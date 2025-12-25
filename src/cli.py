@@ -180,7 +180,7 @@ class MalaOrchestrator:
         self.failed_issues: set[str] = set()
 
     def get_ready_issues(self) -> list[str]:
-        """Get list of ready issue IDs via bd CLI."""
+        """Get list of ready issue IDs via bd CLI, sorted by priority."""
         result = subprocess.run(
             ["bd", "ready", "--json"],
             capture_output=True,
@@ -192,12 +192,15 @@ class MalaOrchestrator:
             return []
         try:
             issues = json.loads(result.stdout)
-            return [
-                i["id"]
+            # Filter and sort by priority (lower number = higher priority)
+            filtered = [
+                i
                 for i in issues
                 if i["id"] not in self.failed_issues
                 and i.get("issue_type") != "epic"  # Skip epics
             ]
+            filtered.sort(key=lambda i: i.get("priority", 999))
+            return [i["id"] for i in filtered]
         except json.JSONDecodeError:
             return []
 
