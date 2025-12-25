@@ -14,8 +14,8 @@ USER_CONFIG_DIR = Path.home() / ".config" / "mala"
 # JSONL log directory
 JSONL_LOG_DIR = USER_CONFIG_DIR / "logs"
 
-# Lock scripts directory (relative to this file: src/tools/env.py -> scripts/)
-SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+# Lock scripts directory (relative to this file: src/tools/env.py -> src/scripts/)
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 
 
 def load_user_env() -> None:

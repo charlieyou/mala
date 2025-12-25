@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 
 LOCK_DIR = Path("/tmp/mala-locks")
 
-# Lock scripts directory (relative to src/tools/locking.py -> ../.. -> scripts/)
-SCRIPTS_DIR = Path(__file__).parent.parent.parent / "scripts"
+# Lock scripts directory (relative to src/tools/locking.py -> src/scripts/)
+SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 
 
 def _lock_path(filepath: str) -> Path:
