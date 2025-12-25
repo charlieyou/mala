@@ -192,7 +192,12 @@ class MalaOrchestrator:
             return []
         try:
             issues = json.loads(result.stdout)
-            return [i["id"] for i in issues if i["id"] not in self.failed_issues]
+            return [
+                i["id"]
+                for i in issues
+                if i["id"] not in self.failed_issues
+                and i.get("issue_type") != "epic"  # Skip epics
+            ]
         except json.JSONDecodeError:
             return []
 
@@ -532,6 +537,16 @@ class MalaOrchestrator:
                 )
                 if commit_result.returncode == 0:
                     log("◐", "Committed .beads/issues.jsonl", Colors.GRAY, dim=True)
+
+            # Auto-close epics where all children are complete
+            epic_result = subprocess.run(
+                ["bd", "epic", "close-eligible"],
+                cwd=self.repo_path,
+                capture_output=True,
+                text=True,
+            )
+            if epic_result.returncode == 0 and epic_result.stdout.strip():
+                log("◐", "Auto-closed completed epics", Colors.GRAY, dim=True)
 
         print()
         return success_count

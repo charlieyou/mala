@@ -44,14 +44,39 @@ mala (Python Orchestrator)
 
 ## How It Works
 
-1. **Orchestrator** spawns up to N parallel agent tasks (default: 3)
-2. **Each agent**:
+1. **Orchestrator** queries `bd ready --json` for available issues
+2. **Filtering**: Epics (`issue_type: "epic"`) are automatically skipped - only tasks/bugs are processed
+3. **Spawning**: Up to N parallel agent tasks (default: 3)
+4. **Each agent**:
    - Gets assigned an issue (already claimed by orchestrator)
    - Acquires filesystem locks before editing any files
    - Implements the issue, runs quality checks, commits
    - Releases locks, closes issue
-3. **On file conflict**: Agent waits up to 60s for lock, returns BLOCKED if unavailable
-4. **On failure/timeout**: Orchestrator releases orphaned locks, resets issue status
+5. **On file conflict**: Agent waits up to 60s for lock, returns BLOCKED if unavailable
+6. **On failure/timeout**: Orchestrator releases orphaned locks, resets issue status
+
+### Epics and Parent-Child Issues
+
+The orchestrator handles epics as follows:
+
+- **Epics are skipped**: Issues with `issue_type: "epic"` are never assigned to agents
+- **Parent-child is non-blocking**: Use `bd dep add <child> <epic> --type parent-child` to link tasks to epics without blocking
+- **Auto-close**: After each run, `bd epic close-eligible` is called to auto-close epics where all children are complete
+
+**Workflow:**
+```bash
+# Create epic
+bd create "Feature X" -t epic -p 1  # Returns: proj-abc
+
+# Create child tasks and link to epic
+bd create "Implement part 1" -p 2
+bd dep add proj-def proj-abc --type parent-child
+
+# Check epic progress
+bd epic status
+
+# Orchestrator auto-closes epics when all children complete
+```
 
 ## Agent Workflow
 
