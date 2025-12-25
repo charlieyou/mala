@@ -127,6 +127,8 @@ Agent output uses color-coded prefixes to distinguish concurrent agents:
 
 ## TODOs
 
+Braintrust LLM tracing is now implemented - see "Braintrust Tracing" section above.
+
 Ideas
 * Add back claude orchestrator, manually managing context
 * agent mail using filesystem?
