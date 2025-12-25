@@ -1,25 +1,28 @@
 """
 Braintrust integration for Claude Agent SDK.
 
-Provides tracing and observability for agent executions using Braintrust's
-logging infrastructure. This integration captures:
-- Agent queries and responses
-- Tool invocations with inputs/outputs
-- Execution timing and success/failure states
+LLM spans are automatically traced by the braintrust.wrappers.claude_agent_sdk wrapper
+which is set up in main.py BEFORE importing claude_agent_sdk.
+
+This module provides:
+- TracedAgentExecution: Context manager for creating parent spans with issue metadata
+- flush_braintrust: Ensure all traces are sent before process exits
 
 Usage:
-    from .braintrust_integration import init_braintrust, TracedAgentExecution
+    # In main.py (BEFORE importing claude_agent_sdk):
+    from braintrust.wrappers.claude_agent_sdk import setup_claude_agent_sdk
+    setup_claude_agent_sdk(project="mala")
 
-    # Initialize at startup
-    init_braintrust(project_name="my-project")
+    # Then in agent code:
+    from .braintrust_integration import TracedAgentExecution, flush_braintrust
 
-    # Use TracedAgentExecution context manager for agent runs
     with TracedAgentExecution(issue_id, agent_id) as tracer:
         tracer.log_input(prompt)
         async with ClaudeSDKClient(options=options) as client:
             await client.query(prompt)
+            # LLM calls are auto-traced by the wrapper
             async for message in client.receive_response():
-                tracer.log_message(message)
+                tracer.log_message(message)  # For output/tool tracking
         tracer.set_success(True)
 """
 
@@ -37,78 +40,41 @@ from claude_agent_sdk import (
 # Braintrust imports - gracefully handle if not configured
 try:
     import braintrust
-    from braintrust import init_logger, start_span
+    from braintrust import start_span
 
     BRAINTRUST_AVAILABLE = True
 except ImportError:
     BRAINTRUST_AVAILABLE = False
     braintrust = None
-    init_logger = None
     start_span = None
 
 
-# Global logger reference
-_logger = None
-# Disable tracing if a failure occurs (best-effort)
-_tracing_disabled = False
-
-
-def init_braintrust(project_name: str = "mala") -> bool:
-    """
-    Initialize Braintrust logging.
-
-    Requires BRAINTRUST_API_KEY environment variable to be set.
-    Returns True if initialization was successful, False otherwise.
-    """
-    global _logger
-
-    if not BRAINTRUST_AVAILABLE:
-        return False
-
-    api_key = os.environ.get("BRAINTRUST_API_KEY")
-    if not api_key:
-        return False
-
-    try:
-        _logger = init_logger(project=project_name)
-        return True
-    except Exception:
-        return False
-
-
 def is_braintrust_enabled() -> bool:
-    """Check if Braintrust is initialized and ready."""
-    return _logger is not None and not _tracing_disabled
+    """Check if Braintrust is available and configured."""
+    return BRAINTRUST_AVAILABLE and os.environ.get("BRAINTRUST_API_KEY") is not None
 
 
 def flush_braintrust() -> None:
     """Flush pending logs to Braintrust."""
-    if _logger is not None:
+    if BRAINTRUST_AVAILABLE and braintrust is not None:
         try:
-            _logger.flush()
+            braintrust.flush()
         except Exception:
             pass
-
-
-def _disable_tracing(error: Exception) -> None:
-    """Disable tracing after a failure (best-effort tracing)."""
-    global _tracing_disabled
-    _tracing_disabled = True
-    import sys
-
-    print(f"[braintrust] Tracing disabled: {error}", file=sys.stderr)
 
 
 class TracedAgentExecution:
     """
     Context manager for tracing a single agent execution.
 
-    Captures the full agent lifecycle including:
+    Creates a parent span for the agent with issue-level metadata.
+    LLM calls within this context are automatically traced by the wrapper.
+
+    Captures:
     - Initial prompt (input)
-    - Tool call counts (nested tool spans disabled for SDK compatibility)
+    - Tool call counts
     - Final result (output)
     - Success/failure status
-    - Duration timing
     """
 
     def __init__(
@@ -118,7 +84,6 @@ class TracedAgentExecution:
         self.agent_id = agent_id
         self.metadata = metadata or {}
         self.span = None
-        self.tool_spans: dict[str, Any] = {}  # Track active tool spans by tool_use_id
         self.input_prompt: str | None = None
         self.output_text: str = ""
         self.tool_calls: list[dict[str, Any]] = []
@@ -142,23 +107,17 @@ class TracedAgentExecution:
             )
             self.span.__enter__()
         except Exception as e:
-            _disable_tracing(e)
+            import sys
+
+            print(f"[braintrust] Failed to start span: {e}", file=sys.stderr)
             self.span = None
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if not is_braintrust_enabled() or self.span is None:
+        if self.span is None:
             return
 
         try:
-            # Close any open tool spans
-            for tool_span in self.tool_spans.values():
-                try:
-                    tool_span.__exit__(None, None, None)
-                except Exception:
-                    pass
-            self.tool_spans.clear()
-
             # Record the final output and metrics
             if exc_type is not None:
                 self.error = str(exc_val)
@@ -178,7 +137,9 @@ class TracedAgentExecution:
             # Flush to ensure data is sent before process exits
             flush_braintrust()
         except Exception as e:
-            _disable_tracing(e)
+            import sys
+
+            print(f"[braintrust] Failed to close span: {e}", file=sys.stderr)
             # Suppress the exception - tracing is best-effort
 
     def log_input(self, prompt: str):
@@ -186,27 +147,23 @@ class TracedAgentExecution:
         self.input_prompt = prompt
 
     def log_message(self, message: Any):
-        """Log a message from the Claude Agent SDK."""
-        if not is_braintrust_enabled():
-            return
-
+        """Log a message from the Claude Agent SDK (for output/tool tracking)."""
         try:
             if isinstance(message, AssistantMessage):
                 self._handle_assistant_message(message)
             elif isinstance(message, ResultMessage):
                 self._handle_result_message(message)
-        except Exception as e:
-            _disable_tracing(e)
-            # Suppress the exception - tracing is best-effort
+        except Exception:
+            pass  # Best-effort tracking
 
     def _handle_assistant_message(self, message: AssistantMessage):
-        """Process an assistant message, logging tools and text."""
+        """Process an assistant message, tracking text and tool calls."""
         for block in message.content:
             if isinstance(block, TextBlock):
                 self.output_text += block.text + "\n"
 
             elif isinstance(block, ToolUseBlock):
-                # Track tool calls for metadata
+                # Track tool calls for metadata (LLM spans are auto-traced by wrapper)
                 tool_use_id = getattr(block, "id", f"tool_{len(self.tool_calls)}")
                 tool_name = block.name
                 tool_input = block.input
@@ -218,17 +175,13 @@ class TracedAgentExecution:
                         "input": tool_input,
                     }
                 )
-                # NOTE: Nested tool spans disabled - parent span reference causes
-                # SpanComponents encoding errors with some SDK versions
 
             elif isinstance(block, ToolResultBlock):
-                # Tool spans disabled - nothing to close
-                pass
+                pass  # Tool results tracked in wrapper
 
     def _handle_result_message(self, message: ResultMessage):
         """Process the final result message."""
         self.output_text = message.result or self.output_text
-        # Success is determined externally based on issue status
 
     def set_success(self, success: bool):
         """Mark the execution as successful or failed."""

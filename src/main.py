@@ -7,17 +7,39 @@ Usage:
     mala clean
 """
 
-import asyncio
+# Setup Braintrust tracing BEFORE importing claude_agent_sdk anywhere
+# This patches the SDK before any imports can use the unpatched version
 import os
+from pathlib import Path
+
+# User config directory (stores .env, logs, etc.)
+USER_CONFIG_DIR = Path.home() / ".config" / "mala"
+
+# Load environment variables early (needed for BRAINTRUST_API_KEY)
+from dotenv import load_dotenv
+
+load_dotenv(dotenv_path=USER_CONFIG_DIR / ".env")
+
+_braintrust_early_setup_done = False
+_braintrust_api_key = os.environ.get("BRAINTRUST_API_KEY")
+if _braintrust_api_key:
+    try:
+        from braintrust.wrappers.claude_agent_sdk import setup_claude_agent_sdk
+
+        setup_claude_agent_sdk(project="mala")
+        _braintrust_early_setup_done = True
+    except ImportError:
+        pass  # braintrust not installed
+
+# Now safe to import claude_agent_sdk (it's been patched if Braintrust is available)
+import asyncio
 import subprocess
 import json
 import uuid
-from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
-from dotenv import load_dotenv
 import typer
 
 from claude_agent_sdk import (
@@ -38,10 +60,7 @@ from claude_agent_sdk.types import (
 )
 
 from .filelock import LOCK_DIR, release_all_locks
-from .braintrust_integration import init_braintrust, TracedAgentExecution
-
-# User config directory (stores .env, logs, etc.)
-USER_CONFIG_DIR = Path.home() / ".config" / "mala"
+from .braintrust_integration import TracedAgentExecution, flush_braintrust
 
 # JSONL log directory
 JSONL_LOG_DIR = USER_CONFIG_DIR / "logs"
@@ -509,9 +528,7 @@ class MalaOrchestrator:
                 "PreToolUse": [
                     HookMatcher(matcher=None, hooks=[block_dangerous_commands])
                 ],
-                "Stop": [
-                    HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])
-                ],
+                "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],
             },
         )
 
@@ -640,9 +657,14 @@ class MalaOrchestrator:
             dim=True,
         )
 
-        # Initialize Braintrust tracing
-        if init_braintrust(project_name="mala"):
-            log("◐", "braintrust: enabled", Colors.CYAN, dim=True)
+        # Report Braintrust status (setup already done at module import)
+        if _braintrust_early_setup_done:
+            log(
+                "◐",
+                "braintrust: enabled (LLM spans auto-traced)",
+                Colors.CYAN,
+                dim=True,
+            )
         else:
             log(
                 "◐",
