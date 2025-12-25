@@ -12,7 +12,6 @@ Default: uv run pytest tests/  (excludes slow tests)
 """
 
 import asyncio
-import os
 import subprocess
 import shutil
 from pathlib import Path
@@ -26,7 +25,8 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import HookMatcher
 
-from src.main import SCRIPTS_DIR, make_stop_hook
+from src.tools.locking import make_stop_hook
+from src.tools.env import SCRIPTS_DIR
 
 # All SDK tests are slow (require API calls)
 pytestmark = pytest.mark.slow
@@ -114,7 +114,7 @@ class TestAgentAcquiresLocks:
 ```bash
 export LOCK_DIR="{lock_dir}"
 export AGENT_ID="{agent_id}"
-export PATH="{lock_env['scripts_dir']}:$PATH"
+export PATH="{lock_env["scripts_dir"]}:$PATH"
 mkdir -p "$LOCK_DIR"
 lock-try.sh test_file.py
 echo "Lock acquired with exit code: $?"
@@ -143,7 +143,7 @@ After running the commands, respond with "DONE".
 ```bash
 export LOCK_DIR="{lock_dir}"
 export AGENT_ID="{agent_id}"
-export PATH="{lock_env['scripts_dir']}:$PATH"
+export PATH="{lock_env["scripts_dir"]}:$PATH"
 mkdir -p "$LOCK_DIR"
 
 # Acquire a lock
@@ -186,7 +186,7 @@ class TestAgentReleasesLocks:
 ```bash
 export LOCK_DIR="{lock_dir}"
 export AGENT_ID="{agent_id}"
-export PATH="{lock_env['scripts_dir']}:$PATH"
+export PATH="{lock_env["scripts_dir"]}:$PATH"
 mkdir -p "$LOCK_DIR"
 
 # Acquire then release
@@ -218,7 +218,7 @@ Respond with "DONE".
 ```bash
 export LOCK_DIR="{lock_dir}"
 export AGENT_ID="{agent_id}"
-export PATH="{lock_env['scripts_dir']}:$PATH"
+export PATH="{lock_env["scripts_dir"]}:$PATH"
 mkdir -p "$LOCK_DIR"
 
 # Acquire multiple locks
@@ -265,7 +265,7 @@ class TestAgentHandlesContention:
 ```bash
 export LOCK_DIR="{lock_dir}"
 export AGENT_ID="{our_agent}"
-export PATH="{lock_env['scripts_dir']}:$PATH"
+export PATH="{lock_env["scripts_dir"]}:$PATH"
 
 # Try to acquire a lock that's already held
 if lock-try.sh blocked_file.py; then
@@ -308,17 +308,15 @@ class TestStopHookWithSDK:
             model="haiku",
             max_turns=2,
             hooks={
-                "Stop": [
-                    HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])
-                ],
+                "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],
             },
         )
 
         # Patch LOCK_DIR for the hook
-        import src.main
+        import src.tools.locking
 
-        original_lock_dir = src.main.LOCK_DIR
-        src.main.LOCK_DIR = lock_dir
+        original_lock_dir = src.tools.locking.LOCK_DIR
+        src.tools.locking.LOCK_DIR = lock_dir
 
         try:
             prompt = f"""Run these commands to acquire locks:
@@ -326,7 +324,7 @@ class TestStopHookWithSDK:
 ```bash
 export LOCK_DIR="{lock_dir}"
 export AGENT_ID="{agent_id}"
-export PATH="{lock_env['scripts_dir']}:$PATH"
+export PATH="{lock_env["scripts_dir"]}:$PATH"
 mkdir -p "$LOCK_DIR"
 lock-try.sh orphan1.py
 lock-try.sh orphan2.py
@@ -345,10 +343,12 @@ Then respond with "DONE" - do NOT release the locks manually.
 
             # Locks should be cleaned by the stop hook
             remaining = list(lock_dir.glob("*.lock"))
-            assert len(remaining) == 0, f"Stop hook should clean locks, found: {remaining}"
+            assert len(remaining) == 0, (
+                f"Stop hook should clean locks, found: {remaining}"
+            )
 
         finally:
-            src.main.LOCK_DIR = original_lock_dir
+            src.tools.locking.LOCK_DIR = original_lock_dir
 
 
 class TestMultiAgentWithSDK:
@@ -367,7 +367,7 @@ class TestMultiAgentWithSDK:
 ```bash
 export LOCK_DIR="{lock_dir}"
 export AGENT_ID="{agent1_id}"
-export PATH="{lock_env['scripts_dir']}:$PATH"
+export PATH="{lock_env["scripts_dir"]}:$PATH"
 mkdir -p "$LOCK_DIR"
 lock-try.sh shared.py
 echo "Agent 1 acquired lock"
@@ -389,7 +389,7 @@ Respond with "DONE".
 ```bash
 export LOCK_DIR="{lock_dir}"
 export AGENT_ID="{agent2_id}"
-export PATH="{lock_env['scripts_dir']}:$PATH"
+export PATH="{lock_env["scripts_dir"]}:$PATH"
 
 if lock-try.sh shared.py; then
     echo "SUCCESS: Agent 2 acquired lock"
@@ -459,7 +459,7 @@ class TestAgentWorkflowE2E:
 ```bash
 export LOCK_DIR="{lock_dir}"
 export AGENT_ID="{agent_id}"
-export PATH="{lock_env['scripts_dir']}:$PATH"
+export PATH="{lock_env["scripts_dir"]}:$PATH"
 mkdir -p "$LOCK_DIR"
 ```
 

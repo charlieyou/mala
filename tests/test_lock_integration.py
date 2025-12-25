@@ -15,11 +15,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.main import (
-    IMPLEMENTER_PROMPT_TEMPLATE,
-    SCRIPTS_DIR,
-    make_stop_hook,
-)
+from src.cli import IMPLEMENTER_PROMPT_TEMPLATE
+from src.tools.locking import make_stop_hook
+from src.tools.env import SCRIPTS_DIR
 
 
 @pytest.fixture
@@ -41,7 +39,9 @@ def agent_env(lock_env):
     }
 
 
-def run_lock_script(script: str, args: list[str], env: dict) -> subprocess.CompletedProcess:
+def run_lock_script(
+    script: str, args: list[str], env: dict
+) -> subprocess.CompletedProcess:
     """Run a lock script in the given environment."""
     return subprocess.run(
         [str(SCRIPTS_DIR / script)] + args,
@@ -87,7 +87,9 @@ class TestPromptTemplateIntegration:
         ]
         for script in expected_scripts:
             assert (SCRIPTS_DIR / script).exists(), f"Missing script: {script}"
-            assert os.access(SCRIPTS_DIR / script, os.X_OK), f"Script not executable: {script}"
+            assert os.access(SCRIPTS_DIR / script, os.X_OK), (
+                f"Script not executable: {script}"
+            )
 
 
 class TestAgentLockWorkflow:
@@ -207,12 +209,14 @@ class TestStopHookIntegration:
         }
 
         # Patch LOCK_DIR to use our test directory
-        with patch("src.main.LOCK_DIR", lock_env):
+        with patch("src.tools.locking.LOCK_DIR", lock_env):
             await stop_hook(hook_input, None, MagicMock())
 
         # Verify locks are cleaned up
         remaining = list(lock_env.glob("*.lock"))
-        assert len(remaining) == 0, f"Stop hook should clean all locks, found: {remaining}"
+        assert len(remaining) == 0, (
+            f"Stop hook should clean all locks, found: {remaining}"
+        )
 
     @pytest.mark.asyncio
     async def test_stop_hook_preserves_other_agent_locks(self, lock_env):
@@ -234,7 +238,7 @@ class TestStopHookIntegration:
 
         # Our agent's stop hook runs
         stop_hook = make_stop_hook(our_agent)
-        with patch("src.main.LOCK_DIR", lock_env):
+        with patch("src.tools.locking.LOCK_DIR", lock_env):
             await stop_hook(
                 {
                     "session_id": "test",
@@ -257,7 +261,7 @@ class TestOrchestratorCleanup:
 
     def test_cleanup_agent_locks_removes_orphaned_locks(self, lock_env, monkeypatch):
         """Orchestrator cleans up locks when agent crashes/times out."""
-        from src.main import MalaOrchestrator
+        from src.cli import MalaOrchestrator
 
         agent_id = "bd-crashed-agent"
         env = {
@@ -271,8 +275,8 @@ class TestOrchestratorCleanup:
         for f in ["orphan1.py", "orphan2.py"]:
             run_lock_script("lock-try.sh", [f], env)
 
-        # Patch LOCK_DIR for the orchestrator
-        monkeypatch.setattr("src.main.LOCK_DIR", lock_env)
+        # Patch LOCK_DIR for the locking module
+        monkeypatch.setattr("src.tools.locking.LOCK_DIR", lock_env)
 
         # Create orchestrator and run cleanup
         orchestrator = MalaOrchestrator.__new__(MalaOrchestrator)
@@ -309,8 +313,14 @@ class TestMultiAgentScenarios:
         assert r2.returncode == 0
 
         # Both should hold their locks
-        assert run_lock_script("lock-check.sh", ["feature_a.py"], agent1_env).returncode == 0
-        assert run_lock_script("lock-check.sh", ["feature_b.py"], agent2_env).returncode == 0
+        assert (
+            run_lock_script("lock-check.sh", ["feature_a.py"], agent1_env).returncode
+            == 0
+        )
+        assert (
+            run_lock_script("lock-check.sh", ["feature_b.py"], agent2_env).returncode
+            == 0
+        )
 
     def test_agent_waits_then_acquires_released_lock(self, lock_env):
         """Agent can acquire lock after holder releases it."""
@@ -333,7 +343,9 @@ class TestMultiAgentScenarios:
 
         # Waiter can now acquire
         assert run_lock_script("lock-try.sh", ["shared.py"], waiter_env).returncode == 0
-        assert run_lock_script("lock-check.sh", ["shared.py"], waiter_env).returncode == 0
+        assert (
+            run_lock_script("lock-check.sh", ["shared.py"], waiter_env).returncode == 0
+        )
 
 
 class TestEdgeCases:
@@ -351,7 +363,9 @@ class TestEdgeCases:
         # All these should succeed on empty dir
         assert run_lock_script("lock-release-all.sh", [], env).returncode == 0
         assert run_lock_script("lock-holder.sh", ["any.py"], env).returncode == 0
-        assert run_lock_script("lock-check.sh", ["any.py"], env).returncode == 1  # Not held
+        assert (
+            run_lock_script("lock-check.sh", ["any.py"], env).returncode == 1
+        )  # Not held
 
     def test_lock_release_idempotent(self, lock_env):
         """Releasing the same lock multiple times should be safe."""
