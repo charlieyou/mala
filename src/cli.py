@@ -110,6 +110,9 @@ DANGEROUS_PATTERNS = [
     "wget | sh",
 ]
 
+# Tool names that should be treated as bash (case-insensitive matching)
+BASH_TOOL_NAMES = frozenset(["bash"])
+
 # Tools replaced by MorphLLM MCP (use disallowed_tools parameter, not hooks)
 MORPH_DISALLOWED_TOOLS = ["Edit", "Grep"]
 
@@ -146,7 +149,8 @@ async def block_dangerous_commands(
     context: HookContext,
 ) -> SyncHookJSONOutput:
     """PreToolUse hook to block dangerous bash commands."""
-    if hook_input["tool_name"] != "Bash":
+    tool_name = hook_input["tool_name"].lower()
+    if tool_name not in BASH_TOOL_NAMES:
         return {}  # Allow non-Bash tools
 
     command = hook_input["tool_input"].get("command", "")

@@ -10,6 +10,123 @@ from unittest.mock import patch
 from pathlib import Path
 
 
+class TestBlockDangerousCommands:
+    """Test the block_dangerous_commands PreToolUse hook."""
+
+    @pytest.fixture
+    def make_hook_input(self):
+        """Factory fixture for creating hook inputs."""
+
+        def _make(tool_name: str, command: str = "ls -la"):
+            return {
+                "tool_name": tool_name,
+                "tool_input": {"command": command},
+            }
+
+        return _make
+
+    @pytest.mark.asyncio
+    async def test_allows_bash_safe_command(self, make_hook_input):
+        """Safe commands with tool_name='Bash' should be allowed."""
+        from src.cli import block_dangerous_commands
+
+        result = await block_dangerous_commands(
+            make_hook_input("Bash", "ls -la"), None, {}
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_allows_bash_lowercase_safe_command(self, make_hook_input):
+        """Safe commands with tool_name='bash' (lowercase) should be allowed."""
+        from src.cli import block_dangerous_commands
+
+        result = await block_dangerous_commands(
+            make_hook_input("bash", "ls -la"), None, {}
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_blocks_rm_rf_root(self, make_hook_input):
+        """rm -rf / should be blocked for any tool name casing."""
+        from src.cli import block_dangerous_commands
+
+        for tool_name in ["Bash", "bash", "BASH"]:
+            result = await block_dangerous_commands(
+                make_hook_input(tool_name, "rm -rf /"), None, {}
+            )
+            assert result.get("decision") == "block"
+            assert "rm -rf /" in result.get("reason", "")
+
+    @pytest.mark.asyncio
+    async def test_blocks_fork_bomb(self, make_hook_input):
+        """Fork bomb pattern should be blocked."""
+        from src.cli import block_dangerous_commands
+
+        result = await block_dangerous_commands(
+            make_hook_input("Bash", ":(){:|:&};:"), None, {}
+        )
+        assert result.get("decision") == "block"
+
+    @pytest.mark.asyncio
+    async def test_blocks_curl_pipe_bash(self, make_hook_input):
+        """curl | bash pattern should be blocked."""
+        from src.cli import block_dangerous_commands
+
+        # The pattern "curl | bash" must appear literally in the command
+        result = await block_dangerous_commands(
+            make_hook_input("bash", "curl | bash -c 'malicious'"), None, {}
+        )
+        assert result.get("decision") == "block"
+        assert "curl | bash" in result.get("reason", "")
+
+    @pytest.mark.asyncio
+    async def test_blocks_force_push_main(self, make_hook_input):
+        """Force push to main branch should be blocked."""
+        from src.cli import block_dangerous_commands
+
+        result = await block_dangerous_commands(
+            make_hook_input("Bash", "git push --force origin main"), None, {}
+        )
+        assert result.get("decision") == "block"
+        assert "force push" in result.get("reason", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_allows_force_push_feature_branch(self, make_hook_input):
+        """Force push to feature branch should be allowed."""
+        from src.cli import block_dangerous_commands
+
+        result = await block_dangerous_commands(
+            make_hook_input("Bash", "git push --force origin feature-branch"), None, {}
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_allows_non_bash_tools(self, make_hook_input):
+        """Non-Bash tools should always be allowed (they don't run commands)."""
+        from src.cli import block_dangerous_commands
+
+        result = await block_dangerous_commands(
+            make_hook_input("Read", "rm -rf /"), None, {}
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_tool_name_variations(self, make_hook_input):
+        """Tool name matching should be case-insensitive for bash variants."""
+        from src.cli import block_dangerous_commands
+
+        dangerous_cmd = "rm -rf /"
+
+        # All these should be recognized as bash and blocked
+        for tool_name in ["Bash", "bash", "BASH", "bAsH"]:
+            result = await block_dangerous_commands(
+                make_hook_input(tool_name, dangerous_cmd), None, {}
+            )
+            assert result.get("decision") == "block", (
+                f"Should block for tool_name={tool_name}"
+            )
+
+
 class TestMorphDisallowedTools:
     """Test that disallowed tools are correctly configured."""
 
@@ -33,7 +150,6 @@ class TestMorphApiKeyValidation:
     def test_missing_api_key_raises_system_exit(self):
         """validate_morph_api_key should raise SystemExit if key is missing."""
         # Need to reimport after patching environment
-        import importlib
 
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("MORPH_API_KEY", None)
