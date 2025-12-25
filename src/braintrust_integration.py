@@ -99,7 +99,9 @@ class TracedAgentExecution:
     - Duration timing
     """
 
-    def __init__(self, issue_id: str, agent_id: str, metadata: dict[str, Any] | None = None):
+    def __init__(
+        self, issue_id: str, agent_id: str, metadata: dict[str, Any] | None = None
+    ):
         self.issue_id = issue_id
         self.agent_id = agent_id
         self.metadata = metadata or {}
@@ -195,11 +197,13 @@ class TracedAgentExecution:
                 tool_name = block.name
                 tool_input = block.input
 
-                self.tool_calls.append({
-                    "id": tool_use_id,
-                    "name": tool_name,
-                    "input": tool_input,
-                })
+                self.tool_calls.append(
+                    {
+                        "id": tool_use_id,
+                        "name": tool_name,
+                        "input": tool_input,
+                    }
+                )
 
                 if self.span is not None:
                     tool_span = start_span(
