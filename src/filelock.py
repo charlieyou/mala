@@ -10,8 +10,8 @@ LOCK_DIR = Path("/tmp/mala-locks")
 
 def _lock_path(filepath: str) -> Path:
     """Convert a file path to its lock file path."""
-    # Replace / and . to create a flat lock filename
-    safe_name = filepath.replace("/", "_").replace(".", "_") + ".lock"
+    # Replace / to create a flat lock filename (match lock scripts)
+    safe_name = filepath.replace("/", "_") + ".lock"
     return LOCK_DIR / safe_name
 
 

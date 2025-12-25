@@ -24,52 +24,22 @@ bd close {issue_id}    # Mark complete (after committing)
 
 ### 2. File Locking Protocol
 
-**Lock helpers:**
+**Setup environment (run once at start):**
 ```bash
-LOCK_DIR="{lock_dir}"
-AGENT_ID="{agent_id}"
+export LOCK_DIR="{lock_dir}"
+export AGENT_ID="{agent_id}"
+export PATH="{scripts_dir}:$PATH"
 mkdir -p "$LOCK_DIR"
-
-lock_file() {{ echo "$LOCK_DIR/${{1//\//_}}.lock"; }}
-
-try_lock() {{
-    local lock=$(lock_file "$1")
-    # Check if already locked
-    [ -f "$lock" ] && return 1
-    # Atomic lock using mkdir as mutex (works in sandboxed environments)
-    if mkdir "$lock.d" 2>/dev/null; then
-        # Double-check after acquiring mutex
-        if [ -f "$lock" ]; then
-            rmdir "$lock.d"
-            return 1
-        fi
-        echo "$AGENT_ID" > "$lock"
-        rmdir "$lock.d"
-        return 0
-    fi
-    return 1
-}}
-
-is_locked_by_me() {{
-    local lock=$(lock_file "$1")
-    [ -f "$lock" ] && [ "$(cat "$lock" 2>/dev/null)" = "$AGENT_ID" ]
-}}
-
-lock_holder() {{
-    cat "$(lock_file "$1")" 2>/dev/null
-}}
-
-release_lock() {{
-    local lock=$(lock_file "$1")
-    [ -f "$lock" ] && [ "$(cat "$lock" 2>/dev/null)" = "$AGENT_ID" ] && rm -f "$lock"
-}}
-
-release_my_locks() {{
-    for lock in "$LOCK_DIR"/*.lock; do
-        [ -f "$lock" ] && [ "$(cat "$lock" 2>/dev/null)" = "$AGENT_ID" ] && rm -f "$lock"
-    done
-}}
 ```
+
+**Lock commands:**
+| Command | Description |
+|---------|-------------|
+| `lock-try.sh <file>` | Acquire lock (exit 0=success, 1=blocked) |
+| `lock-check.sh <file>` | Check if you hold the lock |
+| `lock-holder.sh <file>` | Get agent ID holding the lock |
+| `lock-release.sh <file>` | Release a specific lock |
+| `lock-release-all.sh` | Release all your locks |
 
 **Acquisition strategy - work on other files while waiting:**
 
@@ -81,16 +51,17 @@ release_my_locks() {{
 3. Only give up after 15 minutes of cumulative waiting per file
 
 **Example workflow:**
-```
-Need: [config.py, utils.py, main.py]
+```bash
+# Need: [config.py, utils.py, main.py]
 
-1. try_lock config.py → SUCCESS
-2. try_lock utils.py  → BLOCKED by bd-43
-3. try_lock main.py   → SUCCESS
+lock-try.sh config.py  # exit 0 → SUCCESS
+lock-try.sh utils.py   # exit 1 → BLOCKED
+lock-holder.sh utils.py  # outputs: bd-43
+lock-try.sh main.py    # exit 0 → SUCCESS
 
-→ Work on config.py and main.py first
-→ Periodically retry utils.py (exponential backoff)
-→ Once utils.py acquired, complete that work
+# → Work on config.py and main.py first
+# → Periodically retry utils.py (exponential backoff)
+# → Once utils.py acquired, complete that work
 ```
 
 **If still blocked after 15 min total wait:** Return with `"BLOCKED: <file> held by <holder> for 15+ min"`
@@ -137,7 +108,7 @@ git commit -m "bd-{issue_id}: <summary>"
 git log -1 --oneline
 
 # NOW release locks (after commit is safe)
-release_my_locks
+lock-release-all.sh
 
 # Close the issue
 bd close {issue_id}

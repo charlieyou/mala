@@ -8,6 +8,7 @@ Usage:
 """
 
 import asyncio
+import os
 import subprocess
 import json
 import uuid
@@ -31,6 +32,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import (
     HookMatcher,
     PreToolUseHookInput,
+    StopHookInput,
     HookContext,
     SyncHookJSONOutput,
 )
@@ -47,6 +49,9 @@ JSONL_LOG_DIR = USER_CONFIG_DIR / "logs"
 # Load implementer prompt from file
 PROMPT_FILE = Path(__file__).parent / "implementer_prompt.md"
 IMPLEMENTER_PROMPT_TEMPLATE = PROMPT_FILE.read_text()
+
+# Lock scripts directory
+SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 
 # Dangerous bash command patterns to block
 DANGEROUS_PATTERNS = [
@@ -93,6 +98,34 @@ async def block_dangerous_commands(
             }
 
     return {}  # Allow the command
+
+
+def make_stop_hook(agent_id: str):
+    """Create a Stop hook that cleans up locks for the given agent."""
+
+    async def cleanup_locks_on_stop(
+        hook_input: StopHookInput,
+        stderr: str | None,
+        context: HookContext,
+    ) -> SyncHookJSONOutput:
+        """Stop hook to release all locks held by this agent."""
+        script = SCRIPTS_DIR / "lock-release-all.sh"
+        try:
+            subprocess.run(
+                [str(script)],
+                env={
+                    **os.environ,
+                    "LOCK_DIR": str(LOCK_DIR),
+                    "AGENT_ID": agent_id,
+                },
+                check=False,
+                capture_output=True,
+            )
+        except Exception:
+            pass  # Best effort cleanup, orchestrator has fallback
+        return {}
+
+    return cleanup_locks_on_stop
 
 
 app = typer.Typer(
@@ -458,6 +491,7 @@ class MalaOrchestrator:
             issue_id=issue_id,
             repo_path=self.repo_path,
             lock_dir=LOCK_DIR,
+            scripts_dir=SCRIPTS_DIR,
             agent_id=agent_id,
         )
 
@@ -474,7 +508,10 @@ class MalaOrchestrator:
             hooks={
                 "PreToolUse": [
                     HookMatcher(matcher=None, hooks=[block_dangerous_commands])
-                ]
+                ],
+                "Stop": [
+                    HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])
+                ],
             },
         )
 
