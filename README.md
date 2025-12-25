@@ -168,6 +168,7 @@ Ideas
 * Add back claude orchestrator, manually managing context
 * agent mail using filesystem?
 * use codex for code review?
+* make morphllm optional
 
 ### Context Exhaustion Handling
 When agents run out of context mid-implementation:

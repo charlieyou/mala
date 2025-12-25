@@ -124,31 +124,30 @@ lock-release-all.sh
 bd close {issue_id}
 ```
 
-## Lock Protocol Summary
-
-| Phase | Locks Held? | Action |
-|-------|-------------|--------|
-| Planning | No | Identify files needed |
-| Implementation | Yes | Acquire locks, work on available files |
-| Waiting | Partial | Work on locked files, retry blocked ones |
-| Quality checks | Yes | Keep all locks |
-| Commit | Yes | `git commit` while holding locks |
-| Cleanup | Releasing | Release locks AFTER commit succeeds |
-
-## Rules
-
-1. **Lock before editing** - Never edit a file without locking it first
-2. **Work while waiting** - If blocked on file X, work on files you have locked
-3. **Exponential backoff** - 10s, 20s, 40s... up to 15 min total wait per file
-4. **Commit before release** - Only release locks after `git commit` succeeds
-5. **Complete the work** - Don't return until done or blocked 15+ min
-6. **Fix all check failures** - Lint, type, format errors must pass
-7. **Stay in scope** - Implement what's asked, nothing more
-
 ## Output
 
-When done, return a brief summary:
-- What was implemented
-- Files changed
-- Lock contention encountered (if any)
-- Any notes for follow-up
+When done, return this template:
+- Implemented:
+- Files changed:
+- Tests: <exact command(s)> OR "Not run (reason)"
+- Quality checks: <exact command(s)> OR "Not run (reason)"
+- Commit: <hash> OR "Not committed (reason)"
+- Lock contention:
+- Follow-ups (if any):
+
+## Speed/Scope Guardrails
+
+- If change is docs-only or trivial, run targeted checks on touched files; do NOT run full suite unless required.
+- If issue appears already fixed, do minimal verification, avoid extra scope, and report evidence.
+- If a check fails due to pre-existing issues, call it out explicitly and proceed only if unrelated.
+
+## Parallel Work Rules (Avoid Collisions)
+
+- Before editing, list the exact files you intend to touch; do not edit files outside that list.
+- Acquire locks for ALL intended files up front; if any are blocked, work only on the files you already locked.
+- If you need to add a new file mid-work, lock it first and update your file list.
+- Run tests and checks ONLY on touched files unless the issue explicitly requires full-suite runs.
+- Never run repo-wide formatters or refactors; run tools only on touched files.
+- Avoid renames/moves and broad reformatting unless explicitly required.
+- Do not update shared config or dependency files (e.g., lockfiles) unless the issue requires it.
+- If a needed file stays locked >15 minutes, stop and report “BLOCKED” rather than making overlapping changes.
