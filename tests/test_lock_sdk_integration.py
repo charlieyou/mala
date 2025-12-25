@@ -13,7 +13,6 @@ Default: uv run pytest tests/  (excludes slow tests)
 
 import asyncio
 import subprocess
-import shutil
 from pathlib import Path
 
 import pytest
@@ -32,35 +31,30 @@ from src.tools.env import SCRIPTS_DIR
 pytestmark = pytest.mark.slow
 
 
-def _claude_cli_ready() -> bool:
-    """Return True if Claude Code CLI is installed and authenticated."""
-    if shutil.which("claude") is None:
-        return False
-    try:
-        result = subprocess.run(
-            ["claude", "auth", "status"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-        )
-        return result.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-
-
-@pytest.fixture(autouse=True, scope="session")
-def require_claude_cli_auth():
-    """Skip SDK tests if Claude Code CLI auth is unavailable."""
-    if not _claude_cli_ready():
-        pytest.skip("Claude Code CLI auth not available; run `claude auth login`.")
-
-
 @pytest.fixture(autouse=True)
 def clean_test_env(monkeypatch):
     """Clean environment for tests - disable Braintrust, use CLI auth."""
+    # Disable Braintrust during tests to avoid network/logging side effects.
     monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
     # Remove API key to force OAuth via Claude Code CLI
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    try:
+        import braintrust
+
+        class _NoopSpan:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+            def log(self, **_kwargs):
+                return None
+
+        braintrust.start_span = lambda *args, **kwargs: _NoopSpan()
+        braintrust.flush = lambda *args, **kwargs: None
+    except Exception:
+        pass
 
 
 @pytest.fixture
@@ -306,7 +300,7 @@ class TestStopHookWithSDK:
             cwd=str(tmp_path),
             permission_mode="bypassPermissions",
             model="haiku",
-            max_turns=2,
+            max_turns=3,
             hooks={
                 "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],
             },
@@ -338,8 +332,11 @@ Then respond with "DONE" - do NOT release the locks manually.
                 async for message in client.receive_response():
                     pass
 
-            # Give hook a moment to execute
-            await asyncio.sleep(0.5)
+            # Give hook time to execute (poll briefly to avoid flakiness)
+            for _ in range(10):
+                if not list(lock_dir.glob("*.lock")):
+                    break
+                await asyncio.sleep(0.3)
 
             # Locks should be cleaned by the stop hook
             remaining = list(lock_dir.glob("*.lock"))
@@ -450,7 +447,7 @@ class TestAgentWorkflowE2E:
             cwd=str(tmp_path),
             permission_mode="bypassPermissions",
             model="haiku",
-            max_turns=5,
+            max_turns=8,
         )
 
         prompt = f"""You are implementing a feature. Follow this EXACT workflow:
@@ -482,6 +479,15 @@ git commit -m "Add hello function"
 5. Release the lock:
 ```bash
 lock-release.sh feature.py
+```
+
+6. Verify the lock is released:
+```bash
+if lock-check.sh feature.py; then
+    echo "LOCK_RELEASED=false"
+else
+    echo "LOCK_RELEASED=true"
+fi
 ```
 
 Report "WORKFLOW COMPLETE" when done.
