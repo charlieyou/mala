@@ -81,10 +81,22 @@ def is_braintrust_enabled() -> bool:
     return _logger is not None and not _tracing_disabled
 
 
+def flush_braintrust() -> None:
+    """Flush pending logs to Braintrust."""
+    if _logger is not None:
+        try:
+            _logger.flush()
+        except Exception:
+            pass
+
+
 def _disable_tracing(error: Exception) -> None:
     """Disable tracing after a failure (best-effort tracing)."""
     global _tracing_disabled
     _tracing_disabled = True
+    import sys
+
+    print(f"[braintrust] Tracing disabled: {error}", file=sys.stderr)
 
 
 class TracedAgentExecution:
@@ -93,7 +105,7 @@ class TracedAgentExecution:
 
     Captures the full agent lifecycle including:
     - Initial prompt (input)
-    - All tool invocations as child spans
+    - Tool call counts (nested tool spans disabled for SDK compatibility)
     - Final result (output)
     - Success/failure status
     - Duration timing
@@ -163,6 +175,8 @@ class TracedAgentExecution:
                 scores={"success": 1.0 if self.success else 0.0},
             )
             self.span.__exit__(exc_type, exc_val, exc_tb)
+            # Flush to ensure data is sent before process exits
+            flush_braintrust()
         except Exception as e:
             _disable_tracing(e)
             # Suppress the exception - tracing is best-effort
@@ -192,7 +206,7 @@ class TracedAgentExecution:
                 self.output_text += block.text + "\n"
 
             elif isinstance(block, ToolUseBlock):
-                # Start a new tool span
+                # Track tool calls for metadata
                 tool_use_id = getattr(block, "id", f"tool_{len(self.tool_calls)}")
                 tool_name = block.name
                 tool_input = block.input
@@ -204,34 +218,12 @@ class TracedAgentExecution:
                         "input": tool_input,
                     }
                 )
-
-                if self.span is not None:
-                    tool_span = start_span(
-                        name=f"tool:{tool_name}",
-                        type="function",
-                        parent=self.span,
-                    )
-                    tool_span.__enter__()
-                    tool_span.log(
-                        input=tool_input,
-                        metadata={"tool_name": tool_name, "tool_use_id": tool_use_id},
-                    )
-                    self.tool_spans[tool_use_id] = tool_span
+                # NOTE: Nested tool spans disabled - parent span reference causes
+                # SpanComponents encoding errors with some SDK versions
 
             elif isinstance(block, ToolResultBlock):
-                # Close the corresponding tool span
-                tool_use_id = getattr(block, "tool_use_id", None)
-                is_error = getattr(block, "is_error", False)
-                content = block.content
-
-                if tool_use_id and tool_use_id in self.tool_spans:
-                    tool_span = self.tool_spans[tool_use_id]
-                    tool_span.log(
-                        output=content,
-                        scores={"error": 1.0 if is_error else 0.0},
-                    )
-                    tool_span.__exit__(None, None, None)
-                    del self.tool_spans[tool_use_id]
+                # Tool spans disabled - nothing to close
+                pass
 
     def _handle_result_message(self, message: ResultMessage):
         """Process the final result message."""
