@@ -5,8 +5,7 @@ A multi-agent system for processing beads issues in parallel using the Claude Ag
 ## Installation
 
 ```bash
-cd mala
-uv sync
+uv tool install . --reinstall
 ```
 
 ## Usage
@@ -114,7 +113,7 @@ mala uses a global config directory at `~/.config/mala/`:
 
 ```
 ~/.config/mala/
-├── .env          # API keys (ANTHROPIC_API_KEY, BRAINTRUST_API_KEY)
+├── .env          # API keys (ANTHROPIC_API_KEY, MORPH_API_KEY, BRAINTRUST_API_KEY)
 └── logs/         # JSONL session logs
 ```
 
@@ -128,6 +127,17 @@ To enable Braintrust tracing for agent sessions, add your API key to the global 
 
 ```bash
 echo "BRAINTRUST_API_KEY=your-key" >> ~/.config/mala/.env
+```
+
+### MorphLLM MCP
+
+mala configures the MorphLLM MCP server for all agents and requires `MORPH_API_KEY` to run.
+The server is launched via `npx -y @morphllm/morphmcp`, and agents use MCP tools like
+`edit_file` and `warpgrep_codebase_search` (prefixed as `mcp__morphllm__*`). The built-in
+`Edit` and `Grep` tools are blocked to enforce MCP usage.
+
+```bash
+echo "MORPH_API_KEY=your-key" >> ~/.config/mala/.env
 ```
 
 ## Logs
