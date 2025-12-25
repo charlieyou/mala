@@ -30,4 +30,5 @@ asyncio_default_fixture_loop_scope = "function"
 addopts = "-m 'not slow'"
 markers = [
     "slow: marks tests as slow (run with '-m slow' or '--run-slow')",
+    "morph: marks tests requiring MORPH_API_KEY",
 ]

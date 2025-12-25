@@ -110,6 +110,35 @@ DANGEROUS_PATTERNS = [
     "wget | sh",
 ]
 
+# Tools replaced by MorphLLM MCP (use disallowed_tools parameter, not hooks)
+MORPH_DISALLOWED_TOOLS = ["Edit", "Grep"]
+
+
+def validate_morph_api_key() -> str:
+    """Validate MORPH_API_KEY is set. Raises SystemExit if missing."""
+    api_key = os.environ.get("MORPH_API_KEY")
+    if not api_key:
+        raise SystemExit(
+            f"Error: MORPH_API_KEY is required.\n"
+            f"Add it to {USER_CONFIG_DIR}/.env or set as environment variable."
+        )
+    return api_key
+
+
+def get_mcp_servers(repo_path: Path) -> dict:
+    """Get MCP servers configuration for agents."""
+    return {
+        "morphllm": {
+            "command": "npx",
+            "args": ["-y", "@morphllm/morphmcp"],
+            "env": {
+                "MORPH_API_KEY": os.environ["MORPH_API_KEY"],
+                "ENABLED_TOOLS": "all",
+                "WORKSPACE_MODE": "true",
+            },
+        }
+    }
+
 
 async def block_dangerous_commands(
     hook_input: PreToolUseHookInput,
@@ -139,6 +168,27 @@ async def block_dangerous_commands(
             }
 
     return {}  # Allow the command
+
+
+async def block_morph_replaced_tools(
+    hook_input: PreToolUseHookInput,
+    stderr: str | None,
+    context: HookContext,
+) -> SyncHookJSONOutput:
+    """PreToolUse hook to block tools replaced by MorphLLM MCP.
+
+    Note: We use a hook instead of the SDK's `disallowed_tools` parameter because
+    it has a known bug where it's sometimes ignored.
+    See: https://github.com/anthropics/claude-agent-sdk-python/issues/361
+    """
+    tool_name = hook_input["tool_name"]
+    if tool_name in MORPH_DISALLOWED_TOOLS:
+        return {
+            "decision": "block",
+            "reason": f"Use MorphLLM MCP tool instead of {tool_name}. "
+            "Available: edit_file, warpgrep_codebase_search",
+        }
+    return {}
 
 
 app = typer.Typer(
@@ -261,9 +311,14 @@ class MalaOrchestrator:
             model="opus",
             system_prompt={"type": "preset", "preset": "claude_code"},
             setting_sources=["project", "user"],
+            mcp_servers=get_mcp_servers(self.repo_path),
+            disallowed_tools=MORPH_DISALLOWED_TOOLS,
             hooks={
                 "PreToolUse": [
-                    HookMatcher(matcher=None, hooks=[block_dangerous_commands])
+                    HookMatcher(
+                        matcher=None,
+                        hooks=[block_dangerous_commands, block_morph_replaced_tools],
+                    )
                 ],
                 "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],
             },
@@ -412,6 +467,20 @@ class MalaOrchestrator:
                 Colors.GRAY,
                 dim=True,
             )
+
+        # Report Morph MCP status
+        log(
+            "◐",
+            "morph: enabled (edit_file, warpgrep_codebase_search)",
+            Colors.CYAN,
+            dim=True,
+        )
+        log(
+            "◐",
+            f"morph: blocked tools: {', '.join(MORPH_DISALLOWED_TOOLS)}",
+            Colors.GRAY,
+            dim=True,
+        )
         print()
 
         # Setup directories
@@ -586,6 +655,9 @@ def run(
 
     # Load environment variables: user config first, then repo .env (repo overrides)
     load_env(repo_path)
+
+    # Validate Morph API key (required)
+    validate_morph_api_key()
 
     if not repo_path.exists():
         log("✗", f"Repository not found: {repo_path}", Colors.RED)
