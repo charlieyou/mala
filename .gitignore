@@ -6,3 +6,6 @@ __pycache__/
 uv.lock
 
 .env
+
+# bv (beads viewer) local config and caches
+.bv/
