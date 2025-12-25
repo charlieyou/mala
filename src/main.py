@@ -62,6 +62,11 @@ from claude_agent_sdk.types import (
 from .filelock import LOCK_DIR, release_all_locks
 from .braintrust_integration import TracedAgentExecution, flush_braintrust
 
+# Version (from package metadata)
+from importlib.metadata import version as pkg_version
+
+__version__ = pkg_version("mala")
+
 # JSONL log directory
 JSONL_LOG_DIR = USER_CONFIG_DIR / "logs"
 
@@ -252,6 +257,23 @@ def get_git_branch(cwd: Path) -> str:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return ""
+
+
+def get_git_commit(cwd: Path) -> str:
+    """Get the current git commit hash (short)."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -537,8 +559,11 @@ class MalaOrchestrator:
             issue_id=issue_id,
             agent_id=agent_id,
             metadata={
+                "mala_version": __version__,
+                "project_dir": self.repo_path.name,
+                "git_branch": get_git_branch(self.repo_path),
+                "git_commit": get_git_commit(self.repo_path),
                 "session_id": session_id,
-                "repo_path": str(self.repo_path),
                 "timeout_seconds": self.timeout_seconds,
             },
         )
