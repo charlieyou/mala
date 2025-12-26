@@ -1,6 +1,10 @@
 # mala
 
+**M**ulti-**A**gent **L**oop **A**rchitecture
+
 A multi-agent system for processing beads issues in parallel using the Claude Agent SDK.
+
+The name also derives from Sanskrit, where *mala* means "garland" or "string of beads" - fitting for a system that orchestrates beads issues in a continuous loop, like counting prayer beads.
 
 ## Installation
 
