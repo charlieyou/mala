@@ -19,6 +19,7 @@ from claude_agent_sdk.types import HookMatcher
 from .beads_client import BeadsClient
 from .braintrust_integration import TracedAgentExecution
 from .git_utils import get_git_commit, get_git_branch
+from .handoff import HandoffWriter
 from .hooks import (
     MORPH_DISALLOWED_TOOLS,
     block_dangerous_commands,
@@ -104,6 +105,9 @@ class MalaOrchestrator:
 
         # Quality gate for post-run validation
         self.quality_gate = QualityGate(self.repo_path)
+
+        # Handoff writer for failed issues
+        self.handoff_writer = HandoffWriter(self.repo_path)
 
         # Initialize BeadsClient with warning logger
         def log_warning(msg: str) -> None:
@@ -436,12 +440,18 @@ class MalaOrchestrator:
                                             Colors.YELLOW,
                                             agent_id=issue_id,
                                         )
+                                        # Write handoff file for quality gate failure
+                                        self.handoff_writer.write_handoff(
+                                            issue_id,
+                                            log_path=log_path,
+                                            error_summary=f"Quality gate failed: {reason}",
+                                        )
 
                             self.completed.append(result)
                             del self.active_tasks[issue_id]
 
-                            # Clean up log path tracking
-                            self.session_log_paths.pop(issue_id, None)
+                            # Capture log path before cleanup for potential handoff
+                            log_path = self.session_log_paths.pop(issue_id, None)
 
                             duration_str = f"{result.duration_seconds:.0f}s"
                             if result.success:
@@ -461,6 +471,12 @@ class MalaOrchestrator:
                                 )
                                 self.failed_issues.add(issue_id)
                                 self.beads.reset(issue_id)
+                                # Write handoff file for failed agent
+                                self.handoff_writer.write_handoff(
+                                    issue_id,
+                                    log_path=log_path,
+                                    error_summary=result.summary,
+                                )
                             break
 
         finally:
