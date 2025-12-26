@@ -37,16 +37,46 @@ DANGEROUS_PATTERNS = [
     "wget | sh",
 ]
 
-# Destructive git command patterns to block
+# Destructive git command patterns to block in multi-agent contexts.
+# These operations modify working tree or history in ways that can conflict
+# between concurrent agents.
 DESTRUCTIVE_GIT_PATTERNS = [
+    # Hard reset - discards uncommitted changes silently
     "git reset --hard",
+    # Clean - removes untracked files
     "git clean -fd",
     "git clean -f",
+    "git clean -df",
+    "git clean -d -f",
+    # Force checkout - discards local changes
     "git checkout -- .",
+    "git checkout -f",
+    "git checkout --force",
+    # Rebase - can rewrite history and requires conflict resolution
     "git rebase",
+    # Force delete branches
     "git branch -D",
     "git branch -d -f",
+    # Stash - hides changes that other agents cannot see
+    "git stash",
+    # Abort operations - may discard other agents' work in progress
+    "git merge --abort",
+    "git rebase --abort",
+    "git cherry-pick --abort",
 ]
+
+# Safe alternatives to blocked git operations (for error messages)
+SAFE_GIT_ALTERNATIVES: dict[str, str] = {
+    "git stash": "commit changes instead: git add . && git commit -m 'WIP: ...'",
+    "git reset --hard": "use git checkout <file> to revert specific files, or commit first",
+    "git rebase": "use git merge instead, or coordinate with other agents",
+    "git checkout -f": "commit or stash changes first (in non-agent context)",
+    "git checkout --force": "commit or stash changes first (in non-agent context)",
+    "git clean -f": "manually remove specific untracked files with rm",
+    "git merge --abort": "resolve merge conflicts instead of aborting",
+    "git rebase --abort": "resolve rebase conflicts instead of aborting",
+    "git cherry-pick --abort": "resolve cherry-pick conflicts instead of aborting",
+}
 
 # Tool names that should be treated as bash (case-insensitive matching)
 BASH_TOOL_NAMES = frozenset(["bash"])
@@ -76,7 +106,20 @@ async def block_dangerous_commands(
     stderr: str | None,
     context: HookContext,
 ) -> SyncHookJSONOutput:
-    """PreToolUse hook to block dangerous bash commands."""
+    """PreToolUse hook to block dangerous bash commands.
+
+    In multi-agent contexts, certain git operations are blocked because they
+    can cause conflicts between concurrent agents. Blocked operations include:
+    - git stash (all subcommands) - hides changes other agents cannot see
+    - git reset --hard - discards uncommitted changes silently
+    - git rebase - requires human input and can rewrite history
+    - git checkout -f/--force - discards local changes
+    - git clean -f - removes untracked files without warning
+    - git merge/rebase/cherry-pick --abort - may discard other agents' work
+
+    When a blocked operation is detected, the error message includes a safe
+    alternative when available.
+    """
     tool_name = hook_input["tool_name"].lower()
     if tool_name not in BASH_TOOL_NAMES:
         return {}  # Allow non-Bash tools
@@ -91,12 +134,16 @@ async def block_dangerous_commands(
                 "reason": f"Blocked dangerous command pattern: {pattern}",
             }
 
-    # Block destructive git patterns
+    # Block destructive git patterns with safe alternatives
     for pattern in DESTRUCTIVE_GIT_PATTERNS:
         if pattern in command:
+            alternative = SAFE_GIT_ALTERNATIVES.get(pattern, "")
+            reason = f"Blocked destructive git command: {pattern}"
+            if alternative:
+                reason = f"{reason}. Safe alternative: {alternative}"
             return {
                 "decision": "block",
-                "reason": f"Blocked destructive git command: {pattern}",
+                "reason": reason,
             }
 
     # Block force push to ALL branches (--force-with-lease is allowed as safer alternative)

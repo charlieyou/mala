@@ -8,6 +8,9 @@ import pytest
 
 from src.hooks import (
     make_lock_enforcement_hook,
+    block_dangerous_commands,
+    DESTRUCTIVE_GIT_PATTERNS,
+    SAFE_GIT_ALTERNATIVES,
     FILE_WRITE_TOOLS,
 )
 
@@ -149,3 +152,220 @@ class TestMakeLockEnforcementHook:
 
         assert result == {}  # Allowed
         mock.assert_called_once_with(test_file, repo_namespace=repo_path)
+
+
+class TestBlockDangerousCommands:
+    """Tests for block_dangerous_commands hook."""
+
+    @pytest.mark.asyncio
+    async def test_allows_safe_git_commands(self) -> None:
+        """Safe git commands should be allowed."""
+        safe_commands = [
+            "git status",
+            "git log",
+            "git diff",
+            "git add .",
+            "git commit -m 'test'",
+            "git pull",
+            "git fetch",
+            "git branch feature",
+            "git checkout feature",
+            "git merge feature",
+        ]
+        context = make_context()
+
+        for cmd in safe_commands:
+            hook_input = make_hook_input("Bash", {"command": cmd})
+            result = await block_dangerous_commands(hook_input, None, context)
+            assert result == {}, f"Expected {cmd!r} to be allowed"
+
+    @pytest.mark.asyncio
+    async def test_blocks_git_stash(self) -> None:
+        """git stash (all subcommands) should be blocked."""
+        stash_commands = [
+            "git stash",
+            "git stash push",
+            "git stash pop",
+            "git stash apply",
+            "git stash list",
+            "git stash drop",
+        ]
+        context = make_context()
+
+        for cmd in stash_commands:
+            hook_input = make_hook_input("Bash", {"command": cmd})
+            result = await block_dangerous_commands(hook_input, None, context)
+            assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
+            assert "git stash" in result["reason"]
+
+    @pytest.mark.asyncio
+    async def test_blocks_git_reset_hard(self) -> None:
+        """git reset --hard should be blocked."""
+        hook_input = make_hook_input("Bash", {"command": "git reset --hard HEAD~1"})
+        context = make_context()
+
+        result = await block_dangerous_commands(hook_input, None, context)
+
+        assert result["decision"] == "block"
+        assert "git reset --hard" in result["reason"]
+
+    @pytest.mark.asyncio
+    async def test_blocks_git_rebase(self) -> None:
+        """git rebase (all forms) should be blocked."""
+        rebase_commands = [
+            "git rebase main",
+            "git rebase -i HEAD~3",
+            "git rebase --onto main feature",
+        ]
+        context = make_context()
+
+        for cmd in rebase_commands:
+            hook_input = make_hook_input("Bash", {"command": cmd})
+            result = await block_dangerous_commands(hook_input, None, context)
+            assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
+            assert "git rebase" in result["reason"]
+
+    @pytest.mark.asyncio
+    async def test_blocks_force_checkout(self) -> None:
+        """git checkout -f/--force should be blocked."""
+        force_checkouts = [
+            "git checkout -f",
+            "git checkout --force",
+            "git checkout -f main",
+            "git checkout --force feature",
+        ]
+        context = make_context()
+
+        for cmd in force_checkouts:
+            hook_input = make_hook_input("Bash", {"command": cmd})
+            result = await block_dangerous_commands(hook_input, None, context)
+            assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
+
+    @pytest.mark.asyncio
+    async def test_blocks_git_clean(self) -> None:
+        """git clean -f should be blocked."""
+        clean_commands = [
+            "git clean -f",
+            "git clean -fd",
+            "git clean -df",
+            "git clean -d -f",
+        ]
+        context = make_context()
+
+        for cmd in clean_commands:
+            hook_input = make_hook_input("Bash", {"command": cmd})
+            result = await block_dangerous_commands(hook_input, None, context)
+            assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
+
+    @pytest.mark.asyncio
+    async def test_blocks_abort_operations(self) -> None:
+        """git merge/rebase/cherry-pick --abort should be blocked."""
+        abort_commands = [
+            "git merge --abort",
+            "git rebase --abort",
+            "git cherry-pick --abort",
+        ]
+        context = make_context()
+
+        for cmd in abort_commands:
+            hook_input = make_hook_input("Bash", {"command": cmd})
+            result = await block_dangerous_commands(hook_input, None, context)
+            assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
+
+    @pytest.mark.asyncio
+    async def test_includes_safe_alternatives_in_error(self) -> None:
+        """Error messages should include safe alternatives when available."""
+        context = make_context()
+
+        # Test git stash - should suggest commit instead
+        hook_input = make_hook_input("Bash", {"command": "git stash"})
+        result = await block_dangerous_commands(hook_input, None, context)
+        assert "commit" in result["reason"].lower()
+
+        # Test git reset --hard - should suggest checkout for specific files
+        hook_input = make_hook_input("Bash", {"command": "git reset --hard"})
+        result = await block_dangerous_commands(hook_input, None, context)
+        assert (
+            "checkout" in result["reason"].lower()
+            or "commit" in result["reason"].lower()
+        )
+
+        # Test git rebase - should suggest merge
+        hook_input = make_hook_input("Bash", {"command": "git rebase main"})
+        result = await block_dangerous_commands(hook_input, None, context)
+        assert "merge" in result["reason"].lower()
+
+    @pytest.mark.asyncio
+    async def test_allows_non_bash_tools(self) -> None:
+        """Non-Bash tools should not be affected by the hook."""
+        context = make_context()
+        hook_input = make_hook_input("Write", {"file_path": "/test.py"})
+
+        result = await block_dangerous_commands(hook_input, None, context)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_blocks_force_push(self) -> None:
+        """git push --force should be blocked."""
+        context = make_context()
+        hook_input = make_hook_input(
+            "Bash", {"command": "git push --force origin main"}
+        )
+
+        result = await block_dangerous_commands(hook_input, None, context)
+
+        assert result["decision"] == "block"
+        assert "force push" in result["reason"].lower()
+
+    @pytest.mark.asyncio
+    async def test_allows_force_with_lease(self) -> None:
+        """git push --force-with-lease should be allowed (safer alternative)."""
+        context = make_context()
+        hook_input = make_hook_input(
+            "Bash", {"command": "git push --force-with-lease origin main"}
+        )
+
+        result = await block_dangerous_commands(hook_input, None, context)
+
+        assert result == {}
+
+
+class TestDestructiveGitPatternsConstant:
+    """Tests for DESTRUCTIVE_GIT_PATTERNS constant coverage."""
+
+    def test_contains_all_required_patterns(self) -> None:
+        """DESTRUCTIVE_GIT_PATTERNS should contain all required blocked operations."""
+        required = [
+            "git stash",
+            "git reset --hard",
+            "git rebase",
+            "git checkout -f",
+            "git checkout --force",
+            "git clean -f",
+            "git merge --abort",
+            "git rebase --abort",
+            "git cherry-pick --abort",
+        ]
+        for pattern in required:
+            assert any(pattern in p for p in DESTRUCTIVE_GIT_PATTERNS), (
+                f"Missing required pattern: {pattern}"
+            )
+
+
+class TestSafeGitAlternatives:
+    """Tests for SAFE_GIT_ALTERNATIVES documentation."""
+
+    def test_provides_alternatives_for_common_operations(self) -> None:
+        """SAFE_GIT_ALTERNATIVES should have alternatives for common blocked ops."""
+        assert "git stash" in SAFE_GIT_ALTERNATIVES
+        assert "git reset --hard" in SAFE_GIT_ALTERNATIVES
+        assert "git rebase" in SAFE_GIT_ALTERNATIVES
+
+    def test_alternatives_are_non_empty_strings(self) -> None:
+        """All alternatives should be non-empty strings."""
+        for pattern, alternative in SAFE_GIT_ALTERNATIVES.items():
+            assert isinstance(alternative, str), (
+                f"Alternative for {pattern} is not a string"
+            )
+            assert len(alternative) > 0, f"Alternative for {pattern} is empty"
