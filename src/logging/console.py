@@ -3,7 +3,9 @@
 Claude Code style colored logging with agent identification support.
 """
 
+import json
 from datetime import datetime
+from typing import Any
 
 
 # Global truncation setting (can be modified at runtime)
@@ -100,8 +102,63 @@ def log(
     )
 
 
-def log_tool(tool_name: str, description: str = "", agent_id: str | None = None):
-    """Log tool usage in Claude Code style."""
+def _format_arguments(arguments: dict[str, Any] | None, truncate: bool) -> str:
+    """Format tool arguments for display.
+
+    Args:
+        arguments: Tool arguments as a dictionary.
+        truncate: Whether to truncate/abbreviate the output.
+
+    Returns:
+        Formatted string representation of arguments.
+    """
+    if not arguments:
+        return ""
+
+    if truncate:
+        # Abbreviated format: key=value pairs, truncated
+        parts = []
+        for key, value in arguments.items():
+            if isinstance(value, str):
+                # Truncate long string values
+                if len(value) > 30:
+                    value = value[:30] + "..."
+                parts.append(f"{key}={value!r}")
+            elif isinstance(value, dict):
+                parts.append(f"{key}={{...}}")
+            elif isinstance(value, list):
+                parts.append(f"{key}=[...]")
+            else:
+                parts.append(f"{key}={value!r}")
+        result = ", ".join(parts)
+        # Truncate overall length
+        if len(result) > 80:
+            result = result[:80] + "..."
+        return result
+    else:
+        # Full format: pretty-printed JSON for complex args
+        try:
+            formatted = json.dumps(arguments, indent=2, ensure_ascii=False)
+            return formatted
+        except (TypeError, ValueError):
+            # Fallback for non-serializable objects
+            return str(arguments)
+
+
+def log_tool(
+    tool_name: str,
+    description: str = "",
+    agent_id: str | None = None,
+    arguments: dict[str, Any] | None = None,
+):
+    """Log tool usage in Claude Code style.
+
+    Args:
+        tool_name: Name of the tool being called.
+        description: Brief description of the tool action.
+        agent_id: Optional agent ID for color coding.
+        arguments: Optional tool arguments to display.
+    """
     icon = "\u2699"
     # Apply truncation to description
     desc_text = truncate_text(description, 50) if description else ""
@@ -113,7 +170,22 @@ def log_tool(tool_name: str, description: str = "", agent_id: str | None = None)
     else:
         prefix = ""
 
-    print(f"  {prefix}{Colors.CYAN}{icon} {tool_name}{Colors.RESET}{desc}")
+    # Format arguments if provided
+    args_output = ""
+    if arguments:
+        truncate = is_truncation_enabled()
+        formatted_args = _format_arguments(arguments, truncate)
+        if formatted_args:
+            if truncate:
+                # Single line for truncated mode
+                args_output = f"\n    {Colors.DIM}args: {formatted_args}{Colors.RESET}"
+            else:
+                # Multi-line for full mode
+                lines = formatted_args.split("\n")
+                indented = "\n    ".join(lines)
+                args_output = f"\n    {Colors.DIM}args:\n    {indented}{Colors.RESET}"
+
+    print(f"  {prefix}{Colors.CYAN}{icon} {tool_name}{Colors.RESET}{desc}{args_output}")
 
 
 def log_agent_text(text: str, agent_id: str) -> None:

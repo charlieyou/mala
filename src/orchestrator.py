@@ -219,8 +219,8 @@ class MalaOrchestrator:
                                         elif isinstance(block, ToolUseBlock):
                                             log_tool(
                                                 block.name,
-                                                str(block.input),
                                                 agent_id=issue_id,
+                                                arguments=block.input,
                                             )
 
                                 elif isinstance(message, ResultMessage):
