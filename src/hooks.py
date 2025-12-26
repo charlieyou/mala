@@ -50,7 +50,6 @@ MORPH_DISALLOWED_TOOLS = ["Edit", "Grep"]
 FILE_WRITE_TOOLS: frozenset[str] = frozenset(
     [
         "Write",  # Claude Code Write tool: file_path
-        "Edit",  # Claude Code Edit tool: file_path
         "NotebookEdit",  # Claude Code NotebookEdit: notebook_path
         "mcp__morphllm__edit_file",  # MorphLLM MCP: path
     ]
@@ -59,7 +58,6 @@ FILE_WRITE_TOOLS: frozenset[str] = frozenset(
 # Map of tool name to the key in tool_input that contains the file path
 FILE_PATH_KEYS: dict[str, str] = {
     "Write": "file_path",
-    "Edit": "file_path",
     "NotebookEdit": "notebook_path",
     "mcp__morphllm__edit_file": "path",
 }
