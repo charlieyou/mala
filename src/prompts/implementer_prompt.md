@@ -50,7 +50,7 @@ Lock scripts are pre-configured in your environment (LOCK_DIR, AGENT_ID, REPO_NA
 1. Try to acquire locks for ALL files you need
 2. For files you couldn't lock immediately:
    - Note who holds each lock
-   - Use exponential backoff: 10s, 20s, 40s, 80s, 160s, 320s, 640s (max 15 min total)
+   - Poll every 1 second silently (do not print on each retry, only when starting to wait and when acquired)
    - **While waiting, work on files you DO have locked**
 3. Only give up after 15 minutes of cumulative waiting per file
 
@@ -64,7 +64,7 @@ lock-holder.sh utils.py  # outputs: bd-43
 lock-try.sh main.py    # exit 0 → SUCCESS
 
 # → Work on config.py and main.py first
-# → Periodically retry utils.py (exponential backoff)
+# → Periodically retry utils.py (poll every 1s, don't log each attempt)
 # → Once utils.py acquired, complete that work
 ```
 
@@ -74,7 +74,7 @@ lock-try.sh main.py    # exit 0 → SUCCESS
 
 1. **Acquire all locks you can** - note which are blocked
 2. **Work on locked files first** - write code, don't commit yet
-3. **Retry blocked files** between chunks of work (exponential backoff)
+3. **Retry blocked files** between chunks of work (poll every 1s)
 4. **Once all locks acquired**, complete remaining implementation
 5. Handle edge cases, add tests if appropriate
 
