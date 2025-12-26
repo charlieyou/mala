@@ -143,7 +143,9 @@ Search for "def " pattern. Report what you find."""
 
         # MCP tools are prefixed: mcp__morphllm__warpgrep_codebase_search
         warpgrep_used = any("warpgrep" in name for name in tool_names_used)
-        assert warpgrep_used, f"Expected warpgrep_codebase_search, got: {tool_names_used}"
+        assert warpgrep_used, (
+            f"Expected warpgrep_codebase_search, got: {tool_names_used}"
+        )
         assert "Grep" not in tool_names_used, "Grep tool should be blocked"
 
 
@@ -195,6 +197,4 @@ Use only MCP tools (edit_file, warpgrep_codebase_search), not Edit or Grep."""
 
         # Verify bug was fixed
         content = buggy_file.read_text()
-        assert (
-            "a + b" in content or "a+b" in content
-        ), f"Bug not fixed: {content}"
+        assert "a + b" in content or "a+b" in content, f"Bug not fixed: {content}"

@@ -9,6 +9,9 @@ import pytest
 from unittest.mock import patch
 from pathlib import Path
 
+# Import src.cli early so load_user_env() runs before any tests patch os.environ
+import src.cli  # noqa: F401
+
 
 class TestBlockDangerousCommands:
     """Test the block_dangerous_commands PreToolUse hook."""
@@ -28,7 +31,7 @@ class TestBlockDangerousCommands:
     @pytest.mark.asyncio
     async def test_allows_bash_safe_command(self, make_hook_input):
         """Safe commands with tool_name='Bash' should be allowed."""
-        from src.cli import block_dangerous_commands
+        from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Bash", "ls -la"), None, {}
@@ -38,7 +41,7 @@ class TestBlockDangerousCommands:
     @pytest.mark.asyncio
     async def test_allows_bash_lowercase_safe_command(self, make_hook_input):
         """Safe commands with tool_name='bash' (lowercase) should be allowed."""
-        from src.cli import block_dangerous_commands
+        from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("bash", "ls -la"), None, {}
@@ -48,7 +51,7 @@ class TestBlockDangerousCommands:
     @pytest.mark.asyncio
     async def test_blocks_rm_rf_root(self, make_hook_input):
         """rm -rf / should be blocked for any tool name casing."""
-        from src.cli import block_dangerous_commands
+        from src.hooks import block_dangerous_commands
 
         for tool_name in ["Bash", "bash", "BASH"]:
             result = await block_dangerous_commands(
@@ -60,7 +63,7 @@ class TestBlockDangerousCommands:
     @pytest.mark.asyncio
     async def test_blocks_fork_bomb(self, make_hook_input):
         """Fork bomb pattern should be blocked."""
-        from src.cli import block_dangerous_commands
+        from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Bash", ":(){:|:&};:"), None, {}
@@ -70,7 +73,7 @@ class TestBlockDangerousCommands:
     @pytest.mark.asyncio
     async def test_blocks_curl_pipe_bash(self, make_hook_input):
         """curl | bash pattern should be blocked."""
-        from src.cli import block_dangerous_commands
+        from src.hooks import block_dangerous_commands
 
         # The pattern "curl | bash" must appear literally in the command
         result = await block_dangerous_commands(
@@ -82,7 +85,7 @@ class TestBlockDangerousCommands:
     @pytest.mark.asyncio
     async def test_blocks_force_push_main(self, make_hook_input):
         """Force push to main branch should be blocked."""
-        from src.cli import block_dangerous_commands
+        from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Bash", "git push --force origin main"), None, {}
@@ -93,7 +96,7 @@ class TestBlockDangerousCommands:
     @pytest.mark.asyncio
     async def test_allows_force_push_feature_branch(self, make_hook_input):
         """Force push to feature branch should be allowed."""
-        from src.cli import block_dangerous_commands
+        from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Bash", "git push --force origin feature-branch"), None, {}
@@ -103,7 +106,7 @@ class TestBlockDangerousCommands:
     @pytest.mark.asyncio
     async def test_allows_non_bash_tools(self, make_hook_input):
         """Non-Bash tools should always be allowed (they don't run commands)."""
-        from src.cli import block_dangerous_commands
+        from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Read", "rm -rf /"), None, {}
@@ -113,7 +116,7 @@ class TestBlockDangerousCommands:
     @pytest.mark.asyncio
     async def test_tool_name_variations(self, make_hook_input):
         """Tool name matching should be case-insensitive for bash variants."""
-        from src.cli import block_dangerous_commands
+        from src.hooks import block_dangerous_commands
 
         dangerous_cmd = "rm -rf /"
 
@@ -132,14 +135,14 @@ class TestMorphDisallowedTools:
 
     def test_edit_and_grep_are_disallowed(self):
         """Edit and Grep tools should be in disallowed_tools list."""
-        from src.cli import MORPH_DISALLOWED_TOOLS
+        from src.hooks import MORPH_DISALLOWED_TOOLS
 
         assert "Edit" in MORPH_DISALLOWED_TOOLS
         assert "Grep" in MORPH_DISALLOWED_TOOLS
 
     def test_disallowed_tools_is_list(self):
         """MORPH_DISALLOWED_TOOLS should be a list for SDK compatibility."""
-        from src.cli import MORPH_DISALLOWED_TOOLS
+        from src.hooks import MORPH_DISALLOWED_TOOLS
 
         assert isinstance(MORPH_DISALLOWED_TOOLS, list)
 
@@ -174,7 +177,7 @@ class TestMcpServerConfig:
     def test_get_mcp_servers_returns_morphllm_config(self):
         """get_mcp_servers should return correct MorphLLM config."""
         with patch.dict(os.environ, {"MORPH_API_KEY": "test-key"}):
-            from src.cli import get_mcp_servers
+            from src.orchestrator import get_mcp_servers
 
             config = get_mcp_servers(Path("/tmp/repo"))
 
@@ -186,7 +189,7 @@ class TestMcpServerConfig:
     def test_get_mcp_servers_includes_api_key(self):
         """MCP server config should include API key in env."""
         with patch.dict(os.environ, {"MORPH_API_KEY": "my-secret-key"}):
-            from src.cli import get_mcp_servers
+            from src.orchestrator import get_mcp_servers
 
             config = get_mcp_servers(Path("/tmp/repo"))
 
@@ -195,7 +198,7 @@ class TestMcpServerConfig:
     def test_get_mcp_servers_enables_all_tools(self):
         """MCP server config should enable all tools."""
         with patch.dict(os.environ, {"MORPH_API_KEY": "test-key"}):
-            from src.cli import get_mcp_servers
+            from src.orchestrator import get_mcp_servers
 
             config = get_mcp_servers(Path("/tmp/repo"))
 
@@ -204,7 +207,7 @@ class TestMcpServerConfig:
     def test_get_mcp_servers_enables_workspace_mode(self):
         """MCP server config should enable workspace mode."""
         with patch.dict(os.environ, {"MORPH_API_KEY": "test-key"}):
-            from src.cli import get_mcp_servers
+            from src.orchestrator import get_mcp_servers
 
             config = get_mcp_servers(Path("/tmp/repo"))
 

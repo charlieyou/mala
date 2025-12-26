@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.cli import IMPLEMENTER_PROMPT_TEMPLATE
+from src.orchestrator import IMPLEMENTER_PROMPT_TEMPLATE
 from src.tools.locking import make_stop_hook
 from src.tools.env import SCRIPTS_DIR
 
@@ -280,7 +280,7 @@ class TestOrchestratorCleanup:
 
     def test_cleanup_agent_locks_removes_orphaned_locks(self, lock_env, monkeypatch):
         """Orchestrator cleans up locks when agent crashes/times out."""
-        from src.cli import MalaOrchestrator
+        from src.orchestrator import MalaOrchestrator
 
         agent_id = "bd-crashed-agent"
         env = {
