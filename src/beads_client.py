@@ -500,3 +500,15 @@ class BeadsClient:
             ]
         )
         return result.returncode == 0
+
+    async def close_async(self, issue_id: str) -> bool:
+        """Close an issue by setting status to closed (async version).
+
+        Args:
+            issue_id: The issue ID to close.
+
+        Returns:
+            True if successfully closed, False otherwise.
+        """
+        result = await self._run_subprocess_async(["bd", "close", issue_id])
+        return result.returncode == 0

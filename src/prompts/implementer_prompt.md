@@ -12,7 +12,6 @@ Implement the assigned issue completely before returning.
 
 ```bash
 bd show {issue_id}     # View issue details
-bd close {issue_id}    # Mark complete (after committing)
 ```
 
 ## MCP Tools (Preferred)
@@ -123,17 +122,16 @@ git commit -m "bd-{issue_id}: <summary>"
 - Do NOT push - only commit locally
 - Do NOT commit `.beads/issues.jsonl` - orchestrator handles that
 
-### 7. Release Locks & Close (after commit)
+### 7. Release Locks (after commit)
 ```bash
 # Verify commit succeeded
 git log -1 --oneline
 
 # NOW release locks (after commit is safe)
 lock-release-all.sh
-
-# Close the issue
-bd close {issue_id}
 ```
+
+**Note:** Do NOT call `bd close` - the orchestrator closes issues after the quality gate passes.
 
 ## Output
 

@@ -223,10 +223,9 @@ class MalaOrchestrator:
                                     claude_session_id = message.session_id
                                     final_result = message.result or ""
 
-                    # Check if issue was closed (inside tracer context)
-                    status = await self.beads.get_issue_status_async(issue_id)
-                    if status == "closed":
-                        success = True
+                    # Agent completed without timeout - success will be
+                    # determined by quality gate (commit existence + validation)
+                    success = True
 
                     tracer.set_success(success)
 
@@ -464,7 +463,17 @@ class MalaOrchestrator:
                                     },
                                     failure_reasons=gate_result.failure_reasons,
                                 )
-                                if not gate_result.passed:
+                                if gate_result.passed:
+                                    # Gate passed - close the issue
+                                    if await self.beads.close_async(issue_id):
+                                        log(
+                                            "◐",
+                                            "Closed issue",
+                                            Colors.GRAY,
+                                            dim=True,
+                                            agent_id=issue_id,
+                                        )
+                                else:
                                     # Gate failed - mark needs-followup with log path
                                     reason = "; ".join(gate_result.failure_reasons)
                                     await self.beads.mark_needs_followup_async(
