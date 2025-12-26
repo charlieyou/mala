@@ -75,7 +75,10 @@ uv tool install . --reinstall
 mala run /path/to/repo
 
 # Or with options
-mala run --max-agents 5 --timeout 30 --max-issues 10 /path/to/repo
+mala run --max-agents 5 --max-issues 10 /path/to/repo
+
+# With a timeout
+mala run --timeout 30 /path/to/repo
 
 # Process only children of a specific epic
 mala run --epic proj-abc /path/to/repo
@@ -120,7 +123,7 @@ mala (Python Orchestrator)
 5. **On file conflict**: Agent polls every 1s for lock (up to 60s timeout), returns BLOCKED if unavailable
 6. **Quality gate**: After agent completes, orchestrator verifies commit exists and validation commands ran
 7. **Same-session re-entry**: If gate fails, orchestrator resumes the SAME Claude session with failure context
-8. **Codex review** (optional): After gate passes, automated code review with fix cycle
+8. **Codex review**: After gate passes, automated code review with fix cycle (disable with `--no-codex-review`)
 9. **On success**: Orchestrator closes the issue via `bd close`
 10. **On failure**: After retries exhausted, orchestrator marks issue with `needs-followup` label and records log path in notes
 
@@ -184,11 +187,11 @@ This continues for up to `max_gate_retries` attempts (default: 3). The orchestra
 - **Previous commit hash**: Detects "no progress" when commit is unchanged
 - **No-progress detection**: Stops retries early if agent makes no meaningful changes
 
-### Codex Review (Optional)
+### Codex Review
 
-When `--codex-review` is enabled, after the deterministic gate passes:
+Codex review is enabled by default. After the deterministic gate passes:
 
-1. **Codex review runs**: Invokes `codex review --commit <sha>` with a strict JSON schema prompt
+1. **Codex review runs**: Invokes `codex exec` with `--output-schema` for structured JSON output
 2. **JSON parsing**: Output must be valid JSON with `passed` boolean and `issues` array
 3. **Parse retry**: If JSON is invalid, retries once with stricter prompt (fail-closed behavior)
 4. **Review failure handling**: If review finds errors, orchestrator resumes the SAME session with:
@@ -196,7 +199,7 @@ When `--codex-review` is enabled, after the deterministic gate passes:
    - Instructions to fix errors and re-run validations
 5. **Re-gating**: After fixes, runs both deterministic gate AND Codex review again
 
-Review retries are capped at `max_review_retries` (default: 2).
+Review retries are capped at `max_review_retries` (default: 5). Use `--no-codex-review` to disable.
 
 ### Failure Handling
 
@@ -242,8 +245,10 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 - **Canonical lock keys** with path normalization and repo namespace support
 - **60-second lock timeout** with 1s polling (fail fast on conflicts)
 - **Lock enforcement hook** blocks writes to unlocked files
+- **Lock ownership tracking**: Each run only releases its own locks on shutdown (supports concurrent mala instances)
 - **Orchestrator claims issues** before spawning (agents don't claim)
 - **Quality gate** verifies commits and validation before accepting work
+- **Process group management**: Subprocesses (bd/git) run in new sessions for clean termination on timeout
 - **JSONL logs** in `~/.config/mala/logs/` for debugging
 - **asyncio.wait** for efficient parallel task management
 
@@ -254,13 +259,14 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--max-agents`, `-n` | unlimited | Maximum concurrent agents |
-| `--timeout`, `-t` | 30 | Timeout per agent in minutes |
+| `--timeout`, `-t` | none | Timeout per agent in minutes |
 | `--max-issues`, `-i` | unlimited | Maximum total issues to process |
 | `--epic`, `-e` | - | Only process tasks that are children of this epic |
 | `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
 | `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
-| `--max-review-retries` | 2 | Maximum Codex review retry attempts per issue |
-| `--codex-review` | disabled | Enable automated Codex code review after gate passes |
+| `--max-review-retries` | 5 | Maximum Codex review retry attempts per issue |
+| `--codex-review` | enabled | Automated Codex code review after gate passes |
+| `--no-codex-review` | - | Disable Codex review |
 | `--verbose`, `-v` | false | Enable verbose output with full tool arguments |
 
 ### Global Configuration
