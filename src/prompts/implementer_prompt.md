@@ -5,6 +5,7 @@ Implement the assigned issue completely before returning.
 **Issue ID:** {issue_id}
 **Repository:** {repo_path}
 **Lock Directory:** {lock_dir}
+**Scripts Directory:** {scripts_dir}
 **Agent Lock Prefix:** {agent_id}
 
 ## Commands

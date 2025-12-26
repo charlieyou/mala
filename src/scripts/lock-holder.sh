@@ -21,6 +21,10 @@ filepath="$1"
 
 # Normalize path: resolve symlinks and convert to absolute canonical form
 # Use realpath if available, fall back to readlink -f (Linux) or manual resolution
+is_literal_key() {
+    [[ "$1" == "__test_mutex__" ]]
+}
+
 normalize_path() {
     local path="$1"
     if command -v realpath >/dev/null 2>&1; then
@@ -37,7 +41,9 @@ normalize_path() {
     fi
 }
 
-filepath="$(normalize_path "$filepath")"
+if ! is_literal_key "$filepath"; then
+    filepath="$(normalize_path "$filepath")"
+fi
 
 # Build canonical key: namespace:filepath if REPO_NAMESPACE is set
 if [[ -n "${REPO_NAMESPACE:-}" ]]; then

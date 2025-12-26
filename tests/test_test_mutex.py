@@ -47,7 +47,9 @@ def run_mutex(
     )
 
 
-def run_script(name: str, args: list[str], env: dict) -> subprocess.CompletedProcess:
+def run_script(
+    name: str, args: list[str], env: dict, cwd: Path | None = None
+) -> subprocess.CompletedProcess:
     """Run a lock script with the given environment."""
     script = SCRIPTS_DIR / name
     base_env = {
@@ -61,6 +63,7 @@ def run_script(name: str, args: list[str], env: dict) -> subprocess.CompletedPro
         env=full_env,
         capture_output=True,
         text=True,
+        cwd=cwd,
     )
 
 
@@ -140,6 +143,22 @@ class TestMutexContention:
         result = run_mutex(["echo", "THIS_SHOULD_NOT_APPEAR"], env2)
         assert result.returncode != 0
         assert "THIS_SHOULD_NOT_APPEAR" not in result.stdout
+
+    def test_blocks_across_working_directories(self, mutex_env, tmp_path):
+        """Global mutex should be shared across different CWDs."""
+        cwd1 = tmp_path / "cwd1"
+        cwd2 = tmp_path / "cwd2"
+        cwd1.mkdir()
+        cwd2.mkdir()
+
+        env1 = {**mutex_env, "AGENT_ID": "agent-a"}
+        env2 = {**mutex_env, "AGENT_ID": "agent-b"}
+
+        result1 = run_script("lock-try.sh", [MUTEX_KEY], env1, cwd=cwd1)
+        assert result1.returncode == 0
+
+        result2 = run_script("lock-try.sh", [MUTEX_KEY], env2, cwd=cwd2)
+        assert result2.returncode != 0
 
     def test_serial_execution(self, mutex_env):
         """Commands should run serially (one at a time)."""
