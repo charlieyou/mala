@@ -1,4 +1,4 @@
-# Quality Hardening Plan (Strict-by-Default)
+# Quality Hardening Plan v5 (Strict-by-Default)
 
 Goal: maximize the probability that `mala run` produces correct, working code.
 Constraint: no budget limits; all checks ON by default with explicit CLI opt-outs.
@@ -9,11 +9,8 @@ strict but modular and not overengineered.
 
 ## 1) Data Types (Core, Minimal, Extensible)
 
-These are small dataclasses intended to keep responsibilities clear without
-creating a heavyweight framework.
-
 ### ValidationSpec
-Defines what to run.
+Defines what to run for a given scope.
 
 ```
 ValidationSpec:
@@ -77,6 +74,35 @@ CommandResult:
   stderr_path: Path | None
 ```
 
+### ValidationScope
+Explicit scope identifier.
+
+```
+ValidationScope:
+  "per_issue" | "run_level"
+```
+
+### ValidationArtifacts
+Minimal record of validation outputs for observability.
+
+```
+ValidationArtifacts:
+  log_dir: Path
+  worktree_path: Path | None
+  worktree_state: "kept" | "removed" | None
+  coverage_report: Path | None
+  e2e_fixture_path: Path | None
+```
+
+### IssueResolution
+Records how an issue was resolved.
+
+```
+IssueResolution:
+  outcome: "success" | "no_change" | "obsolete"
+  rationale: str
+```
+
 ### CoverageConfig / CoverageResult
 Minimal coverage config plus result fields.
 
@@ -138,16 +164,17 @@ GateDecision:
 Agent -> Evidence gate (log-based) -> Optional Codex review -> Orchestrator close.
 
 ### Proposed flow (strict-by-default)
-Agent -> Evidence gate -> Post-commit clean-room validation -> Codex review
--> Orchestrator close -> Run-level validation.
+Agent -> EvidenceGate -> Post-commit clean-room validation -> Codex review
+-> Run-level validation -> Orchestrator close.
 
 Key properties:
-- Evidence gate remains fast and enforces compliance.
-- Clean-room validation is the source of truth.
-- Run-level validation verifies combined state across issues.
-- Codex review stays as a correctness backstop.
+- EvidenceGate remains fast and enforces compliance.
+- Clean-room validation is the source of truth for per-issue correctness.
+- Run-level validation verifies combined state across all issues.
+- Codex review remains a correctness backstop.
+- Issues do not close until run-level validation passes.
 
-### New modules (minimal set)
+### Minimal module split
 ```
 src/validation/spec.py      # build ValidationSpec from CLI/config
 src/validation/runner.py    # run ValidationCommands, capture results
@@ -157,32 +184,49 @@ src/validation/e2e.py       # fixture repo creation + mala run
 ```
 
 Existing modules updated:
-- `src/orchestrator.py`: add validation stages + retry handling.
-- `src/quality_gate.py`: treat as EvidenceGate only (log parsing).
-- `src/logging/run_metadata.py`: record new validation results.
-
-No large framework; each module is a small utility that the orchestrator calls.
+- `src/orchestrator.py`: add validation stages + retry handling + run-level close gate
+- `src/quality_gate.py`: EvidenceGate only (log parsing)
+- `src/logging/run_metadata.py`: record new validation results
 
 ## 3) Validation Pipeline (Gate Chain)
 
 ### Gate 1: EvidenceGate (existing)
-- Requires `bd-<issue>` commit evidence and validation commands in logs.
-- Updated to require full suite execution (including slow tests) by default.
-- Still uses log offsets for same-session retries.
+- Requires `bd-<issue>` commit evidence and validation commands in logs,
+  unless the no-op/obsolete path applies (see below).
+- Expected evidence is derived from ValidationSpec by scope:
+  - Per-issue EvidenceGate expects per-issue commands only (no E2E).
+  - Run-level E2E evidence is only required at run-level validation.
+- Must honor CLI opt-outs (e.g., `--disable-validations=slow-tests`).
+- No-op / obsolete issue path (no commit required):
+  - Agent logs an explicit marker: `ISSUE_NO_CHANGE` or `ISSUE_OBSOLETE`.
+  - Include a short rationale in the log line.
+  - Working tree must be clean (`git status --porcelain` empty).
+  - EvidenceGate records `IssueResolution.outcome` and skips Gate 2 and Gate 3
+    for this issue.
 
-### Gate 2: Post-Commit Clean-Room Validation (new, per issue)
-- Create git worktree at commit hash.
-- Run full suite in the worktree.
-- Fail closed if environment prerequisites are missing unless explicitly disabled.
+### Gate 2: Post-Commit Clean-Room Validation (per issue)
+- Create git worktree at commit hash for this attempt.
+- Run full suite in the worktree, including mandatory deps bootstrap:
+  - `uv sync --all-extras`
+- Worktree details:
+  - Unique path per issue+attempt:
+    `~/.config/mala/worktrees/<run_id>/<issue_id>/<attempt>`
+  - Cleanup on pass/fail unless `--keep-worktrees` is set.
+  - Repo-wide commands still use the global test mutex (shared LOCK_DIR).
 
-### Gate 3: Codex Review (existing, default ON)
-- Run after clean-room validation (decision: correctness first, review second).
+### Gate 3: Codex Review (default ON)
+- Run after clean-room validation (do not burn review cycles on broken builds).
 - On failure: same-session re-entry, then re-run Gate 1 + Gate 2 + Gate 3.
+- Commit hash per retry:
+  - Each attempt re-reads the latest `bd-<issue>` commit hash.
+  - Gate 2 uses the commit hash found in the current attempt.
 
-### Gate 4: Run-Level Validation (new, after all issues)
-- Run full suite at current HEAD (all commits).
-- If failure: run ends with non-zero exit, record metadata, and create a
-  follow-up bead (see Failure Handling).
+### Gate 4: Run-Level Validation (after all issues)
+- Run full suite at current HEAD, in a clean worktree.
+- Includes `uv sync --all-extras` + full test/coverage/E2E defaults.
+- Must pass before closing issues (strict-by-default).
+- On failure: run ends non-zero, metadata recorded, follow-up issue created
+  unless `--disable-validations=followup-on-run-validate-fail` is set.
 
 ## 4) CLI Defaults (Strict by Default, Opt-Outs Only)
 
@@ -191,17 +235,21 @@ Defaults:
 - run-level validation: ON
 - slow tests: ON
 - coverage: ON (min 85%)
-- E2E fixture repo: ON
+- E2E fixture repo: ON (run-level only)
 - codex review: ON
 
-New CLI flags (disable-only):
-- `--no-post-validate`
-- `--no-run-level-validate`
-- `--no-slow-tests`
-- `--no-e2e`
-- `--no-coverage`
+Disable list (comma-separated):
+- `--disable-validations <csv>`
+  - values: `post-validate`, `run-level-validate`, `slow-tests`, `coverage`,
+    `e2e`, `codex-review`, `followup-on-run-validate-fail`
+
+Other flags:
 - `--coverage-threshold <float>` (default 85.0)
-- `--no-codex-review` (flip current default)
+- `--keep-worktrees`
+
+Opt-in exceptions:
+- `--lint-only-for-docs`
+- `--skip-e2e-if-no-keys`
 
 ## 5) E2E Fixture Repo Design (True End-to-End)
 
@@ -209,10 +257,10 @@ Objective: run the real `mala run` command against a tiny fixture repo that
 contains one trivial issue. This exercises the agent SDK, locks, gate, and
 quality checks end-to-end.
 
-Fixture repo plan:
-1. Create temp dir under a dedicated root (e.g. `~/.config/mala/e2e-fixtures/`).
+Fixture repo plan (run-level only):
+1. Create temp dir under `~/.config/mala/e2e-fixtures/`.
 2. Initialize git repo, add minimal Python package skeleton.
-3. `bd init` and create one tiny issue (e.g. "Add file hello.txt with content").
+3. `bd init` and create one tiny issue (e.g., "Add file hello.txt with content").
 4. Run:
    ```
    uv run mala run --max-agents 1 --max-issues 1 <fixture-path>
@@ -226,23 +274,65 @@ Fixture repo plan:
 Preconditions:
 - Claude CLI authenticated
 - MORPH_API_KEY present
-If missing and `--no-e2e` not set, fail closed.
+- `bd` installed and available
+
+Strict default: fail closed if missing and E2E is enabled
+(i.e., `--disable-validations` does not include `e2e`).
+Optional dev flag: `--skip-e2e-if-no-keys` (warn and skip instead of failing).
 
 ## 6) Coverage (High but Reasonable)
 
-Default threshold: **85%** line + branch coverage.
-Rationale: strong signal without being unrealistic for early runs.
+Default threshold: 85% line + branch coverage.
+If current coverage is lower, use `--coverage-threshold` temporarily and
+ratchet up over time.
 
 Command (in clean worktree):
 ```
-uv run pytest --cov=src --cov-branch --cov-report=term-missing --cov-fail-under=85
+uv run pytest --cov=src --cov-branch --cov-report=term-missing --cov-report=xml --cov-fail-under=<threshold>
 ```
 
-Notes:
-- Coverage measured in post-commit validation and run-level validation.
-- No diff-coverage yet (can be a later enhancement).
+Where `<threshold>` is `CoverageConfig.min_percent` (default 85.0) and is
+controlled by `--coverage-threshold`.
 
-## 7) Failure Handling & Retries
+## 7) Policy Enforcement Details
+
+### Clean git enforcement
+`require_clean_git` is enforced at:
+- Per-issue acceptance (before marking the issue success in orchestrator).
+- Run-level validation start (before Gate 4).
+
+### Code change classification
+Defaults for code changes (require tests + coverage):
+- Paths: `src/**`, `tests/**`, `commands/**`, `src/scripts/**`
+- Files: `pyproject.toml`, `uv.lock`, `.env` templates
+- Extensions: `.py`, `.sh`, `.toml`, `.yml`, `.yaml`, `.json`
+
+Configuration (optional, not required for v1):
+- Allow overrides in `pyproject.toml` or `.mala.toml`:
+  - `code_paths`, `doc_paths`, `code_extensions`
+
+### require_pytest_for_code_changes
+If a change is classified as code and this flag is true:
+- ValidationSpec must include pytest + coverage commands.
+- `--lint-only-for-docs` is ignored.
+
+### --lint-only-for-docs
+If enabled and a change is classified as docs-only:
+- Per-issue validation may skip tests + coverage + E2E.
+- Run-level validation still runs the full suite unless explicitly disabled.
+
+### EvidenceGate opt-out mapping
+- `--disable-validations=slow-tests` => EvidenceGate expects non-slow pytest only.
+- `--disable-validations=coverage` => coverage evidence not required.
+- `--disable-validations=e2e` => E2E evidence not required.
+
+## 8) Worktree + venv notes
+
+- Each issue+attempt uses a separate worktree; `uv sync` uses global cache,
+  so repeated dependency installs are faster but still deterministic.
+- Optional future enhancement: shared venv per run (deferred).
+
+## 9) Failure Handling & Retries
 
 Per-issue retries (same session):
 - EvidenceGate failure -> re-entry
@@ -254,27 +344,36 @@ Proposed retry limits:
 - add `max_post_validate_retries` (default 2)
 - reuse `max_review_retries` for Codex review
 
+Retry exhaustion behavior:
+- If a per-issue retry limit is hit, mark the issue failed and continue.
+- Run-level validation still runs and will likely fail if issues are broken.
+
+No-op / obsolete issues:
+- Do not require commits or per-issue validation.
+- Close only after run-level validation passes (strict-by-default).
+
 Run-level validation failure:
 - Exit non-zero.
-- Create a follow-up beads issue in the target repo (e.g. "Run-level validation failed").
-- Record failure details in run metadata.
+- Create a follow-up beads issue unless disabled.
+- Leave issues unclosed.
 
-## 8) Observability / Run Metadata
+## 10) Observability / Run Metadata
 
 Extend `RunMetadata` with:
-- per-issue post-commit validation result (command outcomes + coverage/e2e)
+- per-issue post-commit validation results (commands + coverage/E2E)
 - run-level validation result
-- paths to validation logs/artifacts
+- artifacts (worktree state, logs, coverage reports)
+- per-issue `IssueResolution` (success / no_change / obsolete)
 
-Store raw stdout/stderr per command (in `~/.config/mala/validation/`).
+Store raw stdout/stderr per command in `~/.config/mala/validation/`.
 
-## 9) Testing Plan
+## 11) Testing Plan
 
 Unit tests:
 - ValidationSpec building (defaults ON, disable flags work)
 - Worktree creation and cleanup
 - Coverage parsing and failure logic
-- E2E config precondition checks
+- E2E precondition checks
 
 Integration tests:
 - Orchestrator flow with mock ValidationRunner
@@ -284,19 +383,17 @@ Integration tests:
 Slow tests (optional, marked):
 - Real fixture E2E run (requires API keys)
 
-## 10) Rollout Phases
+## 12) Rollout Phases
 
 Phase 0: Data types + spec/runner scaffolding (no behavior changes).
 Phase 1: Post-commit validation in worktree (strict ON).
-Phase 2: Run-level validation at end of run (strict ON).
+Phase 2: Run-level validation in worktree (strict ON).
 Phase 3: Coverage gate (85% default).
 Phase 4: True fixture E2E run (strict ON).
 Phase 5: Documentation updates (README, prompts).
 
-## 11) Open Decisions (if you want to adjust)
+## 13) Deferred / Future (Non-Blocking)
 
-- Confirm coverage threshold 85% (default proposed).
-- Whether to keep Codex review before or after clean-room validation.
-- Whether run-level failure should mark all issues `needs-followup`
-  or only create a single follow-up issue (current plan: one follow-up issue).
-
+- Checkpoint/resume (`mala resume <run_id>`) using run metadata.
+- Configurable code classification via `pyproject.toml` or `.mala.toml`.
+- Shared venv per run for faster worktree validation.
