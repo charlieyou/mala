@@ -244,7 +244,7 @@ class TestRunOrchestrationLoop:
         call_count = 0
         spawned = []
 
-        def mock_get_ready(failed=None):
+        def mock_get_ready(failed=None, epic_id=None):
             # Return issues only on first call
             nonlocal call_count
             call_count += 1
@@ -302,7 +302,7 @@ class TestFailedTaskResetsIssue:
 
         first_call = True
 
-        def mock_get_ready(failed=None):
+        def mock_get_ready(failed=None, epic_id=None):
             nonlocal first_call
             if first_call:
                 first_call = False
@@ -348,7 +348,7 @@ class TestFailedTaskResetsIssue:
 
         first_call = True
 
-        def mock_get_ready(failed=None):
+        def mock_get_ready(failed=None, epic_id=None):
             nonlocal first_call
             if first_call:
                 first_call = False
@@ -395,3 +395,117 @@ class TestOrchestratorInitialization:
         relative = Path(".")
         orch = MalaOrchestrator(repo_path=relative)
         assert orch.repo_path.is_absolute()
+
+
+class TestEpicFilter:
+    """Test epic filter functionality in BeadsClient."""
+
+    def test_get_epic_children_returns_child_ids(self, orchestrator: MalaOrchestrator):
+        """get_epic_children should return IDs of children (depth > 0)."""
+        tree_json = json.dumps(
+            [
+                {"id": "epic-1", "depth": 0, "issue_type": "epic"},  # Epic itself
+                {"id": "task-1", "depth": 1, "issue_type": "task"},  # Child
+                {"id": "task-2", "depth": 1, "issue_type": "task"},  # Child
+                {"id": "task-3", "depth": 2, "issue_type": "task"},  # Grandchild
+            ]
+        )
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(stdout=tree_json)
+            result = orchestrator.beads.get_epic_children("epic-1")
+
+        assert result == {"task-1", "task-2", "task-3"}
+        assert "epic-1" not in result
+
+    def test_get_epic_children_returns_empty_on_failure(
+        self, orchestrator: MalaOrchestrator
+    ):
+        """get_epic_children should return empty set on bd failure."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(
+                returncode=1, stderr="epic not found"
+            )
+            result = orchestrator.beads.get_epic_children("nonexistent-epic")
+
+        assert result == set()
+
+    def test_get_epic_children_returns_empty_on_invalid_json(
+        self, orchestrator: MalaOrchestrator
+    ):
+        """get_epic_children should return empty set on invalid JSON."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(stdout="not valid json")
+            result = orchestrator.beads.get_epic_children("epic-1")
+
+        assert result == set()
+
+    def test_get_ready_with_epic_filter(self, orchestrator: MalaOrchestrator):
+        """get_ready with epic_id should only return children of that epic."""
+        tree_json = json.dumps(
+            [
+                {"id": "epic-1", "depth": 0, "issue_type": "epic"},
+                {"id": "child-1", "depth": 1, "issue_type": "task"},
+                {"id": "child-2", "depth": 1, "issue_type": "task"},
+            ]
+        )
+        ready_json = json.dumps(
+            [
+                {"id": "child-1", "priority": 1, "issue_type": "task"},
+                {"id": "child-2", "priority": 2, "issue_type": "task"},
+                {"id": "other-task", "priority": 1, "issue_type": "task"},
+            ]
+        )
+
+        def mock_run(cmd, **kwargs):
+            if "dep" in cmd and "tree" in cmd:
+                return make_subprocess_result(stdout=tree_json)
+            elif "ready" in cmd:
+                return make_subprocess_result(stdout=ready_json)
+            return make_subprocess_result()
+
+        with patch("subprocess.run", side_effect=mock_run):
+            result = orchestrator.beads.get_ready(epic_id="epic-1")
+
+        assert result == ["child-1", "child-2"]
+        assert "other-task" not in result
+
+    def test_get_ready_without_epic_filter_returns_all(
+        self, orchestrator: MalaOrchestrator
+    ):
+        """get_ready without epic_id should return all ready tasks."""
+        ready_json = json.dumps(
+            [
+                {"id": "task-1", "priority": 1, "issue_type": "task"},
+                {"id": "task-2", "priority": 2, "issue_type": "task"},
+            ]
+        )
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(stdout=ready_json)
+            result = orchestrator.beads.get_ready()
+
+        assert result == ["task-1", "task-2"]
+
+    def test_get_ready_with_epic_filter_returns_empty_if_no_children(
+        self, orchestrator: MalaOrchestrator
+    ):
+        """get_ready with epic_id should return empty if epic has no children."""
+        with patch("subprocess.run") as mock_run:
+            # Epic tree returns empty (epic not found or no children)
+            mock_run.return_value = make_subprocess_result(returncode=1)
+            result = orchestrator.beads.get_ready(epic_id="empty-epic")
+
+        assert result == []
+
+
+class TestOrchestratorWithEpicId:
+    """Test orchestrator with epic_id parameter."""
+
+    def test_epic_id_stored(self, tmp_path: Path):
+        """epic_id parameter should be stored on orchestrator."""
+        orch = MalaOrchestrator(repo_path=tmp_path, epic_id="test-epic")
+        assert orch.epic_id == "test-epic"
+
+    def test_epic_id_defaults_to_none(self, tmp_path: Path):
+        """epic_id should default to None."""
+        orch = MalaOrchestrator(repo_path=tmp_path)
+        assert orch.epic_id is None

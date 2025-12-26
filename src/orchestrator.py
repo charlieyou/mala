@@ -80,12 +80,14 @@ class MalaOrchestrator:
         max_agents: int = 3,
         timeout_minutes: int = 30,
         max_issues: int | None = None,
+        epic_id: str | None = None,
         braintrust_enabled: bool = False,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
         self.timeout_seconds = timeout_minutes * 60
         self.max_issues = max_issues
+        self.epic_id = epic_id
         self.braintrust_enabled = braintrust_enabled
 
         self.active_tasks: dict[str, asyncio.Task] = {}
@@ -262,6 +264,10 @@ class MalaOrchestrator:
             dim=True,
         )
 
+        # Report epic filter
+        if self.epic_id:
+            log("◐", f"epic filter: {self.epic_id}", Colors.CYAN, dim=True)
+
         # Report Braintrust status
         if self.braintrust_enabled:
             log(
@@ -308,7 +314,7 @@ class MalaOrchestrator:
 
                 # Fill up to max_agents (unless limit reached)
                 ready = (
-                    self.beads.get_ready(self.failed_issues)
+                    self.beads.get_ready(self.failed_issues, epic_id=self.epic_id)
                     if not limit_reached
                     else []
                 )

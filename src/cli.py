@@ -83,6 +83,12 @@ def run(
             "--max-issues", "-i", help="Maximum issues to process (default: unlimited)"
         ),
     ] = None,
+    epic: Annotated[
+        str | None,
+        typer.Option(
+            "--epic", "-e", help="Only process tasks that are children of this epic"
+        ),
+    ] = None,
 ):
     """Run parallel issue processing."""
     repo_path = repo_path.resolve()
@@ -105,6 +111,7 @@ def run(
         max_agents=max_agents,
         timeout_minutes=timeout,
         max_issues=max_issues,
+        epic_id=epic,
         braintrust_enabled=_braintrust_early_setup_done,
     )
 

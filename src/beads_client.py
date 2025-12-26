@@ -28,16 +28,55 @@ class BeadsClient:
         self.repo_path = repo_path
         self._log_warning = log_warning or (lambda msg: None)
 
-    def get_ready(self, exclude_ids: set[str] | None = None) -> list[str]:
+    def get_epic_children(self, epic_id: str) -> set[str]:
+        """Get IDs of all children of an epic.
+
+        Args:
+            epic_id: The epic ID to get children for.
+
+        Returns:
+            Set of issue IDs that are children of the epic.
+        """
+        result = subprocess.run(
+            ["bd", "dep", "tree", epic_id, "--direction=up", "--json"],
+            capture_output=True,
+            text=True,
+            cwd=self.repo_path,
+        )
+        if result.returncode != 0:
+            self._log_warning(f"bd dep tree failed for {epic_id}: {result.stderr}")
+            return set()
+        try:
+            tree = json.loads(result.stdout)
+            # First entry is the epic itself (depth 0), children have depth > 0
+            return {item["id"] for item in tree if item.get("depth", 0) > 0}
+        except json.JSONDecodeError:
+            return set()
+
+    def get_ready(
+        self,
+        exclude_ids: set[str] | None = None,
+        epic_id: str | None = None,
+    ) -> list[str]:
         """Get list of ready issue IDs via bd CLI, sorted by priority.
 
         Args:
             exclude_ids: Set of issue IDs to exclude from results.
+            epic_id: Optional epic ID to filter by - only return children of this epic.
 
         Returns:
             List of issue IDs sorted by priority (lower = higher priority).
         """
         exclude_ids = exclude_ids or set()
+
+        # Get epic children if filtering by epic
+        epic_children: set[str] | None = None
+        if epic_id:
+            epic_children = self.get_epic_children(epic_id)
+            if not epic_children:
+                self._log_warning(f"No children found for epic {epic_id}")
+                return []
+
         result = subprocess.run(
             ["bd", "ready", "--json"],
             capture_output=True,
@@ -55,6 +94,7 @@ class BeadsClient:
                 for i in issues
                 if i["id"] not in exclude_ids
                 and i.get("issue_type") != "epic"  # Skip epics
+                and (epic_children is None or i["id"] in epic_children)
             ]
             filtered.sort(key=lambda i: i.get("priority", 999))
             return [i["id"] for i in filtered]
