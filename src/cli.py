@@ -75,9 +75,9 @@ def run(
         ),
     ] = None,
     timeout: Annotated[
-        int,
-        typer.Option("--timeout", "-t", help="Timeout per agent in minutes"),
-    ] = 30,
+        int | None,
+        typer.Option("--timeout", "-t", help="Timeout per agent in minutes (default: no timeout)"),
+    ] = None,
     max_issues: Annotated[
         int | None,
         typer.Option(
@@ -109,16 +109,16 @@ def run(
         int,
         typer.Option(
             "--max-review-retries",
-            help="Maximum codex review retry attempts per issue (default: 2)",
+            help="Maximum codex review retry attempts per issue (default: 5)",
         ),
-    ] = 2,
+    ] = 5,
     codex_review: Annotated[
         bool,
         typer.Option(
             "--codex-review/--no-codex-review",
-            help="Enable/disable codex review step (default: disabled)",
+            help="Enable/disable codex review step (default: enabled)",
         ),
-    ] = False,
+    ] = True,
     verbose: Annotated[
         bool,
         typer.Option(

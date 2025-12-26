@@ -138,7 +138,7 @@ class MalaOrchestrator:
         self,
         repo_path: Path,
         max_agents: int | None = None,
-        timeout_minutes: int = 30,
+        timeout_minutes: int | None = None,
         max_issues: int | None = None,
         epic_id: str | None = None,
         only_ids: set[str] | None = None,
@@ -149,7 +149,7 @@ class MalaOrchestrator:
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
-        self.timeout_seconds = timeout_minutes * 60
+        self.timeout_seconds = timeout_minutes * 60 if timeout_minutes else None
         self.max_issues = max_issues
         self.epic_id = epic_id
         self.only_ids = only_ids
@@ -539,7 +539,8 @@ class MalaOrchestrator:
                     tracer.set_success(success)
 
                 except TimeoutError:
-                    final_result = f"Timeout after {self.timeout_seconds // 60} minutes"
+                    timeout_mins = self.timeout_seconds // 60 if self.timeout_seconds else 0
+                    final_result = f"Timeout after {timeout_mins} minutes"
                     tracer.set_error(final_result)
                     self._cleanup_agent_locks(agent_id)
 
@@ -587,9 +588,10 @@ class MalaOrchestrator:
         agents_str = (
             str(self.max_agents) if self.max_agents is not None else "unlimited"
         )
+        timeout_str = f"{self.timeout_seconds // 60}m" if self.timeout_seconds else "none"
         log(
             "◐",
-            f"max-agents: {agents_str}, timeout: {self.timeout_seconds // 60}m, max-issues: {limit_str}",
+            f"max-agents: {agents_str}, timeout: {timeout_str}, max-issues: {limit_str}",
             Colors.GRAY,
             dim=True,
         )
@@ -658,7 +660,7 @@ class MalaOrchestrator:
         # Create run metadata tracker
         run_config = RunConfig(
             max_agents=self.max_agents,
-            timeout_minutes=self.timeout_seconds // 60,
+            timeout_minutes=self.timeout_seconds // 60 if self.timeout_seconds else None,
             max_issues=self.max_issues,
             epic_id=self.epic_id,
             only_ids=list(self.only_ids) if self.only_ids else None,

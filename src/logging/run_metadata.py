@@ -45,7 +45,7 @@ class RunConfig:
     """Orchestrator run configuration."""
 
     max_agents: int | None
-    timeout_minutes: int
+    timeout_minutes: int | None
     max_issues: int | None
     epic_id: str | None
     only_ids: list[str] | None
