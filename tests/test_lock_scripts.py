@@ -1,5 +1,6 @@
 """Comprehensive test suite for mala lock scripts."""
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -34,10 +35,109 @@ def run_script(name: str, args: list[str], env: dict) -> subprocess.CompletedPro
     )
 
 
-def lock_file_path(lock_dir: str, filepath: str) -> Path:
-    """Get the lock file path for a given filepath."""
-    lock_name = filepath.replace("/", "_") + ".lock"
+def lock_file_path(
+    lock_dir: str, filepath: str, repo_namespace: str | None = None
+) -> Path:
+    """Get the lock file path for a given filepath using the new hash-based naming.
+
+    Args:
+        lock_dir: The lock directory path.
+        filepath: The file path to lock.
+        repo_namespace: Optional repo namespace for disambiguation.
+    """
+    # Build the canonical key
+    if repo_namespace:
+        key = f"{repo_namespace}:{filepath}"
+    else:
+        key = filepath
+
+    # Hash the key
+    key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
+    lock_name = f"{key_hash}.lock"
     return Path(lock_dir) / lock_name
+
+
+class TestLockKeyCollisionResistance:
+    """Test that lock keys are collision-resistant."""
+
+    def test_different_paths_same_underscore_pattern_no_collision(self, lock_env):
+        """Paths 'a/b' and 'a_b' should get different lock files (collision case)."""
+        # Old behavior: both would map to 'a_b.lock'
+        # New behavior: they should get different hashed lock files
+        result1 = run_script("lock-try.sh", ["a/b"], lock_env)
+        assert result1.returncode == 0
+
+        # Use a different agent for the second lock
+        env2 = {**lock_env, "AGENT_ID": "other-agent"}
+        result2 = run_script("lock-try.sh", ["a_b"], env2)
+        # Should succeed because they're different paths
+        assert result2.returncode == 0, "a/b and a_b should not collide"
+
+        # Both locks should exist
+        locks = list(Path(lock_env["LOCK_DIR"]).glob("*.lock"))
+        assert len(locks) == 2, f"Expected 2 lock files, got {len(locks)}"
+
+    def test_nested_vs_flat_paths_no_collision(self, lock_env):
+        """'src/utils' vs 'src_utils' should not collide."""
+        result1 = run_script("lock-try.sh", ["src/utils"], lock_env)
+        assert result1.returncode == 0
+
+        env2 = {**lock_env, "AGENT_ID": "other-agent"}
+        result2 = run_script("lock-try.sh", ["src_utils"], env2)
+        assert result2.returncode == 0, "src/utils and src_utils should not collide"
+
+    def test_multiple_slash_vs_underscore_patterns(self, lock_env):
+        """Complex collision patterns should all be avoided."""
+        paths = ["a/b/c", "a_b/c", "a/b_c", "a_b_c"]
+        agents = [f"agent-{i}" for i in range(len(paths))]
+
+        for path, agent_id in zip(paths, agents, strict=True):
+            env = {**lock_env, "AGENT_ID": agent_id}
+            result = run_script("lock-try.sh", [path], env)
+            assert result.returncode == 0, f"Failed to acquire lock for {path}"
+
+        locks = list(Path(lock_env["LOCK_DIR"]).glob("*.lock"))
+        assert len(locks) == len(paths), (
+            f"Expected {len(paths)} distinct locks, got {len(locks)}"
+        )
+
+
+class TestRepoNamespacing:
+    """Test that locks are namespaced by repository."""
+
+    def test_same_relative_path_different_repos_no_collision(self, lock_env):
+        """Same file path in different repos should not collide."""
+        # Simulate different repos by setting REPO_NAMESPACE
+        env1 = {**lock_env, "REPO_NAMESPACE": "/home/user/repo1"}
+        result1 = run_script("lock-try.sh", ["src/main.py"], env1)
+        assert result1.returncode == 0
+
+        env2 = {
+            **lock_env,
+            "AGENT_ID": "other-agent",
+            "REPO_NAMESPACE": "/home/user/repo2",
+        }
+        result2 = run_script("lock-try.sh", ["src/main.py"], env2)
+        assert result2.returncode == 0, (
+            "Same path in different repos should not collide"
+        )
+
+        locks = list(Path(lock_env["LOCK_DIR"]).glob("*.lock"))
+        assert len(locks) == 2
+
+    def test_same_repo_same_path_does_collide(self, lock_env):
+        """Same file path in same repo should collide (lock contention)."""
+        env1 = {**lock_env, "REPO_NAMESPACE": "/home/user/repo1"}
+        result1 = run_script("lock-try.sh", ["src/main.py"], env1)
+        assert result1.returncode == 0
+
+        env2 = {
+            **lock_env,
+            "AGENT_ID": "other-agent",
+            "REPO_NAMESPACE": "/home/user/repo1",
+        }
+        result2 = run_script("lock-try.sh", ["src/main.py"], env2)
+        assert result2.returncode == 1, "Same path in same repo should collide"
 
 
 class TestBasicLockAcquisition:
@@ -177,9 +277,10 @@ class TestPathHandling:
         result = run_script("lock-try.sh", ["src/utils/helpers/deep.py"], lock_env)
         assert result.returncode == 0
 
-    def test_nested_path_converted_correctly(self, lock_env):
+    def test_nested_path_creates_lock_file(self, lock_env):
         run_script("lock-try.sh", ["src/utils/helpers/deep.py"], lock_env)
-        lock_path = Path(lock_env["LOCK_DIR"]) / "src_utils_helpers_deep.py.lock"
+        # With hash-based naming, just verify a lock file was created
+        lock_path = lock_file_path(lock_env["LOCK_DIR"], "src/utils/helpers/deep.py")
         assert lock_path.exists()
 
     def test_handles_absolute_paths(self, lock_env):

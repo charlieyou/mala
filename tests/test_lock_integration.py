@@ -8,6 +8,7 @@ Tests the full lifecycle of how agents use the locking system:
 5. Orchestrator fallback cleanup
 """
 
+import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -18,6 +19,25 @@ import pytest
 from src.cli import IMPLEMENTER_PROMPT_TEMPLATE
 from src.tools.locking import make_stop_hook
 from src.tools.env import SCRIPTS_DIR
+
+
+def lock_file_path(
+    lock_dir: Path, filepath: str, repo_namespace: str | None = None
+) -> Path:
+    """Get the lock file path for a given filepath using hash-based naming.
+
+    Args:
+        lock_dir: The lock directory path.
+        filepath: The file path to lock.
+        repo_namespace: Optional repo namespace for disambiguation.
+    """
+    if repo_namespace:
+        key = f"{repo_namespace}:{filepath}"
+    else:
+        key = filepath
+
+    key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
+    return lock_dir / f"{key_hash}.lock"
 
 
 @pytest.fixture
@@ -104,10 +124,9 @@ class TestAgentLockWorkflow:
             result = run_lock_script("lock-try.sh", [f], agent_env)
             assert result.returncode == 0, f"Failed to acquire lock for {f}"
 
-        # Verify all locks exist
+        # Verify all locks exist (using hash-based naming)
         for f in files:
-            lock_name = f.replace("/", "_") + ".lock"
-            assert (lock_env / lock_name).exists()
+            assert lock_file_path(lock_env, f).exists()
 
     def test_agent_checks_lock_before_editing(self, agent_env, lock_env):
         """Agent should verify it holds the lock before editing."""
@@ -251,9 +270,9 @@ class TestStopHookIntegration:
                 MagicMock(),
             )
 
-        # Our lock should be gone, other's should remain
-        assert not (lock_env / "our-file.py.lock").exists()
-        assert (lock_env / "other-file.py.lock").exists()
+        # Our lock should be gone, other's should remain (using hash-based naming)
+        assert not lock_file_path(lock_env, "our-file.py").exists()
+        assert lock_file_path(lock_env, "other-file.py").exists()
 
 
 class TestOrchestratorCleanup:

@@ -2,6 +2,7 @@
 # Try to acquire a lock on a file.
 # Usage: lock-try.sh <filepath>
 # Requires: LOCK_DIR, AGENT_ID environment variables
+# Optional: REPO_NAMESPACE for cross-repo disambiguation
 # Exit: 0 if lock acquired, 1 if already locked
 
 set -euo pipefail
@@ -17,7 +18,17 @@ if [[ $# -ne 1 ]]; then
 fi
 
 filepath="$1"
-lock="${LOCK_DIR}/${filepath//\//_}.lock"
+
+# Build canonical key: namespace:filepath if REPO_NAMESPACE is set
+if [[ -n "${REPO_NAMESPACE:-}" ]]; then
+    key="${REPO_NAMESPACE}:${filepath}"
+else
+    key="${filepath}"
+fi
+
+# Hash the key to avoid collisions (e.g., 'a/b' vs 'a_b')
+key_hash=$(printf "%s" "$key" | sha256sum | cut -c1-16)
+lock="${LOCK_DIR}/${key_hash}.lock"
 
 mkdir -p "$LOCK_DIR"
 

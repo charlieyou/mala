@@ -3,6 +3,7 @@
 Consolidates locking behavior from filelock.py and shell scripts.
 """
 
+import hashlib
 import os
 import subprocess
 import time
@@ -23,21 +24,48 @@ LOCK_DIR = Path("/tmp/mala-locks")
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 
 
-def _lock_path(filepath: str) -> Path:
-    """Convert a file path to its lock file path."""
-    # Replace / to create a flat lock filename (match lock scripts)
-    safe_name = filepath.replace("/", "_") + ".lock"
-    return LOCK_DIR / safe_name
+def _lock_key(filepath: str, repo_namespace: str | None = None) -> str:
+    """Build a canonical key for the lock.
+
+    Args:
+        filepath: The file path to lock.
+        repo_namespace: Optional repo namespace for cross-repo disambiguation.
+
+    Returns:
+        The canonical key string.
+    """
+    if repo_namespace:
+        return f"{repo_namespace}:{filepath}"
+    return filepath
+
+
+def _lock_path(filepath: str, repo_namespace: str | None = None) -> Path:
+    """Convert a file path to its lock file path.
+
+    Uses SHA-256 hash of the canonical key to avoid collisions
+    (e.g., 'a/b' vs 'a_b' which would both become 'a_b.lock' with simple replacement).
+
+    Args:
+        filepath: The file path to lock.
+        repo_namespace: Optional repo namespace for cross-repo disambiguation.
+
+    Returns:
+        Path to the lock file.
+    """
+    key = _lock_key(filepath, repo_namespace)
+    key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
+    return LOCK_DIR / f"{key_hash}.lock"
 
 
 @contextmanager
-def file_lock(filepath: str, timeout: int = 60):
+def file_lock(filepath: str, timeout: int = 60, repo_namespace: str | None = None):
     """
     Acquire exclusive lock on a file. Use before editing.
 
     Args:
         filepath: Path to the file to lock (relative or absolute)
         timeout: Max seconds to wait for lock (default 60)
+        repo_namespace: Optional repo namespace for cross-repo disambiguation
 
     Raises:
         TimeoutError: If lock cannot be acquired within timeout
@@ -47,7 +75,7 @@ def file_lock(filepath: str, timeout: int = 60):
             # edit the file safely
     """
     LOCK_DIR.mkdir(exist_ok=True)
-    lock_path = _lock_path(filepath)
+    lock_path = _lock_path(filepath, repo_namespace)
 
     start = time.time()
     while True:
@@ -75,14 +103,30 @@ def release_all_locks() -> None:
             lock.unlink(missing_ok=True)
 
 
-def is_locked(filepath: str) -> bool:
-    """Check if a file is currently locked."""
-    return _lock_path(filepath).exists()
+def is_locked(filepath: str, repo_namespace: str | None = None) -> bool:
+    """Check if a file is currently locked.
+
+    Args:
+        filepath: The file path to check.
+        repo_namespace: Optional repo namespace for cross-repo disambiguation.
+
+    Returns:
+        True if the file is locked, False otherwise.
+    """
+    return _lock_path(filepath, repo_namespace).exists()
 
 
-def get_lock_holder(filepath: str) -> int | None:
-    """Get the PID of the process holding a lock, or None if not locked."""
-    lock_path = _lock_path(filepath)
+def get_lock_holder(filepath: str, repo_namespace: str | None = None) -> int | None:
+    """Get the PID of the process holding a lock, or None if not locked.
+
+    Args:
+        filepath: The file path to check.
+        repo_namespace: Optional repo namespace for cross-repo disambiguation.
+
+    Returns:
+        The PID of the lock holder, or None if not locked.
+    """
+    lock_path = _lock_path(filepath, repo_namespace)
     if lock_path.exists():
         try:
             return int(lock_path.read_text().strip())
