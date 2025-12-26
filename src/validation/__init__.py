@@ -27,6 +27,15 @@ from .spec import (
     build_validation_spec,
     classify_change,
 )
+from .worktree import (
+    WorktreeConfig,
+    WorktreeContext,
+    WorktreeResult,
+    WorktreeState,
+    cleanup_stale_worktrees,
+    create_worktree,
+    remove_worktree,
+)
 
 __all__ = [
     "CommandKind",
@@ -43,9 +52,16 @@ __all__ = [
     "ValidationScope",
     "ValidationSpec",
     "ValidationStepResult",
+    "WorktreeConfig",
+    "WorktreeContext",
+    "WorktreeResult",
+    "WorktreeState",
     "_check_e2e_prereqs",
     "_format_step_output",
     "_tail",
     "build_validation_spec",
     "classify_change",
+    "cleanup_stale_worktrees",
+    "create_worktree",
+    "remove_worktree",
 ]
