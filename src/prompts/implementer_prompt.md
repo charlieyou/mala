@@ -41,6 +41,7 @@ Lock scripts are pre-configured in your environment (LOCK_DIR, AGENT_ID, REPO_NA
 | Command | Description |
 |---------|-------------|
 | `lock-try.sh <file>` | Acquire lock (exit 0=success, 1=blocked) |
+| `lock-wait.sh <file> [timeout] [poll_ms]` | Wait for and acquire lock (exit 0=acquired, 1=timeout) |
 | `lock-check.sh <file>` | Check if you hold the lock |
 | `lock-holder.sh <file>` | Get agent ID holding the lock |
 | `lock-release.sh <file>` | Release a specific lock |
@@ -67,6 +68,11 @@ lock-try.sh main.py    # exit 0 → SUCCESS
 # → Work on config.py and main.py first
 # → Periodically retry utils.py (poll every 1s, don't log each attempt)
 # → Once utils.py acquired, complete that work
+```
+
+**When you have nothing else to work on:** Use `lock-wait.sh` to block until lock acquired:
+```bash
+lock-wait.sh utils.py 900 1000  # Wait up to 900s, poll every 1000ms
 ```
 
 **If still blocked after 15 min total wait:** Return with `"BLOCKED: <file> held by <holder> for 15+ min"`
