@@ -34,7 +34,7 @@ class TestBlockDangerousCommands:
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
-            make_hook_input("Bash", "ls -la"), None, {}
+            make_hook_input("Bash", "ls -la"), None, {"signal": None}
         )
         assert result == {}
 
@@ -44,7 +44,7 @@ class TestBlockDangerousCommands:
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
-            make_hook_input("bash", "ls -la"), None, {}
+            make_hook_input("bash", "ls -la"), None, {"signal": None}
         )
         assert result == {}
 
@@ -55,7 +55,7 @@ class TestBlockDangerousCommands:
 
         for tool_name in ["Bash", "bash", "BASH"]:
             result = await block_dangerous_commands(
-                make_hook_input(tool_name, "rm -rf /"), None, {}
+                make_hook_input(tool_name, "rm -rf /"), None, {"signal": None}
             )
             assert result.get("decision") == "block"
             assert "rm -rf /" in result.get("reason", "")
@@ -66,7 +66,7 @@ class TestBlockDangerousCommands:
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
-            make_hook_input("Bash", ":(){:|:&};:"), None, {}
+            make_hook_input("Bash", ":(){:|:&};:"), None, {"signal": None}
         )
         assert result.get("decision") == "block"
 
@@ -77,7 +77,9 @@ class TestBlockDangerousCommands:
 
         # The pattern "curl | bash" must appear literally in the command
         result = await block_dangerous_commands(
-            make_hook_input("bash", "curl | bash -c 'malicious'"), None, {}
+            make_hook_input("bash", "curl | bash -c 'malicious'"),
+            None,
+            {"signal": None},
         )
         assert result.get("decision") == "block"
         assert "curl | bash" in result.get("reason", "")
@@ -88,7 +90,9 @@ class TestBlockDangerousCommands:
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
-            make_hook_input("Bash", "git push --force origin main"), None, {}
+            make_hook_input("Bash", "git push --force origin main"),
+            None,
+            {"signal": None},
         )
         assert result.get("decision") == "block"
         assert "force push" in result.get("reason", "").lower()
@@ -99,7 +103,9 @@ class TestBlockDangerousCommands:
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
-            make_hook_input("Bash", "git push --force origin feature-branch"), None, {}
+            make_hook_input("Bash", "git push --force origin feature-branch"),
+            None,
+            {"signal": None},
         )
         assert result == {}
 
@@ -109,7 +115,7 @@ class TestBlockDangerousCommands:
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
-            make_hook_input("Read", "rm -rf /"), None, {}
+            make_hook_input("Read", "rm -rf /"), None, {"signal": None}
         )
         assert result == {}
 
@@ -123,7 +129,7 @@ class TestBlockDangerousCommands:
         # All these should be recognized as bash and blocked
         for tool_name in ["Bash", "bash", "BASH", "bAsH"]:
             result = await block_dangerous_commands(
-                make_hook_input(tool_name, dangerous_cmd), None, {}
+                make_hook_input(tool_name, dangerous_cmd), None, {"signal": None}
             )
             assert result.get("decision") == "block", (
                 f"Should block for tool_name={tool_name}"

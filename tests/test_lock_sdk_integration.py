@@ -51,8 +51,8 @@ def clean_test_env(monkeypatch):
             def log(self, **_kwargs):
                 return None
 
-        braintrust.start_span = lambda *args, **kwargs: _NoopSpan()
-        braintrust.flush = lambda *args, **kwargs: None
+        braintrust.start_span = lambda *args, **kwargs: _NoopSpan()  # type: ignore[assignment]
+        braintrust.flush = lambda *args, **kwargs: None  # type: ignore[assignment]
     except Exception:
         pass
 
@@ -161,7 +161,7 @@ Respond with what LOCK_HELD equals.
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if hasattr(block, "text"):
-                            result_text += block.text
+                            result_text += getattr(block, "text", "")
 
         assert "true" in result_text.lower() or "LOCK_HELD=true" in result_text
 
@@ -280,7 +280,7 @@ Report the RESULT.
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if hasattr(block, "text"):
-                            result_text += block.text
+                            result_text += getattr(block, "text", "")
 
         assert "blocked" in result_text.lower()
         assert other_agent in result_text
@@ -405,7 +405,7 @@ Report the result.
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if hasattr(block, "text"):
-                            result_text += block.text
+                            result_text += getattr(block, "text", "")
 
         assert "SUCCESS" in result_text or "acquired" in result_text.lower()
         assert get_lock_holder(lock_dir, "shared.py") == agent2_id
@@ -500,7 +500,7 @@ Report "WORKFLOW COMPLETE" when done.
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if hasattr(block, "text"):
-                            result_text += block.text
+                            result_text += getattr(block, "text", "")
 
         # Verify the workflow completed correctly
         # Lock should be released

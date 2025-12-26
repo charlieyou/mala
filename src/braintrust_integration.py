@@ -27,7 +27,7 @@ Usage:
 """
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -37,16 +37,25 @@ from claude_agent_sdk import (
     ToolResultBlock,
 )
 
+if TYPE_CHECKING:
+    import types
+
 # Braintrust imports - gracefully handle if not configured
+BRAINTRUST_AVAILABLE: bool = False
+braintrust: "types.ModuleType | None" = None
+start_span: Callable[..., Any] | None = None
+flush: Callable[[], None] | None = None
+
 try:
-    import braintrust
-    from braintrust import start_span
+    import braintrust as _braintrust
+    from braintrust import start_span as _start_span
 
     BRAINTRUST_AVAILABLE = True
+    braintrust = _braintrust
+    start_span = _start_span
+    flush = _braintrust.flush
 except ImportError:
-    BRAINTRUST_AVAILABLE = False
-    braintrust = None
-    start_span = None
+    pass
 
 
 def is_braintrust_enabled() -> bool:
@@ -56,9 +65,9 @@ def is_braintrust_enabled() -> bool:
 
 def flush_braintrust() -> None:
     """Flush pending logs to Braintrust."""
-    if BRAINTRUST_AVAILABLE and braintrust is not None:
+    if BRAINTRUST_AVAILABLE and flush is not None:
         try:
-            braintrust.flush()
+            flush()
         except Exception:
             pass
 
@@ -96,6 +105,8 @@ class TracedAgentExecution:
 
         # Start the root span for this agent execution
         try:
+            if start_span is None:
+                return self
             self.span = start_span(
                 name=f"agent:{self.issue_id}",
                 type="task",

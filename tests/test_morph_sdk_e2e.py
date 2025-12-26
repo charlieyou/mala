@@ -89,7 +89,7 @@ def morph_agent_options(tmp_path):
         disallowed_tools=MORPH_DISALLOWED_TOOLS,
         hooks={
             "PreToolUse": [
-                HookMatcher(matcher=None, hooks=[block_morph_replaced_tools])
+                HookMatcher(matcher=None, hooks=[block_morph_replaced_tools])  # type: ignore[arg-type]
             ],
         },
     )
@@ -181,7 +181,7 @@ Use only MCP tools (edit_file, warpgrep_codebase_search), not Edit or Grep."""
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if hasattr(block, "text"):
-                            result_text += block.text
+                            result_text += getattr(block, "text", "")
                         if hasattr(block, "name"):
                             tool_names_used.append(block.name)
 

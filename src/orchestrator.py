@@ -143,7 +143,7 @@ class MalaOrchestrator:
                 "PreToolUse": [
                     HookMatcher(
                         matcher=None,
-                        hooks=[block_dangerous_commands, block_morph_replaced_tools],
+                        hooks=[block_dangerous_commands, block_morph_replaced_tools],  # type: ignore[arg-type]
                     )
                 ],
                 "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],
