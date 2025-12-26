@@ -4,9 +4,11 @@ These tests mock subprocess.run and ClaudeSDKClient to test orchestrator
 state transitions without network or actual bd CLI.
 """
 
+import asyncio
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -240,7 +242,13 @@ class TestSpawnAgent:
         self, orchestrator: MalaOrchestrator
     ):
         """When claim fails, issue should be added to failed_issues."""
-        with patch.object(orchestrator.beads, "claim", return_value=False):
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return False
+
+        with patch.object(
+            orchestrator.beads, "claim_async", side_effect=mock_claim_async
+        ):
             result = await orchestrator.spawn_agent("unclaimed-issue")
 
         assert result is False
@@ -251,8 +259,14 @@ class TestSpawnAgent:
         self, orchestrator: MalaOrchestrator
     ):
         """When claim succeeds, a task should be created."""
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
         with (
-            patch.object(orchestrator.beads, "claim", return_value=True),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
             patch.object(
                 orchestrator,
                 "run_implementer",
@@ -278,8 +292,16 @@ class TestRunOrchestrationLoop:
         self, orchestrator: MalaOrchestrator
     ):
         """When no issues are ready, run() should return 0 and exit cleanly."""
+
+        async def mock_get_ready_async(
+            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
+        ):
+            return []
+
         with (
-            patch.object(orchestrator.beads, "get_ready", return_value=[]),
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", MagicMock()),
             patch("src.orchestrator.release_all_locks"),
@@ -296,7 +318,7 @@ class TestRunOrchestrationLoop:
         call_count = 0
         spawned = []
 
-        def mock_get_ready(
+        async def mock_get_ready_async(
             exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
         ):
             # Return issues only on first call
@@ -320,7 +342,9 @@ class TestRunOrchestrationLoop:
             return True
 
         with (
-            patch.object(orchestrator.beads, "get_ready", side_effect=mock_get_ready),
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
             patch.object(orchestrator, "spawn_agent", side_effect=mock_spawn),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", MagicMock()),
@@ -343,7 +367,7 @@ class TestFailedTaskResetsIssue:
         """When a task fails, the issue should be reset to ready status."""
         reset_calls = []
 
-        def mock_reset(issue_id: str, log_path=None, error=""):
+        async def mock_reset_async(issue_id: str, log_path=None, error=""):
             reset_calls.append(issue_id)
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
@@ -356,7 +380,7 @@ class TestFailedTaskResetsIssue:
 
         first_call = True
 
-        def mock_get_ready(
+        async def mock_get_ready_async(
             exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
         ):
             nonlocal first_call
@@ -365,13 +389,22 @@ class TestFailedTaskResetsIssue:
                 return ["fail-issue"]
             return []
 
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
         with (
-            patch.object(orchestrator.beads, "get_ready", side_effect=mock_get_ready),
-            patch.object(orchestrator.beads, "claim", return_value=True),
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
             patch.object(
                 orchestrator, "run_implementer", side_effect=mock_run_implementer
             ),
-            patch.object(orchestrator.beads, "reset", side_effect=mock_reset),
+            patch.object(
+                orchestrator.beads, "reset_async", side_effect=mock_reset_async
+            ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", MagicMock()),
             patch("src.orchestrator.release_all_locks"),
@@ -391,7 +424,7 @@ class TestFailedTaskResetsIssue:
         """Successful issues should not be reset."""
         reset_calls = []
 
-        def mock_reset(issue_id: str, log_path=None, error=""):
+        async def mock_reset_async(issue_id: str, log_path=None, error=""):
             reset_calls.append(issue_id)
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
@@ -404,7 +437,7 @@ class TestFailedTaskResetsIssue:
 
         first_call = True
 
-        def mock_get_ready(
+        async def mock_get_ready_async(
             exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
         ):
             nonlocal first_call
@@ -413,13 +446,22 @@ class TestFailedTaskResetsIssue:
                 return ["success-issue"]
             return []
 
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
         with (
-            patch.object(orchestrator.beads, "get_ready", side_effect=mock_get_ready),
-            patch.object(orchestrator.beads, "claim", return_value=True),
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
             patch.object(
                 orchestrator, "run_implementer", side_effect=mock_run_implementer
             ),
-            patch.object(orchestrator.beads, "reset", side_effect=mock_reset),
+            patch.object(
+                orchestrator.beads, "reset_async", side_effect=mock_reset_async
+            ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", MagicMock()),
             patch("src.orchestrator.release_all_locks"),
@@ -956,8 +998,9 @@ class TestOrchestratorQualityGateIntegration:
 
         mark_followup_calls = []
 
-        def mock_mark_followup(issue_id: str, reason: str, log_path=None):
+        async def mock_mark_followup_async(issue_id: str, reason: str, log_path=None):
             mark_followup_calls.append((issue_id, reason))
+            return True
 
         # Mock quality gate to fail
         mock_gate_result = GateResult(
@@ -979,7 +1022,7 @@ class TestOrchestratorQualityGateIntegration:
 
         first_call = True
 
-        def mock_get_ready(
+        async def mock_get_ready_async(
             exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
         ):
             nonlocal first_call
@@ -988,16 +1031,29 @@ class TestOrchestratorQualityGateIntegration:
                 return ["issue-123"]
             return []
 
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        async def mock_reset_async(issue_id: str, log_path=None, error=""):
+            pass
+
         with (
-            patch.object(orchestrator.beads, "get_ready", side_effect=mock_get_ready),
-            patch.object(orchestrator.beads, "claim", return_value=True),
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
             patch.object(
                 orchestrator, "run_implementer", side_effect=mock_run_implementer
             ),
             patch.object(
                 orchestrator.beads,
-                "mark_needs_followup",
-                side_effect=mock_mark_followup,
+                "mark_needs_followup_async",
+                side_effect=mock_mark_followup_async,
+            ),
+            patch.object(
+                orchestrator.beads, "reset_async", side_effect=mock_reset_async
             ),
             patch.object(
                 orchestrator.quality_gate, "check", return_value=mock_gate_result
@@ -1037,7 +1093,7 @@ class TestOrchestratorQualityGateIntegration:
 
         first_call = True
 
-        def mock_get_ready(
+        async def mock_get_ready_async(
             exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
         ):
             nonlocal first_call
@@ -1046,14 +1102,37 @@ class TestOrchestratorQualityGateIntegration:
                 return ["issue-ok"]
             return []
 
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        async def mock_commit_issues_async() -> bool:
+            return True
+
+        async def mock_close_eligible_epics_async() -> bool:
+            return False
+
         with (
-            patch.object(orchestrator.beads, "get_ready", side_effect=mock_get_ready),
-            patch.object(orchestrator.beads, "claim", return_value=True),
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
             patch.object(
                 orchestrator, "run_implementer", side_effect=mock_run_implementer
             ),
             patch.object(
                 orchestrator.quality_gate, "check", return_value=mock_gate_result
+            ),
+            patch.object(
+                orchestrator.beads,
+                "commit_issues_async",
+                side_effect=mock_commit_issues_async,
+            ),
+            patch.object(
+                orchestrator.beads,
+                "close_eligible_epics_async",
+                side_effect=mock_close_eligible_epics_async,
             ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", tmp_path),
@@ -1063,3 +1142,116 @@ class TestOrchestratorQualityGateIntegration:
             success_count, total = await orchestrator.run()
 
         assert success_count == 1
+
+
+class TestAsyncBeadsClientWithTimeout:
+    """Test that BeadsClient methods handle slow/hanging commands gracefully."""
+
+    @pytest.mark.asyncio
+    async def test_slow_bd_ready_does_not_block_other_tasks(
+        self, orchestrator: MalaOrchestrator
+    ):
+        """Slow bd ready should not block other concurrent async tasks."""
+        # Track when tasks complete
+        task_completions: list[tuple[str, float]] = []
+        start = time.monotonic()
+
+        async def fast_task():
+            await asyncio.sleep(0.05)
+            task_completions.append(("fast", time.monotonic() - start))
+
+        def slow_subprocess(*args, **kwargs):
+            # Simulate a slow bd command (0.2s)
+            time.sleep(0.2)
+            return make_subprocess_result(stdout="[]")
+
+        with patch("subprocess.run", side_effect=slow_subprocess):
+            # Run slow beads call concurrently with fast task
+            await asyncio.gather(
+                orchestrator.beads.get_ready_async(),
+                fast_task(),
+            )
+            task_completions.append(("beads", time.monotonic() - start))
+
+        # The fast task should complete well before the slow beads call
+        fast_time = next(t for name, t in task_completions if name == "fast")
+        beads_time = next(t for name, t in task_completions if name == "beads")
+
+        # Fast task should complete in ~0.05s, beads in ~0.2s
+        # If blocking, fast would complete at ~0.2s too
+        assert fast_time < 0.15, f"Fast task blocked: completed at {fast_time:.3f}s"
+        assert beads_time >= 0.15, f"Beads completed too fast: {beads_time:.3f}s"
+
+    @pytest.mark.asyncio
+    async def test_bd_command_timeout_returns_safe_fallback(
+        self, orchestrator: MalaOrchestrator
+    ):
+        """When bd command times out, should return safe fallback, not hang."""
+        # Use a very short timeout for testing
+        original_timeout = orchestrator.beads.timeout_seconds
+        orchestrator.beads.timeout_seconds = 0.1
+
+        def hanging_subprocess(*args, **kwargs):
+            # Simulate hanging forever (well, 10s is enough to prove the point)
+            time.sleep(10)
+            return make_subprocess_result(stdout="[]")
+
+        try:
+            with patch("subprocess.run", side_effect=hanging_subprocess):
+                start = time.monotonic()
+                result = await orchestrator.beads.get_ready_async()
+                elapsed = time.monotonic() - start
+
+            # Should return empty list (safe fallback)
+            assert result == []
+            # Should complete quickly due to timeout, not hang for 10s
+            assert elapsed < 1.0, f"Timeout didn't work: took {elapsed:.2f}s"
+        finally:
+            orchestrator.beads.timeout_seconds = original_timeout
+
+    @pytest.mark.asyncio
+    async def test_claim_timeout_returns_false(self, orchestrator: MalaOrchestrator):
+        """When claim times out, should return False (safe fallback)."""
+        original_timeout = orchestrator.beads.timeout_seconds
+        orchestrator.beads.timeout_seconds = 0.1
+
+        def hanging_subprocess(*args, **kwargs):
+            time.sleep(10)
+            return make_subprocess_result(returncode=0)
+
+        try:
+            with patch("subprocess.run", side_effect=hanging_subprocess):
+                start = time.monotonic()
+                result = await orchestrator.beads.claim_async("issue-1")
+                elapsed = time.monotonic() - start
+
+            assert result is False
+            assert elapsed < 1.0
+        finally:
+            orchestrator.beads.timeout_seconds = original_timeout
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_uses_async_beads_methods(
+        self, orchestrator: MalaOrchestrator
+    ):
+        """Orchestrator run loop should use async beads methods."""
+        # This test verifies the integration - that orchestrator calls
+        # the async versions of beads methods
+
+        async def mock_get_ready_async(
+            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
+        ):
+            return []
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ) as mock_ready,
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", MagicMock()),
+            patch("src.orchestrator.release_all_locks"),
+        ):
+            await orchestrator.run()
+
+        # Verify async method was called
+        mock_ready.assert_called()

@@ -18,7 +18,7 @@ from claude_agent_sdk.types import HookMatcher
 
 from .beads_client import BeadsClient
 from .braintrust_integration import TracedAgentExecution
-from .git_utils import get_git_commit, get_git_branch
+from .git_utils import get_git_commit_async, get_git_branch_async
 from .hooks import (
     MORPH_DISALLOWED_TOOLS,
     block_dangerous_commands,
@@ -182,8 +182,8 @@ class MalaOrchestrator:
             metadata={
                 "mala_version": __version__,
                 "project_dir": self.repo_path.name,
-                "git_branch": get_git_branch(self.repo_path),
-                "git_commit": get_git_commit(self.repo_path),
+                "git_branch": await get_git_branch_async(self.repo_path),
+                "git_commit": await get_git_commit_async(self.repo_path),
                 "timeout_seconds": self.timeout_seconds,
             },
         )
@@ -218,7 +218,7 @@ class MalaOrchestrator:
                                     final_result = message.result or ""
 
                     # Check if issue was closed (inside tracer context)
-                    status = self.beads.get_issue_status(issue_id)
+                    status = await self.beads.get_issue_status_async(issue_id)
                     if status == "closed":
                         success = True
 
@@ -257,7 +257,7 @@ class MalaOrchestrator:
 
     async def spawn_agent(self, issue_id: str) -> bool:
         """Spawn a new agent task for an issue. Returns True if spawned."""
-        if not self.beads.claim(issue_id):
+        if not await self.beads.claim_async(issue_id):
             self.failed_issues.add(issue_id)
             log("⚠", f"Failed to claim {issue_id}", Colors.YELLOW, agent_id=issue_id)
             return False
@@ -360,7 +360,7 @@ class MalaOrchestrator:
                         | {result.issue_id for result in self.completed}
                     )
                 ready = (
-                    self.beads.get_ready(
+                    await self.beads.get_ready_async(
                         self.failed_issues,
                         epic_id=self.epic_id,
                         only_ids=self.only_ids,
@@ -458,7 +458,7 @@ class MalaOrchestrator:
                                 if not gate_result.passed:
                                     # Gate failed - mark needs-followup with log path
                                     reason = "; ".join(gate_result.failure_reasons)
-                                    self.beads.mark_needs_followup(
+                                    await self.beads.mark_needs_followup_async(
                                         issue_id, reason, log_path=log_path
                                     )
                                     result = IssueResult(
@@ -512,7 +512,7 @@ class MalaOrchestrator:
                                     agent_id=issue_id,
                                 )
                                 self.failed_issues.add(issue_id)
-                                self.beads.reset(
+                                await self.beads.reset_async(
                                     issue_id, log_path=log_path, error=result.summary
                                 )
                             break
@@ -538,11 +538,11 @@ class MalaOrchestrator:
 
         # Commit .beads/issues.jsonl if there were successes
         if success_count > 0:
-            if self.beads.commit_issues():
+            if await self.beads.commit_issues_async():
                 log("◐", "Committed .beads/issues.jsonl", Colors.GRAY, dim=True)
 
             # Auto-close epics where all children are complete
-            if self.beads.close_eligible_epics():
+            if await self.beads.close_eligible_epics_async():
                 log("◐", "Auto-closed completed epics", Colors.GRAY, dim=True)
 
         # Save run metadata
