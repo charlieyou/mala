@@ -9,3 +9,6 @@ uv.lock
 
 # bv (beads viewer) local config and caches
 .bv/
+
+# Build artifacts
+dist/
