@@ -55,8 +55,9 @@ mala (Python Orchestrator)
    - Acquires filesystem locks before editing any files
    - Implements the issue, runs quality checks, commits
    - Releases locks, closes issue
-5. **On file conflict**: Agent waits up to 60s for lock, returns BLOCKED if unavailable
-6. **On failure/timeout**: Orchestrator releases orphaned locks, resets issue status
+5. **On file conflict**: Agent polls every 1s for lock (up to 60s timeout), returns BLOCKED if unavailable
+6. **Quality gate**: After completion, verifies commit exists and validation commands ran
+7. **On failure/timeout**: Orchestrator releases orphaned locks, writes handoff file, resets issue status
 
 ### Epics and Parent-Child Issues
 
@@ -93,11 +94,62 @@ Each spawned agent follows this workflow:
 6. **Commit**: Stage and commit changes locally
 7. **Cleanup**: Release locks, close issue with `bd close <id>`
 
+## Quality Gate
+
+After an agent completes an issue, the orchestrator runs a quality gate that verifies:
+
+1. **Commit exists**: A git commit with `bd-<issue_id>` in the message
+2. **Validation evidence**: The agent ran required checks (parsed from JSONL logs):
+   - `pytest` - tests
+   - `ruff check` and `ruff format` - linting/formatting
+   - `ty check` - type checking
+   - `uv sync` - dependency installation
+
+If the gate fails, the issue is marked with `needs-followup` label and reset for retry.
+
+## Lock Enforcement
+
+File locks are enforced at two levels:
+
+1. **Advisory locks**: Agents acquire locks before editing files via `lock-try.sh`
+2. **PreToolUse hook**: A hook blocks file-write tool calls (`Write`, `NotebookEdit`, `mcp__morphllm__edit_file`) unless the agent holds the lock for that file
+
+Lock keys are canonicalized so equivalent paths (absolute/relative, with `./..` segments) produce identical locks. When `REPO_NAMESPACE` is set, paths become repo-relative.
+
+## Test Mutex
+
+Repo-wide commands that could interfere between agents are serialized via `test-mutex.sh`:
+
+```bash
+./src/scripts/test-mutex.sh pytest           # Run tests with mutex
+./src/scripts/test-mutex.sh ruff check .     # Lint with mutex
+./src/scripts/test-mutex.sh ty check         # Type check with mutex
+./src/scripts/test-mutex.sh uv sync          # Sync deps with mutex
+```
+
+The mutex uses a fixed key (`__test_mutex__`) and is released on exit, even on failure or signals.
+
+## Failure Handoff
+
+When an agent fails (including quality gate failures), a handoff file is written to preserve context for debugging or retry:
+
+```
+.mala/handoff/<issue_id>.md
+```
+
+Contains:
+- Error summary
+- Last tool error (if any)
+- Last 10 Bash commands from the session log
+
 ## Key Design Decisions
 
 - **Filesystem locks** via atomic hardlink (sandbox-compatible, no external deps)
-- **60-second lock timeout** (fail fast on conflicts)
+- **Canonical lock keys** with path normalization and repo namespace support
+- **60-second lock timeout** with 1s polling (fail fast on conflicts)
+- **Lock enforcement hook** blocks writes to unlocked files
 - **Orchestrator claims issues** before spawning (agents don't claim)
+- **Quality gate** verifies commits and validation before accepting work
 - **JSONL logs** in `~/.config/mala/logs/` for debugging
 - **asyncio.wait** for efficient parallel task management
 
@@ -156,6 +208,16 @@ Check log status with:
 ```bash
 mala status    # Shows recent logs and their timestamps
 ```
+
+### Log Truncation
+
+By default, log output is truncated for readability. Use `--no-truncate` to see full output:
+
+```bash
+mala run --no-truncate /path/to/repo    # Full tool arguments and summaries
+```
+
+Tool calls display abbreviated `key=value` pairs by default, or pretty-printed JSON with `--no-truncate`.
 
 ## Terminal Output
 
