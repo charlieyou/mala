@@ -6,6 +6,62 @@ A multi-agent system for processing beads issues in parallel using the Claude Ag
 
 The name also derives from Sanskrit, where *mala* means "garland" or "string of beads" - fitting for a system that orchestrates beads issues in a continuous loop, like counting prayer beads.
 
+## Prerequisites
+
+### Beads (`bd`)
+
+Mala requires [Beads](https://github.com/cyouAI/beads) to be installed and configured. Beads is the issue tracking system that agents pull work from.
+
+```bash
+# Install beads
+uv tool install beads
+
+# Initialize beads in your target repo
+cd /path/to/repo
+bd init
+```
+
+### Creating Issues Correctly
+
+Mala's effectiveness depends entirely on well-structured beads issues. Agents work autonomously without human guidance, so each issue must be **self-contained and unambiguous**.
+
+**Issue requirements for parallel agent execution:**
+
+| Principle | Description |
+|-----------|-------------|
+| **Atomic** | One issue = one clear outcome. Avoid bundling unrelated fixes. |
+| **Sized for agents** | Each issue must be completable within ~100k tokens. Split larger work into epics with child issues. |
+| **Minimal file overlap** | Issues that touch the same files cannot run in parallel. Use dependencies to serialize overlapping work. |
+| **Actionable** | Every issue needs clear acceptance criteria and a test plan. |
+| **Grounded** | Only create issues with sufficient context. Include exact file/line pointers when available. |
+
+**Issue structure:**
+
+```
+Title: Clear, specific description
+
+Context:
+- Background explaining why this matters
+- File/line pointers to relevant code
+
+Scope:
+- In: what will be changed
+- Out: explicit non-goals
+
+Acceptance Criteria:
+- Testable outcomes
+
+Test Plan:
+- How to verify the fix
+```
+
+**Dependencies:**
+
+- Use `bd dep add <child> <parent>` only when two issues must touch the same file
+- Use `bd dep add <child> <epic> --type parent-child` to group related tasks under an epic without blocking
+
+See `commands/bd-breakdown.md` for the full issue creation workflow.
+
 ## Installation
 
 ```bash
