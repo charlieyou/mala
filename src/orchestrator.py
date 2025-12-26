@@ -77,7 +77,7 @@ class MalaOrchestrator:
     def __init__(
         self,
         repo_path: Path,
-        max_agents: int = 3,
+        max_agents: int | None = None,
         timeout_minutes: int = 30,
         max_issues: int | None = None,
         epic_id: str | None = None,
@@ -257,9 +257,12 @@ class MalaOrchestrator:
         log("●", "mala orchestrator", Colors.MAGENTA)
         log("◐", f"repo: {self.repo_path}", Colors.GRAY, dim=True)
         limit_str = str(self.max_issues) if self.max_issues is not None else "unlimited"
+        agents_str = (
+            str(self.max_agents) if self.max_agents is not None else "unlimited"
+        )
         log(
             "◐",
-            f"max-agents: {self.max_agents}, timeout: {self.timeout_seconds // 60}m, max-issues: {limit_str}",
+            f"max-agents: {agents_str}, timeout: {self.timeout_seconds // 60}m, max-issues: {limit_str}",
             Colors.GRAY,
             dim=True,
         )
@@ -322,7 +325,9 @@ class MalaOrchestrator:
                 if ready:
                     log("◌", f"Ready issues: {', '.join(ready)}", Colors.GRAY, dim=True)
 
-                while len(self.active_tasks) < self.max_agents and ready:
+                while (
+                    self.max_agents is None or len(self.active_tasks) < self.max_agents
+                ) and ready:
                     issue_id = ready.pop(0)
                     if issue_id not in self.active_tasks:
                         if await self.spawn_agent(issue_id):

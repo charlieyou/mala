@@ -70,9 +70,11 @@ def run(
         ),
     ] = Path("."),
     max_agents: Annotated[
-        int,
-        typer.Option("--max-agents", "-n", help="Maximum concurrent agents"),
-    ] = 3,
+        int | None,
+        typer.Option(
+            "--max-agents", "-n", help="Maximum concurrent agents (default: unlimited)"
+        ),
+    ] = None,
     timeout: Annotated[
         int,
         typer.Option("--timeout", "-t", help="Timeout per agent in minutes"),
