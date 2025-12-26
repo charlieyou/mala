@@ -220,6 +220,21 @@ File locks are enforced at two levels:
 
 Lock keys are canonicalized so equivalent paths (absolute/relative, with `./..` segments) produce identical locks. When `REPO_NAMESPACE` is set, paths become repo-relative.
 
+## Git Safety
+
+Dangerous git operations that can cause conflicts between concurrent agents are blocked:
+
+| Blocked Operation | Reason | Safe Alternative |
+|-------------------|--------|------------------|
+| `git stash` | Hides changes other agents cannot see | Commit changes: `git commit -m 'WIP: ...'` |
+| `git reset --hard` | Discards uncommitted changes silently | Use `git checkout <file>` for specific files |
+| `git rebase` | Rewrites history, requires human input | Use `git merge` instead |
+| `git checkout -f` | Discards local changes | Commit changes first |
+| `git clean -f` | Removes untracked files | Use `rm` for specific files |
+| `git merge --abort` | May discard other agents' work | Resolve conflicts instead |
+
+Each blocked operation includes a safe alternative in the error message.
+
 ## Parallel Validation
 
 Agents run validation commands in parallel using **isolated cache directories** to prevent conflicts:
@@ -235,6 +250,54 @@ uv sync                                           # Has internal locking
 This approach avoids deadlocks that occurred when agents held file locks while waiting for a global test mutex. File locks prevent concurrent edits; isolated caches prevent validation conflicts.
 
 **Legacy `test-mutex.sh`**: A wrapper script exists for serializing commands if needed, but agents no longer require it for standard validation.
+
+## Validation System
+
+The validation module (`src/validation/`) provides structured validation with policy-based configuration:
+
+### ValidationSpec
+
+Defines what validations run per scope (per-issue vs run-level):
+
+```python
+from src.validation import build_validation_spec, ValidationScope
+
+spec = build_validation_spec(
+    scope=ValidationScope.PER_ISSUE,
+    disable_validations={"slow-tests"},  # Optional disable flags
+    coverage_threshold=85.0,
+)
+```
+
+**Disable flags:**
+- `post-validate`: Skip test commands entirely
+- `slow-tests`: Exclude slow tests from pytest
+- `coverage`: Disable coverage checking
+- `e2e`: Disable E2E fixture repo test
+- `codex-review`: Disable Codex review
+
+### Code vs Docs Classification
+
+Changes are classified to determine validation requirements:
+
+| Category | Paths/Files | Validation |
+|----------|-------------|------------|
+| **Code** | `src/**`, `tests/**`, `commands/**`, `.py`, `.sh`, `.toml` | Full suite (tests + coverage) |
+| **Docs** | `.md`, `.rst`, `.txt` outside code paths | Lint only (optional) |
+
+Use `--lint-only-for-docs` to skip tests for docs-only changes.
+
+### Worktree Validation
+
+Clean-room validation runs in isolated git worktrees:
+
+```
+/tmp/mala-worktrees/{run_id}/{issue_id}/{attempt}/
+```
+
+- Commits are tested in isolation from the working tree
+- Failed validations can keep worktrees for debugging (`--keep-worktrees`)
+- Stale worktrees from crashed runs are auto-cleaned
 
 ## Failure Handoff
 
@@ -357,7 +420,14 @@ All ty rules are set to `error` level in `pyproject.toml` for maximum strictness
 Tests require 72% minimum coverage:
 
 ```bash
-uv run pytest                           # Run tests with coverage
-uv run pytest -m slow                   # Include slow tests
-uv run pytest --cov-fail-under=80       # Override coverage threshold
+uv run pytest                              # Unit tests only (default, excludes slow)
+uv run pytest -m slow -n auto              # Slow/integration tests in parallel
+uv run pytest -m "slow or not slow"        # All tests
+uv run pytest --reruns 2                   # Auto-retry flaky tests (2 retries)
+uv run pytest -m slow -n auto --reruns 2   # Parallel + auto-retry
+uv run pytest --cov-fail-under=80          # Override coverage threshold
 ```
+
+- **Parallel execution**: Use `-n auto` for parallel test runs (pytest-xdist)
+- **Flaky test retries**: Use `--reruns N` to auto-retry failed tests (pytest-rerunfailures)
+- **Slow tests**: Marked with `@pytest.mark.slow`, excluded by default
