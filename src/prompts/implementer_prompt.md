@@ -34,7 +34,7 @@ bd close {issue_id}    # Mark complete (after committing)
 
 ### 2. File Locking Protocol
 
-Lock scripts are pre-configured in your environment (LOCK_DIR, AGENT_ID, PATH are set).
+Lock scripts are pre-configured in your environment (LOCK_DIR, AGENT_ID, REPO_NAMESPACE, PATH are set).
 
 **Lock commands:**
 | Command | Description |
@@ -78,14 +78,24 @@ lock-try.sh main.py    # exit 0 → SUCCESS
 4. **Once all locks acquired**, complete remaining implementation
 5. Handle edge cases, add tests if appropriate
 
-### 4. Quality Checks
+### 4. Quality Checks (Full Validation Required)
+
+**Before committing, run the full validation suite.** Acquire the test mutex first since these commands affect repo-wide state:
+
 ```bash
-uv sync                # Ensure deps current
-uvx ruff check .       # Lint - fix any issues
-uvx ruff format .      # Format
-uvx ty check           # Type check (if configured)
+lock-try.sh __test_mutex__   # Acquire test mutex before repo-wide commands
+uv sync                      # Ensure deps current
+uv run pytest                # Run full test suite
+uvx ruff check .             # Lint - fix any issues
+uvx ruff format .            # Format
+uvx ty check                 # Type check
+lock-release.sh __test_mutex__
 ```
-Fix any issues found before proceeding.
+
+**All checks must pass.** If any fail:
+- Fix the issues in your code
+- Re-run the full suite
+- Do not commit until all checks pass
 
 ### 5. Self-Review
 Verify before committing:
@@ -129,19 +139,11 @@ When done, return this template:
 - Lock contention:
 - Follow-ups (if any):
 
-## Speed/Scope Guardrails
-
-- If change is docs-only or trivial, run targeted checks on touched files; do NOT run full suite unless required.
-- If issue appears already fixed, do minimal verification, avoid extra scope, and report evidence.
-- If a check fails due to pre-existing issues, call it out explicitly and proceed only if unrelated.
-
 ## Parallel Work Rules (Avoid Collisions)
 
 - Before editing, list the exact files you intend to touch; do not edit files outside that list.
 - Acquire locks for ALL intended files up front; if any are blocked, work only on the files you already locked.
 - If you need to add a new file mid-work, lock it first and update your file list.
-- Run tests and checks ONLY on touched files unless the issue explicitly requires full-suite runs.
-- Never run repo-wide formatters or refactors; run tools only on touched files.
 - Avoid renames/moves and broad reformatting unless explicitly required.
 - Do not update shared config or dependency files (e.g., lockfiles) unless the issue requires it.
-- If a needed file stays locked >15 minutes, stop and report “BLOCKED” rather than making overlapping changes.
+- If a needed file stays locked >15 minutes, stop and report "BLOCKED" rather than making overlapping changes.
