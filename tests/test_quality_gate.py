@@ -1,0 +1,381 @@
+"""Unit tests for quality gate with offset-based parsing.
+
+Tests for:
+- Byte offset-based evidence parsing (parse_validation_evidence_from_offset)
+- No-progress detection (check_no_progress)
+"""
+
+import json
+from pathlib import Path
+
+from src.quality_gate import QualityGate, ValidationEvidence
+
+
+class TestOffsetBasedParsing:
+    """Test parse_validation_evidence_from_offset for scoping evidence by attempt."""
+
+    def test_returns_evidence_and_new_offset(self, tmp_path: Path):
+        """Should return tuple of (evidence, new_offset)."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        evidence, new_offset = gate.parse_validation_evidence_from_offset(log_path)
+
+        assert isinstance(evidence, ValidationEvidence)
+        assert isinstance(new_offset, int)
+        assert new_offset > 0
+
+    def test_starts_from_given_offset(self, tmp_path: Path):
+        """Should only parse log entries after the given byte offset."""
+        log_path = tmp_path / "session.jsonl"
+
+        # First entry: pytest (before offset)
+        first_entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+        # Second entry: ruff check (after offset)
+        second_entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uvx ruff check ."},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(first_entry + "\n" + second_entry + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        # Offset set to after the first line
+        offset = len(first_entry) + 1  # +1 for newline
+        evidence, new_offset = gate.parse_validation_evidence_from_offset(
+            log_path, offset=offset
+        )
+
+        # Should NOT detect pytest (before offset)
+        assert evidence.pytest_ran is False
+        # Should detect ruff check (after offset)
+        assert evidence.ruff_check_ran is True
+
+    def test_offset_zero_parses_entire_file(self, tmp_path: Path):
+        """Offset=0 should parse the entire file (default behavior)."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        evidence, _ = gate.parse_validation_evidence_from_offset(log_path, offset=0)
+
+        assert evidence.pytest_ran is True
+
+    def test_offset_at_end_returns_empty_evidence(self, tmp_path: Path):
+        """Offset at EOF should return empty evidence."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        # Set offset to end of file
+        file_size = log_path.stat().st_size
+        evidence, new_offset = gate.parse_validation_evidence_from_offset(
+            log_path, offset=file_size
+        )
+
+        assert evidence.pytest_ran is False
+        assert evidence.ruff_check_ran is False
+        assert evidence.ruff_format_ran is False
+        assert new_offset == file_size
+
+    def test_new_offset_points_to_end_of_file(self, tmp_path: Path):
+        """Returned offset should point to the current end of the file."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        _, new_offset = gate.parse_validation_evidence_from_offset(log_path)
+
+        assert new_offset == log_path.stat().st_size
+
+    def test_handles_missing_file(self, tmp_path: Path):
+        """Should handle missing log file gracefully."""
+        gate = QualityGate(tmp_path)
+        nonexistent = tmp_path / "nonexistent.jsonl"
+
+        evidence, new_offset = gate.parse_validation_evidence_from_offset(nonexistent)
+
+        assert evidence.pytest_ran is False
+        assert new_offset == 0
+
+    def test_detects_all_validation_commands_after_offset(self, tmp_path: Path):
+        """Should detect all validation commands after the given offset."""
+        log_path = tmp_path / "session.jsonl"
+
+        # Write entries for all validation commands
+        entries = []
+        commands = [
+            "uv sync",
+            "uv run pytest tests/",
+            "uvx ruff check .",
+            "uvx ruff format .",
+            "uvx ty check",
+        ]
+        for cmd in commands:
+            entries.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(entries) + "\n")
+
+        gate = QualityGate(tmp_path)
+        evidence, _ = gate.parse_validation_evidence_from_offset(log_path, offset=0)
+
+        assert evidence.uv_sync_ran is True
+        assert evidence.pytest_ran is True
+        assert evidence.ruff_check_ran is True
+        assert evidence.ruff_format_ran is True
+        assert evidence.ty_check_ran is True
+
+
+class TestNoProgressDetection:
+    """Test check_no_progress for detecting stalled attempts."""
+
+    def test_no_progress_when_same_commit_and_no_new_evidence(self, tmp_path: Path):
+        """No progress: unchanged commit hash + no new evidence since offset."""
+        log_path = tmp_path / "session.jsonl"
+        # Empty file - no new evidence
+        log_path.write_text("")
+
+        gate = QualityGate(tmp_path)
+        # Same commit as before, file has no content after offset 0
+        is_no_progress = gate.check_no_progress(
+            log_path=log_path,
+            log_offset=0,
+            previous_commit_hash="abc1234",
+            current_commit_hash="abc1234",
+        )
+
+        assert is_no_progress is True
+
+    def test_progress_when_commit_changed(self, tmp_path: Path):
+        """Progress detected: different commit hash (even without new evidence)."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")  # No new evidence
+
+        gate = QualityGate(tmp_path)
+        is_no_progress = gate.check_no_progress(
+            log_path=log_path,
+            log_offset=0,
+            previous_commit_hash="abc1234",
+            current_commit_hash="def5678",  # Different commit
+        )
+
+        assert is_no_progress is False
+
+    def test_progress_when_new_evidence_found(self, tmp_path: Path):
+        """Progress detected: new validation evidence (even with same commit)."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        is_no_progress = gate.check_no_progress(
+            log_path=log_path,
+            log_offset=0,  # Check from beginning - will find evidence
+            previous_commit_hash="abc1234",
+            current_commit_hash="abc1234",  # Same commit
+        )
+
+        assert is_no_progress is False
+
+    def test_no_progress_when_evidence_before_offset_only(self, tmp_path: Path):
+        """No progress: validation evidence exists but only before the offset."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        # Set offset to after the evidence
+        offset = log_path.stat().st_size
+
+        is_no_progress = gate.check_no_progress(
+            log_path=log_path,
+            log_offset=offset,  # Offset past the evidence
+            previous_commit_hash="abc1234",
+            current_commit_hash="abc1234",
+        )
+
+        assert is_no_progress is True
+
+    def test_progress_when_no_previous_commit(self, tmp_path: Path):
+        """Progress detected: first attempt (no previous commit to compare)."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+
+        gate = QualityGate(tmp_path)
+        is_no_progress = gate.check_no_progress(
+            log_path=log_path,
+            log_offset=0,
+            previous_commit_hash=None,  # No previous commit
+            current_commit_hash="abc1234",
+        )
+
+        # First attempt with a commit is always progress
+        assert is_no_progress is False
+
+    def test_no_progress_with_none_commits_and_no_evidence(self, tmp_path: Path):
+        """No progress: both commits None (no commit made) and no new evidence."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+
+        gate = QualityGate(tmp_path)
+        is_no_progress = gate.check_no_progress(
+            log_path=log_path,
+            log_offset=0,
+            previous_commit_hash=None,
+            current_commit_hash=None,  # Still no commit
+        )
+
+        assert is_no_progress is True
+
+    def test_handles_missing_log_file(self, tmp_path: Path):
+        """Should handle missing log file (no evidence = no progress)."""
+        gate = QualityGate(tmp_path)
+        nonexistent = tmp_path / "nonexistent.jsonl"
+
+        is_no_progress = gate.check_no_progress(
+            log_path=nonexistent,
+            log_offset=0,
+            previous_commit_hash="abc1234",
+            current_commit_hash="abc1234",
+        )
+
+        assert is_no_progress is True
+
+
+class TestGateResultNoProgress:
+    """Test GateResult includes no-progress indicator."""
+
+    def test_gate_result_has_no_progress_field(self):
+        """GateResult should have a no_progress field."""
+        from src.quality_gate import GateResult
+
+        result = GateResult(passed=False, failure_reasons=["test"])
+        # Check the field exists and defaults appropriately
+        assert hasattr(result, "no_progress")
+
+    def test_gate_result_no_progress_default_false(self):
+        """GateResult.no_progress should default to False."""
+        from src.quality_gate import GateResult
+
+        result = GateResult(passed=True)
+        assert result.no_progress is False

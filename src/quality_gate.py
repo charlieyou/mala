@@ -67,6 +67,7 @@ class GateResult:
     failure_reasons: list[str] = field(default_factory=list)
     commit_hash: str | None = None
     validation_evidence: ValidationEvidence | None = None
+    no_progress: bool = False
 
 
 class QualityGate:
@@ -98,13 +99,35 @@ class QualityGate:
         Returns:
             ValidationEvidence with flags for each detected command.
         """
+        evidence, _ = self.parse_validation_evidence_from_offset(log_path, offset=0)
+        return evidence
+
+    def parse_validation_evidence_from_offset(
+        self, log_path: Path, offset: int = 0
+    ) -> tuple[ValidationEvidence, int]:
+        """Parse JSONL log file for validation command evidence starting at offset.
+
+        This allows scoping evidence to a specific attempt by starting from
+        the byte offset where the previous attempt ended.
+
+        Args:
+            log_path: Path to the JSONL log file from agent session.
+            offset: Byte offset to start reading from (default 0 = beginning).
+
+        Returns:
+            Tuple of (ValidationEvidence, new_offset) where new_offset is the
+            file position after parsing (for use in subsequent calls).
+        """
         evidence = ValidationEvidence()
 
         if not log_path.exists():
-            return evidence
+            return evidence, 0
 
         try:
             with open(log_path) as f:
+                # Seek to the starting offset
+                f.seek(offset)
+
                 for line in f:
                     line = line.strip()
                     if not line:
@@ -143,11 +166,67 @@ class QualityGate:
                         if self.VALIDATION_PATTERNS["ty_check"].search(command):
                             evidence.ty_check_ran = True
 
+                # Get the new offset (current file position)
+                new_offset = f.tell()
+
         except OSError:
             # File read error - return empty evidence
-            pass
+            return evidence, 0
 
-        return evidence
+        return evidence, new_offset
+
+    def check_no_progress(
+        self,
+        log_path: Path,
+        log_offset: int,
+        previous_commit_hash: str | None,
+        current_commit_hash: str | None,
+    ) -> bool:
+        """Check if no progress was made since the last attempt.
+
+        No progress is detected when:
+        - The commit hash hasn't changed (or both are None)
+        - No new validation evidence was found after the log offset
+
+        Args:
+            log_path: Path to the JSONL log file from agent session.
+            log_offset: Byte offset marking the end of the previous attempt.
+            previous_commit_hash: Commit hash from the previous attempt (None if no commit).
+            current_commit_hash: Commit hash from this attempt (None if no commit).
+
+        Returns:
+            True if no progress was made, False if progress was detected.
+        """
+        # Check if commit changed
+        commit_changed = previous_commit_hash != current_commit_hash
+
+        # A new commit from None is progress (first successful commit)
+        if previous_commit_hash is None and current_commit_hash is not None:
+            return False
+
+        # If commit changed, that's progress
+        if commit_changed:
+            return False
+
+        # Check for new validation evidence after the offset
+        evidence, _ = self.parse_validation_evidence_from_offset(
+            log_path, offset=log_offset
+        )
+
+        # Any new validation evidence counts as progress
+        has_new_evidence = (
+            evidence.uv_sync_ran
+            or evidence.pytest_ran
+            or evidence.ruff_check_ran
+            or evidence.ruff_format_ran
+            or evidence.ty_check_ran
+        )
+
+        if has_new_evidence:
+            return False
+
+        # No commit change and no new evidence = no progress
+        return True
 
     def check_commit_exists(self, issue_id: str) -> CommitResult:
         """Check if a commit with bd-<issue_id> exists in recent history.
