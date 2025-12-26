@@ -489,3 +489,233 @@ class TestErrorFormatting:
         # Error should be truncated
         assert len(ctx.error) < 250  # 200 chars of stderr + prefix
         assert "..." in ctx.error
+
+
+class TestPathValidation:
+    """Test path validation for security."""
+
+    @pytest.fixture
+    def config(self, tmp_path: Path) -> WorktreeConfig:
+        return WorktreeConfig(base_dir=tmp_path / "worktrees")
+
+    def test_rejects_run_id_with_slash(
+        self, config: WorktreeConfig, tmp_path: Path
+    ) -> None:
+        """run_id containing '/' should be rejected."""
+        ctx = create_worktree(
+            repo_path=tmp_path / "repo",
+            commit_sha="abc123",
+            config=config,
+            run_id="run/escape",
+            issue_id="mala-10",
+            attempt=1,
+        )
+        assert ctx.state == WorktreeState.FAILED
+        assert "Invalid run_id" in (ctx.error or "")
+
+    def test_rejects_issue_id_with_dotdot(
+        self, config: WorktreeConfig, tmp_path: Path
+    ) -> None:
+        """issue_id containing '..' should be rejected."""
+        ctx = create_worktree(
+            repo_path=tmp_path / "repo",
+            commit_sha="abc123",
+            config=config,
+            run_id="run-1",
+            issue_id="../escape",
+            attempt=1,
+        )
+        assert ctx.state == WorktreeState.FAILED
+        assert "Invalid issue_id" in (ctx.error or "")
+
+    def test_rejects_absolute_path_in_run_id(
+        self, config: WorktreeConfig, tmp_path: Path
+    ) -> None:
+        """Absolute path in run_id should be rejected."""
+        ctx = create_worktree(
+            repo_path=tmp_path / "repo",
+            commit_sha="abc123",
+            config=config,
+            run_id="/etc/passwd",
+            issue_id="mala-10",
+            attempt=1,
+        )
+        assert ctx.state == WorktreeState.FAILED
+        assert "Invalid run_id" in (ctx.error or "")
+
+    def test_rejects_hidden_directory_run_id(
+        self, config: WorktreeConfig, tmp_path: Path
+    ) -> None:
+        """run_id starting with dot should be rejected."""
+        ctx = create_worktree(
+            repo_path=tmp_path / "repo",
+            commit_sha="abc123",
+            config=config,
+            run_id=".hidden",
+            issue_id="mala-10",
+            attempt=1,
+        )
+        assert ctx.state == WorktreeState.FAILED
+        assert "Invalid run_id" in (ctx.error or "")
+
+    def test_rejects_negative_attempt(
+        self, config: WorktreeConfig, tmp_path: Path
+    ) -> None:
+        """Negative attempt number should be rejected."""
+        ctx = create_worktree(
+            repo_path=tmp_path / "repo",
+            commit_sha="abc123",
+            config=config,
+            run_id="run-1",
+            issue_id="mala-10",
+            attempt=-1,
+        )
+        assert ctx.state == WorktreeState.FAILED
+        assert "Invalid attempt" in (ctx.error or "")
+
+    def test_accepts_valid_path_components(
+        self, config: WorktreeConfig, tmp_path: Path
+    ) -> None:
+        """Valid path components should be accepted."""
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+
+        with patch("subprocess.run", return_value=mock_result):
+            ctx = create_worktree(
+                repo_path=tmp_path / "repo",
+                commit_sha="abc123",
+                config=config,
+                run_id="run-123_test.v1",
+                issue_id="mala-42",
+                attempt=1,
+            )
+        assert ctx.state == WorktreeState.CREATED
+
+    def test_context_path_raises_on_unsafe_input(self, tmp_path: Path) -> None:
+        """WorktreeContext.path should raise ValueError for unsafe inputs."""
+        config = WorktreeConfig(base_dir=tmp_path / "worktrees")
+        ctx = WorktreeContext(
+            config=config,
+            repo_path=tmp_path / "repo",
+            run_id="../escape",
+            issue_id="mala-10",
+            attempt=1,
+        )
+
+        with pytest.raises(ValueError, match="Invalid run_id"):
+            _ = ctx.path
+
+
+class TestRemoveWorktreeFailurePropagation:
+    """Test that remove_worktree properly propagates failures."""
+
+    @pytest.fixture
+    def created_ctx(self, tmp_path: Path) -> WorktreeContext:
+        config = WorktreeConfig(base_dir=tmp_path / "worktrees")
+        ctx = WorktreeContext(
+            config=config,
+            repo_path=tmp_path / "repo",
+            run_id="run-1",
+            issue_id="mala-10",
+            attempt=1,
+            state=WorktreeState.CREATED,
+        )
+        # Force path validation
+        ctx._validated = True
+        ctx._path = config.base_dir / "run-1" / "mala-10" / "1"
+        return ctx
+
+    def test_reports_failure_even_when_directory_deleted(
+        self, created_ctx: WorktreeContext
+    ) -> None:
+        """git worktree remove failure should be reported even if directory was deleted."""
+        # Git command fails
+        mock_git_fail = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="worktree not found"
+        )
+        # But directory doesn't exist (already deleted somehow)
+        with (
+            patch("subprocess.run", return_value=mock_git_fail),
+            patch.object(Path, "exists", return_value=False),
+        ):
+            ctx = remove_worktree(created_ctx, validation_passed=True)
+
+        assert ctx.state == WorktreeState.FAILED
+        assert "worktree not found" in (ctx.error or "")
+
+    def test_reports_directory_cleanup_failure(
+        self, created_ctx: WorktreeContext, tmp_path: Path
+    ) -> None:
+        """Should report failure when directory cleanup fails."""
+        # Create the directory so exists() returns True
+        created_ctx._path.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
+
+        mock_git_success = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+
+        def mock_rmtree(path: Path) -> None:
+            raise OSError("Permission denied")
+
+        with (
+            patch("subprocess.run", return_value=mock_git_success),
+            patch("shutil.rmtree", side_effect=mock_rmtree),
+        ):
+            ctx = remove_worktree(created_ctx, validation_passed=True)
+
+        assert ctx.state == WorktreeState.FAILED
+        assert "Permission denied" in (ctx.error or "")
+
+
+class TestStalePathCleanup:
+    """Test stale path cleanup error handling."""
+
+    @pytest.fixture
+    def config(self, tmp_path: Path) -> WorktreeConfig:
+        return WorktreeConfig(base_dir=tmp_path / "worktrees")
+
+    def test_fails_if_path_is_file(
+        self, config: WorktreeConfig, tmp_path: Path
+    ) -> None:
+        """Should fail if worktree path exists as a file."""
+        # Create parent and a file at the worktree path
+        worktree_path = config.base_dir / "run-1" / "mala-10" / "1"
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+        worktree_path.touch()  # Create as file, not directory
+
+        ctx = create_worktree(
+            repo_path=tmp_path / "repo",
+            commit_sha="abc123",
+            config=config,
+            run_id="run-1",
+            issue_id="mala-10",
+            attempt=1,
+        )
+
+        assert ctx.state == WorktreeState.FAILED
+        assert "exists as file" in (ctx.error or "")
+
+    def test_fails_if_stale_cleanup_fails(
+        self, config: WorktreeConfig, tmp_path: Path
+    ) -> None:
+        """Should fail fast if stale worktree cleanup fails."""
+        # Create a directory at the worktree path
+        worktree_path = config.base_dir / "run-1" / "mala-10" / "1"
+        worktree_path.mkdir(parents=True, exist_ok=True)
+
+        def mock_rmtree(path: Path, **kwargs: object) -> None:
+            raise OSError("Permission denied")
+
+        with patch("shutil.rmtree", side_effect=mock_rmtree):
+            ctx = create_worktree(
+                repo_path=tmp_path / "repo",
+                commit_sha="abc123",
+                config=config,
+                run_id="run-1",
+                issue_id="mala-10",
+                attempt=1,
+            )
+
+        assert ctx.state == WorktreeState.FAILED
+        assert "Failed to remove stale worktree" in (ctx.error or "")

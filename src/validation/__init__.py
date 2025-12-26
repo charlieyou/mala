@@ -4,6 +4,13 @@ This package provides a clean-room validation runner that operates in
 temporary git worktrees, ensuring commits are tested in isolation.
 """
 
+from .coverage import (
+    CoverageResult,
+    CoverageStatus,
+    check_coverage_threshold,
+    parse_and_check_coverage,
+    parse_coverage_xml,
+)
 from .runner import (
     ValidationConfig,
     ValidationResult,
@@ -40,6 +47,8 @@ from .worktree import (
 __all__ = [
     "CommandKind",
     "CoverageConfig",
+    "CoverageResult",
+    "CoverageStatus",
     "E2EConfig",
     "IssueResolution",
     "ResolutionOutcome",
@@ -60,8 +69,11 @@ __all__ = [
     "_format_step_output",
     "_tail",
     "build_validation_spec",
+    "check_coverage_threshold",
     "classify_change",
     "cleanup_stale_worktrees",
     "create_worktree",
+    "parse_and_check_coverage",
+    "parse_coverage_xml",
     "remove_worktree",
 ]

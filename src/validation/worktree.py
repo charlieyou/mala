@@ -6,6 +6,7 @@ Worktree paths follow the format: {base_dir}/{run_id}/{issue_id}/{attempt}/
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -14,6 +15,11 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+# Pattern for valid path components (alphanumeric, dash, underscore, dot)
+# Must not start with dot to prevent hidden files/directories
+_SAFE_PATH_COMPONENT = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
 
 class WorktreeState(Enum):
@@ -67,14 +73,61 @@ class WorktreeContext:
     state: WorktreeState = field(default=WorktreeState.PENDING)
     error: str | None = None
     _path: Path | None = field(default=None, repr=False)
+    _validated: bool = field(default=False, repr=False)
+
+    def _validate_path_components(self) -> None:
+        """Validate that path components are safe and don't escape base_dir.
+
+        Raises:
+            ValueError: If any path component is unsafe.
+        """
+        if self._validated:
+            return
+
+        # Validate run_id
+        if not _SAFE_PATH_COMPONENT.match(self.run_id):
+            raise ValueError(
+                f"Invalid run_id '{self.run_id}': must be alphanumeric with ._- allowed"
+            )
+
+        # Validate issue_id
+        if not _SAFE_PATH_COMPONENT.match(self.issue_id):
+            raise ValueError(
+                f"Invalid issue_id '{self.issue_id}': must be alphanumeric with ._- allowed"
+            )
+
+        # Validate attempt is positive
+        if self.attempt < 1:
+            raise ValueError(f"Invalid attempt '{self.attempt}': must be >= 1")
+
+        self._validated = True
 
     @property
     def path(self) -> Path:
-        """Get the deterministic worktree path."""
+        """Get the deterministic worktree path.
+
+        Raises:
+            ValueError: If path components are unsafe.
+        """
         if self._path is None:
-            self._path = (
+            # Validate before constructing path
+            self._validate_path_components()
+
+            # Construct path
+            candidate = (
                 self.config.base_dir / self.run_id / self.issue_id / str(self.attempt)
             )
+
+            # Resolve and verify it's within base_dir
+            resolved_base = self.config.base_dir.resolve()
+            resolved_path = candidate.resolve()
+
+            if not str(resolved_path).startswith(str(resolved_base) + "/"):
+                raise ValueError(
+                    f"Computed path '{resolved_path}' escapes base_dir '{resolved_base}'"
+                )
+
+            self._path = resolved_path
         return self._path
 
     def to_result(self) -> WorktreeResult:
@@ -111,15 +164,32 @@ def create_worktree(
         attempt=attempt,
     )
 
-    # Ensure parent directories exist
-    ctx.path.parent.mkdir(parents=True, exist_ok=True)
+    # Validate and get path (may raise ValueError for unsafe inputs)
+    try:
+        worktree_path = ctx.path
+    except ValueError as e:
+        ctx.state = WorktreeState.FAILED
+        ctx.error = str(e)
+        return ctx
 
-    # Remove any existing directory at the path (stale from crashed run)
-    if ctx.path.exists():
-        shutil.rmtree(ctx.path, ignore_errors=True)
+    # Ensure parent directories exist
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Remove any existing path (stale from crashed run)
+    if worktree_path.exists():
+        if worktree_path.is_file():
+            ctx.state = WorktreeState.FAILED
+            ctx.error = f"Path exists as file, not directory: {worktree_path}"
+            return ctx
+        try:
+            shutil.rmtree(worktree_path)
+        except OSError as e:
+            ctx.state = WorktreeState.FAILED
+            ctx.error = f"Failed to remove stale worktree: {e}"
+            return ctx
 
     result = subprocess.run(
-        ["git", "worktree", "add", "--detach", str(ctx.path), commit_sha],
+        ["git", "worktree", "add", "--detach", str(worktree_path), commit_sha],
         cwd=ctx.repo_path,
         capture_output=True,
         text=True,
@@ -129,8 +199,8 @@ def create_worktree(
         ctx.state = WorktreeState.FAILED
         ctx.error = _format_git_error("git worktree add", result)
         # Clean up any partial directory
-        if ctx.path.exists():
-            shutil.rmtree(ctx.path, ignore_errors=True)
+        if worktree_path.exists():
+            shutil.rmtree(worktree_path, ignore_errors=True)
         return ctx
 
     ctx.state = WorktreeState.CREATED
@@ -172,14 +242,23 @@ def remove_worktree(
         text=True,
     )
 
-    # Even if git worktree remove fails, try to clean up the directory
+    # Track git command failure separately from directory cleanup
+    git_failed = result.returncode != 0
+    git_error = _format_git_error("git worktree remove", result) if git_failed else None
+
+    # Try to clean up the directory even if git worktree remove failed
+    dir_cleanup_failed = False
     if ctx.path.exists():
         try:
             shutil.rmtree(ctx.path)
-        except OSError:
-            pass
+        except OSError as e:
+            dir_cleanup_failed = True
+            if git_error:
+                git_error = f"{git_error}; directory cleanup also failed: {e}"
+            else:
+                git_error = f"Directory cleanup failed: {e}"
 
-    # Prune the worktree list to clean up the git repo
+    # Prune the worktree list to clean up stale git metadata
     subprocess.run(
         ["git", "worktree", "prune"],
         cwd=ctx.repo_path,
@@ -187,9 +266,11 @@ def remove_worktree(
         text=True,
     )
 
-    if result.returncode != 0 and ctx.path.exists():
+    # Report failure if git command failed (even if directory was cleaned up)
+    # This ensures stale git metadata issues are surfaced
+    if git_failed or dir_cleanup_failed:
         ctx.state = WorktreeState.FAILED
-        ctx.error = _format_git_error("git worktree remove", result)
+        ctx.error = git_error
         return ctx
 
     ctx.state = WorktreeState.REMOVED
