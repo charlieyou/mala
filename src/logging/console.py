@@ -8,28 +8,28 @@ from datetime import datetime
 from typing import Any
 
 
-# Global truncation setting (can be modified at runtime)
-_truncate_enabled: bool = True
+# Global verbose setting (can be modified at runtime)
+_verbose_enabled: bool = False
 
 
-def set_truncation(enabled: bool) -> None:
-    """Enable or disable output truncation globally."""
-    global _truncate_enabled
-    _truncate_enabled = enabled
+def set_verbose(enabled: bool) -> None:
+    """Enable or disable verbose output globally."""
+    global _verbose_enabled
+    _verbose_enabled = enabled
 
 
-def is_truncation_enabled() -> bool:
-    """Check if truncation is currently enabled."""
-    return _truncate_enabled
+def is_verbose_enabled() -> bool:
+    """Check if verbose output is currently enabled."""
+    return _verbose_enabled
 
 
 def truncate_text(text: str, max_length: int) -> str:
     """Truncate text to max_length, adding ellipsis if truncated.
 
-    Respects global truncation setting. If truncation is disabled,
+    Respects global verbose setting. If verbose is enabled,
     returns the original text unchanged.
     """
-    if not _truncate_enabled:
+    if _verbose_enabled:
         return text
     if len(text) > max_length:
         return text[:max_length] + "..."
@@ -62,6 +62,27 @@ AGENT_COLORS = [
     "\033[94m",  # Bright Blue
     "\033[97m",  # Bright White
 ]
+
+# Tools that have code fields which should be pretty-printed
+EDIT_TOOLS = frozenset(
+    {
+        "mcp__morphllm__edit_file",
+        "Edit",
+        "Write",
+        "NotebookEdit",
+    }
+)
+
+# Fields in edit tools that contain code (should be pretty-printed with newlines)
+CODE_FIELDS = frozenset(
+    {
+        "code_edit",
+        "content",
+        "new_source",
+        "old_string",
+        "new_string",
+    }
+)
 
 # Maps agent/issue IDs to their assigned colors
 _agent_color_map: dict[str, str] = {}
@@ -102,47 +123,91 @@ def log(
     )
 
 
-def _format_arguments(arguments: dict[str, Any] | None, truncate: bool) -> str:
+def _format_arguments(
+    arguments: dict[str, Any] | None, verbose: bool, tool_name: str = ""
+) -> str:
     """Format tool arguments for display.
 
     Args:
         arguments: Tool arguments as a dictionary.
-        truncate: Whether to truncate/abbreviate the output.
+        verbose: Whether to show full output (vs abbreviated).
+        tool_name: Name of the tool (used to detect edit tools for code formatting).
 
     Returns:
-        Formatted string representation of arguments.
+        Formatted string representation of arguments as key: value lines.
     """
     if not arguments:
         return ""
 
-    if truncate:
-        # Abbreviated format: key=value pairs, truncated
-        parts = []
-        for key, value in arguments.items():
-            if isinstance(value, str):
-                # Truncate long string values
-                if len(value) > 30:
-                    value = value[:30] + "..."
-                parts.append(f"{key}={value!r}")
-            elif isinstance(value, dict):
-                parts.append(f"{key}={{...}}")
-            elif isinstance(value, list):
-                parts.append(f"{key}=[...]")
+    is_edit_tool = tool_name in EDIT_TOOLS
+    lines = []
+
+    for key, value in arguments.items():
+        is_code_field = key in CODE_FIELDS
+
+        if isinstance(value, str):
+            if is_code_field and is_edit_tool:
+                # Code field: show with actual newlines
+                if verbose:
+                    # Full code display with distinct coloring
+                    code_lines = value.split("\n")
+                    lines.append(f"{Colors.CYAN}{key}:{Colors.RESET}")
+                    for code_line in code_lines:
+                        lines.append(f"  {Colors.DIM}{code_line}{Colors.RESET}")
+                else:
+                    # Truncated code preview
+                    preview = value[:60].replace("\n", "↵")
+                    if len(value) > 60:
+                        preview += "..."
+                    lines.append(
+                        f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.DIM}{preview}{Colors.RESET}"
+                    )
             else:
-                parts.append(f"{key}={value!r}")
-        result = ", ".join(parts)
-        # Truncate overall length
-        if len(result) > 80:
-            result = result[:80] + "..."
-        return result
-    else:
-        # Full format: pretty-printed JSON for complex args
-        try:
-            formatted = json.dumps(arguments, indent=2, ensure_ascii=False)
-            return formatted
-        except (TypeError, ValueError):
-            # Fallback for non-serializable objects
-            return str(arguments)
+                # Regular string field
+                if verbose or len(value) <= 80:
+                    lines.append(
+                        f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.WHITE}{value}{Colors.RESET}"
+                    )
+                else:
+                    truncated = value[:80] + "..."
+                    lines.append(
+                        f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.WHITE}{truncated}{Colors.RESET}"
+                    )
+        elif isinstance(value, bool):
+            lines.append(
+                f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.WHITE}{str(value).lower()}{Colors.RESET}"
+            )
+        elif isinstance(value, (int, float)):
+            lines.append(
+                f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.WHITE}{value}{Colors.RESET}"
+            )
+        elif isinstance(value, dict):
+            if verbose:
+                formatted = json.dumps(value, indent=2, ensure_ascii=False)
+                lines.append(f"{Colors.CYAN}{key}:{Colors.RESET}")
+                for dict_line in formatted.split("\n"):
+                    lines.append(f"  {Colors.DIM}{dict_line}{Colors.RESET}")
+            else:
+                lines.append(
+                    f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.DIM}{{...}}{Colors.RESET}"
+                )
+        elif isinstance(value, list):
+            if verbose:
+                formatted = json.dumps(value, indent=2, ensure_ascii=False)
+                lines.append(f"{Colors.CYAN}{key}:{Colors.RESET}")
+                for list_line in formatted.split("\n"):
+                    lines.append(f"  {Colors.DIM}{list_line}{Colors.RESET}")
+            else:
+                lines.append(
+                    f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.DIM}[...]{Colors.RESET}"
+                )
+        else:
+            # Fallback for other types
+            lines.append(
+                f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.WHITE}{value!r}{Colors.RESET}"
+            )
+
+    return "\n    ".join(lines)
 
 
 def log_tool(
@@ -173,17 +238,11 @@ def log_tool(
     # Format arguments if provided
     args_output = ""
     if arguments:
-        truncate = is_truncation_enabled()
-        formatted_args = _format_arguments(arguments, truncate)
+        verbose = is_verbose_enabled()
+        formatted_args = _format_arguments(arguments, verbose, tool_name)
         if formatted_args:
-            if truncate:
-                # Single line for truncated mode
-                args_output = f"\n    {Colors.DIM}args: {formatted_args}{Colors.RESET}"
-            else:
-                # Multi-line for full mode
-                lines = formatted_args.split("\n")
-                indented = "\n    ".join(lines)
-                args_output = f"\n    {Colors.DIM}args:\n    {indented}{Colors.RESET}"
+            # Multi-line key:value format (no "args:" prefix)
+            args_output = f"\n    {formatted_args}"
 
     print(f"  {prefix}{Colors.CYAN}{icon} {tool_name}{Colors.RESET}{desc}{args_output}")
 

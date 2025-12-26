@@ -37,7 +37,7 @@ from typing import Annotated
 
 import typer
 
-from .logging.console import Colors, log, set_truncation
+from .logging.console import Colors, log, set_verbose
 from .tools.locking import LOCK_DIR
 from .orchestrator import MalaOrchestrator
 
@@ -119,18 +119,19 @@ def run(
             help="Enable/disable codex review step (default: disabled)",
         ),
     ] = False,
-    no_truncate: Annotated[
+    verbose: Annotated[
         bool,
         typer.Option(
-            "--no-truncate",
-            help="Disable output truncation to show full log lines",
+            "--verbose",
+            "-v",
+            help="Enable verbose output with full tool arguments and code",
         ),
     ] = False,
 ):
     """Run parallel issue processing."""
-    # Apply truncation setting
-    if no_truncate:
-        set_truncation(False)
+    # Apply verbose setting
+    if verbose:
+        set_verbose(True)
 
     repo_path = repo_path.resolve()
 
