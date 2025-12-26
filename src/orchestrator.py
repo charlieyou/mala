@@ -25,7 +25,7 @@ from .hooks import (
     block_morph_replaced_tools,
     make_lock_enforcement_hook,
 )
-from .logging.console import Colors, log, log_tool, log_agent_text
+from .logging.console import Colors, log, log_tool, log_agent_text, truncate_text
 from .logging.jsonl import JSONLLogger
 from .quality_gate import QualityGate
 from .tools.env import USER_CONFIG_DIR, JSONL_LOG_DIR, SCRIPTS_DIR
@@ -445,11 +445,7 @@ class MalaOrchestrator:
 
                             duration_str = f"{result.duration_seconds:.0f}s"
                             if result.success:
-                                summary = (
-                                    result.summary[:50] + "..."
-                                    if len(result.summary) > 50
-                                    else result.summary
-                                )
+                                summary = truncate_text(result.summary, 50)
                                 log(
                                     "✓",
                                     f"({duration_str}): {summary}",
