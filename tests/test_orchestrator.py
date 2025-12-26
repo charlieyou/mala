@@ -8,6 +8,7 @@ import asyncio
 import json
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1539,3 +1540,43 @@ class TestSubprocessTerminationOnTimeout:
 
         assert result.returncode == 1
         assert "error" in result.stderr
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="Process groups not supported on Windows"
+    )
+    async def test_child_processes_killed_on_timeout(self, tmp_path: Path):
+        """Child processes spawned by the command should also be killed on timeout."""
+        import os
+
+        from src.beads_client import BeadsClient
+
+        beads = BeadsClient(tmp_path, timeout_seconds=0.5)
+
+        # Create a script that spawns a child process that would outlive the parent
+        # The child writes its PID to a file so we can check if it was killed
+        pid_file = tmp_path / "child.pid"
+        script = f"""
+            # Spawn a child that writes its PID and then sleeps
+            (echo $$ > {pid_file}; sleep 60) &
+            # Parent also sleeps
+            sleep 60
+        """
+
+        result = await beads._run_subprocess_async(["sh", "-c", script])
+
+        assert result.returncode == 1
+        assert result.stderr == "timeout"
+
+        # Give a moment for the file to be written and process to be killed
+        await asyncio.sleep(0.2)
+
+        # Check if the child process was killed
+        if pid_file.exists():
+            child_pid = int(pid_file.read_text().strip())
+            # Check if the process is still running
+            try:
+                os.kill(child_pid, 0)  # Signal 0 just checks if process exists
+                pytest.fail(f"Child process {child_pid} was not killed")
+            except ProcessLookupError:
+                pass  # Good - process was killed

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import signal
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -58,8 +61,9 @@ class BeadsClient:
         """Run subprocess asynchronously with timeout and proper termination.
 
         Uses asyncio subprocess to enable proper process termination on timeout.
-        When a timeout occurs, the subprocess is terminated (SIGTERM) and then
-        killed (SIGKILL) if it doesn't exit promptly.
+        When a timeout occurs, the entire process group is terminated (SIGTERM)
+        and then killed (SIGKILL) if it doesn't exit promptly. This ensures that
+        any child processes spawned by the command are also terminated.
 
         Args:
             cmd: Command to run.
@@ -70,12 +74,17 @@ class BeadsClient:
         """
         effective_timeout = timeout if timeout is not None else self.timeout_seconds
 
+        # On Unix, use start_new_session to create a new process group
+        # This allows us to kill all child processes on timeout
+        use_process_group = sys.platform != "win32"
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.repo_path,
+                start_new_session=use_process_group,
             )
 
             try:
@@ -90,28 +99,60 @@ class BeadsClient:
                     stderr=stderr_bytes.decode() if stderr_bytes else "",
                 )
             except TimeoutError:
-                # Terminate the subprocess on timeout
+                # Terminate the subprocess and all its children on timeout
                 self._log_warning(
                     f"Command timed out after {effective_timeout}s: {' '.join(cmd)}"
                 )
-                try:
-                    proc.terminate()
-                    # Give it a short time to terminate gracefully
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=2.0)
-                    except TimeoutError:
-                        # Force kill if it doesn't terminate
-                        proc.kill()
-                        await proc.wait()
-                except ProcessLookupError:
-                    # Process already exited
-                    pass
+                await self._terminate_process(proc, use_process_group)
                 return SubprocessResult(
                     args=cmd, returncode=1, stdout="", stderr="timeout"
                 )
         except Exception as e:
             self._log_warning(f"Command failed: {' '.join(cmd)}: {e}")
             return SubprocessResult(args=cmd, returncode=1, stdout="", stderr=str(e))
+
+    async def _terminate_process(
+        self, proc: asyncio.subprocess.Process, use_process_group: bool
+    ) -> None:
+        """Terminate a process and all its children.
+
+        First sends SIGTERM to the process group (or just the process on Windows),
+        waits up to 2 seconds for graceful exit, then sends SIGKILL if needed.
+
+        Args:
+            proc: The process to terminate.
+            use_process_group: Whether to kill the entire process group.
+        """
+        if proc.returncode is not None:
+            # Process already exited
+            return
+
+        try:
+            if use_process_group and proc.pid is not None:
+                # Kill the entire process group
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            else:
+                proc.terminate()
+
+            # Give it a short time to terminate gracefully
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except TimeoutError:
+                # Force kill if it doesn't terminate
+                if use_process_group and proc.pid is not None:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+                else:
+                    proc.kill()
+                await proc.wait()
+        except ProcessLookupError:
+            # Process already exited
+            pass
 
     # --- Async methods (non-blocking, use in async context) ---
 
