@@ -26,9 +26,9 @@ from .hooks import (
     make_lock_enforcement_hook,
 )
 from .logging.console import Colors, log, log_tool, log_agent_text, truncate_text
-from .logging.jsonl import JSONLLogger
+from .logging.run_metadata import RunMetadata, RunConfig, IssueRun, QualityGateResult
 from .quality_gate import QualityGate
-from .tools.env import USER_CONFIG_DIR, JSONL_LOG_DIR, SCRIPTS_DIR
+from .tools.env import USER_CONFIG_DIR, RUNS_DIR, SCRIPTS_DIR, get_claude_log_path
 from .tools.locking import (
     LOCK_DIR,
     release_all_locks,
@@ -71,6 +71,7 @@ class IssueResult:
     success: bool
     summary: str
     duration_seconds: float = 0.0
+    session_id: str | None = None  # Claude SDK session ID
 
 
 class MalaOrchestrator:
@@ -124,15 +125,11 @@ class MalaOrchestrator:
 
     async def run_implementer(self, issue_id: str) -> IssueResult:
         """Run implementer agent for a single issue."""
-        session_id = str(uuid.uuid4())
-        agent_id = f"{issue_id}-{session_id[:8]}"
+        agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
         self.agent_ids[issue_id] = agent_id
 
-        # JSONL logger for full message logging
-        jsonl_logger = JSONLLogger(session_id, self.repo_path)
-
-        # Store log path for quality gate check
-        self.session_log_paths[issue_id] = jsonl_logger.log_path
+        # Claude session ID will be captured from ResultMessage
+        claude_session_id: str | None = None
 
         prompt = IMPLEMENTER_PROMPT_TEMPLATE.format(
             issue_id=issue_id,
@@ -185,7 +182,6 @@ class MalaOrchestrator:
                 "project_dir": self.repo_path.name,
                 "git_branch": get_git_branch(self.repo_path),
                 "git_commit": get_git_commit(self.repo_path),
-                "session_id": session_id,
                 "timeout_seconds": self.timeout_seconds,
             },
         )
@@ -198,12 +194,8 @@ class MalaOrchestrator:
                     async with asyncio.timeout(self.timeout_seconds):
                         async with ClaudeSDKClient(options=options) as client:
                             await client.query(prompt)
-                            jsonl_logger.log_user_prompt(prompt)
 
                             async for message in client.receive_response():
-                                # Log full message to JSONL
-                                jsonl_logger.log_message(message)
-
                                 # Log to Braintrust
                                 tracer.log_message(message)
 
@@ -220,6 +212,7 @@ class MalaOrchestrator:
                                             )
 
                                 elif isinstance(message, ResultMessage):
+                                    claude_session_id = message.session_id
                                     final_result = message.result or ""
 
                     # Check if issue was closed (inside tracer context)
@@ -241,7 +234,11 @@ class MalaOrchestrator:
 
         finally:
             duration = asyncio.get_event_loop().time() - start_time
-            jsonl_logger.close()
+
+            # Store Claude log path for quality gate (if session completed)
+            if claude_session_id:
+                log_path = get_claude_log_path(self.repo_path, claude_session_id)
+                self.session_log_paths[issue_id] = log_path
 
             # Ensure locks are cleaned
             self._cleanup_agent_locks(agent_id)
@@ -253,6 +250,7 @@ class MalaOrchestrator:
             success=success,
             summary=final_result,
             duration_seconds=duration,
+            session_id=claude_session_id,
         )
 
     async def spawn_agent(self, issue_id: str) -> bool:
@@ -329,7 +327,18 @@ class MalaOrchestrator:
 
         # Setup directories
         LOCK_DIR.mkdir(exist_ok=True)
-        JSONL_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        RUNS_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Create run metadata tracker
+        run_config = RunConfig(
+            max_agents=self.max_agents,
+            timeout_minutes=self.timeout_seconds // 60,
+            max_issues=self.max_issues,
+            epic_id=self.epic_id,
+            only_ids=list(self.only_ids) if self.only_ids else None,
+            braintrust_enabled=self.braintrust_enabled,
+        )
+        run_metadata = RunMetadata(self.repo_path, run_config, __version__)
 
         issues_spawned = 0
 
@@ -413,37 +422,76 @@ class MalaOrchestrator:
                                 )
 
                             # Run quality gate for successful completions
-                            if result.success:
-                                log_path = self.session_log_paths.get(issue_id)
-                                if log_path:
-                                    gate_result = self.quality_gate.check(
-                                        issue_id, log_path
+                            quality_gate_result: QualityGateResult | None = None
+                            log_path = self.session_log_paths.get(issue_id)
+
+                            if result.success and log_path and log_path.exists():
+                                gate_result = self.quality_gate.check(
+                                    issue_id, log_path
+                                )
+                                evidence = gate_result.validation_evidence
+                                quality_gate_result = QualityGateResult(
+                                    passed=gate_result.passed,
+                                    evidence={
+                                        "pytest_ran": evidence.pytest_ran
+                                        if evidence
+                                        else False,
+                                        "ruff_check_ran": evidence.ruff_check_ran
+                                        if evidence
+                                        else False,
+                                        "ruff_format_ran": evidence.ruff_format_ran
+                                        if evidence
+                                        else False,
+                                        "uv_sync_ran": evidence.uv_sync_ran
+                                        if evidence
+                                        else False,
+                                        "ty_check_ran": evidence.ty_check_ran
+                                        if evidence
+                                        else False,
+                                        "commit_found": gate_result.commit_hash
+                                        is not None,
+                                    },
+                                    failure_reasons=gate_result.failure_reasons,
+                                )
+                                if not gate_result.passed:
+                                    # Gate failed - mark needs-followup with log path
+                                    reason = "; ".join(gate_result.failure_reasons)
+                                    self.beads.mark_needs_followup(
+                                        issue_id, reason, log_path=log_path
                                     )
-                                    if not gate_result.passed:
-                                        # Gate failed - mark needs-followup with log path
-                                        reason = "; ".join(gate_result.failure_reasons)
-                                        self.beads.mark_needs_followup(
-                                            issue_id, reason, log_path=log_path
-                                        )
-                                        result = IssueResult(
-                                            issue_id=result.issue_id,
-                                            agent_id=result.agent_id,
-                                            success=False,
-                                            summary=f"Quality gate failed: {reason}",
-                                            duration_seconds=result.duration_seconds,
-                                        )
-                                        log(
-                                            "⚠",
-                                            f"Quality gate failed: {reason}",
-                                            Colors.YELLOW,
-                                            agent_id=issue_id,
-                                        )
+                                    result = IssueResult(
+                                        issue_id=result.issue_id,
+                                        agent_id=result.agent_id,
+                                        success=False,
+                                        summary=f"Quality gate failed: {reason}",
+                                        duration_seconds=result.duration_seconds,
+                                        session_id=result.session_id,
+                                    )
+                                    log(
+                                        "⚠",
+                                        f"Quality gate failed: {reason}",
+                                        Colors.YELLOW,
+                                        agent_id=issue_id,
+                                    )
 
                             self.completed.append(result)
                             del self.active_tasks[issue_id]
 
-                            # Capture log path before cleanup for failure notes
-                            log_path = self.session_log_paths.pop(issue_id, None)
+                            # Record to run metadata
+                            issue_run = IssueRun(
+                                issue_id=result.issue_id,
+                                agent_id=result.agent_id,
+                                status="success" if result.success else "failed",
+                                duration_seconds=result.duration_seconds,
+                                session_id=result.session_id,
+                                log_path=str(log_path) if log_path else None,
+                                quality_gate=quality_gate_result,
+                                error=result.summary if not result.success else None,
+                            )
+                            run_metadata.record_issue(issue_run)
+
+                            # Pop log path after recording
+                            self.session_log_paths.pop(issue_id, None)
 
                             duration_str = f"{result.duration_seconds:.0f}s"
                             if result.success:
@@ -494,6 +542,11 @@ class MalaOrchestrator:
             # Auto-close epics where all children are complete
             if self.beads.close_eligible_epics():
                 log("◐", "Auto-closed completed epics", Colors.GRAY, dim=True)
+
+        # Save run metadata
+        if total > 0:
+            metadata_path = run_metadata.save()
+            log("◐", f"Run metadata: {metadata_path}", Colors.GRAY, dim=True)
 
         print()
         # Return success count for CLI exit code logic

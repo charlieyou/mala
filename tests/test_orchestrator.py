@@ -264,7 +264,7 @@ class TestRunOrchestrationLoop:
         with (
             patch.object(orchestrator.beads, "get_ready", return_value=[]),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
-            patch("src.orchestrator.JSONL_LOG_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", MagicMock()),
             patch("src.orchestrator.release_all_locks"),
         ):
             result = await orchestrator.run()
@@ -306,7 +306,7 @@ class TestRunOrchestrationLoop:
             patch.object(orchestrator.beads, "get_ready", side_effect=mock_get_ready),
             patch.object(orchestrator, "spawn_agent", side_effect=mock_spawn),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
-            patch("src.orchestrator.JSONL_LOG_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", MagicMock()),
             patch("src.orchestrator.release_all_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
@@ -356,7 +356,7 @@ class TestFailedTaskResetsIssue:
             ),
             patch.object(orchestrator.beads, "reset", side_effect=mock_reset),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
-            patch("src.orchestrator.JSONL_LOG_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", MagicMock()),
             patch("src.orchestrator.release_all_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
@@ -404,7 +404,7 @@ class TestFailedTaskResetsIssue:
             ),
             patch.object(orchestrator.beads, "reset", side_effect=mock_reset),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
-            patch("src.orchestrator.JSONL_LOG_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", MagicMock()),
             patch("src.orchestrator.release_all_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
@@ -934,7 +934,7 @@ class TestOrchestratorQualityGateIntegration:
                 orchestrator.quality_gate, "check", return_value=mock_gate_result
             ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
-            patch("src.orchestrator.JSONL_LOG_DIR", tmp_path),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
             patch("src.orchestrator.release_all_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
@@ -987,7 +987,7 @@ class TestOrchestratorQualityGateIntegration:
                 orchestrator.quality_gate, "check", return_value=mock_gate_result
             ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
-            patch("src.orchestrator.JSONL_LOG_DIR", tmp_path),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
             patch("src.orchestrator.release_all_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
