@@ -297,7 +297,7 @@ class TestRunOrchestrationLoop:
         spawned = []
 
         def mock_get_ready(
-            failed=None, epic_id=None, only_ids=None, suppress_warn_ids=None
+            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
         ):
             # Return issues only on first call
             nonlocal call_count
@@ -357,7 +357,7 @@ class TestFailedTaskResetsIssue:
         first_call = True
 
         def mock_get_ready(
-            failed=None, epic_id=None, only_ids=None, suppress_warn_ids=None
+            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
         ):
             nonlocal first_call
             if first_call:
@@ -405,7 +405,7 @@ class TestFailedTaskResetsIssue:
         first_call = True
 
         def mock_get_ready(
-            failed=None, epic_id=None, only_ids=None, suppress_warn_ids=None
+            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
         ):
             nonlocal first_call
             if first_call:
@@ -928,7 +928,7 @@ class TestOrchestratorQualityGateIntegration:
         first_call = True
 
         def mock_get_ready(
-            failed=None, epic_id=None, only_ids=None, suppress_warn_ids=None
+            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
         ):
             nonlocal first_call
             if first_call:
@@ -986,7 +986,7 @@ class TestOrchestratorQualityGateIntegration:
         first_call = True
 
         def mock_get_ready(
-            failed=None, epic_id=None, only_ids=None, suppress_warn_ids=None
+            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
         ):
             nonlocal first_call
             if first_call:
