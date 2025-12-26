@@ -168,12 +168,15 @@ Note: Agents do NOT close issues directly. The orchestrator closes issues only a
 
 After an agent completes an issue, the orchestrator runs a quality gate that verifies:
 
-1. **Commit exists**: A git commit with `bd-<issue_id>` in the message
-2. **Validation evidence**: The agent ran required checks (parsed from JSONL logs):
-   - `pytest` - tests
-   - `ruff check` and `ruff format` - linting/formatting
-   - `ty check` - type checking
+1. **Commit exists**: A git commit with `bd-<issue_id>` in the message, created during the current run (stale commits from previous runs are rejected via baseline timestamp)
+2. **Validation evidence**: The agent ran ALL required checks (parsed from JSONL logs):
    - `uv sync` - dependency installation
+   - `pytest` - tests
+   - `ruff check` - linting
+   - `ruff format` - formatting
+   - `ty check` - type checking
+
+All five validation commands must run for the gate to pass. Partial validation (e.g., only tests) is rejected.
 
 ### Same-Session Re-entry
 
@@ -332,3 +335,26 @@ Agent output uses color-coded prefixes to distinguish concurrent agents:
 - Log lines are prefixed with `[issue-id]` in the agent's color
 - Tool usage, text output, and completion status are all color-coded
 
+## Development
+
+### Type Checking
+
+mala uses strict type checking with both `ty` and `ruff`:
+
+```bash
+uvx ty check         # Type check with strict rules
+uvx ruff check .     # Lint with type annotation rules
+uvx ruff format .    # Format code
+```
+
+All ty rules are set to `error` level in `pyproject.toml` for maximum strictness.
+
+### Test Coverage
+
+Tests require 72% minimum coverage:
+
+```bash
+uv run pytest                           # Run tests with coverage
+uv run pytest -m slow                   # Include slow tests
+uv run pytest --cov-fail-under=80       # Override coverage threshold
+```
