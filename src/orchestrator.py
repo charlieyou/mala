@@ -27,6 +27,7 @@ from .hooks import (
 )
 from .logging.console import Colors, log, log_tool, log_agent_text
 from .logging.jsonl import JSONLLogger
+from .quality_gate import QualityGate
 from .tools.env import USER_CONFIG_DIR, JSONL_LOG_DIR, SCRIPTS_DIR
 from .tools.locking import (
     LOCK_DIR,
@@ -98,6 +99,12 @@ class MalaOrchestrator:
         self.completed: list[IssueResult] = []
         self.failed_issues: set[str] = set()
 
+        # Track session log paths for quality gate (issue_id -> log_path)
+        self.session_log_paths: dict[str, Path] = {}
+
+        # Quality gate for post-run validation
+        self.quality_gate = QualityGate(self.repo_path)
+
         # Initialize BeadsClient with warning logger
         def log_warning(msg: str) -> None:
             log("⚠", msg, Colors.YELLOW)
@@ -123,6 +130,9 @@ class MalaOrchestrator:
 
         # JSONL logger for full message logging
         jsonl_logger = JSONLLogger(session_id, self.repo_path)
+
+        # Store log path for quality gate check
+        self.session_log_paths[issue_id] = jsonl_logger.log_path
 
         prompt = IMPLEMENTER_PROMPT_TEMPLATE.format(
             issue_id=issue_id,
@@ -402,8 +412,36 @@ class MalaOrchestrator:
                                     summary=str(e),
                                 )
 
+                            # Run quality gate for successful completions
+                            if result.success:
+                                log_path = self.session_log_paths.get(issue_id)
+                                if log_path:
+                                    gate_result = self.quality_gate.check(
+                                        issue_id, log_path
+                                    )
+                                    if not gate_result.passed:
+                                        # Gate failed - mark needs-followup
+                                        reason = "; ".join(gate_result.failure_reasons)
+                                        self.beads.mark_needs_followup(issue_id, reason)
+                                        result = IssueResult(
+                                            issue_id=result.issue_id,
+                                            agent_id=result.agent_id,
+                                            success=False,
+                                            summary=f"Quality gate failed: {reason}",
+                                            duration_seconds=result.duration_seconds,
+                                        )
+                                        log(
+                                            "⚠",
+                                            f"Quality gate failed: {reason}",
+                                            Colors.YELLOW,
+                                            agent_id=issue_id,
+                                        )
+
                             self.completed.append(result)
                             del self.active_tasks[issue_id]
+
+                            # Clean up log path tracking
+                            self.session_log_paths.pop(issue_id, None)
 
                             duration_str = f"{result.duration_seconds:.0f}s"
                             if result.success:

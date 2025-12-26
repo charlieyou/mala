@@ -120,9 +120,7 @@ class TestGetReadyIssues:
 
         assert result == ["prio-1", "no-prio"]
 
-    def test_suppresses_warning_for_only_ids_already_processed(
-        self, tmp_path: Path
-    ):
+    def test_suppresses_warning_for_only_ids_already_processed(self, tmp_path: Path):
         """Only-id warnings should be suppressed for already processed IDs."""
         warnings: list[str] = []
         beads = BeadsClient(tmp_path, log_warning=warnings.append)
@@ -533,3 +531,447 @@ class TestOrchestratorWithEpicId:
         """epic_id should default to None."""
         orch = MalaOrchestrator(repo_path=tmp_path)
         assert orch.epic_id is None
+
+
+class TestQualityGateValidationEvidence:
+    """Test JSONL log parsing for validation command evidence."""
+
+    def test_detects_pytest_command(self, tmp_path: Path):
+        """Quality gate should detect pytest execution in JSONL logs."""
+        from src.quality_gate import QualityGate
+
+        # Create sample JSONL with pytest command
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest tests/"},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        evidence = gate.parse_validation_evidence(log_path)
+
+        assert evidence.pytest_ran is True
+
+    def test_detects_ruff_check_command(self, tmp_path: Path):
+        """Quality gate should detect ruff check execution."""
+        from src.quality_gate import QualityGate
+
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uvx ruff check ."},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        evidence = gate.parse_validation_evidence(log_path)
+
+        assert evidence.ruff_check_ran is True
+
+    def test_detects_ruff_format_command(self, tmp_path: Path):
+        """Quality gate should detect ruff format execution."""
+        from src.quality_gate import QualityGate
+
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uvx ruff format ."},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        evidence = gate.parse_validation_evidence(log_path)
+
+        assert evidence.ruff_format_ran is True
+
+    def test_detects_ty_check_command(self, tmp_path: Path):
+        """Quality gate should detect ty check execution."""
+        from src.quality_gate import QualityGate
+
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uvx ty check"},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        evidence = gate.parse_validation_evidence(log_path)
+
+        assert evidence.ty_check_ran is True
+
+    def test_detects_uv_sync_command(self, tmp_path: Path):
+        """Quality gate should detect uv sync execution."""
+        from src.quality_gate import QualityGate
+
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv sync"},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        evidence = gate.parse_validation_evidence(log_path)
+
+        assert evidence.uv_sync_ran is True
+
+    def test_returns_empty_evidence_for_missing_log(self, tmp_path: Path):
+        """Quality gate should return empty evidence for missing log file."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+        nonexistent = tmp_path / "nonexistent.jsonl"
+        evidence = gate.parse_validation_evidence(nonexistent)
+
+        assert evidence.pytest_ran is False
+        assert evidence.ruff_check_ran is False
+        assert evidence.ruff_format_ran is False
+        assert evidence.ty_check_ran is False
+        assert evidence.uv_sync_ran is False
+
+
+class TestQualityGateCommitCheck:
+    """Test git commit message verification."""
+
+    def test_detects_matching_commit(self, tmp_path: Path):
+        """Quality gate should detect commit with correct issue ID."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(
+                stdout="abc1234 bd-issue-123: Fix the bug\n"
+            )
+            result = gate.check_commit_exists("issue-123")
+
+        assert result.exists is True
+        assert result.commit_hash == "abc1234"
+
+    def test_rejects_missing_commit(self, tmp_path: Path):
+        """Quality gate should reject when no matching commit found."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(stdout="")
+            result = gate.check_commit_exists("issue-123")
+
+        assert result.exists is False
+        assert result.commit_hash is None
+
+    def test_handles_git_failure(self, tmp_path: Path):
+        """Quality gate should handle git command failures gracefully."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(
+                returncode=1, stderr="fatal: not a git repository"
+            )
+            result = gate.check_commit_exists("issue-123")
+
+        assert result.exists is False
+
+
+class TestQualityGateFullCheck:
+    """Test full quality gate check combining all criteria."""
+
+    def test_passes_when_all_criteria_met(self, tmp_path: Path):
+        """Quality gate passes when closed, commit exists, validation ran."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        # Create log with all validation commands
+        log_path = tmp_path / "session.jsonl"
+        commands = ["uv sync", "uv run pytest", "uvx ruff check .", "uvx ruff format ."]
+        lines = []
+        for cmd in commands:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(
+                stdout="abc1234 bd-issue-123: Implement feature\n"
+            )
+            result = gate.check("issue-123", log_path)
+
+        assert result.passed is True
+        assert result.failure_reasons == []
+
+    def test_fails_when_commit_missing(self, tmp_path: Path):
+        """Quality gate fails when commit is missing."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        # Create log with validation commands
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Bash",
+                                "input": {"command": "uv run pytest"},
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(stdout="")
+            result = gate.check("issue-123", log_path)
+
+        assert result.passed is False
+        assert "commit" in result.failure_reasons[0].lower()
+
+    def test_fails_when_validation_missing(self, tmp_path: Path):
+        """Quality gate fails when validation commands didn't run."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        # Create empty log (no validation commands)
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(
+                stdout="abc1234 bd-issue-123: Implement feature\n"
+            )
+            result = gate.check("issue-123", log_path)
+
+        assert result.passed is False
+        assert any("validation" in r.lower() for r in result.failure_reasons)
+
+
+class TestBeadsClientNeedsFollowup:
+    """Test BeadsClient.mark_needs_followup method."""
+
+    def test_marks_issue_with_needs_followup_label(
+        self, orchestrator: MalaOrchestrator
+    ):
+        """mark_needs_followup should add the needs-followup label."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result()
+            orchestrator.beads.mark_needs_followup(
+                "issue-123", "Missing commit with bd-issue-123"
+            )
+
+        mock_run.assert_called()
+        call_args = mock_run.call_args[0][0]
+        assert "bd" in call_args
+        assert "update" in call_args
+        assert "issue-123" in call_args
+        assert "--label" in call_args or "--add-label" in call_args
+
+    def test_records_failure_context_in_notes(self, orchestrator: MalaOrchestrator):
+        """mark_needs_followup should record failure context."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result()
+            orchestrator.beads.mark_needs_followup(
+                "issue-123", "Missing validation evidence: pytest, ruff check"
+            )
+
+        mock_run.assert_called()
+        # Verify notes were passed (exact format depends on implementation)
+        call_str = str(mock_run.call_args)
+        assert "Missing validation" in call_str or "--notes" in call_str
+
+
+class TestOrchestratorQualityGateIntegration:
+    """Test quality gate integration in orchestrator run flow."""
+
+    @pytest.mark.asyncio
+    async def test_marks_needs_followup_on_gate_failure(
+        self, orchestrator: MalaOrchestrator, tmp_path: Path
+    ):
+        """When quality gate fails, issue should be marked needs-followup."""
+        from src.quality_gate import GateResult
+
+        mark_followup_calls = []
+
+        def mock_mark_followup(issue_id: str, reason: str):
+            mark_followup_calls.append((issue_id, reason))
+
+        # Mock quality gate to fail
+        mock_gate_result = GateResult(
+            passed=False, failure_reasons=["No commit with bd-issue-123 found"]
+        )
+
+        async def mock_run_implementer(issue_id: str):
+            # Populate log path so quality gate runs
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            # Simulate closed issue but gate will fail
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,  # Issue closed
+                summary="done",
+            )
+
+        first_call = True
+
+        def mock_get_ready(
+            failed=None, epic_id=None, only_ids=None, suppress_warn_ids=None
+        ):
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-123"]
+            return []
+
+        with (
+            patch.object(orchestrator.beads, "get_ready", side_effect=mock_get_ready),
+            patch.object(orchestrator.beads, "claim", return_value=True),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(
+                orchestrator.beads,
+                "mark_needs_followup",
+                side_effect=mock_mark_followup,
+            ),
+            patch.object(
+                orchestrator.quality_gate, "check", return_value=mock_gate_result
+            ),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.JSONL_LOG_DIR", tmp_path),
+            patch("src.orchestrator.release_all_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            await orchestrator.run()
+
+        # Should have been marked as needs-followup
+        assert len(mark_followup_calls) == 1
+        assert mark_followup_calls[0][0] == "issue-123"
+
+    @pytest.mark.asyncio
+    async def test_success_only_when_gate_passes(
+        self, orchestrator: MalaOrchestrator, tmp_path: Path
+    ):
+        """Issue should only count as success when quality gate passes."""
+        from src.quality_gate import GateResult
+
+        # Gate passes
+        mock_gate_result = GateResult(passed=True, failure_reasons=[])
+
+        async def mock_run_implementer(issue_id: str):
+            # Populate log path so quality gate runs
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="done",
+            )
+
+        first_call = True
+
+        def mock_get_ready(
+            failed=None, epic_id=None, only_ids=None, suppress_warn_ids=None
+        ):
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-ok"]
+            return []
+
+        with (
+            patch.object(orchestrator.beads, "get_ready", side_effect=mock_get_ready),
+            patch.object(orchestrator.beads, "claim", return_value=True),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(
+                orchestrator.quality_gate, "check", return_value=mock_gate_result
+            ),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.JSONL_LOG_DIR", tmp_path),
+            patch("src.orchestrator.release_all_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            success_count, total = await orchestrator.run()
+
+        assert success_count == 1

@@ -212,3 +212,34 @@ class BeadsClient:
             text=True,
         )
         return result.returncode == 0 and bool(result.stdout.strip())
+
+    def mark_needs_followup(self, issue_id: str, reason: str) -> bool:
+        """Mark an issue as needing follow-up due to quality gate failure.
+
+        Adds the 'needs-followup' label and records the failure reason in notes.
+        This is used when an issue was closed but failed the quality gate
+        (missing commit or validation evidence).
+
+        Args:
+            issue_id: The issue ID to mark.
+            reason: Description of why the quality gate failed.
+
+        Returns:
+            True if successfully marked, False otherwise.
+        """
+        # Add the needs-followup label with failure context in notes
+        result = subprocess.run(
+            [
+                "bd",
+                "update",
+                issue_id,
+                "--add-label",
+                "needs-followup",
+                "--notes",
+                f"Quality gate failed: {reason}",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=self.repo_path,
+        )
+        return result.returncode == 0
