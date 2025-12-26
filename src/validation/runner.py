@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .tools.env import LOCK_DIR, SCRIPTS_DIR
+from ..tools.env import LOCK_DIR, SCRIPTS_DIR
 
 
 @dataclass
@@ -193,8 +193,8 @@ class ValidationRunner:
             )
         except subprocess.TimeoutExpired as exc:
             duration = time.monotonic() - start
-            stdout_tail = _tail((exc.stdout or b"").decode())
-            stderr_tail = _tail((exc.stderr or b"").decode())
+            stdout_tail = _decode_timeout_output(exc.stdout)
+            stderr_tail = _decode_timeout_output(exc.stderr)
             return ValidationStepResult(
                 name=name,
                 command=cmd,
@@ -242,8 +242,6 @@ class ValidationRunner:
                 "1",
                 "--timeout",
                 "30",
-                "--no-post-validate",
-                "--no-e2e",
             ]
             # Keep coverage/slow-tests/codex-review defaults in the nested run.
             step = self._run_command("mala e2e", cmd, self.repo_path, env)
@@ -272,6 +270,15 @@ def _tail(text: str, max_chars: int = 800, max_lines: int = 20) -> str:
     if len(clipped) > max_chars:
         return clipped[-max_chars:]
     return clipped
+
+
+def _decode_timeout_output(data: bytes | str | None) -> str:
+    """Decode TimeoutExpired stdout/stderr which may be bytes, str, or None."""
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return _tail(data)
+    return _tail(data.decode())
 
 
 def _format_step_output(step: ValidationStepResult) -> str:
