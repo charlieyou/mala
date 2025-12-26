@@ -35,6 +35,9 @@ class IssueRun:
     log_path: str | None = None  # Path to Claude's log file
     quality_gate: QualityGateResult | None = None
     error: str | None = None
+    # Retry tracking (recorded even if defaulted)
+    gate_attempts: int = 0
+    review_attempts: int = 0
 
 
 @dataclass
@@ -47,6 +50,10 @@ class RunConfig:
     epic_id: str | None
     only_ids: list[str] | None
     braintrust_enabled: bool
+    # Retry/review config (optional for backward compatibility)
+    max_gate_retries: int | None = None
+    max_review_retries: int | None = None
+    codex_review: bool | None = None
 
 
 class RunMetadata:

@@ -86,6 +86,9 @@ class MalaOrchestrator:
         epic_id: str | None = None,
         only_ids: set[str] | None = None,
         braintrust_enabled: bool = False,
+        max_gate_retries: int = 3,
+        max_review_retries: int = 2,
+        codex_review: bool = False,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
@@ -94,6 +97,9 @@ class MalaOrchestrator:
         self.epic_id = epic_id
         self.only_ids = only_ids
         self.braintrust_enabled = braintrust_enabled
+        self.max_gate_retries = max_gate_retries
+        self.max_review_retries = max_review_retries
+        self.codex_review = codex_review
 
         self.active_tasks: dict[str, asyncio.Task] = {}
         self.agent_ids: dict[str, str] = {}
@@ -339,6 +345,9 @@ class MalaOrchestrator:
             epic_id=self.epic_id,
             only_ids=list(self.only_ids) if self.only_ids else None,
             braintrust_enabled=self.braintrust_enabled,
+            max_gate_retries=self.max_gate_retries,
+            max_review_retries=self.max_review_retries,
+            codex_review=self.codex_review,
         )
         run_metadata = RunMetadata(self.repo_path, run_config, __version__)
 

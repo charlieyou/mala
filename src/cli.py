@@ -98,6 +98,27 @@ def run(
             help="Comma-separated list of issue IDs to process exclusively",
         ),
     ] = None,
+    max_gate_retries: Annotated[
+        int,
+        typer.Option(
+            "--max-gate-retries",
+            help="Maximum quality gate retry attempts per issue (default: 3)",
+        ),
+    ] = 3,
+    max_review_retries: Annotated[
+        int,
+        typer.Option(
+            "--max-review-retries",
+            help="Maximum codex review retry attempts per issue (default: 2)",
+        ),
+    ] = 2,
+    codex_review: Annotated[
+        bool,
+        typer.Option(
+            "--codex-review/--no-codex-review",
+            help="Enable/disable codex review step (default: disabled)",
+        ),
+    ] = False,
     no_truncate: Annotated[
         bool,
         typer.Option(
@@ -141,6 +162,9 @@ def run(
         epic_id=epic,
         only_ids=only_ids,
         braintrust_enabled=_braintrust_early_setup_done,
+        max_gate_retries=max_gate_retries,
+        max_review_retries=max_review_retries,
+        codex_review=codex_review,
     )
 
     success_count, total = asyncio.run(orchestrator.run())
