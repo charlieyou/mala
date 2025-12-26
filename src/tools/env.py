@@ -35,9 +35,12 @@ def load_user_env() -> None:
 def load_env(repo_path: Path | None = None) -> None:
     """Load environment from user config and optionally repo.
 
+    NOTE: The repo_path parameter is for TESTING ONLY. Production code should
+    only use load_user_env() to load from ~/.config/mala/.env.
+
     Args:
         repo_path: Optional repository path. If provided, loads <repo_path>/.env
-                   with override=True (repo settings take precedence).
+                   with override=True. FOR TESTING ONLY.
     """
     load_user_env()
     if repo_path is not None:

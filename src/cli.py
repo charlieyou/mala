@@ -38,7 +38,6 @@ from typing import Annotated
 import typer
 
 from .logging.console import Colors, log, set_truncation
-from .tools.env import load_env
 from .tools.locking import LOCK_DIR
 from .orchestrator import MalaOrchestrator
 
@@ -127,8 +126,6 @@ def run(
     # Ensure user config directory exists
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Load environment variables: user config first, then repo .env (repo overrides)
-    load_env(repo_path)
 
     # Validate Morph API key (required)
     validate_morph_api_key()

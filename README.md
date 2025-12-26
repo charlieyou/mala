@@ -173,9 +173,9 @@ mala uses a global config directory at `~/.config/mala/`:
 └── logs/         # JSONL session logs
 ```
 
-Environment variables are loaded in order (later overrides earlier):
-1. `~/.config/mala/.env` (global config)
-2. `<repo>/.env` (repo-specific overrides)
+Environment variables are loaded from `~/.config/mala/.env` (global config).
+
+Note: The repo's `.env` file is for testing only and is not loaded by the program.
 
 ### Braintrust Tracing
 
