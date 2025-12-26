@@ -1,13 +1,14 @@
 """Codex review integration for mala orchestrator.
 
 Runs code reviews using Codex CLI with strict JSON output parsing.
-Implements retry logic for JSON parse failures (fail-closed behavior).
+Uses codex exec with --output-schema for structured JSON responses.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,42 +34,43 @@ class CodexReviewResult:
     attempt: int = 1
 
 
-# JSON schema prompt (ASCII-only, no code fences in expected output)
-CODEX_REVIEW_PROMPT = """\
-Review the commit and output your findings as a JSON object.
-Use ASCII characters only. Do not wrap the JSON in markdown code fences.
-
-Required JSON schema:
-{
-  "passed": boolean,
-  "issues": [
-    {
-      "file": "path/to/file.py",
-      "line": 42,
-      "severity": "error" | "warning" | "info",
-      "message": "Description of the issue"
-    }
-  ]
+# JSON schema for structured output (used with codex exec --output-schema)
+REVIEW_OUTPUT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "passed": {"type": "boolean"},
+        "issues": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "file": {"type": "string"},
+                    "line": {"type": ["integer", "null"]},
+                    "severity": {
+                        "type": "string",
+                        "enum": ["error", "warning", "info"],
+                    },
+                    "message": {"type": "string"},
+                },
+                "required": ["file", "line", "severity", "message"],
+            },
+        },
+    },
+    "required": ["passed", "issues"],
 }
+
+# Prompt template for code review
+CODEX_REVIEW_PROMPT = """\
+Review the commit {commit_sha} in this repository.
 
 Rules:
 - passed must be false if there are any issues with severity "error"
 - passed can be true if there are only warnings or info
 - line can be null if the issue is file-level
 - Keep messages concise and actionable
-
-Output only the JSON object, nothing else.
-"""
-
-# Stricter retry prompt for JSON parse failures
-CODEX_REVIEW_RETRY_PROMPT = """\
-Your previous response was not valid JSON. Output ONLY the JSON object below.
-No explanation, no code fences, no extra text. ASCII characters only.
-
-{
-  "passed": boolean,
-  "issues": [{"file": "...", "line": N, "severity": "...", "message": "..."}]
-}
+- Use file path "N/A" for general issues not tied to a specific file
 """
 
 
@@ -184,6 +186,8 @@ async def run_codex_review(
 ) -> CodexReviewResult:
     """Run Codex code review on a commit with JSON output and retry logic.
 
+    Uses `codex exec` with `--output-schema` to get structured JSON responses.
+
     Args:
         repo_path: Path to the git repository.
         commit_sha: The commit SHA to review.
@@ -194,59 +198,95 @@ async def run_codex_review(
         all retries, the result will have passed=False (fail-closed).
     """
     for attempt in range(1, max_retries + 1):
-        # Choose prompt based on attempt
-        prompt = CODEX_REVIEW_PROMPT if attempt == 1 else CODEX_REVIEW_RETRY_PROMPT
+        # Create temporary files for schema and output
+        with (
+            tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False
+            ) as schema_file,
+            tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False
+            ) as output_file,
+        ):
+            schema_path = Path(schema_file.name)
+            output_path = Path(output_file.name)
 
-        # Run codex review with the commit
-        proc = await asyncio.create_subprocess_exec(
-            "codex",
-            "review",
-            "--commit",
-            commit_sha,
-            prompt,
-            cwd=repo_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+            # Write the schema
+            json.dump(REVIEW_OUTPUT_SCHEMA, schema_file)
+            schema_file.flush()
 
-        stdout, stderr = await proc.communicate()
-        output = stdout.decode("utf-8", errors="replace")
+        try:
+            # Build the prompt
+            prompt = CODEX_REVIEW_PROMPT.format(commit_sha=commit_sha)
 
-        if proc.returncode != 0:
-            error_msg = stderr.decode("utf-8", errors="replace").strip()
+            # Run codex exec with output schema
+            proc = await asyncio.create_subprocess_exec(
+                "codex",
+                "exec",
+                "--output-schema",
+                str(schema_path),
+                "-o",
+                str(output_path),
+                prompt,
+                cwd=repo_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout, stderr = await proc.communicate()
+            raw_output = stdout.decode("utf-8", errors="replace")
+
+            if proc.returncode != 0:
+                error_msg = stderr.decode("utf-8", errors="replace").strip()
+                return CodexReviewResult(
+                    passed=False,
+                    issues=[],
+                    raw_output=raw_output,
+                    parse_error=f"codex exited with code {proc.returncode}: {error_msg}",
+                    attempt=attempt,
+                )
+
+            # Read the structured output
+            try:
+                output = output_path.read_text()
+            except OSError as e:
+                return CodexReviewResult(
+                    passed=False,
+                    issues=[],
+                    raw_output=raw_output,
+                    parse_error=f"Failed to read output file: {e}",
+                    attempt=attempt,
+                )
+
+            # Try to parse the JSON output
+            passed, issues, parse_error = _parse_review_json(output)
+
+            if parse_error is None:
+                # Successful parse
+                return CodexReviewResult(
+                    passed=passed,
+                    issues=issues,
+                    raw_output=output,
+                    parse_error=None,
+                    attempt=attempt,
+                )
+
+            # Parse failed - retry if we have attempts left
+            if attempt < max_retries:
+                continue
+
+            # No retries left - fail closed
             return CodexReviewResult(
                 passed=False,
                 issues=[],
                 raw_output=output,
-                parse_error=f"codex exited with code {proc.returncode}: {error_msg}",
+                parse_error=parse_error,
                 attempt=attempt,
             )
 
-        # Try to parse the JSON output
-        passed, issues, parse_error = _parse_review_json(output)
-
-        if parse_error is None:
-            # Successful parse
-            return CodexReviewResult(
-                passed=passed,
-                issues=issues,
-                raw_output=output,
-                parse_error=None,
-                attempt=attempt,
-            )
-
-        # Parse failed - retry if we have attempts left
-        if attempt < max_retries:
-            continue
-
-        # No retries left - fail closed
-        return CodexReviewResult(
-            passed=False,
-            issues=[],
-            raw_output=output,
-            parse_error=parse_error,
-            attempt=attempt,
-        )
+        finally:
+            # Clean up temporary files
+            schema_path.unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)
 
     # Should not reach here, but fail closed if we do
     return CodexReviewResult(
