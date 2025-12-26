@@ -148,6 +148,7 @@ class MalaOrchestrator:
             "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
             "LOCK_DIR": str(LOCK_DIR),
             "AGENT_ID": agent_id,
+            "REPO_NAMESPACE": str(self.repo_path),
         }
 
         options = ClaudeAgentOptions(
@@ -166,7 +167,7 @@ class MalaOrchestrator:
                         hooks=[
                             block_dangerous_commands,
                             block_morph_replaced_tools,
-                            make_lock_enforcement_hook(agent_id),
+                            make_lock_enforcement_hook(agent_id, str(self.repo_path)),
                         ],  # type: ignore[arg-type]
                     )
                 ],

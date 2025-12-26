@@ -25,59 +25,46 @@ def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
     Normalizes paths by:
     - Resolving symlinks (if the path exists)
     - Making paths absolute
-    - Making paths repo-relative when a namespace is provided
     - Normalizing . and .. segments
+
+    This matches the shell script behavior (realpath -m), which always produces
+    absolute paths. The repo_namespace is used by _lock_key to build the final
+    key as "namespace:absolute_path".
 
     Args:
         filepath: The file path to canonicalize.
-        repo_namespace: Optional repo root path for making paths repo-relative.
+        repo_namespace: Optional repo root path for resolving relative paths.
+            When provided and filepath is relative, the path is resolved
+            relative to the namespace directory (mimicking cwd=repo behavior).
 
     Returns:
-        A canonicalized, repo-relative path string.
+        A canonicalized absolute path string.
     """
     path = Path(filepath)
 
     # When we have a namespace and a relative path, resolve relative to the namespace
+    # This mimics shell script behavior when cwd is the repo directory
     if repo_namespace and not path.is_absolute():
         namespace_path = Path(repo_namespace).resolve()
         candidate = namespace_path / path
 
         if candidate.exists():
-            # Path exists relative to namespace - resolve symlinks
-            resolved = candidate.resolve()
+            # Path exists - resolve symlinks
+            return str(candidate.resolve())
         else:
-            # Normalize . and .. segments relative to namespace
-            resolved = Path(os.path.normpath(candidate))
+            # Normalize . and .. segments
+            return str(Path(os.path.normpath(candidate)))
 
-        # Return repo-relative path
-        try:
-            relative = resolved.relative_to(namespace_path)
-            return str(relative)
-        except ValueError:
-            return str(resolved)
-
-    # Absolute path or no namespace
+    # Absolute path or no namespace - resolve to absolute
     if path.exists():
-        resolved = path.resolve()  # Resolves symlinks
+        return str(path.resolve())  # Resolves symlinks
     else:
         if path.is_absolute():
             resolved = path
         else:
             resolved = Path.cwd() / path
         # Normalize . and .. segments
-        resolved = Path(os.path.normpath(resolved))
-
-    # Make repo-relative if namespace is provided
-    if repo_namespace:
-        namespace_path = Path(repo_namespace).resolve()
-        try:
-            relative = resolved.relative_to(namespace_path)
-            return str(relative)
-        except ValueError:
-            # Path is not under the repo namespace, return as-is
-            return str(resolved)
-
-    return str(resolved)
+        return str(Path(os.path.normpath(resolved)))
 
 
 def _lock_key(filepath: str, repo_namespace: str | None = None) -> str:

@@ -537,6 +537,94 @@ class TestPathCanonicalization:
 class TestRepoNamespaceIntegration:
     """Test REPO_NAMESPACE behavior for cross-repo disambiguation."""
 
+    def test_python_hook_recognizes_shell_lock_with_namespace(
+        self, lock_env, tmp_path, monkeypatch
+    ):
+        """Python get_lock_holder should find locks created by shell scripts with REPO_NAMESPACE.
+
+        This tests the critical invariant that locks acquired via lock-try.sh with
+        REPO_NAMESPACE set are correctly recognized by the Python PreToolUse hook.
+
+        The hook receives absolute file paths from Claude Code tools and must compute
+        the same lock key as the shell script did.
+        """
+        from src.tools.locking import get_lock_holder
+
+        agent_id = "test-agent-cross-cwd"
+        repo_namespace = str(tmp_path)
+        cwd = str(tmp_path)
+
+        # Patch LOCK_DIR so get_lock_holder uses our test lock directory
+        monkeypatch.setattr("src.tools.locking.LOCK_DIR", lock_env)
+
+        env = {
+            **os.environ,
+            "LOCK_DIR": str(lock_env),
+            "AGENT_ID": agent_id,
+            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "PWD": cwd,
+            "REPO_NAMESPACE": repo_namespace,
+        }
+
+        # Shell script acquires lock with REPO_NAMESPACE
+        result = run_lock_script("lock-try.sh", ["src/file.py"], env)
+        assert result.returncode == 0, f"Failed to acquire lock: {result.stderr}"
+
+        # Python hook receives absolute path (as Claude Code tools provide)
+        absolute_path = str(tmp_path / "src" / "file.py")
+
+        # Python should find the lock holder - THIS IS THE BUG:
+        # get_lock_holder is not passed repo_namespace, so it computes a different key
+        holder = get_lock_holder(absolute_path, repo_namespace=repo_namespace)
+
+        assert holder == agent_id, (
+            f"Python get_lock_holder should find lock created by shell script. "
+            f"Expected {agent_id!r}, got {holder!r}. "
+            f"Lock files in dir: {list(lock_env.glob('*.lock'))}"
+        )
+
+    def test_python_hook_recognizes_shell_lock_from_different_cwd(
+        self, lock_env, tmp_path, monkeypatch
+    ):
+        """Test lock recognition when mala is launched from outside the repo.
+
+        Scenario:
+        1. Agent acquires lock via shell script from repo dir (cwd=/repo)
+        2. Python hook checks lock with absolute path (running from any cwd)
+        3. They must compute the same lock key
+        """
+        from src.tools.locking import get_lock_holder
+
+        agent_id = "cross-cwd-agent"
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        repo_namespace = str(repo_path)
+
+        # Patch LOCK_DIR
+        monkeypatch.setattr("src.tools.locking.LOCK_DIR", lock_env)
+
+        env = {
+            **os.environ,
+            "LOCK_DIR": str(lock_env),
+            "AGENT_ID": agent_id,
+            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "REPO_NAMESPACE": repo_namespace,
+        }
+
+        # Shell script acquires lock using relative path FROM THE REPO
+        result = run_lock_script("lock-try.sh", ["config.py"], env, cwd=str(repo_path))
+        assert result.returncode == 0, f"Lock failed: {result.stderr}"
+
+        # Python hook receives absolute path (like MorphLLM MCP does)
+        absolute_path = str(repo_path / "config.py")
+
+        # Python should find the same lock (with namespace)
+        holder = get_lock_holder(absolute_path, repo_namespace=repo_namespace)
+
+        assert holder == agent_id, (
+            f"Lock not found from different cwd. Expected {agent_id!r}, got {holder!r}"
+        )
+
     def test_same_file_different_namespaces_different_locks(self, lock_env, tmp_path):
         """Same relative path in different namespaces produces different locks."""
         cwd = str(tmp_path)

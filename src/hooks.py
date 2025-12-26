@@ -128,64 +128,14 @@ async def block_morph_replaced_tools(
     return {}
 
 
-async def block_unlocked_file_writes(
-    hook_input: PreToolUseHookInput,
-    stderr: str | None,
-    context: HookContext,
-) -> SyncHookJSONOutput:
-    """PreToolUse hook to block file writes unless the agent holds the lock.
-
-    This enforces lock ownership for file-write operations, preventing agents
-    from writing to files they haven't acquired locks for.
-
-    Note: This is a no-op if agent_id is not injected via make_lock_enforcement_hook.
-    """
-    tool_name = hook_input["tool_name"]
-
-    # Only check file-write tools
-    if tool_name not in FILE_WRITE_TOOLS:
-        return {}
-
-    # Get the file path from the tool input
-    path_key = FILE_PATH_KEYS.get(tool_name)
-    if not path_key:
-        return {}
-
-    file_path = hook_input["tool_input"].get(path_key)
-    if not file_path:
-        # No path provided, can't check lock - allow (tool will fail anyway)
-        return {}
-
-    # Get the agent ID from context
-    agent_id = context.get("agent_id")
-    if not agent_id:
-        # No agent ID in context, can't verify ownership - allow
-        return {}
-
-    # Check if this agent holds the lock
-    lock_holder = get_lock_holder(file_path)
-
-    if lock_holder is None:
-        return {
-            "decision": "block",
-            "reason": f"File {file_path} is not locked. Acquire lock with: lock-try.sh {file_path}",
-        }
-
-    if lock_holder != agent_id:
-        return {
-            "decision": "block",
-            "reason": f"File {file_path} is locked by {lock_holder}. Wait or coordinate to acquire the lock.",
-        }
-
-    # Agent holds the lock, allow the write
-    return {}
-
-
-def make_lock_enforcement_hook(agent_id: str):
+def make_lock_enforcement_hook(agent_id: str, repo_path: str | None = None):
     """Create a PreToolUse hook that enforces lock ownership for file writes.
 
     Args:
         agent_id: The agent ID to check lock ownership against.
+        repo_path: The repository root path, used as REPO_NAMESPACE for lock
+            key computation. Must match the REPO_NAMESPACE environment variable
+            set for the agent's shell scripts.
 
     Returns:
         An async hook function that blocks file writes unless the agent holds the lock.
@@ -214,7 +164,8 @@ def make_lock_enforcement_hook(agent_id: str):
             return {}
 
         # Check if this agent holds the lock
-        lock_holder = get_lock_holder(file_path)
+        # Pass repo_path as repo_namespace to match shell script key computation
+        lock_holder = get_lock_holder(file_path, repo_namespace=repo_path)
 
         if lock_holder is None:
             return {
