@@ -27,7 +27,7 @@ from .hooks import (
 )
 from .logging.console import Colors, log, log_tool, log_agent_text, truncate_text
 from .logging.run_metadata import RunMetadata, RunConfig, IssueRun, QualityGateResult
-from .quality_gate import QualityGate
+from .quality_gate import QualityGate, GateResult
 from .tools.env import USER_CONFIG_DIR, RUNS_DIR, SCRIPTS_DIR, get_claude_log_path
 from .tools.locking import (
     LOCK_DIR,
@@ -45,6 +45,25 @@ __version__ = pkg_version("mala")
 # Load implementer prompt from file
 PROMPT_FILE = Path(__file__).parent / "prompts" / "implementer_prompt.md"
 IMPLEMENTER_PROMPT_TEMPLATE = PROMPT_FILE.read_text()
+
+# Follow-up prompt for gate failures
+GATE_FOLLOWUP_PROMPT = """## Quality Gate Failed (Attempt {attempt}/{max_attempts})
+
+The quality gate check failed with the following issues:
+{failure_reasons}
+
+**Required actions:**
+1. Fix the issues listed above
+2. Re-run the full validation suite:
+   - `uv sync`
+   - `uv run pytest`
+   - `uvx ruff check .`
+   - `uvx ruff format .`
+   - `uvx ty check`
+3. Commit your changes with message: `bd-{issue_id}: <description>`
+
+Note: The orchestrator requires NEW validation evidence - re-run all validations even if you ran them before.
+"""
 
 
 def get_mcp_servers(repo_path: Path) -> dict:
@@ -72,6 +91,16 @@ class IssueResult:
     summary: str
     duration_seconds: float = 0.0
     session_id: str | None = None  # Claude SDK session ID
+    gate_attempts: int = 1  # Number of gate retry attempts
+
+
+@dataclass
+class RetryState:
+    """Per-issue state for tracking gate retry attempts."""
+
+    attempt: int = 1
+    log_offset: int = 0  # Byte offset for scoped evidence parsing
+    previous_commit_hash: str | None = None
 
 
 class MalaOrchestrator:
@@ -129,10 +158,73 @@ class MalaOrchestrator:
                 dim=True,
             )
 
+    def _run_quality_gate(
+        self,
+        issue_id: str,
+        log_path: Path,
+        retry_state: RetryState,
+    ) -> tuple[GateResult, int]:
+        """Run quality gate check with attempt-scoped evidence.
+
+        Args:
+            issue_id: The issue being checked.
+            log_path: Path to the session log file.
+            retry_state: Current retry state for this issue.
+
+        Returns:
+            Tuple of (GateResult, new_log_offset).
+        """
+        # Check for matching commit
+        commit_result = self.quality_gate.check_commit_exists(issue_id)
+
+        # Parse validation evidence from the current attempt's log offset
+        evidence, new_offset = self.quality_gate.parse_validation_evidence_from_offset(
+            log_path, offset=retry_state.log_offset
+        )
+
+        failure_reasons: list[str] = []
+
+        if not commit_result.exists:
+            failure_reasons.append(
+                f"No commit with bd-{issue_id} found in last 30 days"
+            )
+
+        if not evidence.has_minimum_validation():
+            missing = evidence.missing_commands()
+            failure_reasons.append(f"Missing validation commands: {', '.join(missing)}")
+
+        # Check for no-progress condition (same commit, no new evidence)
+        no_progress = False
+        if retry_state.attempt > 1:
+            no_progress = self.quality_gate.check_no_progress(
+                log_path,
+                retry_state.log_offset,
+                retry_state.previous_commit_hash,
+                commit_result.commit_hash,
+            )
+            if no_progress:
+                failure_reasons.append(
+                    "No progress: commit unchanged and no new validation evidence"
+                )
+
+        return (
+            GateResult(
+                passed=len(failure_reasons) == 0,
+                failure_reasons=failure_reasons,
+                commit_hash=commit_result.commit_hash,
+                validation_evidence=evidence,
+                no_progress=no_progress,
+            ),
+            new_offset,
+        )
+
     async def run_implementer(self, issue_id: str) -> IssueResult:
-        """Run implementer agent for a single issue."""
+        """Run implementer agent for a single issue with gate retry support."""
         agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
         self.agent_ids[issue_id] = agent_id
+
+        # Initialize retry state for this issue
+        retry_state = RetryState()
 
         # Claude session ID will be captured from ResultMessage
         claude_session_id: str | None = None
@@ -148,6 +240,7 @@ class MalaOrchestrator:
         final_result = ""
         start_time = asyncio.get_event_loop().time()
         success = False
+        gate_result: GateResult | None = None
 
         # Set up environment with lock scripts in PATH
         agent_env = {
@@ -201,31 +294,99 @@ class MalaOrchestrator:
                 try:
                     async with asyncio.timeout(self.timeout_seconds):
                         async with ClaudeSDKClient(options=options) as client:
+                            # Initial query
                             await client.query(prompt)
 
-                            async for message in client.receive_response():
-                                # Log to Braintrust
-                                tracer.log_message(message)
+                            # Gate retry loop
+                            while True:
+                                # Process messages from this attempt
+                                async for message in client.receive_response():
+                                    # Log to Braintrust
+                                    tracer.log_message(message)
 
-                                # Console output
-                                if isinstance(message, AssistantMessage):
-                                    for block in message.content:
-                                        if isinstance(block, TextBlock):
-                                            log_agent_text(block.text, issue_id)
-                                        elif isinstance(block, ToolUseBlock):
-                                            log_tool(
-                                                block.name,
-                                                agent_id=issue_id,
-                                                arguments=block.input,
+                                    # Console output
+                                    if isinstance(message, AssistantMessage):
+                                        for block in message.content:
+                                            if isinstance(block, TextBlock):
+                                                log_agent_text(block.text, issue_id)
+                                            elif isinstance(block, ToolUseBlock):
+                                                log_tool(
+                                                    block.name,
+                                                    agent_id=issue_id,
+                                                    arguments=block.input,
+                                                )
+
+                                    elif isinstance(message, ResultMessage):
+                                        claude_session_id = message.session_id
+                                        final_result = message.result or ""
+
+                                # Agent completed this attempt - run quality gate
+                                if claude_session_id:
+                                    log_path = get_claude_log_path(
+                                        self.repo_path, claude_session_id
+                                    )
+                                    self.session_log_paths[issue_id] = log_path
+
+                                    if log_path.exists():
+                                        gate_result, new_offset = (
+                                            self._run_quality_gate(
+                                                issue_id, log_path, retry_state
+                                            )
+                                        )
+
+                                        if gate_result.passed:
+                                            # Gate passed - we're done
+                                            success = True
+                                            break
+
+                                        # Gate failed - check if we can retry
+                                        if (
+                                            retry_state.attempt < self.max_gate_retries
+                                            and not gate_result.no_progress
+                                        ):
+                                            # Prepare for retry
+                                            retry_state.attempt += 1
+                                            retry_state.log_offset = new_offset
+                                            retry_state.previous_commit_hash = (
+                                                gate_result.commit_hash
                                             )
 
-                                elif isinstance(message, ResultMessage):
-                                    claude_session_id = message.session_id
-                                    final_result = message.result or ""
+                                            # Log retry attempt
+                                            log(
+                                                "↻",
+                                                f"Gate retry {retry_state.attempt}/{self.max_gate_retries}",
+                                                Colors.YELLOW,
+                                                agent_id=issue_id,
+                                            )
 
-                    # Agent completed without timeout - success will be
-                    # determined by quality gate (commit existence + validation)
-                    success = True
+                                            # Build follow-up prompt with failure context
+                                            failure_text = "\n".join(
+                                                f"- {r}"
+                                                for r in gate_result.failure_reasons
+                                            )
+                                            followup = GATE_FOLLOWUP_PROMPT.format(
+                                                attempt=retry_state.attempt,
+                                                max_attempts=self.max_gate_retries,
+                                                failure_reasons=failure_text,
+                                                issue_id=issue_id,
+                                            )
+
+                                            # Resume session with follow-up prompt
+                                            await client.query(
+                                                followup, session_id=claude_session_id
+                                            )
+                                            # Continue the retry loop
+                                            continue
+
+                                        # No retries left or no progress - fail
+                                        final_result = (
+                                            f"Quality gate failed: "
+                                            f"{'; '.join(gate_result.failure_reasons)}"
+                                        )
+                                        break
+                                else:
+                                    # No session ID - can't run gate
+                                    break
 
                     tracer.set_success(success)
 
@@ -242,11 +403,6 @@ class MalaOrchestrator:
         finally:
             duration = asyncio.get_event_loop().time() - start_time
 
-            # Store Claude log path for quality gate (if session completed)
-            if claude_session_id:
-                log_path = get_claude_log_path(self.repo_path, claude_session_id)
-                self.session_log_paths[issue_id] = log_path
-
             # Ensure locks are cleaned
             self._cleanup_agent_locks(agent_id)
             self.agent_ids.pop(issue_id, None)
@@ -258,6 +414,7 @@ class MalaOrchestrator:
             summary=final_result,
             duration_seconds=duration,
             session_id=claude_session_id,
+            gate_attempts=retry_state.attempt,
         )
 
     async def spawn_agent(self, issue_id: str) -> bool:
@@ -284,6 +441,12 @@ class MalaOrchestrator:
         log(
             "◐",
             f"max-agents: {agents_str}, timeout: {self.timeout_seconds // 60}m, max-issues: {limit_str}",
+            Colors.GRAY,
+            dim=True,
+        )
+        log(
+            "◐",
+            f"gate-retries: {self.max_gate_retries}",
             Colors.GRAY,
             dim=True,
         )
@@ -431,68 +594,69 @@ class MalaOrchestrator:
                                     summary=str(e),
                                 )
 
-                            # Run quality gate for successful completions
+                            # Quality gate already run in run_implementer for retry support
+                            # Just handle the final result here
                             quality_gate_result: QualityGateResult | None = None
                             log_path = self.session_log_paths.get(issue_id)
 
                             if result.success and log_path and log_path.exists():
-                                gate_result = self.quality_gate.check(
-                                    issue_id, log_path
+                                # Parse final evidence for metadata (full session)
+                                evidence = self.quality_gate.parse_validation_evidence(
+                                    log_path
                                 )
-                                evidence = gate_result.validation_evidence
+                                commit_result = self.quality_gate.check_commit_exists(
+                                    issue_id
+                                )
                                 quality_gate_result = QualityGateResult(
-                                    passed=gate_result.passed,
+                                    passed=True,
                                     evidence={
-                                        "pytest_ran": evidence.pytest_ran
-                                        if evidence
-                                        else False,
-                                        "ruff_check_ran": evidence.ruff_check_ran
-                                        if evidence
-                                        else False,
-                                        "ruff_format_ran": evidence.ruff_format_ran
-                                        if evidence
-                                        else False,
-                                        "uv_sync_ran": evidence.uv_sync_ran
-                                        if evidence
-                                        else False,
-                                        "ty_check_ran": evidence.ty_check_ran
-                                        if evidence
-                                        else False,
-                                        "commit_found": gate_result.commit_hash
-                                        is not None,
+                                        "pytest_ran": evidence.pytest_ran,
+                                        "ruff_check_ran": evidence.ruff_check_ran,
+                                        "ruff_format_ran": evidence.ruff_format_ran,
+                                        "uv_sync_ran": evidence.uv_sync_ran,
+                                        "ty_check_ran": evidence.ty_check_ran,
+                                        "commit_found": commit_result.exists,
                                     },
-                                    failure_reasons=gate_result.failure_reasons,
+                                    failure_reasons=[],
                                 )
-                                if gate_result.passed:
-                                    # Gate passed - close the issue
-                                    if await self.beads.close_async(issue_id):
-                                        log(
-                                            "◐",
-                                            "Closed issue",
-                                            Colors.GRAY,
-                                            dim=True,
-                                            agent_id=issue_id,
-                                        )
-                                else:
-                                    # Gate failed - mark needs-followup with log path
-                                    reason = "; ".join(gate_result.failure_reasons)
-                                    await self.beads.mark_needs_followup_async(
-                                        issue_id, reason, log_path=log_path
-                                    )
-                                    result = IssueResult(
-                                        issue_id=result.issue_id,
-                                        agent_id=result.agent_id,
-                                        success=False,
-                                        summary=f"Quality gate failed: {reason}",
-                                        duration_seconds=result.duration_seconds,
-                                        session_id=result.session_id,
-                                    )
+                                # Gate passed - close the issue
+                                if await self.beads.close_async(issue_id):
                                     log(
-                                        "⚠",
-                                        f"Quality gate failed: {reason}",
-                                        Colors.YELLOW,
+                                        "◐",
+                                        "Closed issue",
+                                        Colors.GRAY,
+                                        dim=True,
                                         agent_id=issue_id,
                                     )
+                            elif not result.success and log_path and log_path.exists():
+                                # Gate failed - record evidence for metadata
+                                evidence = self.quality_gate.parse_validation_evidence(
+                                    log_path
+                                )
+                                commit_result = self.quality_gate.check_commit_exists(
+                                    issue_id
+                                )
+                                # Extract failure reasons from result summary
+                                failure_reasons = []
+                                if "Quality gate failed:" in result.summary:
+                                    reasons_part = result.summary.replace(
+                                        "Quality gate failed: ", ""
+                                    )
+                                    failure_reasons = [
+                                        r.strip() for r in reasons_part.split(";")
+                                    ]
+                                quality_gate_result = QualityGateResult(
+                                    passed=False,
+                                    evidence={
+                                        "pytest_ran": evidence.pytest_ran,
+                                        "ruff_check_ran": evidence.ruff_check_ran,
+                                        "ruff_format_ran": evidence.ruff_format_ran,
+                                        "uv_sync_ran": evidence.uv_sync_ran,
+                                        "ty_check_ran": evidence.ty_check_ran,
+                                        "commit_found": commit_result.exists,
+                                    },
+                                    failure_reasons=failure_reasons,
+                                )
 
                             self.completed.append(result)
                             del self.active_tasks[issue_id]
@@ -507,6 +671,7 @@ class MalaOrchestrator:
                                 log_path=str(log_path) if log_path else None,
                                 quality_gate=quality_gate_result,
                                 error=result.summary if not result.success else None,
+                                gate_attempts=result.gate_attempts,
                             )
                             run_metadata.record_issue(issue_run)
 
@@ -530,8 +695,9 @@ class MalaOrchestrator:
                                     agent_id=issue_id,
                                 )
                                 self.failed_issues.add(issue_id)
-                                await self.beads.reset_async(
-                                    issue_id, log_path=log_path, error=result.summary
+                                # Mark needs-followup with log path
+                                await self.beads.mark_needs_followup_async(
+                                    issue_id, result.summary, log_path=log_path
                                 )
                             break
 

@@ -360,15 +360,16 @@ class TestRunOrchestrationLoop:
 
 
 class TestFailedTaskResetsIssue:
-    """Test that failed tasks correctly reset issue status."""
+    """Test that failed tasks correctly mark issue as needing followup."""
 
     @pytest.mark.asyncio
     async def test_resets_issue_on_task_failure(self, orchestrator: MalaOrchestrator):
-        """When a task fails, the issue should be reset to ready status."""
-        reset_calls = []
+        """When a task fails, the issue should be marked needs-followup."""
+        followup_calls = []
 
-        async def mock_reset_async(issue_id: str, log_path=None, error=""):
-            reset_calls.append(issue_id)
+        async def mock_mark_followup_async(issue_id: str, reason: str, log_path=None):
+            followup_calls.append(issue_id)
+            return True
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             return IssueResult(
@@ -403,7 +404,9 @@ class TestFailedTaskResetsIssue:
                 orchestrator, "run_implementer", side_effect=mock_run_implementer
             ),
             patch.object(
-                orchestrator.beads, "reset_async", side_effect=mock_reset_async
+                orchestrator.beads,
+                "mark_needs_followup_async",
+                side_effect=mock_mark_followup_async,
             ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", MagicMock()),
@@ -412,8 +415,8 @@ class TestFailedTaskResetsIssue:
         ):
             await orchestrator.run()
 
-        # The failed issue should have been reset
-        assert "fail-issue" in reset_calls
+        # The failed issue should have been marked needs-followup
+        assert "fail-issue" in followup_calls
         # And added to failed_issues set
         assert "fail-issue" in orchestrator.failed_issues
 
@@ -993,31 +996,24 @@ class TestOrchestratorQualityGateIntegration:
     async def test_marks_needs_followup_on_gate_failure(
         self, orchestrator: MalaOrchestrator, tmp_path: Path
     ):
-        """When quality gate fails, issue should be marked needs-followup."""
-        from src.quality_gate import GateResult
-
+        """When quality gate fails (inside run_implementer), issue should be marked needs-followup."""
         mark_followup_calls = []
 
         async def mock_mark_followup_async(issue_id: str, reason: str, log_path=None):
             mark_followup_calls.append((issue_id, reason))
             return True
 
-        # Mock quality gate to fail
-        mock_gate_result = GateResult(
-            passed=False, failure_reasons=["No commit with bd-issue-123 found"]
-        )
-
         async def mock_run_implementer(issue_id: str):
-            # Populate log path so quality gate runs
+            # Populate log path so evidence can be gathered
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
             orchestrator.session_log_paths[issue_id] = log_path
-            # Simulate closed issue but gate will fail
+            # Gate failure now returns success=False from run_implementer
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
-                success=True,  # Issue closed
-                summary="done",
+                success=False,  # Gate failed
+                summary="Quality gate failed: No commit with bd-issue-123 found",
             )
 
         first_call = True
@@ -1034,9 +1030,6 @@ class TestOrchestratorQualityGateIntegration:
         async def mock_claim_async(issue_id: str) -> bool:
             return True
 
-        async def mock_reset_async(issue_id: str, log_path=None, error=""):
-            pass
-
         with (
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
@@ -1051,12 +1044,6 @@ class TestOrchestratorQualityGateIntegration:
                 orchestrator.beads,
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
-            ),
-            patch.object(
-                orchestrator.beads, "reset_async", side_effect=mock_reset_async
-            ),
-            patch.object(
-                orchestrator.quality_gate, "check", return_value=mock_gate_result
             ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", tmp_path),
