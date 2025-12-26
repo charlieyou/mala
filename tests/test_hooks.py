@@ -29,7 +29,7 @@ class TestMakeLockEnforcementHook:
     """Tests for the make_lock_enforcement_hook factory function."""
 
     @pytest.mark.asyncio
-    async def test_captures_agent_id_via_closure(self, tmp_path: Path):
+    async def test_captures_agent_id_via_closure(self, tmp_path: Path) -> None:
         """Hook created by factory should use the captured agent_id."""
         test_file = str(tmp_path / "test.py")
         hook = make_lock_enforcement_hook("captured-agent-id")
@@ -45,7 +45,7 @@ class TestMakeLockEnforcementHook:
         mock.assert_called_once_with(test_file, repo_namespace=None)
 
     @pytest.mark.asyncio
-    async def test_blocks_when_different_agent_holds_lock(self, tmp_path: Path):
+    async def test_blocks_when_different_agent_holds_lock(self, tmp_path: Path) -> None:
         """Factory-created hook should block when another agent holds lock."""
         test_file = str(tmp_path / "test.py")
         hook = make_lock_enforcement_hook("my-agent")
@@ -59,7 +59,7 @@ class TestMakeLockEnforcementHook:
         assert "other-agent" in result["reason"]
 
     @pytest.mark.asyncio
-    async def test_blocks_when_no_lock_exists(self, tmp_path: Path):
+    async def test_blocks_when_no_lock_exists(self, tmp_path: Path) -> None:
         """Factory-created hook should block when file is not locked."""
         test_file = str(tmp_path / "test.py")
         hook = make_lock_enforcement_hook("my-agent")
@@ -73,7 +73,7 @@ class TestMakeLockEnforcementHook:
         assert "not locked" in result["reason"].lower()
 
     @pytest.mark.asyncio
-    async def test_allows_non_write_tools(self):
+    async def test_allows_non_write_tools(self) -> None:
         """Non-write tools should be allowed without lock check."""
         hook = make_lock_enforcement_hook("test-agent")
         hook_input = make_hook_input("Bash", {"command": "ls -la"})
@@ -84,7 +84,7 @@ class TestMakeLockEnforcementHook:
         assert result == {}  # Empty dict means allow
 
     @pytest.mark.asyncio
-    async def test_handles_edit_file_mcp_tool(self, tmp_path: Path):
+    async def test_handles_edit_file_mcp_tool(self, tmp_path: Path) -> None:
         """MCP edit_file tool should also check lock ownership."""
         test_file = str(tmp_path / "test.py")
         hook_input = make_hook_input(
@@ -100,7 +100,7 @@ class TestMakeLockEnforcementHook:
         assert result == {}  # Allowed when agent holds lock
 
     @pytest.mark.asyncio
-    async def test_handles_notebook_edit_tool(self, tmp_path: Path):
+    async def test_handles_notebook_edit_tool(self, tmp_path: Path) -> None:
         """NotebookEdit tool should also check lock ownership."""
         notebook_file = str(tmp_path / "notebook.ipynb")
         hook_input = make_hook_input(
@@ -117,14 +117,14 @@ class TestMakeLockEnforcementHook:
         assert result == {}  # Allowed
 
     @pytest.mark.asyncio
-    async def test_file_write_tools_constant_contains_expected_tools(self):
+    async def test_file_write_tools_constant_contains_expected_tools(self) -> None:
         """FILE_WRITE_TOOLS should contain expected write tools."""
         # These are the tools we expect to be file-write tools
         expected_tools = {"Write", "NotebookEdit", "mcp__morphllm__edit_file"}
         assert expected_tools.issubset(FILE_WRITE_TOOLS)
 
     @pytest.mark.asyncio
-    async def test_handles_missing_file_path_gracefully(self):
+    async def test_handles_missing_file_path_gracefully(self) -> None:
         """Should handle malformed tool input without crashing."""
         hook = make_lock_enforcement_hook("test-agent")
         hook_input = make_hook_input("Write", {})  # Missing file_path
@@ -136,7 +136,7 @@ class TestMakeLockEnforcementHook:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_repo_path_passed_to_get_lock_holder(self, tmp_path: Path):
+    async def test_repo_path_passed_to_get_lock_holder(self, tmp_path: Path) -> None:
         """repo_path should be passed to get_lock_holder as repo_namespace."""
         test_file = str(tmp_path / "test.py")
         repo_path = "/home/user/my-repo"

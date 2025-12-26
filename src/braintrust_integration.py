@@ -26,8 +26,10 @@ Usage:
         tracer.set_success(True)
 """
 
+from __future__ import annotations
+
 import os
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Self
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -39,11 +41,17 @@ from claude_agent_sdk import (
 
 if TYPE_CHECKING:
     import types
+    from collections.abc import Callable
+    from types import TracebackType
+
+# Type alias for SDK messages (all types from receive_response)
+# We only handle AssistantMessage and ResultMessage, but accept all for type safety
+SDKMessage = object  # receive_response yields multiple types
 
 # Braintrust imports - gracefully handle if not configured
 BRAINTRUST_AVAILABLE: bool = False
-braintrust: "types.ModuleType | None" = None
-start_span: Callable[..., Any] | None = None
+braintrust: types.ModuleType | None = None
+start_span: Callable[..., object] | None = None
 flush: Callable[[], None] | None = None
 
 try:
@@ -92,14 +100,14 @@ class TracedAgentExecution:
         self.issue_id = issue_id
         self.agent_id = agent_id
         self.metadata = metadata or {}
-        self.span = None
+        self.span: Any = None  # Braintrust span object (dynamic type)
         self.input_prompt: str | None = None
         self.output_text: str = ""
         self.tool_calls: list[dict[str, Any]] = []
         self.success: bool = False
         self.error: str | None = None
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         if not is_braintrust_enabled():
             return self
 
@@ -107,7 +115,7 @@ class TracedAgentExecution:
         try:
             if start_span is None:
                 return self
-            self.span = start_span(
+            span = start_span(
                 name=f"agent:{self.issue_id}",
                 type="task",
                 metadata={
@@ -116,7 +124,8 @@ class TracedAgentExecution:
                     **self.metadata,
                 },
             )
-            self.span.__enter__()
+            self.span = span
+            span.__enter__()  # type: ignore[union-attr]
         except Exception as e:
             import sys
 
@@ -124,7 +133,12 @@ class TracedAgentExecution:
             self.span = None
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         if self.span is None:
             return
 
@@ -153,11 +167,11 @@ class TracedAgentExecution:
             print(f"[braintrust] Failed to close span: {e}", file=sys.stderr)
             # Suppress the exception - tracing is best-effort
 
-    def log_input(self, prompt: str):
+    def log_input(self, prompt: str) -> None:
         """Log the initial user prompt."""
         self.input_prompt = prompt
 
-    def log_message(self, message: Any):
+    def log_message(self, message: SDKMessage) -> None:
         """Log a message from the Claude Agent SDK (for output/tool tracking)."""
         try:
             if isinstance(message, AssistantMessage):
@@ -167,7 +181,7 @@ class TracedAgentExecution:
         except Exception:
             pass  # Best-effort tracking
 
-    def _handle_assistant_message(self, message: AssistantMessage):
+    def _handle_assistant_message(self, message: AssistantMessage) -> None:
         """Process an assistant message, tracking text and tool calls."""
         for block in message.content:
             if isinstance(block, TextBlock):
@@ -190,15 +204,15 @@ class TracedAgentExecution:
             elif isinstance(block, ToolResultBlock):
                 pass  # Tool results tracked in wrapper
 
-    def _handle_result_message(self, message: ResultMessage):
+    def _handle_result_message(self, message: ResultMessage) -> None:
         """Process the final result message."""
         self.output_text = message.result or self.output_text
 
-    def set_success(self, success: bool):
+    def set_success(self, success: bool) -> None:
         """Mark the execution as successful or failed."""
         self.success = success
 
-    def set_error(self, error: str):
+    def set_error(self, error: str) -> None:
         """Record an error message."""
         self.error = error
         self.success = False

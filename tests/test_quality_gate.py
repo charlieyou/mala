@@ -14,7 +14,7 @@ from src.quality_gate import QualityGate, ValidationEvidence
 class TestOffsetBasedParsing:
     """Test parse_validation_evidence_from_offset for scoping evidence by attempt."""
 
-    def test_returns_evidence_and_new_offset(self, tmp_path: Path):
+    def test_returns_evidence_and_new_offset(self, tmp_path: Path) -> None:
         """Should return tuple of (evidence, new_offset)."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -40,7 +40,7 @@ class TestOffsetBasedParsing:
         assert isinstance(new_offset, int)
         assert new_offset > 0
 
-    def test_starts_from_given_offset(self, tmp_path: Path):
+    def test_starts_from_given_offset(self, tmp_path: Path) -> None:
         """Should only parse log entries after the given byte offset."""
         log_path = tmp_path / "session.jsonl"
 
@@ -80,7 +80,7 @@ class TestOffsetBasedParsing:
 
         # Offset set to after the first line
         offset = len(first_entry) + 1  # +1 for newline
-        evidence, new_offset = gate.parse_validation_evidence_from_offset(
+        evidence, _new_offset = gate.parse_validation_evidence_from_offset(
             log_path, offset=offset
         )
 
@@ -89,7 +89,7 @@ class TestOffsetBasedParsing:
         # Should detect ruff check (after offset)
         assert evidence.ruff_check_ran is True
 
-    def test_offset_zero_parses_entire_file(self, tmp_path: Path):
+    def test_offset_zero_parses_entire_file(self, tmp_path: Path) -> None:
         """Offset=0 should parse the entire file (default behavior)."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -113,7 +113,7 @@ class TestOffsetBasedParsing:
 
         assert evidence.pytest_ran is True
 
-    def test_offset_at_end_returns_empty_evidence(self, tmp_path: Path):
+    def test_offset_at_end_returns_empty_evidence(self, tmp_path: Path) -> None:
         """Offset at EOF should return empty evidence."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -144,7 +144,7 @@ class TestOffsetBasedParsing:
         assert evidence.ruff_format_ran is False
         assert new_offset == file_size
 
-    def test_new_offset_points_to_end_of_file(self, tmp_path: Path):
+    def test_new_offset_points_to_end_of_file(self, tmp_path: Path) -> None:
         """Returned offset should point to the current end of the file."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -168,7 +168,7 @@ class TestOffsetBasedParsing:
 
         assert new_offset == log_path.stat().st_size
 
-    def test_handles_missing_file(self, tmp_path: Path):
+    def test_handles_missing_file(self, tmp_path: Path) -> None:
         """Should handle missing log file gracefully."""
         gate = QualityGate(tmp_path)
         nonexistent = tmp_path / "nonexistent.jsonl"
@@ -178,7 +178,7 @@ class TestOffsetBasedParsing:
         assert evidence.pytest_ran is False
         assert new_offset == 0
 
-    def test_detects_all_validation_commands_after_offset(self, tmp_path: Path):
+    def test_detects_all_validation_commands_after_offset(self, tmp_path: Path) -> None:
         """Should detect all validation commands after the given offset."""
         log_path = tmp_path / "session.jsonl"
 
@@ -223,7 +223,7 @@ class TestOffsetBasedParsing:
 class TestNoProgressDetection:
     """Test check_no_progress for detecting stalled attempts."""
 
-    def test_no_progress_when_same_commit_and_no_new_evidence(self, tmp_path: Path):
+    def test_no_progress_when_same_commit_and_no_new_evidence(self, tmp_path: Path) -> None:
         """No progress: unchanged commit hash + no new evidence since offset."""
         log_path = tmp_path / "session.jsonl"
         # Empty file - no new evidence
@@ -240,7 +240,7 @@ class TestNoProgressDetection:
 
         assert is_no_progress is True
 
-    def test_progress_when_commit_changed(self, tmp_path: Path):
+    def test_progress_when_commit_changed(self, tmp_path: Path) -> None:
         """Progress detected: different commit hash (even without new evidence)."""
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")  # No new evidence
@@ -255,7 +255,7 @@ class TestNoProgressDetection:
 
         assert is_no_progress is False
 
-    def test_progress_when_new_evidence_found(self, tmp_path: Path):
+    def test_progress_when_new_evidence_found(self, tmp_path: Path) -> None:
         """Progress detected: new validation evidence (even with same commit)."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -284,7 +284,7 @@ class TestNoProgressDetection:
 
         assert is_no_progress is False
 
-    def test_no_progress_when_evidence_before_offset_only(self, tmp_path: Path):
+    def test_no_progress_when_evidence_before_offset_only(self, tmp_path: Path) -> None:
         """No progress: validation evidence exists but only before the offset."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -316,7 +316,7 @@ class TestNoProgressDetection:
 
         assert is_no_progress is True
 
-    def test_progress_when_no_previous_commit(self, tmp_path: Path):
+    def test_progress_when_no_previous_commit(self, tmp_path: Path) -> None:
         """Progress detected: first attempt (no previous commit to compare)."""
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")
@@ -332,7 +332,7 @@ class TestNoProgressDetection:
         # First attempt with a commit is always progress
         assert is_no_progress is False
 
-    def test_no_progress_with_none_commits_and_no_evidence(self, tmp_path: Path):
+    def test_no_progress_with_none_commits_and_no_evidence(self, tmp_path: Path) -> None:
         """No progress: both commits None (no commit made) and no new evidence."""
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")
@@ -347,7 +347,7 @@ class TestNoProgressDetection:
 
         assert is_no_progress is True
 
-    def test_handles_missing_log_file(self, tmp_path: Path):
+    def test_handles_missing_log_file(self, tmp_path: Path) -> None:
         """Should handle missing log file (no evidence = no progress)."""
         gate = QualityGate(tmp_path)
         nonexistent = tmp_path / "nonexistent.jsonl"
@@ -365,7 +365,7 @@ class TestNoProgressDetection:
 class TestGateResultNoProgress:
     """Test GateResult includes no-progress indicator."""
 
-    def test_gate_result_has_no_progress_field(self):
+    def test_gate_result_has_no_progress_field(self) -> None:
         """GateResult should have a no_progress field."""
         from src.quality_gate import GateResult
 
@@ -373,7 +373,7 @@ class TestGateResultNoProgress:
         # Check the field exists and defaults appropriately
         assert hasattr(result, "no_progress")
 
-    def test_gate_result_no_progress_default_false(self):
+    def test_gate_result_no_progress_default_false(self) -> None:
         """GateResult.no_progress should default to False."""
         from src.quality_gate import GateResult
 

@@ -27,6 +27,64 @@ artifacts = ["src/scripts/*.sh"]
 [tool.ty.environment]
 root = ["."]
 
+[tool.ty.rules]
+# Set all ty rules to error level for strictest checking
+possibly-unresolved-reference = "error"
+unresolved-reference = "error"
+unresolved-import = "error"
+invalid-type-form = "error"
+invalid-type-variable-constraints = "error"
+invalid-legacy-type-variable = "error"
+invalid-syntax-in-forward-annotation = "error"
+invalid-attribute-access = "error"
+invalid-assignment = "error"
+invalid-declaration = "error"
+invalid-parameter-default = "error"
+invalid-argument-type = "error"
+invalid-return-type = "error"
+unresolved-attribute = "error"
+missing-argument = "error"
+too-many-positional-arguments = "error"
+unknown-argument = "error"
+parameter-already-assigned = "error"
+conflicting-declarations = "error"
+conflicting-metaclass = "error"
+cyclic-class-definition = "error"
+duplicate-base = "error"
+inconsistent-mro = "error"
+invalid-base = "error"
+unsupported-base = "error"
+unsupported-operator = "error"
+not-iterable = "error"
+non-subscriptable = "error"
+invalid-context-manager = "error"
+invalid-raise = "error"
+invalid-exception-caught = "error"
+call-non-callable = "error"
+invalid-overload = "error"
+invalid-super-argument = "error"
+
+[tool.ruff.lint]
+extend-select = [
+    "ANN",   # flake8-annotations - require type annotations
+    "TCH",   # flake8-type-checking - proper TYPE_CHECKING imports
+    "PYI",   # flake8-pyi - type stub best practices
+    "UP",    # pyupgrade - modern type syntax
+    "FA",    # flake8-future-annotations - use future annotations
+    "RUF",   # Ruff-specific rules including type issues
+]
+
+[tool.ruff.lint.flake8-annotations]
+allow-star-arg-any = false
+suppress-none-returning = false
+suppress-dummy-args = false
+mypy-init-return = true
+
+[tool.ruff.lint.flake8-type-checking]
+strict = true
+runtime-evaluated-base-classes = []
+runtime-evaluated-decorators = []
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

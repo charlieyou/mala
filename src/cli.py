@@ -33,7 +33,7 @@ if _braintrust_api_key:
 # Now safe to import claude_agent_sdk (it's been patched if Braintrust is available)
 import asyncio
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Never
 
 import typer
 
@@ -129,7 +129,7 @@ def run(
             help="Enable verbose output with full tool arguments and code",
         ),
     ] = False,
-):
+) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
     if verbose:
@@ -177,7 +177,7 @@ def run(
 
 
 @app.command()
-def clean():
+def clean() -> None:
     """Clean up locks and JSONL logs."""
     cleaned_locks = 0
     cleaned_logs = 0
@@ -201,7 +201,7 @@ def clean():
 
 
 @app.command()
-def status():
+def status() -> None:
     """Show current orchestrator status."""
     print()
     log("●", "mala status", Colors.MAGENTA)

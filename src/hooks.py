@@ -5,6 +5,8 @@ Contains PreToolUse hooks and related constants for blocking dangerous commands
 and managing tool restrictions.
 """
 
+from collections.abc import Awaitable, Callable
+
 from claude_agent_sdk.types import (
     PreToolUseHookInput,
     HookContext,
@@ -12,6 +14,12 @@ from claude_agent_sdk.types import (
 )
 
 from .tools.locking import get_lock_holder
+
+# Type alias for PreToolUse hooks
+PreToolUseHook = Callable[
+    [PreToolUseHookInput, str | None, HookContext],
+    Awaitable[SyncHookJSONOutput],
+]
 
 # Dangerous bash command patterns to block
 DANGEROUS_PATTERNS = [
@@ -126,7 +134,9 @@ async def block_morph_replaced_tools(
     return {}
 
 
-def make_lock_enforcement_hook(agent_id: str, repo_path: str | None = None):
+def make_lock_enforcement_hook(
+    agent_id: str, repo_path: str | None = None
+) -> PreToolUseHook:
     """Create a PreToolUse hook that enforces lock ownership for file writes.
 
     Args:

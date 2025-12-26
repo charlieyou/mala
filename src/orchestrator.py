@@ -175,7 +175,7 @@ class MalaOrchestrator:
 
         self.beads = BeadsClient(self.repo_path, log_warning=log_warning)
 
-    def _cleanup_agent_locks(self, agent_id: str):
+    def _cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup)."""
         cleaned = cleanup_agent_locks(agent_id)
         if cleaned:
@@ -298,7 +298,7 @@ class MalaOrchestrator:
                         ],  # type: ignore[arg-type]
                     )
                 ],
-                "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],
+                "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],  # type: ignore[arg-type]
             },
         )
 

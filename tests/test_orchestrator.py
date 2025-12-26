@@ -10,12 +10,14 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from claude_agent_sdk.types import ResultMessage
 
-from src.beads_client import BeadsClient
+from src.beads_client import BeadsClient, SubprocessResult
 from src.orchestrator import IMPLEMENTER_PROMPT_TEMPLATE, IssueResult, MalaOrchestrator
 
 
@@ -45,7 +47,7 @@ def make_subprocess_result(
 class TestPromptTemplate:
     """Test implementer prompt template validity."""
 
-    def test_prompt_template_placeholders_match_format_call(self):
+    def test_prompt_template_placeholders_match_format_call(self) -> None:
         """Verify prompt template placeholders match what format() provides."""
         # Extract all {placeholder} from template
         placeholders = set(re.findall(r"\{(\w+)\}", IMPLEMENTER_PROMPT_TEMPLATE))
@@ -64,7 +66,7 @@ class TestGetReadyIssuesAsync:
     @pytest.mark.asyncio
     async def test_returns_issue_ids_sorted_by_priority(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """Issues should be returned sorted by priority (lower = higher)."""
         issues_json = json.dumps(
             [
@@ -84,7 +86,7 @@ class TestGetReadyIssuesAsync:
         assert result == ["issue-1", "issue-2", "issue-3"]
 
     @pytest.mark.asyncio
-    async def test_filters_out_epics(self, orchestrator: MalaOrchestrator):
+    async def test_filters_out_epics(self, orchestrator: MalaOrchestrator) -> None:
         """Epics should be excluded from ready issues."""
         issues_json = json.dumps(
             [
@@ -105,7 +107,7 @@ class TestGetReadyIssuesAsync:
         assert "epic-1" not in result
 
     @pytest.mark.asyncio
-    async def test_filters_out_failed_issues(self, orchestrator: MalaOrchestrator):
+    async def test_filters_out_failed_issues(self, orchestrator: MalaOrchestrator) -> None:
         """Previously failed issues should be excluded."""
         failed_set = {"failed-1"}
         issues_json = json.dumps(
@@ -128,7 +130,7 @@ class TestGetReadyIssuesAsync:
     @pytest.mark.asyncio
     async def test_returns_empty_list_on_bd_failure(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """When bd ready fails, return empty list."""
         with patch.object(
             orchestrator.beads,
@@ -145,7 +147,7 @@ class TestGetReadyIssuesAsync:
     @pytest.mark.asyncio
     async def test_returns_empty_list_on_invalid_json(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """When bd returns invalid JSON, return empty list."""
         with patch.object(
             orchestrator.beads,
@@ -158,7 +160,7 @@ class TestGetReadyIssuesAsync:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_handles_missing_priority(self, orchestrator: MalaOrchestrator):
+    async def test_handles_missing_priority(self, orchestrator: MalaOrchestrator) -> None:
         """Issues without priority should be sorted last (priority 999)."""
         issues_json = json.dumps(
             [
@@ -179,7 +181,7 @@ class TestGetReadyIssuesAsync:
     @pytest.mark.asyncio
     async def test_suppresses_warning_for_only_ids_already_processed(
         self, tmp_path: Path
-    ):
+    ) -> None:
         """Only-id warnings should be suppressed for already processed IDs."""
         warnings: list[str] = []
         beads = BeadsClient(tmp_path, log_warning=warnings.append)
@@ -203,7 +205,7 @@ class TestClaimIssueAsync:
     """Test beads.claim_async invokes bd update correctly."""
 
     @pytest.mark.asyncio
-    async def test_returns_true_on_success(self, orchestrator: MalaOrchestrator):
+    async def test_returns_true_on_success(self, orchestrator: MalaOrchestrator) -> None:
         """Successful claim returns True."""
         with patch.object(
             orchestrator.beads,
@@ -216,7 +218,7 @@ class TestClaimIssueAsync:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_returns_false_on_failure(self, orchestrator: MalaOrchestrator):
+    async def test_returns_false_on_failure(self, orchestrator: MalaOrchestrator) -> None:
         """Failed claim returns False."""
         with patch.object(
             orchestrator.beads,
@@ -233,7 +235,7 @@ class TestClaimIssueAsync:
     @pytest.mark.asyncio
     async def test_calls_bd_update_with_correct_args(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """Verify bd update is called with correct arguments."""
         mock_run = AsyncMock(return_value=make_subprocess_result())
         with patch.object(orchestrator.beads, "_run_subprocess_async", mock_run):
@@ -256,7 +258,7 @@ class TestResetIssueAsync:
     @pytest.mark.asyncio
     async def test_calls_bd_update_with_ready_status(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """Verify reset calls bd update with ready status."""
         mock_run = AsyncMock(return_value=make_subprocess_result())
         with patch.object(orchestrator.beads, "_run_subprocess_async", mock_run):
@@ -269,7 +271,7 @@ class TestResetIssueAsync:
     @pytest.mark.asyncio
     async def test_includes_log_path_and_error_in_notes(
         self, orchestrator: MalaOrchestrator, tmp_path: Path
-    ):
+    ) -> None:
         """Reset with log_path and error should include notes."""
         log_path = tmp_path / "session.jsonl"
         mock_run = AsyncMock(return_value=make_subprocess_result())
@@ -287,7 +289,7 @@ class TestResetIssueAsync:
         assert str(log_path) in notes_value
 
     @pytest.mark.asyncio
-    async def test_does_not_raise_on_failure(self, orchestrator: MalaOrchestrator):
+    async def test_does_not_raise_on_failure(self, orchestrator: MalaOrchestrator) -> None:
         """Reset should not raise even if bd fails."""
         with patch.object(
             orchestrator.beads,
@@ -305,7 +307,7 @@ class TestSpawnAgent:
     @pytest.mark.asyncio
     async def test_adds_issue_to_failed_when_claim_fails(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """When claim fails, issue should be added to failed_issues."""
 
         async def mock_claim_async(issue_id: str) -> bool:
@@ -322,7 +324,7 @@ class TestSpawnAgent:
     @pytest.mark.asyncio
     async def test_creates_task_when_claim_succeeds(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """When claim succeeds, a task should be created."""
 
         async def mock_claim_async(issue_id: str) -> bool:
@@ -355,12 +357,15 @@ class TestRunOrchestrationLoop:
     @pytest.mark.asyncio
     async def test_stops_cleanly_when_no_ready_issues(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """When no issues are ready, run() should return 0 and exit cleanly."""
 
         async def mock_get_ready_async(
-            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
-        ):
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
             return []
 
         with (
@@ -377,15 +382,18 @@ class TestRunOrchestrationLoop:
         assert len(orchestrator.completed) == 0
 
     @pytest.mark.asyncio
-    async def test_respects_max_issues_limit(self, orchestrator: MalaOrchestrator):
+    async def test_respects_max_issues_limit(self, orchestrator: MalaOrchestrator) -> None:
         """Should stop after processing max_issues."""
         orchestrator.max_issues = 2
         call_count = 0
-        spawned = []
+        spawned: list[str] = []
 
         async def mock_get_ready_async(
-            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
-        ):
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
             # Return issues only on first call
             nonlocal call_count
             call_count += 1
@@ -428,11 +436,13 @@ class TestFailedTaskResetsIssue:
     """Test that failed tasks correctly mark issue as needing followup."""
 
     @pytest.mark.asyncio
-    async def test_resets_issue_on_task_failure(self, orchestrator: MalaOrchestrator):
+    async def test_resets_issue_on_task_failure(self, orchestrator: MalaOrchestrator) -> None:
         """When a task fails, the issue should be marked needs-followup."""
         followup_calls = []
 
-        async def mock_mark_followup_async(issue_id: str, reason: str, log_path=None):
+        async def mock_mark_followup_async(
+            issue_id: str, reason: str, log_path: Path | None = None
+        ) -> bool:
             followup_calls.append(issue_id)
             return True
 
@@ -447,8 +457,11 @@ class TestFailedTaskResetsIssue:
         first_call = True
 
         async def mock_get_ready_async(
-            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
-        ):
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
             nonlocal first_call
             if first_call:
                 first_call = False
@@ -488,11 +501,13 @@ class TestFailedTaskResetsIssue:
     @pytest.mark.asyncio
     async def test_does_not_reset_successful_issue(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """Successful issues should not be reset."""
-        reset_calls = []
+        reset_calls: list[str] = []
 
-        async def mock_reset_async(issue_id: str, log_path=None, error=""):
+        async def mock_reset_async(
+            issue_id: str, log_path: Path | None = None, error: str = ""
+        ) -> None:
             reset_calls.append(issue_id)
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
@@ -506,8 +521,11 @@ class TestFailedTaskResetsIssue:
         first_call = True
 
         async def mock_get_ready_async(
-            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
-        ):
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
             nonlocal first_call
             if first_call:
                 first_call = False
@@ -546,19 +564,19 @@ class TestFailedTaskResetsIssue:
 class TestOrchestratorInitialization:
     """Test orchestrator initialization."""
 
-    def test_timeout_conversion(self, tmp_path: Path):
+    def test_timeout_conversion(self, tmp_path: Path) -> None:
         """Timeout minutes should be converted to seconds."""
         orch = MalaOrchestrator(repo_path=tmp_path, timeout_minutes=15)
         assert orch.timeout_seconds == 15 * 60
 
-    def test_default_values(self, tmp_path: Path):
+    def test_default_values(self, tmp_path: Path) -> None:
         """Default values should be set correctly."""
         orch = MalaOrchestrator(repo_path=tmp_path)
         assert orch.max_agents is None  # Unlimited by default
         assert orch.timeout_seconds is None  # No timeout by default
         assert orch.max_issues is None
 
-    def test_repo_path_resolved(self, tmp_path: Path):
+    def test_repo_path_resolved(self, tmp_path: Path) -> None:
         """Repo path should be resolved to absolute."""
         relative = Path(".")
         orch = MalaOrchestrator(repo_path=relative)
@@ -571,7 +589,7 @@ class TestEpicFilterAsync:
     @pytest.mark.asyncio
     async def test_get_epic_children_returns_child_ids(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """get_epic_children_async should return IDs of children (depth > 0)."""
         tree_json = json.dumps(
             [
@@ -595,7 +613,7 @@ class TestEpicFilterAsync:
     @pytest.mark.asyncio
     async def test_get_epic_children_returns_empty_on_failure(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """get_epic_children_async should return empty set on bd failure."""
         with patch.object(
             orchestrator.beads,
@@ -612,7 +630,7 @@ class TestEpicFilterAsync:
     @pytest.mark.asyncio
     async def test_get_epic_children_returns_empty_on_invalid_json(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """get_epic_children_async should return empty set on invalid JSON."""
         with patch.object(
             orchestrator.beads,
@@ -625,7 +643,7 @@ class TestEpicFilterAsync:
         assert result == set()
 
     @pytest.mark.asyncio
-    async def test_get_ready_with_epic_filter(self, orchestrator: MalaOrchestrator):
+    async def test_get_ready_with_epic_filter(self, orchestrator: MalaOrchestrator) -> None:
         """get_ready_async with epic_id should only return children of that epic."""
         tree_json = json.dumps(
             [
@@ -642,7 +660,9 @@ class TestEpicFilterAsync:
             ]
         )
 
-        async def mock_run(cmd, **kwargs):
+        async def mock_run(
+            cmd: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
             if "dep" in cmd and "tree" in cmd:
                 return make_subprocess_result(stdout=tree_json)
             elif "ready" in cmd:
@@ -660,7 +680,7 @@ class TestEpicFilterAsync:
     @pytest.mark.asyncio
     async def test_get_ready_without_epic_filter_returns_all(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """get_ready_async without epic_id should return all ready tasks."""
         ready_json = json.dumps(
             [
@@ -681,7 +701,7 @@ class TestEpicFilterAsync:
     @pytest.mark.asyncio
     async def test_get_ready_with_epic_filter_returns_empty_if_no_children(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """get_ready_async with epic_id should return empty if epic has no children."""
         with patch.object(
             orchestrator.beads,
@@ -697,12 +717,12 @@ class TestEpicFilterAsync:
 class TestOrchestratorWithEpicId:
     """Test orchestrator with epic_id parameter."""
 
-    def test_epic_id_stored(self, tmp_path: Path):
+    def test_epic_id_stored(self, tmp_path: Path) -> None:
         """epic_id parameter should be stored on orchestrator."""
         orch = MalaOrchestrator(repo_path=tmp_path, epic_id="test-epic")
         assert orch.epic_id == "test-epic"
 
-    def test_epic_id_defaults_to_none(self, tmp_path: Path):
+    def test_epic_id_defaults_to_none(self, tmp_path: Path) -> None:
         """epic_id should default to None."""
         orch = MalaOrchestrator(repo_path=tmp_path)
         assert orch.epic_id is None
@@ -711,7 +731,7 @@ class TestOrchestratorWithEpicId:
 class TestQualityGateValidationEvidence:
     """Test JSONL log parsing for validation command evidence."""
 
-    def test_detects_pytest_command(self, tmp_path: Path):
+    def test_detects_pytest_command(self, tmp_path: Path) -> None:
         """Quality gate should detect pytest execution in JSONL logs."""
         from src.quality_gate import QualityGate
 
@@ -738,7 +758,7 @@ class TestQualityGateValidationEvidence:
 
         assert evidence.pytest_ran is True
 
-    def test_detects_ruff_check_command(self, tmp_path: Path):
+    def test_detects_ruff_check_command(self, tmp_path: Path) -> None:
         """Quality gate should detect ruff check execution."""
         from src.quality_gate import QualityGate
 
@@ -764,7 +784,7 @@ class TestQualityGateValidationEvidence:
 
         assert evidence.ruff_check_ran is True
 
-    def test_detects_ruff_format_command(self, tmp_path: Path):
+    def test_detects_ruff_format_command(self, tmp_path: Path) -> None:
         """Quality gate should detect ruff format execution."""
         from src.quality_gate import QualityGate
 
@@ -790,7 +810,7 @@ class TestQualityGateValidationEvidence:
 
         assert evidence.ruff_format_ran is True
 
-    def test_detects_ty_check_command(self, tmp_path: Path):
+    def test_detects_ty_check_command(self, tmp_path: Path) -> None:
         """Quality gate should detect ty check execution."""
         from src.quality_gate import QualityGate
 
@@ -816,7 +836,7 @@ class TestQualityGateValidationEvidence:
 
         assert evidence.ty_check_ran is True
 
-    def test_detects_uv_sync_command(self, tmp_path: Path):
+    def test_detects_uv_sync_command(self, tmp_path: Path) -> None:
         """Quality gate should detect uv sync execution."""
         from src.quality_gate import QualityGate
 
@@ -842,7 +862,7 @@ class TestQualityGateValidationEvidence:
 
         assert evidence.uv_sync_ran is True
 
-    def test_returns_empty_evidence_for_missing_log(self, tmp_path: Path):
+    def test_returns_empty_evidence_for_missing_log(self, tmp_path: Path) -> None:
         """Quality gate should return empty evidence for missing log file."""
         from src.quality_gate import QualityGate
 
@@ -860,7 +880,7 @@ class TestQualityGateValidationEvidence:
 class TestQualityGateCommitCheck:
     """Test git commit message verification."""
 
-    def test_detects_matching_commit(self, tmp_path: Path):
+    def test_detects_matching_commit(self, tmp_path: Path) -> None:
         """Quality gate should detect commit with correct issue ID."""
         from src.quality_gate import QualityGate
 
@@ -875,7 +895,7 @@ class TestQualityGateCommitCheck:
         assert result.exists is True
         assert result.commit_hash == "abc1234"
 
-    def test_rejects_missing_commit(self, tmp_path: Path):
+    def test_rejects_missing_commit(self, tmp_path: Path) -> None:
         """Quality gate should reject when no matching commit found."""
         from src.quality_gate import QualityGate
 
@@ -888,7 +908,7 @@ class TestQualityGateCommitCheck:
         assert result.exists is False
         assert result.commit_hash is None
 
-    def test_handles_git_failure(self, tmp_path: Path):
+    def test_handles_git_failure(self, tmp_path: Path) -> None:
         """Quality gate should handle git command failures gracefully."""
         from src.quality_gate import QualityGate
 
@@ -902,7 +922,7 @@ class TestQualityGateCommitCheck:
 
         assert result.exists is False
 
-    def test_searches_30_day_window(self, tmp_path: Path):
+    def test_searches_30_day_window(self, tmp_path: Path) -> None:
         """Quality gate should search commits from the last 30 days."""
         from src.quality_gate import QualityGate
 
@@ -925,7 +945,7 @@ class TestQualityGateCommitCheck:
 class TestQualityGateFullCheck:
     """Test full quality gate check combining all criteria."""
 
-    def test_passes_when_all_criteria_met(self, tmp_path: Path):
+    def test_passes_when_all_criteria_met(self, tmp_path: Path) -> None:
         """Quality gate passes when closed, commit exists, validation ran."""
         from src.quality_gate import QualityGate
 
@@ -933,7 +953,7 @@ class TestQualityGateFullCheck:
 
         # Create log with all validation commands
         log_path = tmp_path / "session.jsonl"
-        commands = ["uv sync", "uv run pytest", "uvx ruff check .", "uvx ruff format ."]
+        commands = ["uv sync", "uv run pytest", "uvx ruff check .", "uvx ruff format .", "uvx ty check"]
         lines = []
         for cmd in commands:
             lines.append(
@@ -963,7 +983,7 @@ class TestQualityGateFullCheck:
         assert result.passed is True
         assert result.failure_reasons == []
 
-    def test_fails_when_commit_missing(self, tmp_path: Path):
+    def test_fails_when_commit_missing(self, tmp_path: Path) -> None:
         """Quality gate fails when commit is missing."""
         from src.quality_gate import QualityGate
 
@@ -996,7 +1016,7 @@ class TestQualityGateFullCheck:
         assert result.passed is False
         assert "commit" in result.failure_reasons[0].lower()
 
-    def test_failure_message_reflects_30_day_window(self, tmp_path: Path):
+    def test_failure_message_reflects_30_day_window(self, tmp_path: Path) -> None:
         """Quality gate failure message should mention the 30-day window."""
         from src.quality_gate import QualityGate
 
@@ -1029,7 +1049,7 @@ class TestQualityGateFullCheck:
         assert result.passed is False
         assert "30 days" in result.failure_reasons[0]
 
-    def test_fails_when_validation_missing(self, tmp_path: Path):
+    def test_fails_when_validation_missing(self, tmp_path: Path) -> None:
         """Quality gate fails when validation commands didn't run."""
         from src.quality_gate import QualityGate
 
@@ -1055,7 +1075,7 @@ class TestBeadsClientNeedsFollowupAsync:
     @pytest.mark.asyncio
     async def test_marks_issue_with_needs_followup_label(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """mark_needs_followup_async should add the needs-followup label."""
         mock_run = AsyncMock(return_value=make_subprocess_result())
         with patch.object(orchestrator.beads, "_run_subprocess_async", mock_run):
@@ -1073,7 +1093,7 @@ class TestBeadsClientNeedsFollowupAsync:
     @pytest.mark.asyncio
     async def test_records_failure_context_in_notes(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """mark_needs_followup_async should record failure context."""
         mock_run = AsyncMock(return_value=make_subprocess_result())
         with patch.object(orchestrator.beads, "_run_subprocess_async", mock_run):
@@ -1095,15 +1115,17 @@ class TestOrchestratorQualityGateIntegration:
     @pytest.mark.asyncio
     async def test_marks_needs_followup_on_gate_failure(
         self, orchestrator: MalaOrchestrator, tmp_path: Path
-    ):
+    ) -> None:
         """When quality gate fails (inside run_implementer), issue should be marked needs-followup."""
-        mark_followup_calls = []
+        mark_followup_calls: list[tuple[str, str]] = []
 
-        async def mock_mark_followup_async(issue_id: str, reason: str, log_path=None):
+        async def mock_mark_followup_async(
+            issue_id: str, reason: str, log_path: Path | None = None
+        ) -> bool:
             mark_followup_calls.append((issue_id, reason))
             return True
 
-        async def mock_run_implementer(issue_id: str):
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
             # Populate log path so quality gate runs
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
@@ -1119,8 +1141,11 @@ class TestOrchestratorQualityGateIntegration:
         first_call = True
 
         async def mock_get_ready_async(
-            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
-        ):
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
             nonlocal first_call
             if first_call:
                 first_call = False
@@ -1165,14 +1190,14 @@ class TestOrchestratorQualityGateIntegration:
     @pytest.mark.asyncio
     async def test_success_only_when_gate_passes(
         self, orchestrator: MalaOrchestrator, tmp_path: Path
-    ):
+    ) -> None:
         """Issue should only count as success when quality gate passes."""
         from src.quality_gate import GateResult
 
         # Gate passes
         mock_gate_result = GateResult(passed=True, failure_reasons=[])
 
-        async def mock_run_implementer(issue_id: str):
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
             # Populate log path so quality gate runs
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
@@ -1187,8 +1212,11 @@ class TestOrchestratorQualityGateIntegration:
         first_call = True
 
         async def mock_get_ready_async(
-            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
-        ):
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
             nonlocal first_call
             if first_call:
                 first_call = False
@@ -1232,7 +1260,7 @@ class TestOrchestratorQualityGateIntegration:
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
-            success_count, total = await orchestrator.run()
+            success_count, _total = await orchestrator.run()
 
         assert success_count == 1
 
@@ -1243,13 +1271,13 @@ class TestAsyncBeadsClientWithTimeout:
     @pytest.mark.asyncio
     async def test_slow_bd_ready_does_not_block_other_tasks(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """Slow bd ready should not block other concurrent async tasks."""
         # Track when tasks complete
         task_completions: list[tuple[str, float]] = []
         start = time.monotonic()
 
-        async def fast_task():
+        async def fast_task() -> None:
             await asyncio.sleep(0.05)
             task_completions.append(("fast", time.monotonic() - start))
 
@@ -1257,7 +1285,7 @@ class TestAsyncBeadsClientWithTimeout:
         # (since we now use asyncio.create_subprocess_exec)
         orchestrator.beads.timeout_seconds = 0.5
 
-        async def slow_beads_call():
+        async def slow_beads_call() -> None:
             # Use sleep as a slow command
             await orchestrator.beads._run_subprocess_async(["sleep", "0.2"])
             task_completions.append(("beads", time.monotonic() - start))
@@ -1280,7 +1308,7 @@ class TestAsyncBeadsClientWithTimeout:
     @pytest.mark.asyncio
     async def test_bd_command_timeout_returns_safe_fallback(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """When bd command times out, should return safe fallback, not hang."""
         # Use a very short timeout for testing
         orchestrator.beads.timeout_seconds = 0.1
@@ -1297,15 +1325,13 @@ class TestAsyncBeadsClientWithTimeout:
         assert elapsed < 3.0, f"Timeout didn't work: took {elapsed:.2f}s"
 
     @pytest.mark.asyncio
-    async def test_claim_timeout_returns_false(self, orchestrator: MalaOrchestrator):
+    async def test_claim_timeout_returns_false(self, orchestrator: MalaOrchestrator) -> None:
         """When claim times out, should return False (safe fallback)."""
-        from src.beads_client import SubprocessResult
-
         original_timeout = orchestrator.beads.timeout_seconds
         orchestrator.beads.timeout_seconds = 0.1
 
         # Mock _run_subprocess_async to simulate timeout
-        async def mock_timeout(*args, **kwargs):
+        async def mock_timeout(*args: object, **kwargs: object) -> SubprocessResult:
             return SubprocessResult(args=[], returncode=1, stdout="", stderr="timeout")
 
         try:
@@ -1321,14 +1347,17 @@ class TestAsyncBeadsClientWithTimeout:
     @pytest.mark.asyncio
     async def test_orchestrator_uses_async_beads_methods(
         self, orchestrator: MalaOrchestrator
-    ):
+    ) -> None:
         """Orchestrator run loop should use async beads methods."""
         # This test verifies the integration - that orchestrator calls
         # the async versions of beads methods
 
         async def mock_get_ready_async(
-            exclude_ids=None, epic_id=None, only_ids=None, suppress_warn_ids=None
-        ):
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
             return []
 
         with (
@@ -1349,11 +1378,8 @@ class TestMissingLogFile:
     """Test run_implementer behavior when log file never appears."""
 
     @pytest.mark.asyncio
-    async def test_exits_quickly_when_log_file_missing(self, tmp_path: Path):
+    async def test_exits_quickly_when_log_file_missing(self, tmp_path: Path) -> None:
         """run_implementer should exit within bounded wait when log file missing."""
-        from unittest.mock import AsyncMock, MagicMock
-        from claude_agent_sdk.types import ResultMessage
-
         from src.orchestrator import (
             MalaOrchestrator,
             LOG_FILE_WAIT_TIMEOUT,
@@ -1372,7 +1398,7 @@ class TestMissingLogFile:
         mock_client.query = AsyncMock()
 
         # Create an async generator that yields a ResultMessage
-        async def mock_receive_response():
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
             yield ResultMessage(
                 subtype="result",
                 session_id="test-session-123",
@@ -1418,11 +1444,8 @@ class TestMissingLogFile:
         )
 
     @pytest.mark.asyncio
-    async def test_summary_indicates_missing_log(self, tmp_path: Path):
+    async def test_summary_indicates_missing_log(self, tmp_path: Path) -> None:
         """Failure summary should clearly indicate the log file was missing."""
-        from unittest.mock import AsyncMock, MagicMock
-        from claude_agent_sdk.types import ResultMessage
-
         from src.orchestrator import MalaOrchestrator
 
         orchestrator = MalaOrchestrator(
@@ -1436,7 +1459,7 @@ class TestMissingLogFile:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.query = AsyncMock()
 
-        async def mock_receive_response():
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
             yield ResultMessage(
                 subtype="result",
                 session_id="missing-log-session",
@@ -1473,7 +1496,7 @@ class TestSubprocessTerminationOnTimeout:
     """Test that timed-out subprocesses are properly terminated."""
 
     @pytest.mark.asyncio
-    async def test_subprocess_terminated_on_timeout(self, tmp_path: Path):
+    async def test_subprocess_terminated_on_timeout(self, tmp_path: Path) -> None:
         """When a subprocess times out, it should be terminated, not left running."""
         from src.beads_client import BeadsClient
 
@@ -1497,7 +1520,7 @@ class TestSubprocessTerminationOnTimeout:
         assert "timed out" in warnings[0]
 
     @pytest.mark.asyncio
-    async def test_subprocess_killed_if_terminate_fails(self, tmp_path: Path):
+    async def test_subprocess_killed_if_terminate_fails(self, tmp_path: Path) -> None:
         """If SIGTERM doesn't work, subprocess should be killed with SIGKILL."""
         from src.beads_client import BeadsClient
 
@@ -1515,7 +1538,7 @@ class TestSubprocessTerminationOnTimeout:
         assert result.stderr == "timeout"
 
     @pytest.mark.asyncio
-    async def test_successful_command_not_affected(self, tmp_path: Path):
+    async def test_successful_command_not_affected(self, tmp_path: Path) -> None:
         """Fast commands should complete normally without being terminated."""
         from src.beads_client import BeadsClient
 
@@ -1528,7 +1551,7 @@ class TestSubprocessTerminationOnTimeout:
         assert result.stderr == ""
 
     @pytest.mark.asyncio
-    async def test_command_stderr_captured(self, tmp_path: Path):
+    async def test_command_stderr_captured(self, tmp_path: Path) -> None:
         """stderr from commands should be captured correctly."""
         from src.beads_client import BeadsClient
 
@@ -1545,7 +1568,7 @@ class TestSubprocessTerminationOnTimeout:
     @pytest.mark.skipif(
         sys.platform == "win32", reason="Process groups not supported on Windows"
     )
-    async def test_child_processes_killed_on_timeout(self, tmp_path: Path):
+    async def test_child_processes_killed_on_timeout(self, tmp_path: Path) -> None:
         """Child processes spawned by the command should also be killed on timeout."""
         import os
 

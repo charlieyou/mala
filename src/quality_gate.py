@@ -12,7 +12,10 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass
@@ -74,7 +77,7 @@ class QualityGate:
     """Quality gate for verifying agent work meets requirements."""
 
     # Patterns for detecting validation commands in Bash tool calls
-    VALIDATION_PATTERNS = {
+    VALIDATION_PATTERNS: ClassVar[dict[str, re.Pattern[str]]] = {
         "uv_sync": re.compile(r"\buv\s+sync\b"),
         "pytest": re.compile(r"\b(uv\s+run\s+)?pytest\b"),
         "ruff_check": re.compile(r"\b(uvx\s+)?ruff\s+check\b"),

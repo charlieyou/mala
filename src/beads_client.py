@@ -7,10 +7,10 @@ import json
 import os
 import signal
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from collections.abc import Callable
 
 # Default timeout for bd/git subprocess calls (seconds)

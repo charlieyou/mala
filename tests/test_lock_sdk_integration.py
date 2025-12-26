@@ -15,6 +15,8 @@ import asyncio
 import hashlib
 import subprocess
 from pathlib import Path
+from types import TracebackType
+from typing import Self
 
 import pytest
 
@@ -33,7 +35,7 @@ pytestmark = pytest.mark.slow
 
 
 @pytest.fixture(autouse=True)
-def clean_test_env(monkeypatch):
+def clean_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clean environment for tests - disable Braintrust, use CLI auth."""
     # Disable Braintrust during tests to avoid network/logging side effects.
     monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
@@ -43,13 +45,18 @@ def clean_test_env(monkeypatch):
         import braintrust
 
         class _NoopSpan:
-            def __enter__(self):
+            def __enter__(self) -> Self:
                 return self
 
-            def __exit__(self, exc_type, exc_val, exc_tb):
+            def __exit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc_val: BaseException | None,
+                exc_tb: TracebackType | None,
+            ) -> None:
                 return None
 
-            def log(self, **_kwargs):
+            def log(self, **_kwargs: object) -> None:
                 return None
 
         braintrust.start_span = lambda *args, **kwargs: _NoopSpan()  # type: ignore[assignment]
@@ -59,7 +66,7 @@ def clean_test_env(monkeypatch):
 
 
 @pytest.fixture
-def lock_env(tmp_path):
+def lock_env(tmp_path: Path) -> dict[str, Path]:
     """Provide isolated lock environment for tests."""
     lock_dir = tmp_path / "locks"
     lock_dir.mkdir()
@@ -70,7 +77,7 @@ def lock_env(tmp_path):
 
 
 @pytest.fixture
-def agent_options(tmp_path):
+def agent_options(tmp_path: Path) -> ClaudeAgentOptions:
     """Base agent options for tests."""
     return ClaudeAgentOptions(
         cwd=str(tmp_path),
@@ -166,7 +173,7 @@ class TestAgentAcquiresLocks:
     """Test that agents can acquire locks using the scripts."""
 
     @pytest.mark.asyncio
-    async def test_agent_runs_lock_try_script(self, lock_env, agent_options, tmp_path):
+    async def test_agent_runs_lock_try_script(self, lock_env: dict[str, Path], agent_options: ClaudeAgentOptions, tmp_path: Path) -> None:
         """Agent can execute lock-try.sh and acquire a lock."""
         agent_id = "test-agent-acquire"
         lock_dir = lock_env["lock_dir"]
@@ -196,7 +203,7 @@ After running the commands, respond with "DONE".
         assert get_lock_holder(lock_dir, "test_file.py", cwd) == agent_id
 
     @pytest.mark.asyncio
-    async def test_agent_checks_lock_ownership(self, lock_env, agent_options, tmp_path):
+    async def test_agent_checks_lock_ownership(self, lock_env: dict[str, Path], agent_options: ClaudeAgentOptions, tmp_path: Path) -> None:
         """Agent can check if it holds a lock."""
         agent_id = "test-agent-check"
         lock_dir = lock_env["lock_dir"]
@@ -239,7 +246,7 @@ class TestAgentReleasesLocks:
     """Test that agents properly release locks."""
 
     @pytest.mark.asyncio
-    async def test_agent_releases_single_lock(self, lock_env, agent_options, tmp_path):
+    async def test_agent_releases_single_lock(self, lock_env: dict[str, Path], agent_options: ClaudeAgentOptions, tmp_path: Path) -> None:
         """Agent can release a specific lock."""
         agent_id = "test-agent-release"
         lock_dir = lock_env["lock_dir"]
@@ -272,7 +279,7 @@ Respond with "DONE".
         assert not lock_file_exists(lock_dir, "release_test.py", cwd)
 
     @pytest.mark.asyncio
-    async def test_agent_releases_all_locks(self, lock_env, agent_options):
+    async def test_agent_releases_all_locks(self, lock_env: dict[str, Path], agent_options: ClaudeAgentOptions) -> None:
         """Agent can release all its locks at once."""
         agent_id = "test-agent-release-all"
         lock_dir = lock_env["lock_dir"]
@@ -313,7 +320,7 @@ class TestAgentHandlesContention:
     """Test agent behavior when encountering locked files."""
 
     @pytest.mark.asyncio
-    async def test_agent_detects_blocked_file(self, lock_env, agent_options, tmp_path):
+    async def test_agent_detects_blocked_file(self, lock_env: dict[str, Path], agent_options: ClaudeAgentOptions, tmp_path: Path) -> None:
         """Agent correctly identifies when a file is locked by another."""
         lock_dir = lock_env["lock_dir"]
         our_agent = "our-agent"
@@ -361,7 +368,7 @@ class TestStopHookWithSDK:
     """Test the Stop hook integration with real SDK."""
 
     @pytest.mark.asyncio
-    async def test_stop_hook_cleans_locks_on_agent_exit(self, lock_env, tmp_path):
+    async def test_stop_hook_cleans_locks_on_agent_exit(self, lock_env: dict[str, Path], tmp_path: Path) -> None:
         """Stop hook cleans up locks when agent finishes."""
         agent_id = "test-agent-stophook"
         lock_dir = lock_env["lock_dir"]
@@ -424,8 +431,11 @@ class TestMultiAgentWithSDK:
 
     @pytest.mark.asyncio
     async def test_sequential_agents_handoff_lock(
-        self, lock_env, agent_options, tmp_path
-    ):
+        self,
+        lock_env: dict[str, Path],
+        agent_options: ClaudeAgentOptions,
+        tmp_path: Path,
+    ) -> None:
         """First agent releases lock, second agent acquires it."""
         lock_dir = lock_env["lock_dir"]
         agent1_id = "agent-1"
@@ -489,7 +499,7 @@ class TestAgentWorkflowE2E:
     """End-to-end test of a realistic agent workflow."""
 
     @pytest.mark.asyncio
-    async def test_full_implementation_workflow(self, lock_env, tmp_path):
+    async def test_full_implementation_workflow(self, lock_env: dict[str, Path], tmp_path: Path) -> None:
         """Test the full workflow: acquire, work, commit, release."""
         agent_id = "impl-agent"
         lock_dir = lock_env["lock_dir"]

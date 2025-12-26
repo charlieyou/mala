@@ -6,17 +6,22 @@ Consolidates locking behavior from shell scripts.
 import hashlib
 import os
 import subprocess
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+from claude_agent_sdk.types import (
+    HookContext,
+    StopHookInput,
+    SyncHookJSONOutput,
+)
 
 from .env import LOCK_DIR, SCRIPTS_DIR
 
-if TYPE_CHECKING:
-    from claude_agent_sdk.types import (
-        HookContext,
-        StopHookInput,
-        SyncHookJSONOutput,
-    )
+# Type alias for Stop hooks
+StopHook = Callable[
+    [StopHookInput, str | None, HookContext],
+    Awaitable[SyncHookJSONOutput],
+]
 
 
 def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
@@ -275,7 +280,7 @@ def cleanup_agent_locks(agent_id: str) -> int:
     return cleaned
 
 
-def make_stop_hook(agent_id: str):
+def make_stop_hook(agent_id: str) -> StopHook:
     """Create a Stop hook that cleans up locks for the given agent.
 
     Args:
@@ -286,10 +291,10 @@ def make_stop_hook(agent_id: str):
     """
 
     async def cleanup_locks_on_stop(
-        hook_input: "StopHookInput",
+        hook_input: StopHookInput,
         stderr: str | None,
-        context: "HookContext",
-    ) -> "SyncHookJSONOutput":
+        context: HookContext,
+    ) -> SyncHookJSONOutput:
         """Stop hook to release all locks held by this agent."""
         script = SCRIPTS_DIR / "lock-release-all.sh"
         try:

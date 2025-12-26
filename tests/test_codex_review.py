@@ -29,27 +29,27 @@ from src.codex_review import (
 class TestExtractJson:
     """Tests for JSON extraction from mixed text."""
 
-    def test_extracts_clean_json(self):
+    def test_extracts_clean_json(self) -> None:
         text = '{"passed": true, "issues": []}'
         result = _extract_json(text)
         assert result == '{"passed": true, "issues": []}'
 
-    def test_extracts_json_with_surrounding_text(self):
+    def test_extracts_json_with_surrounding_text(self) -> None:
         text = 'Here is the review:\n{"passed": false, "issues": []}\nDone.'
         result = _extract_json(text)
         assert result == '{"passed": false, "issues": []}'
 
-    def test_extracts_nested_json(self):
+    def test_extracts_nested_json(self) -> None:
         text = '{"passed": true, "issues": [{"file": "a.py", "line": 1}]}'
         result = _extract_json(text)
         assert result == text
 
-    def test_returns_none_for_no_json(self):
+    def test_returns_none_for_no_json(self) -> None:
         text = "No JSON here"
         result = _extract_json(text)
         assert result is None
 
-    def test_handles_strings_with_braces(self):
+    def test_handles_strings_with_braces(self) -> None:
         text = '{"passed": true, "message": "use {foo} syntax"}'
         result = _extract_json(text)
         assert result is not None
@@ -60,14 +60,14 @@ class TestExtractJson:
 class TestParseReviewJson:
     """Tests for parsing Codex review JSON output."""
 
-    def test_parses_valid_passed_review(self):
+    def test_parses_valid_passed_review(self) -> None:
         output = '{"passed": true, "issues": []}'
         passed, issues, error = _parse_review_json(output)
         assert passed is True
         assert issues == []
         assert error is None
 
-    def test_parses_valid_failed_review_with_issues(self):
+    def test_parses_valid_failed_review_with_issues(self) -> None:
         output = json.dumps(
             {
                 "passed": False,
@@ -90,7 +90,7 @@ class TestParseReviewJson:
         assert issues[0].message == "Missing type annotation"
         assert error is None
 
-    def test_parses_issue_with_null_line(self):
+    def test_parses_issue_with_null_line(self) -> None:
         output = json.dumps(
             {
                 "passed": False,
@@ -104,10 +104,10 @@ class TestParseReviewJson:
                 ],
             }
         )
-        passed, issues, error = _parse_review_json(output)
+        _passed, issues, _error = _parse_review_json(output)
         assert issues[0].line is None
 
-    def test_returns_error_for_invalid_json(self):
+    def test_returns_error_for_invalid_json(self) -> None:
         output = "not valid json"
         passed, issues, error = _parse_review_json(output)
         assert passed is False
@@ -115,14 +115,14 @@ class TestParseReviewJson:
         assert error is not None
         assert "No JSON object found" in error
 
-    def test_returns_error_for_missing_passed_field(self):
+    def test_returns_error_for_missing_passed_field(self) -> None:
         output = '{"issues": []}'
-        passed, issues, error = _parse_review_json(output)
+        passed, _issues, error = _parse_review_json(output)
         assert passed is False
         assert error is not None
         assert "'passed' field must be a boolean" in error
 
-    def test_returns_error_for_invalid_severity(self):
+    def test_returns_error_for_invalid_severity(self) -> None:
         output = json.dumps(
             {
                 "passed": False,
@@ -131,7 +131,7 @@ class TestParseReviewJson:
                 ],
             }
         )
-        passed, issues, error = _parse_review_json(output)
+        _passed, _issues, error = _parse_review_json(output)
         assert error is not None
         assert "invalid severity" in error
 
@@ -139,11 +139,11 @@ class TestParseReviewJson:
 class TestFormatReviewIssues:
     """Tests for formatting review issues."""
 
-    def test_formats_empty_issues(self):
+    def test_formats_empty_issues(self) -> None:
         result = format_review_issues([])
         assert result == "No specific issues found."
 
-    def test_formats_single_issue(self):
+    def test_formats_single_issue(self) -> None:
         issues = [
             ReviewIssue(
                 file="src/main.py", line=10, severity="error", message="Missing import"
@@ -153,7 +153,7 @@ class TestFormatReviewIssues:
         assert "File: src/main.py" in result
         assert "[ERROR] L10: Missing import" in result
 
-    def test_formats_file_level_issue(self):
+    def test_formats_file_level_issue(self) -> None:
         issues = [
             ReviewIssue(
                 file="README.md", line=None, severity="warning", message="Outdated docs"
@@ -162,7 +162,7 @@ class TestFormatReviewIssues:
         result = format_review_issues(issues)
         assert "[WARNING] file-level: Outdated docs" in result
 
-    def test_groups_by_file(self):
+    def test_groups_by_file(self) -> None:
         issues = [
             ReviewIssue(file="b.py", line=1, severity="error", message="Issue 1"),
             ReviewIssue(file="a.py", line=5, severity="error", message="Issue 2"),
@@ -177,7 +177,7 @@ class TestFormatReviewIssues:
 
 
 @pytest.fixture
-def mock_codex_script(tmp_path: Path):
+def mock_codex_script(tmp_path: Path) -> tuple[Path, Path]:
     """Create a mock codex script that captures invocations and writes to output file."""
     script_path = tmp_path / "codex"
     invocation_log = tmp_path / "codex_invocations.jsonl"
@@ -225,8 +225,8 @@ class TestRunCodexReview:
 
     @pytest.mark.asyncio
     async def test_invokes_codex_with_correct_arguments(
-        self, tmp_path: Path, mock_codex_script
-    ):
+        self, tmp_path: Path, mock_codex_script: tuple[Path, Path]
+    ) -> None:
         """Codex should be invoked with correct arguments for commit review."""
         script_path, invocation_log = mock_codex_script
         repo_path = tmp_path / "repo"
@@ -258,8 +258,8 @@ class TestRunCodexReview:
 
     @pytest.mark.asyncio
     async def test_returns_success_for_passing_review(
-        self, tmp_path: Path, mock_codex_script
-    ):
+        self, tmp_path: Path, mock_codex_script: tuple[Path, Path]
+    ) -> None:
         """Should return passed=True when codex reports no errors."""
         script_path, _ = mock_codex_script
         repo_path = tmp_path / "repo"
@@ -279,7 +279,7 @@ class TestRunCodexReview:
         assert result.parse_error is None
 
     @pytest.mark.asyncio
-    async def test_returns_failure_with_issues(self, tmp_path: Path, mock_codex_script):
+    async def test_returns_failure_with_issues(self, tmp_path: Path, mock_codex_script: tuple[Path, Path]) -> None:
         """Should return passed=False with issues when codex finds errors."""
         script_path, _ = mock_codex_script
         repo_path = tmp_path / "repo"
@@ -313,7 +313,7 @@ class TestRunCodexReview:
         assert result.issues[0].message == "Potential null pointer"
 
     @pytest.mark.asyncio
-    async def test_handles_codex_nonzero_exit(self, tmp_path: Path, mock_codex_script):
+    async def test_handles_codex_nonzero_exit(self, tmp_path: Path, mock_codex_script: tuple[Path, Path]) -> None:
         """Should return parse_error when codex exits non-zero."""
         script_path, _ = mock_codex_script
         repo_path = tmp_path / "repo"
@@ -334,7 +334,7 @@ class TestRunCodexReview:
         assert "exited with code 2" in result.parse_error
 
     @pytest.mark.asyncio
-    async def test_retries_on_parse_failure(self, tmp_path: Path):
+    async def test_retries_on_parse_failure(self, tmp_path: Path) -> None:
         """Should retry when JSON parsing fails."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
@@ -342,7 +342,7 @@ class TestRunCodexReview:
         # First return invalid JSON, second returns valid
         call_count = 0
 
-        async def mock_subprocess(*args, **kwargs):
+        async def mock_subprocess(*args: object, **kwargs: object) -> AsyncMock:
             nonlocal call_count
             call_count += 1
             mock_proc = AsyncMock()
@@ -370,12 +370,12 @@ class TestRunCodexReview:
         assert result.attempt == 2
 
     @pytest.mark.asyncio
-    async def test_fails_closed_after_max_retries(self, tmp_path: Path):
+    async def test_fails_closed_after_max_retries(self, tmp_path: Path) -> None:
         """Should return passed=False after all retries exhausted."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
 
-        async def mock_subprocess(*args, **kwargs):
+        async def mock_subprocess(*args: object, **kwargs: object) -> AsyncMock:
             mock_proc = AsyncMock()
             mock_proc.returncode = 0
             mock_proc.communicate.return_value = (b"", b"")
@@ -406,7 +406,7 @@ class TestCodexExecApproach:
     """
 
     @pytest.mark.asyncio
-    async def test_uses_codex_exec_not_review(self, tmp_path: Path, mock_codex_script):
+    async def test_uses_codex_exec_not_review(self, tmp_path: Path, mock_codex_script: tuple[Path, Path]) -> None:
         """
         Verify we use 'codex exec' with output schema, not 'codex review'.
 

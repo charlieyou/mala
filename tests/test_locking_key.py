@@ -8,13 +8,15 @@ import hashlib
 import os
 from pathlib import Path
 
+import pytest
+
 from src.tools.locking import _lock_key, _lock_path
 
 
 class TestLockKeyNormalization:
     """Test that _lock_key normalizes paths correctly."""
 
-    def test_absolute_and_relative_same_key(self, tmp_path: Path):
+    def test_absolute_and_relative_same_key(self, tmp_path: Path) -> None:
         """Absolute and relative paths to the same file produce the same key."""
         # Create a real file in a temp "repo"
         repo = tmp_path / "repo"
@@ -41,7 +43,7 @@ class TestLockKeyNormalization:
         finally:
             os.chdir(original_cwd)
 
-    def test_symlink_resolves_to_same_key(self, tmp_path: Path):
+    def test_symlink_resolves_to_same_key(self, tmp_path: Path) -> None:
         """Symlink and real path produce the same key."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -63,7 +65,7 @@ class TestLockKeyNormalization:
             f"got {key_real!r} vs {key_link!r}"
         )
 
-    def test_dot_segments_normalized(self, tmp_path: Path):
+    def test_dot_segments_normalized(self, tmp_path: Path) -> None:
         """Paths with . and .. segments are normalized."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -93,7 +95,7 @@ class TestLockKeyNormalization:
         finally:
             os.chdir(original_cwd)
 
-    def test_repo_namespace_included_in_key(self, tmp_path: Path):
+    def test_repo_namespace_included_in_key(self, tmp_path: Path) -> None:
         """Repo namespace is always part of the canonical key."""
         filepath = "src/main.py"
         namespace = "/home/user/project"
@@ -105,7 +107,7 @@ class TestLockKeyNormalization:
         key_no_namespace = _lock_key(filepath, repo_namespace=None)
         assert key != key_no_namespace, "Namespace should affect key"
 
-    def test_different_repos_different_keys(self, tmp_path: Path):
+    def test_different_repos_different_keys(self, tmp_path: Path) -> None:
         """Same relative path in different repos produces different keys."""
         filepath = "src/main.py"
 
@@ -116,7 +118,7 @@ class TestLockKeyNormalization:
             "Same file in different repos should have different keys"
         )
 
-    def test_trailing_slashes_normalized(self, tmp_path: Path):
+    def test_trailing_slashes_normalized(self, tmp_path: Path) -> None:
         """Trailing slashes don't affect the key."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -141,7 +143,7 @@ class TestLockKeyNormalization:
 class TestLockPathNormalization:
     """Test that _lock_path produces correct paths with normalized keys."""
 
-    def test_absolute_and_relative_same_lock_path(self, tmp_path: Path, monkeypatch):
+    def test_absolute_and_relative_same_lock_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Absolute and relative paths should produce the same lock file path."""
         from src.tools import locking
 
@@ -168,7 +170,7 @@ class TestLockPathNormalization:
         finally:
             os.chdir(original_cwd)
 
-    def test_lock_path_uses_hash_of_canonical_key(self, tmp_path: Path, monkeypatch):
+    def test_lock_path_uses_hash_of_canonical_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Lock path should be derived from the canonical key's hash."""
         from src.tools import locking
 
@@ -189,7 +191,7 @@ class TestLockPathNormalization:
 class TestLockKeyEdgeCases:
     """Edge cases for lock key generation."""
 
-    def test_nonexistent_path_still_works(self, tmp_path: Path):
+    def test_nonexistent_path_still_works(self, tmp_path: Path) -> None:
         """Lock key can be generated for paths that don't exist yet."""
         # This is important for locking files before creating them
         repo = tmp_path / "repo"
@@ -200,7 +202,7 @@ class TestLockKeyEdgeCases:
         assert isinstance(key, str)
         assert len(key) > 0
 
-    def test_empty_namespace_treated_as_none(self, tmp_path: Path):
+    def test_empty_namespace_treated_as_none(self, tmp_path: Path) -> None:
         """Empty string namespace should behave like None."""
         filepath = "src/main.py"
 
@@ -209,7 +211,7 @@ class TestLockKeyEdgeCases:
 
         assert key_empty == key_none, "Empty namespace should behave like None"
 
-    def test_consistent_across_calls(self, tmp_path: Path):
+    def test_consistent_across_calls(self, tmp_path: Path) -> None:
         """Same inputs should always produce same outputs."""
         repo = tmp_path / "repo"
         repo.mkdir()

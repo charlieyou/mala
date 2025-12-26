@@ -7,7 +7,7 @@ Replaces the duplicate JSONL logging with structured run metadata.
 import json
 import uuid
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any, Literal
 
@@ -73,7 +73,7 @@ class RunMetadata:
         version: str,
     ):
         self.run_id = str(uuid.uuid4())
-        self.started_at = datetime.now(timezone.utc)
+        self.started_at = datetime.now(UTC)
         self.completed_at: datetime | None = None
         self.repo_path = repo_path
         self.config = config
@@ -112,7 +112,7 @@ class RunMetadata:
         Returns:
             Path to the saved metadata file.
         """
-        self.completed_at = datetime.now(timezone.utc)
+        self.completed_at = datetime.now(UTC)
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
         path = RUNS_DIR / f"{self.run_id}.json"
         with open(path, "w") as f:

@@ -106,7 +106,7 @@ def log(
     color: str = Colors.RESET,
     dim: bool = False,
     agent_id: str | None = None,
-):
+) -> None:
     """Claude Code style logging with optional agent color coding."""
     style = Colors.DIM if dim else ""
     timestamp = datetime.now().strftime("%H:%M:%S")
@@ -215,7 +215,7 @@ def log_tool(
     description: str = "",
     agent_id: str | None = None,
     arguments: dict[str, Any] | None = None,
-):
+) -> None:
     """Log tool usage in Claude Code style.
 
     Args:
