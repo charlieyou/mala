@@ -144,7 +144,9 @@ class TestMutexContention:
         assert result.returncode != 0
         assert "THIS_SHOULD_NOT_APPEAR" not in result.stdout
 
-    def test_blocks_across_working_directories(self, mutex_env: dict[str, str], tmp_path: Path) -> None:
+    def test_blocks_across_working_directories(
+        self, mutex_env: dict[str, str], tmp_path: Path
+    ) -> None:
         """Global mutex should be shared across different CWDs."""
         cwd1 = tmp_path / "cwd1"
         cwd2 = tmp_path / "cwd2"

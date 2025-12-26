@@ -99,7 +99,9 @@ class TestMcpToolsAvailable:
     """Test that MCP tools are available to agents."""
 
     @pytest.mark.asyncio
-    async def test_agent_can_use_edit_file_tool(self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path) -> None:
+    async def test_agent_can_use_edit_file_tool(
+        self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path
+    ) -> None:
         """Agent should have access to edit_file MCP tool."""
         test_file = tmp_path / "test.py"
         test_file.write_text("# original content\n")
@@ -124,7 +126,9 @@ Respond with "DONE" when complete."""
         assert "Edit" not in tool_names_used, "Edit tool should be blocked"
 
     @pytest.mark.asyncio
-    async def test_agent_can_use_warpgrep_search(self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path) -> None:
+    async def test_agent_can_use_warpgrep_search(
+        self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path
+    ) -> None:
         """Agent should have access to warpgrep_codebase_search MCP tool."""
         (tmp_path / "module.py").write_text("def hello_world(): pass\n")
         (tmp_path / "utils.py").write_text("def helper(): pass\n")
@@ -153,7 +157,9 @@ class TestMorphWorkflowE2E:
     """End-to-end test of realistic workflow with MorphLLM tools."""
 
     @pytest.mark.asyncio
-    async def test_search_and_edit_workflow(self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path) -> None:
+    async def test_search_and_edit_workflow(
+        self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path
+    ) -> None:
         """Test full workflow: search for code, then edit it."""
         # Create a file with a bug
         buggy_file = tmp_path / "calculator.py"

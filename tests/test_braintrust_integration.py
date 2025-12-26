@@ -37,7 +37,9 @@ class DummySpan:
         self.logged = kwargs
 
 
-def test_is_braintrust_enabled_false_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_is_braintrust_enabled_false_without_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", True)
     monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
 
@@ -59,7 +61,9 @@ def test_flush_braintrust_ignores_errors(monkeypatch: pytest.MonkeyPatch) -> Non
     assert calls["count"] == 1
 
 
-def test_traced_agent_execution_disabled_returns_self(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_traced_agent_execution_disabled_returns_self(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", False)
     tracer = braintrust_integration.TracedAgentExecution("issue", "agent")
 
@@ -68,7 +72,9 @@ def test_traced_agent_execution_disabled_returns_self(monkeypatch: pytest.Monkey
         assert tracer.span is None
 
 
-def test_traced_agent_execution_logs_and_flushes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_traced_agent_execution_logs_and_flushes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     dummy_span = DummySpan()
     flush_calls = {"count": 0}
 

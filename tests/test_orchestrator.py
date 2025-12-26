@@ -107,7 +107,9 @@ class TestGetReadyIssuesAsync:
         assert "epic-1" not in result
 
     @pytest.mark.asyncio
-    async def test_filters_out_failed_issues(self, orchestrator: MalaOrchestrator) -> None:
+    async def test_filters_out_failed_issues(
+        self, orchestrator: MalaOrchestrator
+    ) -> None:
         """Previously failed issues should be excluded."""
         failed_set = {"failed-1"}
         issues_json = json.dumps(
@@ -160,7 +162,9 @@ class TestGetReadyIssuesAsync:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_handles_missing_priority(self, orchestrator: MalaOrchestrator) -> None:
+    async def test_handles_missing_priority(
+        self, orchestrator: MalaOrchestrator
+    ) -> None:
         """Issues without priority should be sorted last (priority 999)."""
         issues_json = json.dumps(
             [
@@ -205,7 +209,9 @@ class TestClaimIssueAsync:
     """Test beads.claim_async invokes bd update correctly."""
 
     @pytest.mark.asyncio
-    async def test_returns_true_on_success(self, orchestrator: MalaOrchestrator) -> None:
+    async def test_returns_true_on_success(
+        self, orchestrator: MalaOrchestrator
+    ) -> None:
         """Successful claim returns True."""
         with patch.object(
             orchestrator.beads,
@@ -218,7 +224,9 @@ class TestClaimIssueAsync:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_returns_false_on_failure(self, orchestrator: MalaOrchestrator) -> None:
+    async def test_returns_false_on_failure(
+        self, orchestrator: MalaOrchestrator
+    ) -> None:
         """Failed claim returns False."""
         with patch.object(
             orchestrator.beads,
@@ -289,7 +297,9 @@ class TestResetIssueAsync:
         assert str(log_path) in notes_value
 
     @pytest.mark.asyncio
-    async def test_does_not_raise_on_failure(self, orchestrator: MalaOrchestrator) -> None:
+    async def test_does_not_raise_on_failure(
+        self, orchestrator: MalaOrchestrator
+    ) -> None:
         """Reset should not raise even if bd fails."""
         with patch.object(
             orchestrator.beads,
@@ -382,7 +392,9 @@ class TestRunOrchestrationLoop:
         assert len(orchestrator.completed) == 0
 
     @pytest.mark.asyncio
-    async def test_respects_max_issues_limit(self, orchestrator: MalaOrchestrator) -> None:
+    async def test_respects_max_issues_limit(
+        self, orchestrator: MalaOrchestrator
+    ) -> None:
         """Should stop after processing max_issues."""
         orchestrator.max_issues = 2
         call_count = 0
@@ -436,7 +448,9 @@ class TestFailedTaskResetsIssue:
     """Test that failed tasks correctly mark issue as needing followup."""
 
     @pytest.mark.asyncio
-    async def test_resets_issue_on_task_failure(self, orchestrator: MalaOrchestrator) -> None:
+    async def test_resets_issue_on_task_failure(
+        self, orchestrator: MalaOrchestrator
+    ) -> None:
         """When a task fails, the issue should be marked needs-followup."""
         followup_calls = []
 
@@ -643,7 +657,9 @@ class TestEpicFilterAsync:
         assert result == set()
 
     @pytest.mark.asyncio
-    async def test_get_ready_with_epic_filter(self, orchestrator: MalaOrchestrator) -> None:
+    async def test_get_ready_with_epic_filter(
+        self, orchestrator: MalaOrchestrator
+    ) -> None:
         """get_ready_async with epic_id should only return children of that epic."""
         tree_json = json.dumps(
             [
@@ -953,7 +969,13 @@ class TestQualityGateFullCheck:
 
         # Create log with all validation commands
         log_path = tmp_path / "session.jsonl"
-        commands = ["uv sync", "uv run pytest", "uvx ruff check .", "uvx ruff format .", "uvx ty check"]
+        commands = [
+            "uv sync",
+            "uv run pytest",
+            "uvx ruff check .",
+            "uvx ruff format .",
+            "uvx ty check",
+        ]
         lines = []
         for cmd in commands:
             lines.append(
@@ -1325,7 +1347,9 @@ class TestAsyncBeadsClientWithTimeout:
         assert elapsed < 3.0, f"Timeout didn't work: took {elapsed:.2f}s"
 
     @pytest.mark.asyncio
-    async def test_claim_timeout_returns_false(self, orchestrator: MalaOrchestrator) -> None:
+    async def test_claim_timeout_returns_false(
+        self, orchestrator: MalaOrchestrator
+    ) -> None:
         """When claim times out, should return False (safe fallback)."""
         original_timeout = orchestrator.beads.timeout_seconds
         orchestrator.beads.timeout_seconds = 0.1

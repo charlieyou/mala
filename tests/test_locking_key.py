@@ -143,7 +143,9 @@ class TestLockKeyNormalization:
 class TestLockPathNormalization:
     """Test that _lock_path produces correct paths with normalized keys."""
 
-    def test_absolute_and_relative_same_lock_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_absolute_and_relative_same_lock_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Absolute and relative paths should produce the same lock file path."""
         from src.tools import locking
 
@@ -170,7 +172,9 @@ class TestLockPathNormalization:
         finally:
             os.chdir(original_cwd)
 
-    def test_lock_path_uses_hash_of_canonical_key(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_lock_path_uses_hash_of_canonical_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Lock path should be derived from the canonical key's hash."""
         from src.tools import locking
 

@@ -147,7 +147,9 @@ class TestPromptTemplateIntegration:
 class TestAgentLockWorkflow:
     """Test the complete agent workflow with locks."""
 
-    def test_agent_acquires_locks_before_editing(self, agent_env: dict[str, str], lock_env: Path) -> None:
+    def test_agent_acquires_locks_before_editing(
+        self, agent_env: dict[str, str], lock_env: Path
+    ) -> None:
         """Simulate agent acquiring locks for multiple files."""
         files = ["src/main.py", "src/utils.py", "tests/test_main.py"]
 
@@ -160,7 +162,9 @@ class TestAgentLockWorkflow:
         for f in files:
             assert lock_file_path(lock_env, f, agent_env["PWD"]).exists()
 
-    def test_agent_checks_lock_before_editing(self, agent_env: dict[str, str], lock_env: Path) -> None:
+    def test_agent_checks_lock_before_editing(
+        self, agent_env: dict[str, str], lock_env: Path
+    ) -> None:
         """Agent should verify it holds the lock before editing."""
         run_lock_script("lock-try.sh", ["file.py"], agent_env)
 
@@ -168,7 +172,9 @@ class TestAgentLockWorkflow:
         result = run_lock_script("lock-check.sh", ["file.py"], agent_env)
         assert result.returncode == 0, "Agent should hold the lock"
 
-    def test_agent_handles_blocked_file(self, agent_env: dict[str, str], lock_env: Path) -> None:
+    def test_agent_handles_blocked_file(
+        self, agent_env: dict[str, str], lock_env: Path
+    ) -> None:
         """Agent encounters a file locked by another agent."""
         # Another agent holds the lock
         other_env = {**agent_env, "AGENT_ID": "bd-other-agent"}
@@ -182,7 +188,9 @@ class TestAgentLockWorkflow:
         result = run_lock_script("lock-holder.sh", ["contested.py"], agent_env)
         assert result.stdout.strip() == "bd-other-agent"
 
-    def test_agent_releases_locks_after_commit(self, agent_env: dict[str, str], lock_env: Path) -> None:
+    def test_agent_releases_locks_after_commit(
+        self, agent_env: dict[str, str], lock_env: Path
+    ) -> None:
         """Agent releases locks after successful git commit."""
         files = ["src/main.py", "src/utils.py"]
 
@@ -202,7 +210,9 @@ class TestAgentLockWorkflow:
         locks = list(lock_env.glob("*.lock"))
         assert len(locks) == 0, "All locks should be released after commit"
 
-    def test_agent_workflow_with_partial_blocking(self, agent_env: dict[str, str], lock_env: Path) -> None:
+    def test_agent_workflow_with_partial_blocking(
+        self, agent_env: dict[str, str], lock_env: Path
+    ) -> None:
         """Test realistic scenario: some files locked, some available."""
         # Another agent has locked utils.py
         other_env = {**agent_env, "AGENT_ID": "bd-blocker"}
@@ -270,7 +280,9 @@ class TestStopHookIntegration:
         )
 
     @pytest.mark.asyncio
-    async def test_stop_hook_preserves_other_agent_locks(self, lock_env: Path, tmp_path: Path) -> None:
+    async def test_stop_hook_preserves_other_agent_locks(
+        self, lock_env: Path, tmp_path: Path
+    ) -> None:
         """Stop hook should only clean up its own agent's locks."""
         our_agent = "bd-our-agent"
         other_agent = "bd-other-agent"
@@ -312,7 +324,9 @@ class TestStopHookIntegration:
 class TestOrchestratorCleanup:
     """Test orchestrator's fallback lock cleanup."""
 
-    def test_cleanup_agent_locks_removes_orphaned_locks(self, lock_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_cleanup_agent_locks_removes_orphaned_locks(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Orchestrator cleans up locks when agent crashes/times out."""
         from src.orchestrator import MalaOrchestrator
 
@@ -467,7 +481,9 @@ class TestEdgeCases:
 class TestPathCanonicalization:
     """Test that paths are properly canonicalized for consistent lock keys."""
 
-    def test_relative_and_absolute_paths_same_lock(self, lock_env: Path, tmp_path: Path) -> None:
+    def test_relative_and_absolute_paths_same_lock(
+        self, lock_env: Path, tmp_path: Path
+    ) -> None:
         """Relative and absolute paths to the same file produce the same lock."""
         cwd = str(tmp_path)
         env = {
@@ -514,7 +530,9 @@ class TestPathCanonicalization:
         locks = list(lock_env.glob("*.lock"))
         assert len(locks) == 1
 
-    def test_different_files_different_locks(self, lock_env: Path, tmp_path: Path) -> None:
+    def test_different_files_different_locks(
+        self, lock_env: Path, tmp_path: Path
+    ) -> None:
         """Different files produce different locks."""
         cwd = str(tmp_path)
         env = {
@@ -625,7 +643,9 @@ class TestRepoNamespaceIntegration:
             f"Lock not found from different cwd. Expected {agent_id!r}, got {holder!r}"
         )
 
-    def test_same_file_different_namespaces_different_locks(self, lock_env: Path, tmp_path: Path) -> None:
+    def test_same_file_different_namespaces_different_locks(
+        self, lock_env: Path, tmp_path: Path
+    ) -> None:
         """Same relative path in different namespaces produces different locks."""
         cwd = str(tmp_path)
         base_env = {
@@ -652,7 +672,9 @@ class TestRepoNamespaceIntegration:
         locks = list(lock_env.glob("*.lock"))
         assert len(locks) == 2
 
-    def test_same_namespace_same_file_conflict(self, lock_env: Path, tmp_path: Path) -> None:
+    def test_same_namespace_same_file_conflict(
+        self, lock_env: Path, tmp_path: Path
+    ) -> None:
         """Same file in same namespace should conflict."""
         cwd = str(tmp_path)
         base_env = {
@@ -677,7 +699,9 @@ class TestRepoNamespaceIntegration:
         locks = list(lock_env.glob("*.lock"))
         assert len(locks) == 1
 
-    def test_namespace_included_in_holder_lookup(self, lock_env: Path, tmp_path: Path) -> None:
+    def test_namespace_included_in_holder_lookup(
+        self, lock_env: Path, tmp_path: Path
+    ) -> None:
         """Lock holder lookup respects namespace."""
         cwd = str(tmp_path)
         env = {
@@ -700,7 +724,9 @@ class TestRepoNamespaceIntegration:
         result = run_lock_script("lock-check.sh", ["module.py"], env)
         assert result.returncode == 0, "Should hold lock in same namespace"
 
-    def test_empty_namespace_treated_as_none(self, lock_env: Path, tmp_path: Path) -> None:
+    def test_empty_namespace_treated_as_none(
+        self, lock_env: Path, tmp_path: Path
+    ) -> None:
         """Empty REPO_NAMESPACE is treated the same as not set."""
         cwd = str(tmp_path)
         base_env = {
@@ -724,7 +750,9 @@ class TestRepoNamespaceIntegration:
 class TestReleaseRunLocks:
     """Test run-scoped lock cleanup to avoid releasing locks from other runs."""
 
-    def test_release_run_locks_only_removes_owned_locks(self, lock_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_release_run_locks_only_removes_owned_locks(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Cleanup should only remove locks owned by the specified agent IDs."""
         from src.tools.locking import release_run_locks, try_lock
 
@@ -758,7 +786,9 @@ class TestReleaseRunLocks:
         remaining_lock = next(iter(locks_after))
         assert remaining_lock.read_text().strip() == run2_agents[0]
 
-    def test_release_run_locks_handles_empty_agent_list(self, lock_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_release_run_locks_handles_empty_agent_list(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Cleanup with empty agent list should not remove any locks."""
         from src.tools.locking import release_run_locks, try_lock
 
@@ -774,7 +804,9 @@ class TestReleaseRunLocks:
         # Lock should remain
         assert len(list(lock_env.glob("*.lock"))) == 1
 
-    def test_release_run_locks_handles_missing_lock_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_release_run_locks_handles_missing_lock_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Cleanup should handle non-existent lock directory gracefully."""
         from src.tools.locking import release_run_locks
 

@@ -79,7 +79,9 @@ def lock_file_path(
 class TestLockKeyCollisionResistance:
     """Test that lock keys are collision-resistant."""
 
-    def test_different_paths_same_underscore_pattern_no_collision(self, lock_env: dict[str, str]) -> None:
+    def test_different_paths_same_underscore_pattern_no_collision(
+        self, lock_env: dict[str, str]
+    ) -> None:
         """Paths 'a/b' and 'a_b' should get different lock files (collision case)."""
         # Old behavior: both would map to 'a_b.lock'
         # New behavior: they should get different hashed lock files
@@ -105,7 +107,9 @@ class TestLockKeyCollisionResistance:
         result2 = run_script("lock-try.sh", ["src_utils"], env2)
         assert result2.returncode == 0, "src/utils and src_utils should not collide"
 
-    def test_multiple_slash_vs_underscore_patterns(self, lock_env: dict[str, str]) -> None:
+    def test_multiple_slash_vs_underscore_patterns(
+        self, lock_env: dict[str, str]
+    ) -> None:
         """Complex collision patterns should all be avoided."""
         paths = ["a/b/c", "a_b/c", "a/b_c", "a_b_c"]
         agents = [f"agent-{i}" for i in range(len(paths))]
@@ -124,7 +128,9 @@ class TestLockKeyCollisionResistance:
 class TestRepoNamespacing:
     """Test that locks are namespaced by repository."""
 
-    def test_same_relative_path_different_repos_no_collision(self, lock_env: dict[str, str]) -> None:
+    def test_same_relative_path_different_repos_no_collision(
+        self, lock_env: dict[str, str]
+    ) -> None:
         """Same file path in different repos should not collide."""
         # Simulate different repos by setting REPO_NAMESPACE
         env1 = {**lock_env, "REPO_NAMESPACE": "/home/user/repo1"}
@@ -166,7 +172,9 @@ class TestBasicLockAcquisition:
         result = run_script("lock-try.sh", ["src/main.py"], lock_env)
         assert result.returncode == 0
 
-    def test_creates_lock_file_with_correct_name(self, lock_env: dict[str, str]) -> None:
+    def test_creates_lock_file_with_correct_name(
+        self, lock_env: dict[str, str]
+    ) -> None:
         run_script("lock-try.sh", ["src/main.py"], lock_env)
         lock_path = lock_file_path(lock_env["LOCK_DIR"], "src/main.py")
         assert lock_path.exists()
@@ -185,7 +193,9 @@ class TestLockCheck:
         result = run_script("lock-check.sh", ["file.py"], lock_env)
         assert result.returncode == 0
 
-    def test_returns_1_when_another_agent_holds_lock(self, lock_env: dict[str, str]) -> None:
+    def test_returns_1_when_another_agent_holds_lock(
+        self, lock_env: dict[str, str]
+    ) -> None:
         run_script("lock-try.sh", ["file.py"], lock_env)
         other_env = {**lock_env, "AGENT_ID": "other-agent"}
         result = run_script("lock-check.sh", ["file.py"], other_env)
@@ -272,7 +282,9 @@ class TestReleaseAllLocks:
 class TestLockContention:
     """Test lock contention between agents."""
 
-    def test_second_agent_cannot_acquire_held_lock(self, lock_env: dict[str, str]) -> None:
+    def test_second_agent_cannot_acquire_held_lock(
+        self, lock_env: dict[str, str]
+    ) -> None:
         run_script("lock-try.sh", ["contested.py"], lock_env)
         other_env = {**lock_env, "AGENT_ID": "second-agent"}
         result = run_script("lock-try.sh", ["contested.py"], other_env)
@@ -399,7 +411,9 @@ class TestLockPersistence:
 class TestPathNormalization:
     """Test that paths are normalized before hashing to ensure equivalent paths get the same lock."""
 
-    def test_relative_and_absolute_paths_same_lock(self, lock_env: dict[str, str], tmp_path: Path) -> None:
+    def test_relative_and_absolute_paths_same_lock(
+        self, lock_env: dict[str, str], tmp_path: Path
+    ) -> None:
         """An absolute path and its relative equivalent should produce the same lock."""
         # Create a real file to work with
         test_file = tmp_path / "target.py"
@@ -428,7 +442,9 @@ class TestPathNormalization:
             "Relative path should resolve to same lock as absolute"
         )
 
-    def test_dot_slash_prefix_same_as_without(self, lock_env: dict[str, str], tmp_path: Path) -> None:
+    def test_dot_slash_prefix_same_as_without(
+        self, lock_env: dict[str, str], tmp_path: Path
+    ) -> None:
         """'./foo.py' and 'foo.py' should produce the same lock when in same directory."""
         test_file = tmp_path / "foo.py"
         test_file.touch()
@@ -456,7 +472,9 @@ class TestPathNormalization:
         )
         assert result2.returncode == 1, "./foo.py and foo.py should be same lock"
 
-    def test_dotdot_path_resolves_correctly(self, lock_env: dict[str, str], tmp_path: Path) -> None:
+    def test_dotdot_path_resolves_correctly(
+        self, lock_env: dict[str, str], tmp_path: Path
+    ) -> None:
         """Paths with .. components should resolve to canonical form."""
         # Create nested structure
         subdir = tmp_path / "subdir"
@@ -483,7 +501,9 @@ class TestPathNormalization:
             "../root.py should resolve to same lock as absolute path"
         )
 
-    def test_symlink_resolves_to_target(self, lock_env: dict[str, str], tmp_path: Path) -> None:
+    def test_symlink_resolves_to_target(
+        self, lock_env: dict[str, str], tmp_path: Path
+    ) -> None:
         """Symlinks should resolve to the same lock as their target."""
         target = tmp_path / "real_file.py"
         target.touch()
@@ -500,7 +520,9 @@ class TestPathNormalization:
         result2 = run_script("lock-try.sh", [str(symlink)], env)
         assert result2.returncode == 1, "Symlink should resolve to same lock as target"
 
-    def test_namespace_applied_after_normalization(self, lock_env: dict[str, str], tmp_path: Path) -> None:
+    def test_namespace_applied_after_normalization(
+        self, lock_env: dict[str, str], tmp_path: Path
+    ) -> None:
         """REPO_NAMESPACE should be applied to normalized path, not raw path."""
         test_file = tmp_path / "file.py"
         test_file.touch()
@@ -543,7 +565,9 @@ class TestPathNormalization:
 class TestNormalizationAcrossAllScripts:
     """Ensure all lock scripts use consistent path normalization."""
 
-    def test_lock_check_uses_normalized_path(self, lock_env: dict[str, str], tmp_path: Path) -> None:
+    def test_lock_check_uses_normalized_path(
+        self, lock_env: dict[str, str], tmp_path: Path
+    ) -> None:
         """lock-check.sh should find locks regardless of path format."""
         test_file = tmp_path / "check_test.py"
         test_file.touch()
@@ -565,7 +589,9 @@ class TestNormalizationAcrossAllScripts:
         )
         assert result2.returncode == 0, "lock-check should find lock via relative path"
 
-    def test_lock_holder_uses_normalized_path(self, lock_env: dict[str, str], tmp_path: Path) -> None:
+    def test_lock_holder_uses_normalized_path(
+        self, lock_env: dict[str, str], tmp_path: Path
+    ) -> None:
         """lock-holder.sh should return holder regardless of path format."""
         test_file = tmp_path / "holder_test.py"
         test_file.touch()
@@ -586,7 +612,9 @@ class TestNormalizationAcrossAllScripts:
         )
         assert result.stdout.strip() == "my-agent"
 
-    def test_lock_release_uses_normalized_path(self, lock_env: dict[str, str], tmp_path: Path) -> None:
+    def test_lock_release_uses_normalized_path(
+        self, lock_env: dict[str, str], tmp_path: Path
+    ) -> None:
         """lock-release.sh should release locks regardless of path format."""
         test_file = tmp_path / "release_test.py"
         test_file.touch()

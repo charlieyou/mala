@@ -87,9 +87,7 @@ class ValidationRunner:
                 text=True,
             )
             if add_result.returncode != 0:
-                reason = (
-                    f"Post-validation failed: git worktree add exited {add_result.returncode}"
-                )
+                reason = f"Post-validation failed: git worktree add exited {add_result.returncode}"
                 if add_result.stderr.strip():
                     reason += f" ({_tail(add_result.stderr.strip())})"
                 return ValidationResult(
@@ -339,7 +337,9 @@ def _init_fixture_repo(repo_path: Path) -> str | None:
         )
         if result.returncode != 0:
             stderr = result.stderr.strip()
-            reason = f"E2E fixture setup failed: {' '.join(cmd)} (exit {result.returncode})"
+            reason = (
+                f"E2E fixture setup failed: {' '.join(cmd)} (exit {result.returncode})"
+            )
             if stderr:
                 reason = f"{reason}: {_tail(stderr)}"
             return reason

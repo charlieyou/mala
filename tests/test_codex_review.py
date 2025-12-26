@@ -279,7 +279,9 @@ class TestRunCodexReview:
         assert result.parse_error is None
 
     @pytest.mark.asyncio
-    async def test_returns_failure_with_issues(self, tmp_path: Path, mock_codex_script: tuple[Path, Path]) -> None:
+    async def test_returns_failure_with_issues(
+        self, tmp_path: Path, mock_codex_script: tuple[Path, Path]
+    ) -> None:
         """Should return passed=False with issues when codex finds errors."""
         script_path, _ = mock_codex_script
         repo_path = tmp_path / "repo"
@@ -313,7 +315,9 @@ class TestRunCodexReview:
         assert result.issues[0].message == "Potential null pointer"
 
     @pytest.mark.asyncio
-    async def test_handles_codex_nonzero_exit(self, tmp_path: Path, mock_codex_script: tuple[Path, Path]) -> None:
+    async def test_handles_codex_nonzero_exit(
+        self, tmp_path: Path, mock_codex_script: tuple[Path, Path]
+    ) -> None:
         """Should return parse_error when codex exits non-zero."""
         script_path, _ = mock_codex_script
         repo_path = tmp_path / "repo"
@@ -406,7 +410,9 @@ class TestCodexExecApproach:
     """
 
     @pytest.mark.asyncio
-    async def test_uses_codex_exec_not_review(self, tmp_path: Path, mock_codex_script: tuple[Path, Path]) -> None:
+    async def test_uses_codex_exec_not_review(
+        self, tmp_path: Path, mock_codex_script: tuple[Path, Path]
+    ) -> None:
         """
         Verify we use 'codex exec' with output schema, not 'codex review'.
 

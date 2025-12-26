@@ -34,7 +34,9 @@ class TestBlockDangerousCommands:
         return _make
 
     @pytest.mark.asyncio
-    async def test_allows_bash_safe_command(self, make_hook_input: HookInputFactory) -> None:
+    async def test_allows_bash_safe_command(
+        self, make_hook_input: HookInputFactory
+    ) -> None:
         """Safe commands with tool_name='Bash' should be allowed."""
         from src.hooks import block_dangerous_commands
 
@@ -44,7 +46,9 @@ class TestBlockDangerousCommands:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_allows_bash_lowercase_safe_command(self, make_hook_input: HookInputFactory) -> None:
+    async def test_allows_bash_lowercase_safe_command(
+        self, make_hook_input: HookInputFactory
+    ) -> None:
         """Safe commands with tool_name='bash' (lowercase) should be allowed."""
         from src.hooks import block_dangerous_commands
 
@@ -76,7 +80,9 @@ class TestBlockDangerousCommands:
         assert result.get("decision") == "block"
 
     @pytest.mark.asyncio
-    async def test_blocks_curl_pipe_bash(self, make_hook_input: HookInputFactory) -> None:
+    async def test_blocks_curl_pipe_bash(
+        self, make_hook_input: HookInputFactory
+    ) -> None:
         """curl | bash pattern should be blocked."""
         from src.hooks import block_dangerous_commands
 
@@ -90,7 +96,9 @@ class TestBlockDangerousCommands:
         assert "curl | bash" in result.get("reason", "")
 
     @pytest.mark.asyncio
-    async def test_blocks_force_push_main(self, make_hook_input: HookInputFactory) -> None:
+    async def test_blocks_force_push_main(
+        self, make_hook_input: HookInputFactory
+    ) -> None:
         """Force push to main branch should be blocked."""
         from src.hooks import block_dangerous_commands
 
@@ -103,7 +111,9 @@ class TestBlockDangerousCommands:
         assert "force push" in result.get("reason", "").lower()
 
     @pytest.mark.asyncio
-    async def test_blocks_force_push_any_branch(self, make_hook_input: HookInputFactory) -> None:
+    async def test_blocks_force_push_any_branch(
+        self, make_hook_input: HookInputFactory
+    ) -> None:
         """Force push to ANY branch should now be blocked."""
         from src.hooks import block_dangerous_commands
 
@@ -116,7 +126,9 @@ class TestBlockDangerousCommands:
         assert "force push" in result.get("reason", "").lower()
 
     @pytest.mark.asyncio
-    async def test_allows_force_with_lease(self, make_hook_input: HookInputFactory) -> None:
+    async def test_allows_force_with_lease(
+        self, make_hook_input: HookInputFactory
+    ) -> None:
         """Force with lease should be allowed (safer alternative)."""
         from src.hooks import block_dangerous_commands
 
@@ -128,7 +140,9 @@ class TestBlockDangerousCommands:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_allows_non_bash_tools(self, make_hook_input: HookInputFactory) -> None:
+    async def test_allows_non_bash_tools(
+        self, make_hook_input: HookInputFactory
+    ) -> None:
         """Non-Bash tools should always be allowed (they don't run commands)."""
         from src.hooks import block_dangerous_commands
 
@@ -138,7 +152,9 @@ class TestBlockDangerousCommands:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_tool_name_variations(self, make_hook_input: HookInputFactory) -> None:
+    async def test_tool_name_variations(
+        self, make_hook_input: HookInputFactory
+    ) -> None:
         """Tool name matching should be case-insensitive for bash variants."""
         from src.hooks import block_dangerous_commands
 
@@ -169,7 +185,9 @@ class TestBlockDangerousCommands:
             "git push -f origin feature",
         ],
     )
-    async def test_blocks_destructive_git_commands(self, make_hook_input: HookInputFactory, cmd: str) -> None:
+    async def test_blocks_destructive_git_commands(
+        self, make_hook_input: HookInputFactory, cmd: str
+    ) -> None:
         """Destructive git commands should be blocked."""
         from src.hooks import block_dangerous_commands
 
@@ -196,7 +214,9 @@ class TestBlockDangerousCommands:
             "git checkout feature.txt",
         ],
     )
-    async def test_allows_safe_git_commands(self, make_hook_input: HookInputFactory, cmd: str) -> None:
+    async def test_allows_safe_git_commands(
+        self, make_hook_input: HookInputFactory, cmd: str
+    ) -> None:
         """Safe git commands should be allowed."""
         from src.hooks import block_dangerous_commands
 
