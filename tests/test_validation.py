@@ -31,7 +31,7 @@ class TestValidationConfig:
         assert config.coverage is True
         assert config.coverage_min == 85
         assert config.coverage_source == "."
-        assert config.use_test_mutex is True
+        assert config.use_test_mutex is False  # Disabled by default to avoid deadlocks
         assert config.step_timeout_seconds is None
 
     def test_custom_values(self) -> None:
@@ -431,3 +431,93 @@ class TestE2EValidation:
         ):
             result = runner._run_e2e("test", {"MORPH_API_KEY": "test-key"})
             assert result.passed is True
+
+    def test_run_e2e_command_uses_valid_flags(self, tmp_path: Path) -> None:
+        """Test that E2E command only uses flags supported by the mala CLI."""
+        config = ValidationConfig(run_e2e=True, use_test_mutex=False)
+        runner = ValidationRunner(tmp_path, config)
+
+        captured_cmd: list[str] = []
+
+        def capture_run(*args, **kwargs):  # type: ignore[no-untyped-def]
+            if args and isinstance(args[0], list):
+                captured_cmd.extend(args[0])
+            return subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="", stderr=""
+            )
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/fake"),
+            patch("subprocess.run", side_effect=capture_run),
+        ):
+            runner._run_e2e("test", {"MORPH_API_KEY": "test-key"})
+
+        # These flags do not exist in the mala CLI
+        assert "--no-post-validate" not in captured_cmd, (
+            "mala CLI has no --no-post-validate flag"
+        )
+        assert "--no-e2e" not in captured_cmd, "mala CLI has no --no-e2e flag"
+        # These are valid flags
+        assert "mala" in captured_cmd
+        assert "run" in captured_cmd
+
+
+class TestTimeoutHandling:
+    """Test timeout handling for str/bytes output types."""
+
+    def test_run_command_timeout_with_string_output(self, tmp_path: Path) -> None:
+        """TimeoutExpired may have str stdout/stderr when text=True is used."""
+        config = ValidationConfig(
+            use_test_mutex=False,
+            step_timeout_seconds=0.1,
+        )
+        runner = ValidationRunner(tmp_path, config)
+
+        exc = subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1)
+        exc.stdout = "string output"  # Already a string, not bytes
+        exc.stderr = "string error"
+
+        with patch("subprocess.run", side_effect=exc):
+            result = runner._run_command("sleep", ["sleep", "10"], Path("."), {})
+            assert result.ok is False
+            assert result.returncode == 124
+            assert "string output" in result.stdout_tail
+            assert "string error" in result.stderr_tail
+
+    def test_run_command_timeout_with_none_output(self, tmp_path: Path) -> None:
+        """TimeoutExpired may have None stdout/stderr."""
+        config = ValidationConfig(
+            use_test_mutex=False,
+            step_timeout_seconds=0.1,
+        )
+        runner = ValidationRunner(tmp_path, config)
+
+        exc = subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1)
+        exc.stdout = None
+        exc.stderr = None
+
+        with patch("subprocess.run", side_effect=exc):
+            result = runner._run_command("sleep", ["sleep", "10"], Path("."), {})
+            assert result.ok is False
+            assert result.returncode == 124
+            assert result.stdout_tail == ""
+            assert result.stderr_tail == ""
+
+    def test_run_command_timeout_with_bytes_output(self, tmp_path: Path) -> None:
+        """TimeoutExpired may have bytes stdout/stderr when text=False."""
+        config = ValidationConfig(
+            use_test_mutex=False,
+            step_timeout_seconds=0.1,
+        )
+        runner = ValidationRunner(tmp_path, config)
+
+        exc = subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1)
+        exc.stdout = b"bytes output"
+        exc.stderr = b"bytes error"
+
+        with patch("subprocess.run", side_effect=exc):
+            result = runner._run_command("sleep", ["sleep", "10"], Path("."), {})
+            assert result.ok is False
+            assert result.returncode == 124
+            assert "bytes output" in result.stdout_tail
+            assert "bytes error" in result.stderr_tail

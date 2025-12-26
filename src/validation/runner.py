@@ -28,7 +28,9 @@ class ValidationConfig:
     coverage: bool = True
     coverage_min: int = 85
     coverage_source: str = "."
-    use_test_mutex: bool = True
+    use_test_mutex: bool = (
+        False  # Disabled to avoid deadlocks; isolated caches prevent conflicts
+    )
     step_timeout_seconds: float | None = None
 
 

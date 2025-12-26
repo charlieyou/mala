@@ -220,18 +220,21 @@ File locks are enforced at two levels:
 
 Lock keys are canonicalized so equivalent paths (absolute/relative, with `./..` segments) produce identical locks. When `REPO_NAMESPACE` is set, paths become repo-relative.
 
-## Test Mutex
+## Parallel Validation
 
-Repo-wide commands that could interfere between agents are serialized via `test-mutex.sh`:
+Agents run validation commands in parallel using **isolated cache directories** to prevent conflicts:
 
 ```bash
-./src/scripts/test-mutex.sh pytest           # Run tests with mutex
-./src/scripts/test-mutex.sh ruff check .     # Lint with mutex
-./src/scripts/test-mutex.sh ty check         # Type check with mutex
-./src/scripts/test-mutex.sh uv sync          # Sync deps with mutex
+pytest --cache-dir=/tmp/pytest-$AGENT_ID         # Isolated pytest cache
+ruff check . --cache-dir=/tmp/ruff-$AGENT_ID     # Isolated ruff cache
+ruff format .                                     # No cache conflicts
+ty check                                          # Type check (read-only)
+uv sync                                           # Has internal locking
 ```
 
-The mutex uses a fixed key (`__test_mutex__`) and is released on exit, even on failure or signals.
+This approach avoids deadlocks that occurred when agents held file locks while waiting for a global test mutex. File locks prevent concurrent edits; isolated caches prevent validation conflicts.
+
+**Legacy `test-mutex.sh`**: A wrapper script exists for serializing commands if needed, but agents no longer require it for standard validation.
 
 ## Failure Handoff
 

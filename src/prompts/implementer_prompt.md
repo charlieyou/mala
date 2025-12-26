@@ -86,17 +86,17 @@ lock-wait.sh utils.py 900 1000  # Wait up to 900s, poll every 1000ms
 
 ### 4. Quality Checks (Full Validation Required)
 
-**Before committing, run the full validation suite.** Acquire the test mutex first since these commands affect repo-wide state:
+**Before committing, run the full validation suite.** Use isolated cache directories to allow parallel validation:
 
 ```bash
-lock-try.sh __test_mutex__   # Acquire test mutex before repo-wide commands
-uv sync --all-extras         # Ensure deps current
-uv run pytest                # Run full test suite
-uvx ruff check .             # Lint - fix any issues
-uvx ruff format .            # Format
-uvx ty check                 # Type check
-lock-release.sh __test_mutex__
+uv sync --all-extras                                    # Ensure deps current
+uv run pytest --cache-dir=/tmp/pytest-$AGENT_ID         # Isolated pytest cache
+uvx ruff check . --cache-dir=/tmp/ruff-$AGENT_ID        # Isolated ruff cache
+uvx ruff format .                                       # Format (no cache concerns)
+uvx ty check                                            # Type check
 ```
+
+**Note:** No test mutex needed. Isolated caches prevent conflicts between parallel agents.
 
 **All checks must pass.** If any fail:
 - Fix the issues in your code
