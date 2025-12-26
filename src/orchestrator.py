@@ -24,7 +24,7 @@ from .hooks import (
     block_dangerous_commands,
     block_morph_replaced_tools,
 )
-from .logging.console import Colors, get_agent_color, log, log_tool
+from .logging.console import Colors, log, log_tool, log_agent_text
 from .logging.jsonl import JSONLLogger
 from .tools.env import USER_CONFIG_DIR, JSONL_LOG_DIR, SCRIPTS_DIR
 from .tools.locking import (
@@ -189,19 +189,11 @@ class MalaOrchestrator:
                                 if isinstance(message, AssistantMessage):
                                     for block in message.content:
                                         if isinstance(block, TextBlock):
-                                            text = (
-                                                block.text[:100] + "..."
-                                                if len(block.text) > 100
-                                                else block.text
-                                            )
-                                            agent_color = get_agent_color(issue_id)
-                                            print(
-                                                f"    {agent_color}[{issue_id}]{Colors.RESET} {Colors.DIM}{text}{Colors.RESET}"
-                                            )
+                                            log_agent_text(block.text, issue_id)
                                         elif isinstance(block, ToolUseBlock):
                                             log_tool(
                                                 block.name,
-                                                str(block.input)[:50],
+                                                str(block.input),
                                                 agent_id=issue_id,
                                             )
 

@@ -37,7 +37,7 @@ from typing import Annotated
 
 import typer
 
-from .logging.console import Colors, log
+from .logging.console import Colors, log, set_truncation
 from .tools.env import load_env
 from .tools.locking import LOCK_DIR
 from .orchestrator import MalaOrchestrator
@@ -99,8 +99,19 @@ def run(
             help="Comma-separated list of issue IDs to process exclusively",
         ),
     ] = None,
+    no_truncate: Annotated[
+        bool,
+        typer.Option(
+            "--no-truncate",
+            help="Disable output truncation to show full log lines",
+        ),
+    ] = False,
 ):
     """Run parallel issue processing."""
+    # Apply truncation setting
+    if no_truncate:
+        set_truncation(False)
+
     repo_path = repo_path.resolve()
 
     # Parse --only flag into a set of issue IDs

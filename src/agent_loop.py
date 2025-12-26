@@ -144,25 +144,17 @@ def make_default_console_callback(
     Returns:
         A callback function for console output.
     """
-    from .logging.console import Colors, get_agent_color, log_tool
+    from .logging.console import log_tool, log_agent_text
 
     def callback(message: AssistantMessage | ResultMessage) -> None:
         if isinstance(message, AssistantMessage):
             for block in message.content:
                 if isinstance(block, TextBlock):
-                    text = (
-                        block.text[:100] + "..."
-                        if len(block.text) > 100
-                        else block.text
-                    )
-                    agent_color = get_agent_color(issue_id)
-                    print(
-                        f"    {agent_color}[{issue_id}]{Colors.RESET} {Colors.DIM}{text}{Colors.RESET}"
-                    )
+                    log_agent_text(block.text, issue_id)
                 elif isinstance(block, ToolUseBlock):
                     log_tool(
                         block.name,
-                        str(block.input)[:50],
+                        str(block.input),
                         agent_id=issue_id,
                     )
 
