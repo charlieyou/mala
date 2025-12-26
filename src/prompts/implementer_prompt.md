@@ -34,13 +34,7 @@ bd close {issue_id}    # Mark complete (after committing)
 
 ### 2. File Locking Protocol
 
-**Setup environment (run once at start):**
-```bash
-export LOCK_DIR="{lock_dir}"
-export AGENT_ID="{agent_id}"
-export PATH="{scripts_dir}:$PATH"
-mkdir -p "$LOCK_DIR"
-```
+Lock scripts are pre-configured in your environment (LOCK_DIR, AGENT_ID, PATH are set).
 
 **Lock commands:**
 | Command | Description |

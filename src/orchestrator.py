@@ -127,13 +127,19 @@ class MalaOrchestrator:
             issue_id=issue_id,
             repo_path=self.repo_path,
             lock_dir=LOCK_DIR,
-            scripts_dir=SCRIPTS_DIR,
             agent_id=agent_id,
         )
 
         final_result = ""
         start_time = asyncio.get_event_loop().time()
         success = False
+
+        # Set up environment with lock scripts in PATH
+        agent_env = {
+            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "LOCK_DIR": str(LOCK_DIR),
+            "AGENT_ID": agent_id,
+        }
 
         options = ClaudeAgentOptions(
             cwd=str(self.repo_path),
@@ -143,6 +149,7 @@ class MalaOrchestrator:
             setting_sources=["project", "user"],
             mcp_servers=get_mcp_servers(self.repo_path),
             disallowed_tools=MORPH_DISALLOWED_TOOLS,
+            env=agent_env,
             hooks={
                 "PreToolUse": [
                     HookMatcher(
