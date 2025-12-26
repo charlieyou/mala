@@ -1,6 +1,6 @@
 """Quality gate for verifying agent work before marking success.
 
-Implements Track A4 from coordination-plan-codex.md:
+Implements Track A4 from 2025-12-26-coordination-plan.md:
 - Verify commit message contains bd-<issue_id>
 - Verify validation commands ran (parse JSONL logs)
 - On failure: mark needs-followup with failure context
