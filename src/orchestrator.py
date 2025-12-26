@@ -319,11 +319,19 @@ class MalaOrchestrator:
                 )
 
                 # Fill up to max_agents (unless limit reached)
+                suppress_warn_ids = None
+                if self.only_ids:
+                    suppress_warn_ids = (
+                        self.failed_issues
+                        | set(self.active_tasks.keys())
+                        | {result.issue_id for result in self.completed}
+                    )
                 ready = (
                     self.beads.get_ready(
                         self.failed_issues,
                         epic_id=self.epic_id,
                         only_ids=self.only_ids,
+                        suppress_warn_ids=suppress_warn_ids,
                     )
                     if not limit_reached
                     else []

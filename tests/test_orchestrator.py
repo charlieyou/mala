@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.beads_client import BeadsClient
 from src.orchestrator import IssueResult, MalaOrchestrator
 
 
@@ -118,6 +119,23 @@ class TestGetReadyIssues:
             result = orchestrator.beads.get_ready()
 
         assert result == ["prio-1", "no-prio"]
+
+    def test_suppresses_warning_for_only_ids_already_processed(
+        self, tmp_path: Path
+    ):
+        """Only-id warnings should be suppressed for already processed IDs."""
+        warnings: list[str] = []
+        beads = BeadsClient(tmp_path, log_warning=warnings.append)
+        issues_json = json.dumps([])
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(stdout=issues_json)
+            result = beads.get_ready(
+                only_ids={"issue-1"},
+                suppress_warn_ids={"issue-1"},
+            )
+
+        assert result == []
+        assert warnings == []
 
 
 class TestClaimIssue:
@@ -244,7 +262,9 @@ class TestRunOrchestrationLoop:
         call_count = 0
         spawned = []
 
-        def mock_get_ready(failed=None, epic_id=None):
+        def mock_get_ready(
+            failed=None, epic_id=None, only_ids=None, suppress_warn_ids=None
+        ):
             # Return issues only on first call
             nonlocal call_count
             call_count += 1
@@ -302,7 +322,9 @@ class TestFailedTaskResetsIssue:
 
         first_call = True
 
-        def mock_get_ready(failed=None, epic_id=None):
+        def mock_get_ready(
+            failed=None, epic_id=None, only_ids=None, suppress_warn_ids=None
+        ):
             nonlocal first_call
             if first_call:
                 first_call = False
@@ -348,7 +370,9 @@ class TestFailedTaskResetsIssue:
 
         first_call = True
 
-        def mock_get_ready(failed=None, epic_id=None):
+        def mock_get_ready(
+            failed=None, epic_id=None, only_ids=None, suppress_warn_ids=None
+        ):
             nonlocal first_call
             if first_call:
                 first_call = False
@@ -386,7 +410,7 @@ class TestOrchestratorInitialization:
     def test_default_values(self, tmp_path: Path):
         """Default values should be set correctly."""
         orch = MalaOrchestrator(repo_path=tmp_path)
-        assert orch.max_agents == 3
+        assert orch.max_agents is None  # Unlimited by default
         assert orch.timeout_seconds == 30 * 60
         assert orch.max_issues is None
 

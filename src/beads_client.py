@@ -58,6 +58,7 @@ class BeadsClient:
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
         only_ids: set[str] | None = None,
+        suppress_warn_ids: set[str] | None = None,
     ) -> list[str]:
         """Get list of ready issue IDs via bd CLI, sorted by priority.
 
@@ -66,11 +67,14 @@ class BeadsClient:
             epic_id: Optional epic ID to filter by - only return children of this epic.
             only_ids: Optional set of issue IDs to include exclusively. If provided,
                 only these IDs will be returned (if they exist and are ready).
+            suppress_warn_ids: Optional set of issue IDs to suppress from "not ready"
+                warnings (e.g., already started or finished).
 
         Returns:
             List of issue IDs sorted by priority (lower = higher priority).
         """
         exclude_ids = exclude_ids or set()
+        suppress_warn_ids = suppress_warn_ids or set()
 
         # Get epic children if filtering by epic
         epic_children: set[str] | None = None
@@ -96,7 +100,7 @@ class BeadsClient:
 
             # Validate only_ids - warn about IDs that aren't ready
             if only_ids:
-                not_ready = only_ids - ready_issue_ids
+                not_ready = only_ids - ready_issue_ids - suppress_warn_ids
                 if not_ready:
                     self._log_warning(
                         f"Specified IDs not ready: {', '.join(sorted(not_ready))}"
