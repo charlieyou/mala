@@ -7,6 +7,8 @@ Tests for:
 
 import json
 from pathlib import Path
+import subprocess
+from unittest.mock import patch
 
 from src.quality_gate import QualityGate, ValidationEvidence
 
@@ -501,3 +503,170 @@ class TestMissingCommands:
         )
         missing = evidence.missing_commands()
         assert len(missing) == 0
+
+
+class TestCommitBaselineCheck:
+    """Test check_commit_exists with baseline timestamp to reject stale commits."""
+
+    def test_rejects_commit_before_baseline(self, tmp_path: Path) -> None:
+        """Should reject commits created before the baseline timestamp."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        # Mock git log returning a commit with a timestamp before baseline
+        # The commit exists but is older than the run started
+        with patch("subprocess.run") as mock_run:
+            # Return commit with timestamp 1000 seconds before baseline
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="abc1234 1703500000 bd-issue-123: Old fix\n",
+                stderr="",
+            )
+            # Baseline is at timestamp 1703501000 (1000s after the commit)
+            result = gate.check_commit_exists(
+                "issue-123", baseline_timestamp=1703501000
+            )
+
+        assert result.exists is False
+
+    def test_accepts_commit_after_baseline(self, tmp_path: Path) -> None:
+        """Should accept commits created after the baseline timestamp."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        with patch("subprocess.run") as mock_run:
+            # Return commit with timestamp 1000 seconds after baseline
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="abc1234 1703502000 bd-issue-123: New fix\n",
+                stderr="",
+            )
+            # Baseline is at timestamp 1703501000 (commit is newer)
+            result = gate.check_commit_exists(
+                "issue-123", baseline_timestamp=1703501000
+            )
+
+        assert result.exists is True
+        assert result.commit_hash == "abc1234"
+
+    def test_accepts_any_commit_without_baseline(self, tmp_path: Path) -> None:
+        """Should accept any matching commit when no baseline is provided (backward compat)."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="abc1234 bd-issue-123: Old fix\n",
+                stderr="",
+            )
+            result = gate.check_commit_exists("issue-123")  # No baseline
+
+        assert result.exists is True
+        assert result.commit_hash == "abc1234"
+
+    def test_gate_check_uses_baseline(self, tmp_path: Path) -> None:
+        """Gate check method should use baseline to reject stale commits."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        # Create log with all validation commands
+        log_path = tmp_path / "session.jsonl"
+        commands = [
+            "uv sync",
+            "uv run pytest",
+            "uvx ruff check .",
+            "uvx ruff format .",
+            "uvx ty check",
+        ]
+        lines = []
+        for cmd in commands:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        with patch("subprocess.run") as mock_run:
+            # Return a commit that is older than the baseline
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="abc1234 1703500000 bd-issue-123: Old fix\n",
+                stderr="",
+            )
+            # Baseline makes the commit stale
+            result = gate.check("issue-123", log_path, baseline_timestamp=1703501000)
+
+        assert result.passed is False
+        assert any(
+            "baseline" in r.lower() or "stale" in r.lower()
+            for r in result.failure_reasons
+        )
+
+    def test_gate_check_passes_with_new_commit(self, tmp_path: Path) -> None:
+        """Gate check should pass when commit is after baseline."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        # Create log with all validation commands
+        log_path = tmp_path / "session.jsonl"
+        commands = [
+            "uv sync",
+            "uv run pytest",
+            "uvx ruff check .",
+            "uvx ruff format .",
+            "uvx ty check",
+        ]
+        lines = []
+        for cmd in commands:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        with patch("subprocess.run") as mock_run:
+            # Return a commit that is newer than the baseline
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="abc1234 1703502000 bd-issue-123: New fix\n",
+                stderr="",
+            )
+            # Baseline allows the newer commit
+            result = gate.check("issue-123", log_path, baseline_timestamp=1703501000)
+
+        assert result.passed is True

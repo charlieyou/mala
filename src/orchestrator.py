@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -129,6 +130,9 @@ class RetryState:
     review_attempt: int = 0  # Review attempt number (0 = not started)
     log_offset: int = 0  # Byte offset for scoped evidence parsing
     previous_commit_hash: str | None = None
+    baseline_timestamp: int = (
+        0  # Unix timestamp when run started (reject older commits)
+    )
 
 
 class MalaOrchestrator:
@@ -202,8 +206,10 @@ class MalaOrchestrator:
         Returns:
             Tuple of (GateResult, new_log_offset).
         """
-        # Check for matching commit
-        commit_result = self.quality_gate.check_commit_exists(issue_id)
+        # Check for matching commit (using baseline to reject stale commits)
+        commit_result = self.quality_gate.check_commit_exists(
+            issue_id, baseline_timestamp=retry_state.baseline_timestamp
+        )
 
         # Parse validation evidence from the current attempt's log offset
         evidence, new_offset = self.quality_gate.parse_validation_evidence_from_offset(
@@ -214,7 +220,8 @@ class MalaOrchestrator:
 
         if not commit_result.exists:
             failure_reasons.append(
-                f"No commit with bd-{issue_id} found in last 30 days"
+                f"No commit with bd-{issue_id} found after run baseline "
+                f"(stale commits from previous runs are rejected)"
             )
 
         if not evidence.has_minimum_validation():
@@ -251,8 +258,9 @@ class MalaOrchestrator:
         agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
         self.agent_ids[issue_id] = agent_id
 
-        # Initialize retry state for this issue
-        retry_state = RetryState()
+        # Initialize retry state with baseline timestamp to reject stale commits
+        # Baseline is captured once per run to avoid false positives in retries
+        retry_state = RetryState(baseline_timestamp=int(time.time()))
 
         # Claude session ID will be captured from ResultMessage
         claude_session_id: str | None = None

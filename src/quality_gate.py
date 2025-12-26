@@ -240,7 +240,9 @@ class QualityGate:
         # No commit change and no new evidence = no progress
         return True
 
-    def check_commit_exists(self, issue_id: str) -> CommitResult:
+    def check_commit_exists(
+        self, issue_id: str, baseline_timestamp: int | None = None
+    ) -> CommitResult:
         """Check if a commit with bd-<issue_id> exists in recent history.
 
         Searches commits from the last 30 days to accommodate long-running
@@ -248,6 +250,8 @@ class QualityGate:
 
         Args:
             issue_id: The issue ID to search for (without bd- prefix).
+            baseline_timestamp: Unix timestamp. If provided, only accepts commits
+                created after this time (to reject stale commits from previous runs).
 
         Returns:
             CommitResult indicating whether a matching commit exists.
@@ -256,11 +260,14 @@ class QualityGate:
         # Use git log with grep to find matching commits
         pattern = f"bd-{issue_id}"
 
+        # Include commit timestamp in format for baseline comparison
+        format_str = "%h %ct %s" if baseline_timestamp is not None else "%h %s"
+
         result = subprocess.run(
             [
                 "git",
                 "log",
-                "--oneline",
+                f"--format={format_str}",
                 "--grep",
                 pattern,
                 "-n",
@@ -279,18 +286,45 @@ class QualityGate:
         if not output:
             return CommitResult(exists=False)
 
-        # Parse the commit hash from oneline format: "abc1234 message"
-        parts = output.split(" ", 1)
-        commit_hash = parts[0] if parts else None
-        message = parts[1] if len(parts) > 1 else None
+        # Parse the output based on format
+        if baseline_timestamp is not None:
+            # Format: "hash timestamp message"
+            parts = output.split(" ", 2)
+            if len(parts) < 2:
+                return CommitResult(exists=False)
 
-        return CommitResult(
-            exists=True,
-            commit_hash=commit_hash,
-            message=message,
-        )
+            commit_hash = parts[0]
+            try:
+                commit_timestamp = int(parts[1])
+            except ValueError:
+                return CommitResult(exists=False)
 
-    def check(self, issue_id: str, log_path: Path) -> GateResult:
+            message = parts[2] if len(parts) > 2 else None
+
+            # Reject commits created before the baseline
+            if commit_timestamp < baseline_timestamp:
+                return CommitResult(exists=False)
+
+            return CommitResult(
+                exists=True,
+                commit_hash=commit_hash,
+                message=message,
+            )
+        else:
+            # Original format: "hash message"
+            parts = output.split(" ", 1)
+            commit_hash = parts[0] if parts else None
+            message = parts[1] if len(parts) > 1 else None
+
+            return CommitResult(
+                exists=True,
+                commit_hash=commit_hash,
+                message=message,
+            )
+
+    def check(
+        self, issue_id: str, log_path: Path, baseline_timestamp: int | None = None
+    ) -> GateResult:
         """Run full quality gate check.
 
         Verifies:
@@ -300,6 +334,8 @@ class QualityGate:
         Args:
             issue_id: The issue ID to verify.
             log_path: Path to the JSONL log file from agent session.
+            baseline_timestamp: Unix timestamp. If provided, only accepts commits
+                created after this time (to reject stale commits from previous runs).
 
         Returns:
             GateResult with pass/fail and failure reasons.
@@ -307,11 +343,17 @@ class QualityGate:
         failure_reasons: list[str] = []
 
         # Check for matching commit
-        commit_result = self.check_commit_exists(issue_id)
+        commit_result = self.check_commit_exists(issue_id, baseline_timestamp)
         if not commit_result.exists:
-            failure_reasons.append(
-                f"No commit with bd-{issue_id} found in last 30 days"
-            )
+            if baseline_timestamp is not None:
+                failure_reasons.append(
+                    f"No commit with bd-{issue_id} found after run baseline "
+                    f"(stale commits from previous runs are rejected)"
+                )
+            else:
+                failure_reasons.append(
+                    f"No commit with bd-{issue_id} found in last 30 days"
+                )
 
         # Check validation evidence
         evidence = self.parse_validation_evidence(log_path)
