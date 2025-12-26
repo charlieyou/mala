@@ -33,7 +33,6 @@ if _braintrust_api_key:
 # Now safe to import claude_agent_sdk (it's been patched if Braintrust is available)
 import asyncio
 import subprocess
-import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -63,6 +62,7 @@ from .logging.console import Colors, get_agent_color, log, log_tool
 from .logging.jsonl import JSONLLogger, get_git_branch
 from .braintrust_integration import TracedAgentExecution
 from .tools.env import load_env
+from .beads_client import BeadsClient
 from .hooks import (
     MORPH_DISALLOWED_TOOLS,
     block_dangerous_commands,
@@ -160,49 +160,11 @@ class MalaOrchestrator:
         self.completed: list[IssueResult] = []
         self.failed_issues: set[str] = set()
 
-    def get_ready_issues(self) -> list[str]:
-        """Get list of ready issue IDs via bd CLI, sorted by priority."""
-        result = subprocess.run(
-            ["bd", "ready", "--json"],
-            capture_output=True,
-            text=True,
-            cwd=self.repo_path,
-        )
-        if result.returncode != 0:
-            log("⚠", f"bd ready failed: {result.stderr}", Colors.YELLOW)
-            return []
-        try:
-            issues = json.loads(result.stdout)
-            # Filter and sort by priority (lower number = higher priority)
-            filtered = [
-                i
-                for i in issues
-                if i["id"] not in self.failed_issues
-                and i.get("issue_type") != "epic"  # Skip epics
-            ]
-            filtered.sort(key=lambda i: i.get("priority", 999))
-            return [i["id"] for i in filtered]
-        except json.JSONDecodeError:
-            return []
+        # Initialize BeadsClient with warning logger
+        def log_warning(msg: str) -> None:
+            log("⚠", msg, Colors.YELLOW)
 
-    def claim_issue(self, issue_id: str) -> bool:
-        """Claim an issue by setting status to in_progress."""
-        result = subprocess.run(
-            ["bd", "update", issue_id, "--status", "in_progress"],
-            capture_output=True,
-            text=True,
-            cwd=self.repo_path,
-        )
-        return result.returncode == 0
-
-    def reset_issue(self, issue_id: str):
-        """Reset failed issue to ready status."""
-        subprocess.run(
-            ["bd", "update", issue_id, "--status", "ready"],
-            capture_output=True,
-            text=True,
-            cwd=self.repo_path,
-        )
+        self.beads = BeadsClient(self.repo_path, log_warning=log_warning)
 
     def _cleanup_agent_locks(self, agent_id: str):
         """Remove locks held by a specific agent (crash/timeout cleanup)."""
@@ -310,25 +272,9 @@ class MalaOrchestrator:
                                     final_result = message.result or ""
 
                     # Check if issue was closed (inside tracer context)
-                    check = subprocess.run(
-                        ["bd", "show", issue_id, "--json"],
-                        capture_output=True,
-                        text=True,
-                        cwd=self.repo_path,
-                    )
-                    if check.returncode == 0:
-                        try:
-                            issue_data = json.loads(check.stdout)
-                            # Handle both list and dict responses
-                            if isinstance(issue_data, list) and issue_data:
-                                issue_data = issue_data[0]
-                            if (
-                                isinstance(issue_data, dict)
-                                and issue_data.get("status") == "closed"
-                            ):
-                                success = True
-                        except json.JSONDecodeError:
-                            pass
+                    status = self.beads.get_issue_status(issue_id)
+                    if status == "closed":
+                        success = True
 
                     tracer.set_success(success)
 
@@ -360,7 +306,7 @@ class MalaOrchestrator:
 
     async def spawn_agent(self, issue_id: str) -> bool:
         """Spawn a new agent task for an issue. Returns True if spawned."""
-        if not self.claim_issue(issue_id):
+        if not self.beads.claim(issue_id):
             self.failed_issues.add(issue_id)
             log("⚠", f"Failed to claim {issue_id}", Colors.YELLOW, agent_id=issue_id)
             return False
@@ -428,7 +374,11 @@ class MalaOrchestrator:
                 )
 
                 # Fill up to max_agents (unless limit reached)
-                ready = self.get_ready_issues() if not limit_reached else []
+                ready = (
+                    self.beads.get_ready(self.failed_issues)
+                    if not limit_reached
+                    else []
+                )
 
                 if ready:
                     log("◌", f"Ready issues: {', '.join(ready)}", Colors.GRAY, dim=True)
@@ -505,7 +455,7 @@ class MalaOrchestrator:
                                     agent_id=issue_id,
                                 )
                                 self.failed_issues.add(issue_id)
-                                self.reset_issue(issue_id)
+                                self.beads.reset(issue_id)
                             break
 
         finally:
@@ -529,28 +479,11 @@ class MalaOrchestrator:
 
         # Commit .beads/issues.jsonl if there were successes
         if success_count > 0:
-            result = subprocess.run(
-                ["git", "add", ".beads/issues.jsonl"],
-                cwd=self.repo_path,
-                capture_output=True,
-            )
-            if result.returncode == 0:
-                commit_result = subprocess.run(
-                    ["git", "commit", "-m", "beads: close completed issues"],
-                    cwd=self.repo_path,
-                    capture_output=True,
-                )
-                if commit_result.returncode == 0:
-                    log("◐", "Committed .beads/issues.jsonl", Colors.GRAY, dim=True)
+            if self.beads.commit_issues():
+                log("◐", "Committed .beads/issues.jsonl", Colors.GRAY, dim=True)
 
             # Auto-close epics where all children are complete
-            epic_result = subprocess.run(
-                ["bd", "epic", "close-eligible"],
-                cwd=self.repo_path,
-                capture_output=True,
-                text=True,
-            )
-            if epic_result.returncode == 0 and epic_result.stdout.strip():
+            if self.beads.close_eligible_epics():
                 log("◐", "Auto-closed completed epics", Colors.GRAY, dim=True)
 
         print()
