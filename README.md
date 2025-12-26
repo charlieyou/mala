@@ -116,10 +116,13 @@ mala (Python Orchestrator)
    - Gets assigned an issue (already claimed by orchestrator)
    - Acquires filesystem locks before editing any files
    - Implements the issue, runs quality checks, commits
-   - Releases locks, closes issue
+   - Releases locks (orchestrator handles issue closing)
 5. **On file conflict**: Agent polls every 1s for lock (up to 60s timeout), returns BLOCKED if unavailable
-6. **Quality gate**: After completion, verifies commit exists and validation commands ran
-7. **On failure/timeout**: Orchestrator releases orphaned locks, records log path in issue notes, resets issue status
+6. **Quality gate**: After agent completes, orchestrator verifies commit exists and validation commands ran
+7. **Same-session re-entry**: If gate fails, orchestrator resumes the SAME Claude session with failure context
+8. **Codex review** (optional): After gate passes, automated code review with fix cycle
+9. **On success**: Orchestrator closes the issue via `bd close`
+10. **On failure**: After retries exhausted, orchestrator marks issue with `needs-followup` label and records log path in notes
 
 ### Epics and Parent-Child Issues
 
@@ -154,7 +157,9 @@ Each spawned agent follows this workflow:
 4. **Quality checks**: Run linters, formatters, type checkers
 5. **Self-review**: Verify implementation meets requirements
 6. **Commit**: Stage and commit changes locally
-7. **Cleanup**: Release locks, close issue with `bd close <id>`
+7. **Cleanup**: Release locks (orchestrator closes issue after gate passes)
+
+Note: Agents do NOT close issues directly. The orchestrator closes issues only after the quality gate (and optional Codex review) passes.
 
 ## Quality Gate
 
@@ -167,7 +172,38 @@ After an agent completes an issue, the orchestrator runs a quality gate that ver
    - `ty check` - type checking
    - `uv sync` - dependency installation
 
-If the gate fails, the issue is marked with `needs-followup` label and reset for retry.
+### Same-Session Re-entry
+
+If the gate fails, the orchestrator **resumes the same Claude session** with a follow-up prompt containing:
+- The specific failure reasons (missing commit, missing validations)
+- Instructions to fix and re-run validations
+- The current attempt number (e.g., "Attempt 2/3")
+
+This continues for up to `max_gate_retries` attempts (default: 3). The orchestrator tracks:
+- **Log offset**: Only evidence from the current attempt is considered
+- **Previous commit hash**: Detects "no progress" when commit is unchanged
+- **No-progress detection**: Stops retries early if agent makes no meaningful changes
+
+### Codex Review (Optional)
+
+When `--codex-review` is enabled, after the deterministic gate passes:
+
+1. **Codex review runs**: Invokes `codex review --commit <sha>` with a strict JSON schema prompt
+2. **JSON parsing**: Output must be valid JSON with `passed` boolean and `issues` array
+3. **Parse retry**: If JSON is invalid, retries once with stricter prompt (fail-closed behavior)
+4. **Review failure handling**: If review finds errors, orchestrator resumes the SAME session with:
+   - List of issues (file, line, severity, message)
+   - Instructions to fix errors and re-run validations
+5. **Re-gating**: After fixes, runs both deterministic gate AND Codex review again
+
+Review retries are capped at `max_review_retries` (default: 2).
+
+### Failure Handling
+
+After all retries are exhausted (gate or review), the orchestrator:
+- Marks the issue with `needs-followup` label
+- Records error summary and log path in issue notes
+- Does NOT close the issue (leaves it for manual intervention)
 
 ## Lock Enforcement
 
@@ -193,11 +229,12 @@ The mutex uses a fixed key (`__test_mutex__`) and is released on exit, even on f
 
 ## Failure Handoff
 
-When an agent fails (including quality gate failures), the orchestrator records context in the beads issue notes:
-- Error summary
+When an agent fails (including quality gate failures after all retries), the orchestrator records context in the beads issue notes:
+- Error summary (gate failures, review issues, timeout, etc.)
 - Path to the JSONL session log (in `~/.mala/logs/`)
+- Attempt counts (gate attempts, review attempts)
 
-The next agent can read the issue notes with `bd show <issue_id>` and grep the log file for context.
+The next agent (or human) can read the issue notes with `bd show <issue_id>` and grep the log file for context.
 
 ## Key Design Decisions
 
@@ -221,7 +258,10 @@ The next agent can read the issue notes with `bd show <issue_id>` and grep the l
 | `--max-issues`, `-i` | unlimited | Maximum total issues to process |
 | `--epic`, `-e` | - | Only process tasks that are children of this epic |
 | `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
-| `--no-truncate` | false | Disable output truncation to show full log lines |
+| `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
+| `--max-review-retries` | 2 | Maximum Codex review retry attempts per issue |
+| `--codex-review` | disabled | Enable automated Codex code review after gate passes |
+| `--verbose`, `-v` | false | Enable verbose output with full tool arguments |
 
 ### Global Configuration
 
