@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.cli import IssueResult, MalaOrchestrator
+from src.orchestrator import IssueResult, MalaOrchestrator
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def make_subprocess_result(
 
 
 class TestGetReadyIssues:
-    """Test get_ready_issues handles bd CLI JSON and errors."""
+    """Test beads.get_ready handles bd CLI JSON and errors."""
 
     def test_returns_issue_ids_sorted_by_priority(self, orchestrator: MalaOrchestrator):
         """Issues should be returned sorted by priority (lower = higher)."""
@@ -51,7 +51,7 @@ class TestGetReadyIssues:
         )
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_subprocess_result(stdout=issues_json)
-            result = orchestrator.get_ready_issues()
+            result = orchestrator.beads.get_ready()
 
         assert result == ["issue-1", "issue-2", "issue-3"]
 
@@ -66,14 +66,14 @@ class TestGetReadyIssues:
         )
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_subprocess_result(stdout=issues_json)
-            result = orchestrator.get_ready_issues()
+            result = orchestrator.beads.get_ready()
 
         assert result == ["task-1", "bug-1"]
         assert "epic-1" not in result
 
     def test_filters_out_failed_issues(self, orchestrator: MalaOrchestrator):
         """Previously failed issues should be excluded."""
-        orchestrator.failed_issues.add("failed-1")
+        failed_set = {"failed-1"}
         issues_json = json.dumps(
             [
                 {"id": "ok-1", "priority": 1, "issue_type": "task"},
@@ -82,7 +82,7 @@ class TestGetReadyIssues:
         )
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_subprocess_result(stdout=issues_json)
-            result = orchestrator.get_ready_issues()
+            result = orchestrator.beads.get_ready(failed_set)
 
         assert result == ["ok-1"]
         assert "failed-1" not in result
@@ -93,7 +93,7 @@ class TestGetReadyIssues:
             mock_run.return_value = make_subprocess_result(
                 returncode=1, stderr="bd: command not found"
             )
-            result = orchestrator.get_ready_issues()
+            result = orchestrator.beads.get_ready()
 
         assert result == []
 
@@ -101,7 +101,7 @@ class TestGetReadyIssues:
         """When bd returns invalid JSON, return empty list."""
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_subprocess_result(stdout="not valid json")
-            result = orchestrator.get_ready_issues()
+            result = orchestrator.beads.get_ready()
 
         assert result == []
 
@@ -115,19 +115,19 @@ class TestGetReadyIssues:
         )
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_subprocess_result(stdout=issues_json)
-            result = orchestrator.get_ready_issues()
+            result = orchestrator.beads.get_ready()
 
         assert result == ["prio-1", "no-prio"]
 
 
 class TestClaimIssue:
-    """Test claim_issue invokes bd update correctly."""
+    """Test beads.claim invokes bd update correctly."""
 
     def test_returns_true_on_success(self, orchestrator: MalaOrchestrator):
         """Successful claim returns True."""
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_subprocess_result(returncode=0)
-            result = orchestrator.claim_issue("issue-1")
+            result = orchestrator.beads.claim("issue-1")
 
         assert result is True
 
@@ -137,7 +137,7 @@ class TestClaimIssue:
             mock_run.return_value = make_subprocess_result(
                 returncode=1, stderr="Issue already claimed"
             )
-            result = orchestrator.claim_issue("issue-1")
+            result = orchestrator.beads.claim("issue-1")
 
         assert result is False
 
@@ -145,7 +145,7 @@ class TestClaimIssue:
         """Verify bd update is called with correct arguments."""
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_subprocess_result()
-            orchestrator.claim_issue("issue-abc")
+            orchestrator.beads.claim("issue-abc")
 
         mock_run.assert_called_once()
         call_args = mock_run.call_args
@@ -160,13 +160,13 @@ class TestClaimIssue:
 
 
 class TestResetIssue:
-    """Test reset_issue invokes bd update correctly."""
+    """Test beads.reset invokes bd update correctly."""
 
     def test_calls_bd_update_with_ready_status(self, orchestrator: MalaOrchestrator):
         """Verify reset calls bd update with ready status."""
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_subprocess_result()
-            orchestrator.reset_issue("issue-failed")
+            orchestrator.beads.reset("issue-failed")
 
         mock_run.assert_called_once()
         call_args = mock_run.call_args
@@ -177,7 +177,7 @@ class TestResetIssue:
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = make_subprocess_result(returncode=1)
             # Should not raise
-            orchestrator.reset_issue("issue-failed")
+            orchestrator.beads.reset("issue-failed")
 
 
 class TestSpawnAgent:
@@ -188,7 +188,7 @@ class TestSpawnAgent:
         self, orchestrator: MalaOrchestrator
     ):
         """When claim fails, issue should be added to failed_issues."""
-        with patch.object(orchestrator, "claim_issue", return_value=False):
+        with patch.object(orchestrator.beads, "claim", return_value=False):
             result = await orchestrator.spawn_agent("unclaimed-issue")
 
         assert result is False
@@ -200,7 +200,7 @@ class TestSpawnAgent:
     ):
         """When claim succeeds, a task should be created."""
         with (
-            patch.object(orchestrator, "claim_issue", return_value=True),
+            patch.object(orchestrator.beads, "claim", return_value=True),
             patch.object(
                 orchestrator,
                 "run_implementer",
@@ -227,14 +227,14 @@ class TestRunOrchestrationLoop:
     ):
         """When no issues are ready, run() should return 0 and exit cleanly."""
         with (
-            patch.object(orchestrator, "get_ready_issues", return_value=[]),
-            patch("src.cli.LOCK_DIR", MagicMock()),
-            patch("src.cli.JSONL_LOG_DIR", MagicMock()),
-            patch("src.cli.release_all_locks"),
+            patch.object(orchestrator.beads, "get_ready", return_value=[]),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.JSONL_LOG_DIR", MagicMock()),
+            patch("src.orchestrator.release_all_locks"),
         ):
             result = await orchestrator.run()
 
-        assert result == 0
+        assert result == (0, 0)
         assert len(orchestrator.completed) == 0
 
     @pytest.mark.asyncio
@@ -244,7 +244,7 @@ class TestRunOrchestrationLoop:
         call_count = 0
         spawned = []
 
-        def mock_get_ready():
+        def mock_get_ready(failed=None):
             # Return issues only on first call
             nonlocal call_count
             call_count += 1
@@ -266,11 +266,11 @@ class TestRunOrchestrationLoop:
             return True
 
         with (
-            patch.object(orchestrator, "get_ready_issues", side_effect=mock_get_ready),
+            patch.object(orchestrator.beads, "get_ready", side_effect=mock_get_ready),
             patch.object(orchestrator, "spawn_agent", side_effect=mock_spawn),
-            patch("src.cli.LOCK_DIR", MagicMock()),
-            patch("src.cli.JSONL_LOG_DIR", MagicMock()),
-            patch("src.cli.release_all_locks"),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.JSONL_LOG_DIR", MagicMock()),
+            patch("src.orchestrator.release_all_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             # Orchestrator needs active_tasks to be empty to exit
@@ -302,7 +302,7 @@ class TestFailedTaskResetsIssue:
 
         first_call = True
 
-        def mock_get_ready():
+        def mock_get_ready(failed=None):
             nonlocal first_call
             if first_call:
                 first_call = False
@@ -310,15 +310,15 @@ class TestFailedTaskResetsIssue:
             return []
 
         with (
-            patch.object(orchestrator, "get_ready_issues", side_effect=mock_get_ready),
-            patch.object(orchestrator, "claim_issue", return_value=True),
+            patch.object(orchestrator.beads, "get_ready", side_effect=mock_get_ready),
+            patch.object(orchestrator.beads, "claim", return_value=True),
             patch.object(
                 orchestrator, "run_implementer", side_effect=mock_run_implementer
             ),
-            patch.object(orchestrator, "reset_issue", side_effect=mock_reset),
-            patch("src.cli.LOCK_DIR", MagicMock()),
-            patch("src.cli.JSONL_LOG_DIR", MagicMock()),
-            patch("src.cli.release_all_locks"),
+            patch.object(orchestrator.beads, "reset", side_effect=mock_reset),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.JSONL_LOG_DIR", MagicMock()),
+            patch("src.orchestrator.release_all_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -348,7 +348,7 @@ class TestFailedTaskResetsIssue:
 
         first_call = True
 
-        def mock_get_ready():
+        def mock_get_ready(failed=None):
             nonlocal first_call
             if first_call:
                 first_call = False
@@ -356,15 +356,15 @@ class TestFailedTaskResetsIssue:
             return []
 
         with (
-            patch.object(orchestrator, "get_ready_issues", side_effect=mock_get_ready),
-            patch.object(orchestrator, "claim_issue", return_value=True),
+            patch.object(orchestrator.beads, "get_ready", side_effect=mock_get_ready),
+            patch.object(orchestrator.beads, "claim", return_value=True),
             patch.object(
                 orchestrator, "run_implementer", side_effect=mock_run_implementer
             ),
-            patch.object(orchestrator, "reset_issue", side_effect=mock_reset),
-            patch("src.cli.LOCK_DIR", MagicMock()),
-            patch("src.cli.JSONL_LOG_DIR", MagicMock()),
-            patch("src.cli.release_all_locks"),
+            patch.object(orchestrator.beads, "reset", side_effect=mock_reset),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.JSONL_LOG_DIR", MagicMock()),
+            patch("src.orchestrator.release_all_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
