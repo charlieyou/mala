@@ -63,7 +63,17 @@ REVIEW_OUTPUT_SCHEMA = {
 
 # Prompt template for code review
 CODEX_REVIEW_PROMPT = """\
-Review the commit {commit_sha} in this repository.
+Review only the diff introduced by commit {commit_sha} (vs its parent).
+Focus on correctness, security, performance, data integrity, and missing tests.
+Ignore style/formatting or refactors unless they affect correctness.
+
+Severity:
+- error: likely bug, data loss, security issue, failing tests, or behavior mismatch.
+- warning: risk, edge case, or missing test coverage.
+- info: minor improvement.
+
+For each issue: use repo-relative file path, line if possible (null if file-level),
+and a concise, actionable fix hint. Use file "N/A" for repo-level issues.
 
 Rules:
 - passed must be false if there are any issues with severity "error"
@@ -71,6 +81,8 @@ Rules:
 - line can be null if the issue is file-level
 - Keep messages concise and actionable
 - Use file path "N/A" for general issues not tied to a specific file
+- If no issues, return passed=true and issues=[]
+- Output only JSON that conforms to the provided schema
 """
 
 
