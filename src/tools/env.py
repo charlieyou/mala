@@ -4,6 +4,7 @@ Centralizes config paths and dotenv loading. Import this module early
 to ensure environment variables are set before Braintrust setup.
 """
 
+import os
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,6 +14,10 @@ USER_CONFIG_DIR = Path.home() / ".config" / "mala"
 
 # JSONL log directory
 JSONL_LOG_DIR = USER_CONFIG_DIR / "logs"
+
+# Lock directory for multi-agent coordination
+# Can be overridden via MALA_LOCK_DIR environment variable
+LOCK_DIR = Path(os.environ.get("MALA_LOCK_DIR", "/tmp/mala-locks"))
 
 # Lock scripts directory (relative to this file: src/tools/env.py -> src/scripts/)
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"

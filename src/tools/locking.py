@@ -9,17 +9,14 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .env import LOCK_DIR, SCRIPTS_DIR
+
 if TYPE_CHECKING:
     from claude_agent_sdk.types import (
         HookContext,
         StopHookInput,
         SyncHookJSONOutput,
     )
-
-LOCK_DIR = Path("/tmp/mala-locks")
-
-# Lock scripts directory (relative to src/tools/locking.py -> src/scripts/)
-SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 
 
 def _lock_key(filepath: str, repo_namespace: str | None = None) -> str:
