@@ -24,9 +24,20 @@ def lock_env(tmp_path):
 
 
 def run_script(name: str, args: list[str], env: dict) -> subprocess.CompletedProcess:
-    """Run a lock script with the given environment."""
+    """Run a lock script with the given environment.
+
+    Note: This creates a clean environment that excludes LOCK_DIR, AGENT_ID, and
+    REPO_NAMESPACE from os.environ to prevent test interference. The test must
+    explicitly provide these in the env dict if needed.
+    """
     script = SCRIPTS_DIR / name
-    full_env = {**os.environ, **env}
+    # Create clean environment: exclude lock-related vars from os.environ
+    base_env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("LOCK_DIR", "AGENT_ID", "REPO_NAMESPACE")
+    }
+    full_env = {**base_env, **env}
     return subprocess.run(
         [str(script)] + args,
         env=full_env,
@@ -44,12 +55,18 @@ def lock_file_path(
         lock_dir: The lock directory path.
         filepath: The file path to lock.
         repo_namespace: Optional repo namespace for disambiguation.
+
+    Note: This normalizes the filepath the same way the scripts do (resolving to
+    absolute path) to ensure test assertions match actual lock file locations.
     """
+    # Normalize the filepath to absolute path (mirroring script behavior)
+    normalized_path = str(Path(filepath).resolve())
+
     # Build the canonical key
     if repo_namespace:
-        key = f"{repo_namespace}:{filepath}"
+        key = f"{repo_namespace}:{normalized_path}"
     else:
-        key = filepath
+        key = normalized_path
 
     # Hash the key
     key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
@@ -375,3 +392,219 @@ class TestLockPersistence:
         # Lock should still be held
         result = run_script("lock-check.sh", ["persist.py"], lock_env)
         assert result.returncode == 0
+
+
+class TestPathNormalization:
+    """Test that paths are normalized before hashing to ensure equivalent paths get the same lock."""
+
+    def test_relative_and_absolute_paths_same_lock(self, lock_env, tmp_path):
+        """An absolute path and its relative equivalent should produce the same lock."""
+        # Create a real file to work with
+        test_file = tmp_path / "target.py"
+        test_file.touch()
+
+        abs_path = str(test_file)
+        # Change to tmp_path to make relative path work
+        env1 = {**lock_env, "PWD": str(tmp_path)}
+
+        result1 = run_script("lock-try.sh", [abs_path], env1)
+        assert result1.returncode == 0
+
+        # Same agent trying the relative path should fail (same lock)
+        rel_path = "target.py"
+        # We need to cd to tmp_path for relative to work - use a subshell
+        full_env = {**os.environ, **env1}
+        result2 = subprocess.run(
+            f"cd {tmp_path} && {SCRIPTS_DIR}/lock-try.sh {rel_path}",
+            shell=True,
+            env=full_env,
+            capture_output=True,
+            text=True,
+        )
+        # Should fail because it's the same file, already locked
+        assert result2.returncode == 1, (
+            "Relative path should resolve to same lock as absolute"
+        )
+
+    def test_dot_slash_prefix_same_as_without(self, lock_env, tmp_path):
+        """'./foo.py' and 'foo.py' should produce the same lock when in same directory."""
+        test_file = tmp_path / "foo.py"
+        test_file.touch()
+
+        env = {**lock_env}
+        full_env = {**os.environ, **env}
+
+        # Lock with ./foo.py
+        result1 = subprocess.run(
+            f"cd {tmp_path} && {SCRIPTS_DIR}/lock-try.sh ./foo.py",
+            shell=True,
+            env=full_env,
+            capture_output=True,
+            text=True,
+        )
+        assert result1.returncode == 0
+
+        # Try foo.py (same file)
+        result2 = subprocess.run(
+            f"cd {tmp_path} && {SCRIPTS_DIR}/lock-try.sh foo.py",
+            shell=True,
+            env=full_env,
+            capture_output=True,
+            text=True,
+        )
+        assert result2.returncode == 1, "./foo.py and foo.py should be same lock"
+
+    def test_dotdot_path_resolves_correctly(self, lock_env, tmp_path):
+        """Paths with .. components should resolve to canonical form."""
+        # Create nested structure
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        test_file = tmp_path / "root.py"
+        test_file.touch()
+
+        env = {**lock_env}
+        full_env = {**os.environ, **env}
+
+        # Lock from tmp_path using absolute path
+        result1 = run_script("lock-try.sh", [str(test_file)], env)
+        assert result1.returncode == 0
+
+        # Try from subdir using ../root.py
+        result2 = subprocess.run(
+            f"cd {subdir} && {SCRIPTS_DIR}/lock-try.sh ../root.py",
+            shell=True,
+            env=full_env,
+            capture_output=True,
+            text=True,
+        )
+        assert result2.returncode == 1, (
+            "../root.py should resolve to same lock as absolute path"
+        )
+
+    def test_symlink_resolves_to_target(self, lock_env, tmp_path):
+        """Symlinks should resolve to the same lock as their target."""
+        target = tmp_path / "real_file.py"
+        target.touch()
+        symlink = tmp_path / "link_to_file.py"
+        symlink.symlink_to(target)
+
+        env = {**lock_env}
+
+        # Lock the real file
+        result1 = run_script("lock-try.sh", [str(target)], env)
+        assert result1.returncode == 0
+
+        # Symlink should hit the same lock
+        result2 = run_script("lock-try.sh", [str(symlink)], env)
+        assert result2.returncode == 1, "Symlink should resolve to same lock as target"
+
+    def test_namespace_applied_after_normalization(self, lock_env, tmp_path):
+        """REPO_NAMESPACE should be applied to normalized path, not raw path."""
+        test_file = tmp_path / "file.py"
+        test_file.touch()
+
+        # Agent1 with namespace, absolute path
+        env1 = {**lock_env, "REPO_NAMESPACE": "repo-A", "AGENT_ID": "agent-1"}
+        result1 = run_script("lock-try.sh", [str(test_file)], env1)
+        assert result1.returncode == 0
+
+        # Agent2 same namespace, relative path (from tmp_path) - should collide
+        env2 = {**lock_env, "REPO_NAMESPACE": "repo-A", "AGENT_ID": "agent-2"}
+        full_env2 = {**os.environ, **env2}
+        result2 = subprocess.run(
+            f"cd {tmp_path} && {SCRIPTS_DIR}/lock-try.sh file.py",
+            shell=True,
+            env=full_env2,
+            capture_output=True,
+            text=True,
+        )
+        assert result2.returncode == 1, (
+            "Same namespace + normalized path should collide"
+        )
+
+    def test_different_namespaces_no_collision_after_normalization(
+        self, lock_env, tmp_path
+    ):
+        """Different namespaces should not collide even with same normalized path."""
+        test_file = tmp_path / "file.py"
+        test_file.touch()
+
+        env1 = {**lock_env, "REPO_NAMESPACE": "repo-A", "AGENT_ID": "agent-1"}
+        result1 = run_script("lock-try.sh", [str(test_file)], env1)
+        assert result1.returncode == 0
+
+        env2 = {**lock_env, "REPO_NAMESPACE": "repo-B", "AGENT_ID": "agent-2"}
+        result2 = run_script("lock-try.sh", [str(test_file)], env2)
+        assert result2.returncode == 0, "Different namespaces should not collide"
+
+
+class TestNormalizationAcrossAllScripts:
+    """Ensure all lock scripts use consistent path normalization."""
+
+    def test_lock_check_uses_normalized_path(self, lock_env, tmp_path):
+        """lock-check.sh should find locks regardless of path format."""
+        test_file = tmp_path / "check_test.py"
+        test_file.touch()
+
+        env = {**lock_env}
+        full_env = {**os.environ, **env}
+
+        # Lock with absolute path
+        result1 = run_script("lock-try.sh", [str(test_file)], env)
+        assert result1.returncode == 0
+
+        # Check with relative path should succeed
+        result2 = subprocess.run(
+            f"cd {tmp_path} && {SCRIPTS_DIR}/lock-check.sh check_test.py",
+            shell=True,
+            env=full_env,
+            capture_output=True,
+            text=True,
+        )
+        assert result2.returncode == 0, "lock-check should find lock via relative path"
+
+    def test_lock_holder_uses_normalized_path(self, lock_env, tmp_path):
+        """lock-holder.sh should return holder regardless of path format."""
+        test_file = tmp_path / "holder_test.py"
+        test_file.touch()
+
+        env = {**lock_env, "AGENT_ID": "my-agent"}
+        full_env = {**os.environ, **env}
+
+        # Lock with absolute path
+        run_script("lock-try.sh", [str(test_file)], env)
+
+        # Query holder with relative path
+        result = subprocess.run(
+            f"cd {tmp_path} && {SCRIPTS_DIR}/lock-holder.sh holder_test.py",
+            shell=True,
+            env=full_env,
+            capture_output=True,
+            text=True,
+        )
+        assert result.stdout.strip() == "my-agent"
+
+    def test_lock_release_uses_normalized_path(self, lock_env, tmp_path):
+        """lock-release.sh should release locks regardless of path format."""
+        test_file = tmp_path / "release_test.py"
+        test_file.touch()
+
+        env = {**lock_env}
+        full_env = {**os.environ, **env}
+
+        # Lock with absolute path
+        run_script("lock-try.sh", [str(test_file)], env)
+
+        # Release with relative path
+        result = subprocess.run(
+            f"cd {tmp_path} && {SCRIPTS_DIR}/lock-release.sh release_test.py",
+            shell=True,
+            env=full_env,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+
+        # Verify lock is released by trying to acquire again
+        result2 = run_script("lock-try.sh", [str(test_file)], env)
+        assert result2.returncode == 0, "Should be able to reacquire after release"

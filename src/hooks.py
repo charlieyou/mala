@@ -11,6 +11,8 @@ from claude_agent_sdk.types import (
     SyncHookJSONOutput,
 )
 
+from .tools.locking import get_lock_holder
+
 # Dangerous bash command patterns to block
 DANGEROUS_PATTERNS = [
     "rm -rf /",
@@ -43,6 +45,22 @@ BASH_TOOL_NAMES = frozenset(["bash"])
 
 # Tools replaced by MorphLLM MCP (use disallowed_tools parameter, not hooks)
 MORPH_DISALLOWED_TOOLS = ["Edit", "Grep"]
+
+# Tools that write to files and require lock ownership
+FILE_WRITE_TOOLS: frozenset[str] = frozenset(
+    [
+        "Write",  # Claude Code Write tool: file_path
+        "NotebookEdit",  # Claude Code NotebookEdit: notebook_path
+        "mcp__morphllm__edit_file",  # MorphLLM MCP: path
+    ]
+)
+
+# Map of tool name to the key in tool_input that contains the file path
+FILE_PATH_KEYS: dict[str, str] = {
+    "Write": "file_path",
+    "NotebookEdit": "notebook_path",
+    "mcp__morphllm__edit_file": "path",
+}
 
 
 async def block_dangerous_commands(
@@ -106,3 +124,109 @@ async def block_morph_replaced_tools(
             "Available: edit_file, warpgrep_codebase_search",
         }
     return {}
+
+
+async def block_unlocked_file_writes(
+    hook_input: PreToolUseHookInput,
+    stderr: str | None,
+    context: HookContext,
+) -> SyncHookJSONOutput:
+    """PreToolUse hook to block file writes unless the agent holds the lock.
+
+    This enforces lock ownership for file-write operations, preventing agents
+    from writing to files they haven't acquired locks for.
+
+    Note: This is a no-op if agent_id is not injected via make_lock_enforcement_hook.
+    """
+    tool_name = hook_input["tool_name"]
+
+    # Only check file-write tools
+    if tool_name not in FILE_WRITE_TOOLS:
+        return {}
+
+    # Get the file path from the tool input
+    path_key = FILE_PATH_KEYS.get(tool_name)
+    if not path_key:
+        return {}
+
+    file_path = hook_input["tool_input"].get(path_key)
+    if not file_path:
+        # No path provided, can't check lock - allow (tool will fail anyway)
+        return {}
+
+    # Get the agent ID from context
+    agent_id = context.get("agent_id")
+    if not agent_id:
+        # No agent ID in context, can't verify ownership - allow
+        return {}
+
+    # Check if this agent holds the lock
+    lock_holder = get_lock_holder(file_path)
+
+    if lock_holder is None:
+        return {
+            "decision": "block",
+            "reason": f"File {file_path} is not locked. Acquire lock with: lock-try.sh {file_path}",
+        }
+
+    if lock_holder != agent_id:
+        return {
+            "decision": "block",
+            "reason": f"File {file_path} is locked by {lock_holder}. Wait or coordinate to acquire the lock.",
+        }
+
+    # Agent holds the lock, allow the write
+    return {}
+
+
+def make_lock_enforcement_hook(agent_id: str):
+    """Create a PreToolUse hook that enforces lock ownership for file writes.
+
+    Args:
+        agent_id: The agent ID to check lock ownership against.
+
+    Returns:
+        An async hook function that blocks file writes unless the agent holds the lock.
+    """
+
+    async def enforce_lock_ownership(
+        hook_input: PreToolUseHookInput,
+        stderr: str | None,
+        context: HookContext,
+    ) -> SyncHookJSONOutput:
+        """PreToolUse hook to block file writes unless this agent holds the lock."""
+        tool_name = hook_input["tool_name"]
+
+        # Only check file-write tools
+        if tool_name not in FILE_WRITE_TOOLS:
+            return {}
+
+        # Get the file path from the tool input
+        path_key = FILE_PATH_KEYS.get(tool_name)
+        if not path_key:
+            return {}
+
+        file_path = hook_input["tool_input"].get(path_key)
+        if not file_path:
+            # No path provided, can't check lock - allow (tool will fail anyway)
+            return {}
+
+        # Check if this agent holds the lock
+        lock_holder = get_lock_holder(file_path)
+
+        if lock_holder is None:
+            return {
+                "decision": "block",
+                "reason": f"File {file_path} is not locked. Acquire lock with: lock-try.sh {file_path}",
+            }
+
+        if lock_holder != agent_id:
+            return {
+                "decision": "block",
+                "reason": f"File {file_path} is locked by {lock_holder}. Wait or coordinate to acquire the lock.",
+            }
+
+        # Agent holds the lock, allow the write
+        return {}
+
+    return enforce_lock_ownership

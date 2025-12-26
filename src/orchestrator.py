@@ -23,6 +23,7 @@ from .hooks import (
     MORPH_DISALLOWED_TOOLS,
     block_dangerous_commands,
     block_morph_replaced_tools,
+    make_lock_enforcement_hook,
 )
 from .logging.console import Colors, log, log_tool, log_agent_text
 from .logging.jsonl import JSONLLogger
@@ -154,7 +155,11 @@ class MalaOrchestrator:
                 "PreToolUse": [
                     HookMatcher(
                         matcher=None,
-                        hooks=[block_dangerous_commands, block_morph_replaced_tools],  # type: ignore[arg-type]
+                        hooks=[
+                            block_dangerous_commands,
+                            block_morph_replaced_tools,
+                            make_lock_enforcement_hook(agent_id),
+                        ],  # type: ignore[arg-type]
                     )
                 ],
                 "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],
