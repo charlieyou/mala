@@ -124,7 +124,10 @@ def log(
 
 
 def _format_arguments(
-    arguments: dict[str, Any] | None, verbose: bool, tool_name: str = ""
+    arguments: dict[str, Any] | None,
+    verbose: bool,
+    tool_name: str = "",
+    key_color: str = Colors.CYAN,
 ) -> str:
     """Format tool arguments for display.
 
@@ -132,6 +135,7 @@ def _format_arguments(
         arguments: Tool arguments as a dictionary.
         verbose: Whether to show full output (vs abbreviated).
         tool_name: Name of the tool (used to detect edit tools for code formatting).
+        key_color: Color to use for argument keys (defaults to CYAN).
 
     Returns:
         Formatted string representation of arguments as key: value lines.
@@ -151,7 +155,7 @@ def _format_arguments(
                 if verbose:
                     # Full code display with distinct coloring
                     code_lines = value.split("\n")
-                    lines.append(f"{Colors.CYAN}{key}:{Colors.RESET}")
+                    lines.append(f"{key_color}{key}:{Colors.RESET}")
                     for code_line in code_lines:
                         lines.append(f"  {Colors.DIM}{code_line}{Colors.RESET}")
                 else:
@@ -160,51 +164,51 @@ def _format_arguments(
                     if len(value) > 60:
                         preview += "..."
                     lines.append(
-                        f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.DIM}{preview}{Colors.RESET}"
+                        f"{key_color}{key}:{Colors.RESET} {Colors.DIM}{preview}{Colors.RESET}"
                     )
             else:
                 # Regular string field
                 if verbose or len(value) <= 80:
                     lines.append(
-                        f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.WHITE}{value}{Colors.RESET}"
+                        f"{key_color}{key}:{Colors.RESET} {Colors.WHITE}{value}{Colors.RESET}"
                     )
                 else:
                     truncated = value[:80] + "..."
                     lines.append(
-                        f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.WHITE}{truncated}{Colors.RESET}"
+                        f"{key_color}{key}:{Colors.RESET} {Colors.WHITE}{truncated}{Colors.RESET}"
                     )
         elif isinstance(value, bool):
             lines.append(
-                f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.WHITE}{str(value).lower()}{Colors.RESET}"
+                f"{key_color}{key}:{Colors.RESET} {Colors.WHITE}{str(value).lower()}{Colors.RESET}"
             )
         elif isinstance(value, (int, float)):
             lines.append(
-                f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.WHITE}{value}{Colors.RESET}"
+                f"{key_color}{key}:{Colors.RESET} {Colors.WHITE}{value}{Colors.RESET}"
             )
         elif isinstance(value, dict):
             if verbose:
                 formatted = json.dumps(value, indent=2, ensure_ascii=False)
-                lines.append(f"{Colors.CYAN}{key}:{Colors.RESET}")
+                lines.append(f"{key_color}{key}:{Colors.RESET}")
                 for dict_line in formatted.split("\n"):
                     lines.append(f"  {Colors.DIM}{dict_line}{Colors.RESET}")
             else:
                 lines.append(
-                    f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.DIM}{{...}}{Colors.RESET}"
+                    f"{key_color}{key}:{Colors.RESET} {Colors.DIM}{{...}}{Colors.RESET}"
                 )
         elif isinstance(value, list):
             if verbose:
                 formatted = json.dumps(value, indent=2, ensure_ascii=False)
-                lines.append(f"{Colors.CYAN}{key}:{Colors.RESET}")
+                lines.append(f"{key_color}{key}:{Colors.RESET}")
                 for list_line in formatted.split("\n"):
                     lines.append(f"  {Colors.DIM}{list_line}{Colors.RESET}")
             else:
                 lines.append(
-                    f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.DIM}[...]{Colors.RESET}"
+                    f"{key_color}{key}:{Colors.RESET} {Colors.DIM}[...]{Colors.RESET}"
                 )
         else:
             # Fallback for other types
             lines.append(
-                f"{Colors.CYAN}{key}:{Colors.RESET} {Colors.WHITE}{value!r}{Colors.RESET}"
+                f"{key_color}{key}:{Colors.RESET} {Colors.WHITE}{value!r}{Colors.RESET}"
             )
 
     return "\n    ".join(lines)
@@ -233,13 +237,14 @@ def log_tool(
         agent_color = get_agent_color(agent_id)
         prefix = f"{agent_color}[{agent_id}]{Colors.RESET} "
     else:
+        agent_color = Colors.CYAN
         prefix = ""
 
     # Format arguments if provided
     args_output = ""
     if arguments:
         verbose = is_verbose_enabled()
-        formatted_args = _format_arguments(arguments, verbose, tool_name)
+        formatted_args = _format_arguments(arguments, verbose, tool_name, agent_color)
         if formatted_args:
             # Multi-line key:value format (no "args:" prefix)
             args_output = f"\n    {formatted_args}"
