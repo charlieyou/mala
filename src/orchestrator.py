@@ -539,7 +539,9 @@ class MalaOrchestrator:
                     tracer.set_success(success)
 
                 except TimeoutError:
-                    timeout_mins = self.timeout_seconds // 60 if self.timeout_seconds else 0
+                    timeout_mins = (
+                        self.timeout_seconds // 60 if self.timeout_seconds else 0
+                    )
                     final_result = f"Timeout after {timeout_mins} minutes"
                     tracer.set_error(final_result)
                     self._cleanup_agent_locks(agent_id)
@@ -588,7 +590,9 @@ class MalaOrchestrator:
         agents_str = (
             str(self.max_agents) if self.max_agents is not None else "unlimited"
         )
-        timeout_str = f"{self.timeout_seconds // 60}m" if self.timeout_seconds else "none"
+        timeout_str = (
+            f"{self.timeout_seconds // 60}m" if self.timeout_seconds else "none"
+        )
         log(
             "◐",
             f"max-agents: {agents_str}, timeout: {timeout_str}, max-issues: {limit_str}",
@@ -660,7 +664,9 @@ class MalaOrchestrator:
         # Create run metadata tracker
         run_config = RunConfig(
             max_agents=self.max_agents,
-            timeout_minutes=self.timeout_seconds // 60 if self.timeout_seconds else None,
+            timeout_minutes=self.timeout_seconds // 60
+            if self.timeout_seconds
+            else None,
             max_issues=self.max_issues,
             epic_id=self.epic_id,
             only_ids=list(self.only_ids) if self.only_ids else None,
