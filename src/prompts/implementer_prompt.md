@@ -90,7 +90,7 @@ lock-wait.sh utils.py 900 1000  # Wait up to 900s, poll every 1000ms
 
 ```bash
 lock-try.sh __test_mutex__   # Acquire test mutex before repo-wide commands
-uv sync                      # Ensure deps current
+uv sync --all-extras         # Ensure deps current
 uv run pytest                # Run full test suite
 uvx ruff check .             # Lint - fix any issues
 uvx ruff format .            # Format

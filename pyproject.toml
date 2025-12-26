@@ -35,3 +35,9 @@ markers = [
     "slow: marks tests as slow (run with '-m slow' or '--run-slow')",
     "morph: marks tests requiring MORPH_API_KEY",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+]
