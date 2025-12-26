@@ -223,7 +223,9 @@ class TestOffsetBasedParsing:
 class TestNoProgressDetection:
     """Test check_no_progress for detecting stalled attempts."""
 
-    def test_no_progress_when_same_commit_and_no_new_evidence(self, tmp_path: Path) -> None:
+    def test_no_progress_when_same_commit_and_no_new_evidence(
+        self, tmp_path: Path
+    ) -> None:
         """No progress: unchanged commit hash + no new evidence since offset."""
         log_path = tmp_path / "session.jsonl"
         # Empty file - no new evidence
@@ -332,7 +334,9 @@ class TestNoProgressDetection:
         # First attempt with a commit is always progress
         assert is_no_progress is False
 
-    def test_no_progress_with_none_commits_and_no_evidence(self, tmp_path: Path) -> None:
+    def test_no_progress_with_none_commits_and_no_evidence(
+        self, tmp_path: Path
+    ) -> None:
         """No progress: both commits None (no commit made) and no new evidence."""
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")
@@ -379,3 +383,121 @@ class TestGateResultNoProgress:
 
         result = GateResult(passed=True)
         assert result.no_progress is False
+
+
+class TestHasMinimumValidation:
+    """Test has_minimum_validation() requires full validation suite."""
+
+    def test_fails_when_only_pytest_ran(self) -> None:
+        """Should fail when only pytest ran (missing uv sync, ruff, ty check)."""
+        evidence = ValidationEvidence(pytest_ran=True)
+        assert evidence.has_minimum_validation() is False
+
+    def test_fails_when_only_ruff_ran(self) -> None:
+        """Should fail when only ruff check/format ran (missing uv sync, pytest, ty check)."""
+        evidence = ValidationEvidence(ruff_check_ran=True, ruff_format_ran=True)
+        assert evidence.has_minimum_validation() is False
+
+    def test_fails_when_missing_uv_sync(self) -> None:
+        """Should fail when uv sync is missing."""
+        evidence = ValidationEvidence(
+            uv_sync_ran=False,
+            pytest_ran=True,
+            ruff_check_ran=True,
+            ruff_format_ran=True,
+            ty_check_ran=True,
+        )
+        assert evidence.has_minimum_validation() is False
+
+    def test_fails_when_missing_ty_check(self) -> None:
+        """Should fail when ty check is missing."""
+        evidence = ValidationEvidence(
+            uv_sync_ran=True,
+            pytest_ran=True,
+            ruff_check_ran=True,
+            ruff_format_ran=True,
+            ty_check_ran=False,
+        )
+        assert evidence.has_minimum_validation() is False
+
+    def test_fails_when_missing_pytest(self) -> None:
+        """Should fail when pytest is missing."""
+        evidence = ValidationEvidence(
+            uv_sync_ran=True,
+            pytest_ran=False,
+            ruff_check_ran=True,
+            ruff_format_ran=True,
+            ty_check_ran=True,
+        )
+        assert evidence.has_minimum_validation() is False
+
+    def test_fails_when_missing_ruff_check(self) -> None:
+        """Should fail when ruff check is missing."""
+        evidence = ValidationEvidence(
+            uv_sync_ran=True,
+            pytest_ran=True,
+            ruff_check_ran=False,
+            ruff_format_ran=True,
+            ty_check_ran=True,
+        )
+        assert evidence.has_minimum_validation() is False
+
+    def test_fails_when_missing_ruff_format(self) -> None:
+        """Should fail when ruff format is missing."""
+        evidence = ValidationEvidence(
+            uv_sync_ran=True,
+            pytest_ran=True,
+            ruff_check_ran=True,
+            ruff_format_ran=False,
+            ty_check_ran=True,
+        )
+        assert evidence.has_minimum_validation() is False
+
+    def test_passes_when_all_commands_ran(self) -> None:
+        """Should pass when all required commands ran."""
+        evidence = ValidationEvidence(
+            uv_sync_ran=True,
+            pytest_ran=True,
+            ruff_check_ran=True,
+            ruff_format_ran=True,
+            ty_check_ran=True,
+        )
+        assert evidence.has_minimum_validation() is True
+
+
+class TestMissingCommands:
+    """Test missing_commands() includes uv sync and ty check."""
+
+    def test_includes_uv_sync_when_missing(self) -> None:
+        """Should include 'uv sync' when it didn't run."""
+        evidence = ValidationEvidence(uv_sync_ran=False)
+        missing = evidence.missing_commands()
+        assert "uv sync" in missing
+
+    def test_includes_ty_check_when_missing(self) -> None:
+        """Should include 'ty check' when it didn't run."""
+        evidence = ValidationEvidence(ty_check_ran=False)
+        missing = evidence.missing_commands()
+        assert "ty check" in missing
+
+    def test_includes_all_missing_commands(self) -> None:
+        """Should list all missing commands."""
+        evidence = ValidationEvidence()  # All default to False
+        missing = evidence.missing_commands()
+        assert "uv sync" in missing
+        assert "pytest" in missing
+        assert "ruff check" in missing
+        assert "ruff format" in missing
+        assert "ty check" in missing
+
+    def test_excludes_commands_that_ran(self) -> None:
+        """Should not list commands that ran."""
+        evidence = ValidationEvidence(
+            uv_sync_ran=True,
+            pytest_ran=True,
+            ruff_check_ran=True,
+            ruff_format_ran=True,
+            ty_check_ran=True,
+        )
+        missing = evidence.missing_commands()
+        assert len(missing) == 0

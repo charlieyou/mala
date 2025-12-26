@@ -31,25 +31,34 @@ class ValidationEvidence:
     def has_minimum_validation(self) -> bool:
         """Check if minimum required validation was performed.
 
-        Requires at least:
-        - pytest OR (ruff_check AND ruff_format)
-
-        ty_check is optional since not all projects use it.
-        uv_sync is recommended but not required.
+        Requires the full validation suite:
+        - uv sync (ensure dependencies are current)
+        - pytest (run tests)
+        - ruff check (lint)
+        - ruff format (format)
+        - ty check (type check)
         """
-        has_tests = self.pytest_ran
-        has_lint = self.ruff_check_ran and self.ruff_format_ran
-        return has_tests or has_lint
+        return (
+            self.uv_sync_ran
+            and self.pytest_ran
+            and self.ruff_check_ran
+            and self.ruff_format_ran
+            and self.ty_check_ran
+        )
 
     def missing_commands(self) -> list[str]:
         """List validation commands that didn't run."""
         missing = []
+        if not self.uv_sync_ran:
+            missing.append("uv sync")
         if not self.pytest_ran:
             missing.append("pytest")
         if not self.ruff_check_ran:
             missing.append("ruff check")
         if not self.ruff_format_ran:
             missing.append("ruff format")
+        if not self.ty_check_ran:
+            missing.append("ty check")
         return missing
 
 
