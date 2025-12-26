@@ -50,8 +50,8 @@ A stop-gap to reduce damage while Track B is built.
 - Serializes `pytest`, `ruff`, `ty`, `uv sync`.
 
 ### A6. Failure Handoff ✅
-- Writes `.mala/handoff/<issue_id>.md` on agent failure.
-- Contains error summary, last tool error, and last 10 Bash commands from session log.
+- Records failure context in beads issue notes on agent failure.
+- Contains error summary and path to JSONL session log.
 
 ## Track B: Worktrees + Merge Queue (2-4 weeks, end state)
 Full isolation removes the core coordination failures.
@@ -80,7 +80,7 @@ If any fail, return to the agent for fixes (keep worktree).
 
 ### B6. Cleanup
 - On success: remove worktree + branch.
-- On permanent failure: archive handoff and clean worktree.
+- On permanent failure: clean worktree, failure context preserved in issue notes.
 
 ## Prompt Changes
 

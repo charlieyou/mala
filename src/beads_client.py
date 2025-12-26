@@ -137,14 +137,26 @@ class BeadsClient:
         )
         return result.returncode == 0
 
-    def reset(self, issue_id: str) -> None:
-        """Reset failed issue to ready status.
+    def reset(
+        self, issue_id: str, log_path: Path | None = None, error: str = ""
+    ) -> None:
+        """Reset failed issue to ready status with failure context.
 
         Args:
             issue_id: The issue ID to reset.
+            log_path: Optional path to the JSONL log file from the failed attempt.
+            error: Optional error summary describing the failure.
         """
+        args = ["bd", "update", issue_id, "--status", "ready"]
+        if log_path or error:
+            notes_parts = []
+            if error:
+                notes_parts.append(f"Failed: {error}")
+            if log_path:
+                notes_parts.append(f"Log: {log_path}")
+            args.extend(["--notes", "\n".join(notes_parts)])
         subprocess.run(
-            ["bd", "update", issue_id, "--status", "ready"],
+            args,
             capture_output=True,
             text=True,
             cwd=self.repo_path,
@@ -213,7 +225,9 @@ class BeadsClient:
         )
         return result.returncode == 0 and bool(result.stdout.strip())
 
-    def mark_needs_followup(self, issue_id: str, reason: str) -> bool:
+    def mark_needs_followup(
+        self, issue_id: str, reason: str, log_path: Path | None = None
+    ) -> bool:
         """Mark an issue as needing follow-up due to quality gate failure.
 
         Adds the 'needs-followup' label and records the failure reason in notes.
@@ -223,11 +237,14 @@ class BeadsClient:
         Args:
             issue_id: The issue ID to mark.
             reason: Description of why the quality gate failed.
+            log_path: Optional path to the JSONL log file from the attempt.
 
         Returns:
             True if successfully marked, False otherwise.
         """
-        # Add the needs-followup label with failure context in notes
+        notes = f"Quality gate failed: {reason}"
+        if log_path:
+            notes += f"\nLog: {log_path}"
         result = subprocess.run(
             [
                 "bd",
@@ -236,7 +253,7 @@ class BeadsClient:
                 "--add-label",
                 "needs-followup",
                 "--notes",
-                f"Quality gate failed: {reason}",
+                notes,
             ],
             capture_output=True,
             text=True,

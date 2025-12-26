@@ -188,6 +188,25 @@ class TestResetIssue:
         call_args = mock_run.call_args
         assert call_args[0][0] == ["bd", "update", "issue-failed", "--status", "ready"]
 
+    def test_includes_log_path_and_error_in_notes(
+        self, orchestrator: MalaOrchestrator, tmp_path: Path
+    ):
+        """Reset with log_path and error should include notes."""
+        log_path = tmp_path / "session.jsonl"
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result()
+            orchestrator.beads.reset(
+                "issue-failed", log_path=log_path, error="Timeout after 30 minutes"
+            )
+
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args[0][0]
+        assert "--notes" in call_args
+        notes_idx = call_args.index("--notes")
+        notes_value = call_args[notes_idx + 1]
+        assert "Timeout after 30 minutes" in notes_value
+        assert str(log_path) in notes_value
+
     def test_does_not_raise_on_failure(self, orchestrator: MalaOrchestrator):
         """Reset should not raise even if bd fails."""
         with patch("subprocess.run") as mock_run:
@@ -307,7 +326,7 @@ class TestFailedTaskResetsIssue:
         """When a task fails, the issue should be reset to ready status."""
         reset_calls = []
 
-        def mock_reset(issue_id: str):
+        def mock_reset(issue_id: str, log_path=None, error=""):
             reset_calls.append(issue_id)
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
@@ -355,7 +374,7 @@ class TestFailedTaskResetsIssue:
         """Successful issues should not be reset."""
         reset_calls = []
 
-        def mock_reset(issue_id: str):
+        def mock_reset(issue_id: str, log_path=None, error=""):
             reset_calls.append(issue_id)
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
@@ -868,7 +887,7 @@ class TestOrchestratorQualityGateIntegration:
 
         mark_followup_calls = []
 
-        def mock_mark_followup(issue_id: str, reason: str):
+        def mock_mark_followup(issue_id: str, reason: str, log_path=None):
             mark_followup_calls.append((issue_id, reason))
 
         # Mock quality gate to fail

@@ -57,7 +57,7 @@ mala (Python Orchestrator)
    - Releases locks, closes issue
 5. **On file conflict**: Agent polls every 1s for lock (up to 60s timeout), returns BLOCKED if unavailable
 6. **Quality gate**: After completion, verifies commit exists and validation commands ran
-7. **On failure/timeout**: Orchestrator releases orphaned locks, writes handoff file, resets issue status
+7. **On failure/timeout**: Orchestrator releases orphaned locks, records log path in issue notes, resets issue status
 
 ### Epics and Parent-Child Issues
 
@@ -131,16 +131,11 @@ The mutex uses a fixed key (`__test_mutex__`) and is released on exit, even on f
 
 ## Failure Handoff
 
-When an agent fails (including quality gate failures), a handoff file is written to preserve context for debugging or retry:
-
-```
-.mala/handoff/<issue_id>.md
-```
-
-Contains:
+When an agent fails (including quality gate failures), the orchestrator records context in the beads issue notes:
 - Error summary
-- Last tool error (if any)
-- Last 10 Bash commands from the session log
+- Path to the JSONL session log (in `~/.mala/logs/`)
+
+The next agent can read the issue notes with `bd show <issue_id>` and grep the log file for context.
 
 ## Key Design Decisions
 

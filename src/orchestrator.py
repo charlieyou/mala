@@ -19,7 +19,6 @@ from claude_agent_sdk.types import HookMatcher
 from .beads_client import BeadsClient
 from .braintrust_integration import TracedAgentExecution
 from .git_utils import get_git_commit, get_git_branch
-from .handoff import HandoffWriter
 from .hooks import (
     MORPH_DISALLOWED_TOOLS,
     block_dangerous_commands,
@@ -105,9 +104,6 @@ class MalaOrchestrator:
 
         # Quality gate for post-run validation
         self.quality_gate = QualityGate(self.repo_path)
-
-        # Handoff writer for failed issues
-        self.handoff_writer = HandoffWriter(self.repo_path)
 
         # Initialize BeadsClient with warning logger
         def log_warning(msg: str) -> None:
@@ -424,9 +420,11 @@ class MalaOrchestrator:
                                         issue_id, log_path
                                     )
                                     if not gate_result.passed:
-                                        # Gate failed - mark needs-followup
+                                        # Gate failed - mark needs-followup with log path
                                         reason = "; ".join(gate_result.failure_reasons)
-                                        self.beads.mark_needs_followup(issue_id, reason)
+                                        self.beads.mark_needs_followup(
+                                            issue_id, reason, log_path=log_path
+                                        )
                                         result = IssueResult(
                                             issue_id=result.issue_id,
                                             agent_id=result.agent_id,
@@ -440,17 +438,11 @@ class MalaOrchestrator:
                                             Colors.YELLOW,
                                             agent_id=issue_id,
                                         )
-                                        # Write handoff file for quality gate failure
-                                        self.handoff_writer.write_handoff(
-                                            issue_id,
-                                            log_path=log_path,
-                                            error_summary=f"Quality gate failed: {reason}",
-                                        )
 
                             self.completed.append(result)
                             del self.active_tasks[issue_id]
 
-                            # Capture log path before cleanup for potential handoff
+                            # Capture log path before cleanup for failure notes
                             log_path = self.session_log_paths.pop(issue_id, None)
 
                             duration_str = f"{result.duration_seconds:.0f}s"
@@ -470,12 +462,8 @@ class MalaOrchestrator:
                                     agent_id=issue_id,
                                 )
                                 self.failed_issues.add(issue_id)
-                                self.beads.reset(issue_id)
-                                # Write handoff file for failed agent
-                                self.handoff_writer.write_handoff(
-                                    issue_id,
-                                    log_path=log_path,
-                                    error_summary=result.summary,
+                                self.beads.reset(
+                                    issue_id, log_path=log_path, error=result.summary
                                 )
                             break
 
