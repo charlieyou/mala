@@ -2,14 +2,14 @@
 Braintrust integration for Claude Agent SDK.
 
 LLM spans are automatically traced by the braintrust.wrappers.claude_agent_sdk wrapper
-which is set up in main.py BEFORE importing claude_agent_sdk.
+which is set up in cli.py BEFORE importing claude_agent_sdk.
 
 This module provides:
 - TracedAgentExecution: Context manager for creating parent spans with issue metadata
 - flush_braintrust: Ensure all traces are sent before process exits
 
 Usage:
-    # In main.py (BEFORE importing claude_agent_sdk):
+    # In cli.py (BEFORE importing claude_agent_sdk):
     from braintrust.wrappers.claude_agent_sdk import setup_claude_agent_sdk
     setup_claude_agent_sdk(project="mala")
 

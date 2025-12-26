@@ -91,7 +91,7 @@ Each spawned agent follows this workflow:
 
 ## Key Design Decisions
 
-- **Filesystem locks** via atomic mkdir (sandbox-compatible, no external deps)
+- **Filesystem locks** via atomic hardlink (sandbox-compatible, no external deps)
 - **60-second lock timeout** (fail fast on conflicts)
 - **Orchestrator claims issues** before spawning (agents don't claim)
 - **JSONL logs** in `~/.config/mala/logs/` for debugging
