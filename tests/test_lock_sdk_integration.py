@@ -12,6 +12,7 @@ Default: uv run pytest tests/  (excludes slow tests)
 """
 
 import asyncio
+import hashlib
 import subprocess
 from pathlib import Path
 
@@ -79,16 +80,83 @@ def agent_options(tmp_path):
     )
 
 
-def lock_file_exists(lock_dir: Path, filepath: str) -> bool:
-    """Check if a lock file exists."""
-    lock_name = filepath.replace("/", "_") + ".lock"
-    return (lock_dir / lock_name).exists()
+def _canonicalize_path(filepath: str, cwd: str) -> str:
+    """Canonicalize a file path for consistent lock key generation.
+
+    Matches the normalization logic in the shell scripts (realpath -m).
+
+    Args:
+        filepath: The file path to canonicalize.
+        cwd: The working directory for relative path resolution.
+
+    Returns:
+        The canonical absolute path string.
+    """
+    path = Path(filepath)
+    if not path.is_absolute():
+        path = Path(cwd) / path
+    # Use resolve() with strict=False to handle non-existent paths
+    # This mimics 'realpath -m' behavior
+    try:
+        return str(path.resolve())
+    except OSError:
+        # Fallback for edge cases
+        import os
+
+        return str(Path(os.path.normpath(path)))
 
 
-def get_lock_holder(lock_dir: Path, filepath: str) -> str | None:
-    """Get the holder of a lock file."""
-    lock_name = filepath.replace("/", "_") + ".lock"
-    lock_path = lock_dir / lock_name
+def lock_file_path(
+    lock_dir: Path, filepath: str, cwd: str, repo_namespace: str | None = None
+) -> Path:
+    """Get the lock file path for a given filepath using hash-based naming.
+
+    Matches the canonical key generation in the shell scripts.
+
+    Args:
+        lock_dir: The lock directory path.
+        filepath: The file path to lock.
+        cwd: The working directory for relative path resolution.
+        repo_namespace: Optional repo namespace for disambiguation.
+
+    Returns:
+        Path to the lock file.
+    """
+    canonical = _canonicalize_path(filepath, cwd)
+    if repo_namespace:
+        key = f"{repo_namespace}:{canonical}"
+    else:
+        key = canonical
+    key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
+    return lock_dir / f"{key_hash}.lock"
+
+
+def lock_file_exists(
+    lock_dir: Path, filepath: str, cwd: str, repo_namespace: str | None = None
+) -> bool:
+    """Check if a lock file exists.
+
+    Args:
+        lock_dir: The lock directory path.
+        filepath: The file path to check.
+        cwd: The working directory for relative path resolution.
+        repo_namespace: Optional repo namespace for disambiguation.
+    """
+    return lock_file_path(lock_dir, filepath, cwd, repo_namespace).exists()
+
+
+def get_lock_holder(
+    lock_dir: Path, filepath: str, cwd: str, repo_namespace: str | None = None
+) -> str | None:
+    """Get the holder of a lock file.
+
+    Args:
+        lock_dir: The lock directory path.
+        filepath: The file path to check.
+        cwd: The working directory for relative path resolution.
+        repo_namespace: Optional repo namespace for disambiguation.
+    """
+    lock_path = lock_file_path(lock_dir, filepath, cwd, repo_namespace)
     if lock_path.exists():
         return lock_path.read_text().strip()
     return None
@@ -102,6 +170,7 @@ class TestAgentAcquiresLocks:
         """Agent can execute lock-try.sh and acquire a lock."""
         agent_id = "test-agent-acquire"
         lock_dir = lock_env["lock_dir"]
+        cwd = str(tmp_path)
 
         prompt = f"""You are testing the lock system. Run these commands exactly:
 
@@ -123,8 +192,8 @@ After running the commands, respond with "DONE".
                 pass  # Consume all messages
 
         # Verify lock was acquired
-        assert lock_file_exists(lock_dir, "test_file.py"), "Lock file should exist"
-        assert get_lock_holder(lock_dir, "test_file.py") == agent_id
+        assert lock_file_exists(lock_dir, "test_file.py", cwd), "Lock file should exist"
+        assert get_lock_holder(lock_dir, "test_file.py", cwd) == agent_id
 
     @pytest.mark.asyncio
     async def test_agent_checks_lock_ownership(self, lock_env, agent_options, tmp_path):
@@ -170,10 +239,11 @@ class TestAgentReleasesLocks:
     """Test that agents properly release locks."""
 
     @pytest.mark.asyncio
-    async def test_agent_releases_single_lock(self, lock_env, agent_options):
+    async def test_agent_releases_single_lock(self, lock_env, agent_options, tmp_path):
         """Agent can release a specific lock."""
         agent_id = "test-agent-release"
         lock_dir = lock_env["lock_dir"]
+        cwd = str(tmp_path)
 
         prompt = f"""You are testing the lock system. Run these commands exactly:
 
@@ -199,7 +269,7 @@ Respond with "DONE".
                 pass
 
         # Lock should be gone
-        assert not lock_file_exists(lock_dir, "release_test.py")
+        assert not lock_file_exists(lock_dir, "release_test.py", cwd)
 
     @pytest.mark.asyncio
     async def test_agent_releases_all_locks(self, lock_env, agent_options):
@@ -243,16 +313,17 @@ class TestAgentHandlesContention:
     """Test agent behavior when encountering locked files."""
 
     @pytest.mark.asyncio
-    async def test_agent_detects_blocked_file(self, lock_env, agent_options):
+    async def test_agent_detects_blocked_file(self, lock_env, agent_options, tmp_path):
         """Agent correctly identifies when a file is locked by another."""
         lock_dir = lock_env["lock_dir"]
         our_agent = "our-agent"
         other_agent = "blocking-agent"
+        cwd = str(tmp_path)
 
-        # Pre-create a lock from another agent
+        # Pre-create a lock from another agent using hash-based naming
         lock_dir.mkdir(exist_ok=True)
-        lock_file = lock_dir / "blocked_file.py.lock"
-        lock_file.write_text(other_agent)
+        lock_path = lock_file_path(lock_dir, "blocked_file.py", cwd)
+        lock_path.write_text(other_agent)
 
         prompt = f"""You are testing the lock system. Run these commands exactly:
 
@@ -352,11 +423,14 @@ class TestMultiAgentWithSDK:
     """Test multiple agents interacting with locks via SDK."""
 
     @pytest.mark.asyncio
-    async def test_sequential_agents_handoff_lock(self, lock_env, agent_options):
+    async def test_sequential_agents_handoff_lock(
+        self, lock_env, agent_options, tmp_path
+    ):
         """First agent releases lock, second agent acquires it."""
         lock_dir = lock_env["lock_dir"]
         agent1_id = "agent-1"
         agent2_id = "agent-2"
+        cwd = str(tmp_path)
 
         # Agent 1 acquires and releases
         prompt1 = f"""Run these commands:
@@ -408,7 +482,7 @@ Report the result.
                             result_text += getattr(block, "text", "")
 
         assert "SUCCESS" in result_text or "acquired" in result_text.lower()
-        assert get_lock_holder(lock_dir, "shared.py") == agent2_id
+        assert get_lock_holder(lock_dir, "shared.py", cwd) == agent2_id
 
 
 class TestAgentWorkflowE2E:
@@ -419,6 +493,7 @@ class TestAgentWorkflowE2E:
         """Test the full workflow: acquire, work, commit, release."""
         agent_id = "impl-agent"
         lock_dir = lock_env["lock_dir"]
+        cwd = str(tmp_path)
 
         # Create a simple test file to "implement"
         test_file = tmp_path / "feature.py"
@@ -444,7 +519,7 @@ class TestAgentWorkflowE2E:
         )
 
         options = ClaudeAgentOptions(
-            cwd=str(tmp_path),
+            cwd=cwd,
             permission_mode="bypassPermissions",
             model="haiku",
             max_turns=8,
@@ -504,7 +579,9 @@ Report "WORKFLOW COMPLETE" when done.
 
         # Verify the workflow completed correctly
         # Lock should be released
-        assert not lock_file_exists(lock_dir, "feature.py"), "Lock should be released"
+        assert not lock_file_exists(lock_dir, "feature.py", cwd), (
+            "Lock should be released"
+        )
 
         # File should be modified
         content = test_file.read_text()

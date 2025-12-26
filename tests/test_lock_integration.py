@@ -21,20 +21,49 @@ from src.tools.locking import make_stop_hook
 from src.tools.env import SCRIPTS_DIR
 
 
+def _canonicalize_path(filepath: str, cwd: str) -> str:
+    """Canonicalize a file path for consistent lock key generation.
+
+    Matches the normalization logic in the shell scripts (realpath -m).
+
+    Args:
+        filepath: The file path to canonicalize.
+        cwd: The working directory for relative path resolution.
+
+    Returns:
+        The canonical absolute path string.
+    """
+    path = Path(filepath)
+    if not path.is_absolute():
+        path = Path(cwd) / path
+    # Use resolve() to handle symlinks and normalize path
+    # This mimics 'realpath -m' behavior
+    try:
+        return str(path.resolve())
+    except OSError:
+        # Fallback for edge cases
+        return str(Path(os.path.normpath(path)))
+
+
 def lock_file_path(
-    lock_dir: Path, filepath: str, repo_namespace: str | None = None
+    lock_dir: Path, filepath: str, cwd: str, repo_namespace: str | None = None
 ) -> Path:
     """Get the lock file path for a given filepath using hash-based naming.
 
     Args:
         lock_dir: The lock directory path.
         filepath: The file path to lock.
+        cwd: The working directory for relative path resolution.
         repo_namespace: Optional repo namespace for disambiguation.
+
+    Returns:
+        Path to the lock file.
     """
+    canonical = _canonicalize_path(filepath, cwd)
     if repo_namespace:
-        key = f"{repo_namespace}:{filepath}"
+        key = f"{repo_namespace}:{canonical}"
     else:
-        key = filepath
+        key = canonical
 
     key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
     return lock_dir / f"{key_hash}.lock"
@@ -49,18 +78,20 @@ def lock_env(tmp_path):
 
 
 @pytest.fixture
-def agent_env(lock_env):
+def agent_env(lock_env, tmp_path):
     """Simulate agent environment as set up by prompt template."""
+    cwd = str(tmp_path)
     return {
         **os.environ,
         "LOCK_DIR": str(lock_env),
         "AGENT_ID": "bd-42-abc12345",
         "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+        "PWD": cwd,  # Working directory for path resolution
     }
 
 
 def run_lock_script(
-    script: str, args: list[str], env: dict
+    script: str, args: list[str], env: dict, cwd: str | None = None
 ) -> subprocess.CompletedProcess:
     """Run a lock script in the given environment."""
     return subprocess.run(
@@ -68,6 +99,7 @@ def run_lock_script(
         env=env,
         capture_output=True,
         text=True,
+        cwd=cwd or env.get("PWD"),
     )
 
 
@@ -126,7 +158,7 @@ class TestAgentLockWorkflow:
 
         # Verify all locks exist (using hash-based naming)
         for f in files:
-            assert lock_file_path(lock_env, f).exists()
+            assert lock_file_path(lock_env, f, agent_env["PWD"]).exists()
 
     def test_agent_checks_lock_before_editing(self, agent_env, lock_env):
         """Agent should verify it holds the lock before editing."""
@@ -238,16 +270,18 @@ class TestStopHookIntegration:
         )
 
     @pytest.mark.asyncio
-    async def test_stop_hook_preserves_other_agent_locks(self, lock_env):
+    async def test_stop_hook_preserves_other_agent_locks(self, lock_env, tmp_path):
         """Stop hook should only clean up its own agent's locks."""
         our_agent = "bd-our-agent"
         other_agent = "bd-other-agent"
+        cwd = str(tmp_path)
 
         our_env = {
             **os.environ,
             "LOCK_DIR": str(lock_env),
             "AGENT_ID": our_agent,
             "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "PWD": cwd,
         }
         other_env = {**our_env, "AGENT_ID": other_agent}
 
@@ -271,8 +305,8 @@ class TestStopHookIntegration:
             )
 
         # Our lock should be gone, other's should remain (using hash-based naming)
-        assert not lock_file_path(lock_env, "our-file.py").exists()
-        assert lock_file_path(lock_env, "other-file.py").exists()
+        assert not lock_file_path(lock_env, "our-file.py", cwd).exists()
+        assert lock_file_path(lock_env, "other-file.py", cwd).exists()
 
 
 class TestOrchestratorCleanup:
@@ -370,13 +404,15 @@ class TestMultiAgentScenarios:
 class TestEdgeCases:
     """Test edge cases in the integration."""
 
-    def test_empty_lock_dir_operations(self, lock_env):
+    def test_empty_lock_dir_operations(self, lock_env, tmp_path):
         """Operations on empty lock directory should not fail."""
+        cwd = str(tmp_path)
         env = {
             **os.environ,
             "LOCK_DIR": str(lock_env),
             "AGENT_ID": "test-agent",
             "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "PWD": cwd,
         }
 
         # All these should succeed on empty dir
@@ -386,13 +422,15 @@ class TestEdgeCases:
             run_lock_script("lock-check.sh", ["any.py"], env).returncode == 1
         )  # Not held
 
-    def test_lock_release_idempotent(self, lock_env):
+    def test_lock_release_idempotent(self, lock_env, tmp_path):
         """Releasing the same lock multiple times should be safe."""
+        cwd = str(tmp_path)
         env = {
             **os.environ,
             "LOCK_DIR": str(lock_env),
             "AGENT_ID": "test-agent",
             "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "PWD": cwd,
         }
 
         run_lock_script("lock-try.sh", ["file.py"], env)
@@ -402,13 +440,15 @@ class TestEdgeCases:
             result = run_lock_script("lock-release.sh", ["file.py"], env)
             assert result.returncode == 0
 
-    def test_special_characters_in_path(self, lock_env):
+    def test_special_characters_in_path(self, lock_env, tmp_path):
         """Paths with special characters should be handled."""
+        cwd = str(tmp_path)
         env = {
             **os.environ,
             "LOCK_DIR": str(lock_env),
             "AGENT_ID": "test-agent",
             "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "PWD": cwd,
         }
 
         # Various path formats
@@ -422,3 +462,172 @@ class TestEdgeCases:
             assert run_lock_script("lock-try.sh", [p], env).returncode == 0
 
         assert len(list(lock_env.glob("*.lock"))) == len(paths)
+
+
+class TestPathCanonicalization:
+    """Test that paths are properly canonicalized for consistent lock keys."""
+
+    def test_relative_and_absolute_paths_same_lock(self, lock_env, tmp_path):
+        """Relative and absolute paths to the same file produce the same lock."""
+        cwd = str(tmp_path)
+        env = {
+            **os.environ,
+            "LOCK_DIR": str(lock_env),
+            "AGENT_ID": "agent-1",
+            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "PWD": cwd,
+        }
+
+        # Lock using relative path
+        result = run_lock_script("lock-try.sh", ["file.py"], env)
+        assert result.returncode == 0
+
+        # Try to lock the same file using absolute path - should fail (already locked)
+        absolute_path = str(tmp_path / "file.py")
+        result2 = run_lock_script("lock-try.sh", [absolute_path], env)
+        assert result2.returncode == 1, "Absolute path should resolve to same lock"
+
+        # Verify there's only one lock file
+        locks = list(lock_env.glob("*.lock"))
+        assert len(locks) == 1
+
+    def test_normalized_paths_same_lock(self, lock_env, tmp_path):
+        """Paths with . and .. segments are normalized to the same lock."""
+        cwd = str(tmp_path)
+        env = {
+            **os.environ,
+            "LOCK_DIR": str(lock_env),
+            "AGENT_ID": "agent-1",
+            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "PWD": cwd,
+        }
+
+        # Lock using path with . and ..
+        result = run_lock_script("lock-try.sh", ["./src/../src/file.py"], env)
+        assert result.returncode == 0
+
+        # Try to lock the normalized version - should fail
+        result2 = run_lock_script("lock-try.sh", ["src/file.py"], env)
+        assert result2.returncode == 1, "Normalized path should resolve to same lock"
+
+        # Verify only one lock
+        locks = list(lock_env.glob("*.lock"))
+        assert len(locks) == 1
+
+    def test_different_files_different_locks(self, lock_env, tmp_path):
+        """Different files produce different locks."""
+        cwd = str(tmp_path)
+        env = {
+            **os.environ,
+            "LOCK_DIR": str(lock_env),
+            "AGENT_ID": "agent-1",
+            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "PWD": cwd,
+        }
+
+        # Lock two different files
+        assert run_lock_script("lock-try.sh", ["file1.py"], env).returncode == 0
+        assert run_lock_script("lock-try.sh", ["file2.py"], env).returncode == 0
+
+        # Should have two distinct locks
+        locks = list(lock_env.glob("*.lock"))
+        assert len(locks) == 2
+
+
+class TestRepoNamespaceIntegration:
+    """Test REPO_NAMESPACE behavior for cross-repo disambiguation."""
+
+    def test_same_file_different_namespaces_different_locks(self, lock_env, tmp_path):
+        """Same relative path in different namespaces produces different locks."""
+        cwd = str(tmp_path)
+        base_env = {
+            **os.environ,
+            "LOCK_DIR": str(lock_env),
+            "AGENT_ID": "agent-1",
+            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "PWD": cwd,
+        }
+
+        # Lock file in namespace A
+        env_a = {**base_env, "REPO_NAMESPACE": "/repo/a"}
+        result = run_lock_script("lock-try.sh", ["config.py"], env_a)
+        assert result.returncode == 0
+
+        # Lock same relative path in namespace B - should succeed (different namespace)
+        env_b = {**base_env, "REPO_NAMESPACE": "/repo/b"}
+        result2 = run_lock_script("lock-try.sh", ["config.py"], env_b)
+        assert result2.returncode == 0, (
+            "Different namespace should produce different lock"
+        )
+
+        # Should have two distinct locks
+        locks = list(lock_env.glob("*.lock"))
+        assert len(locks) == 2
+
+    def test_same_namespace_same_file_conflict(self, lock_env, tmp_path):
+        """Same file in same namespace should conflict."""
+        cwd = str(tmp_path)
+        base_env = {
+            **os.environ,
+            "LOCK_DIR": str(lock_env),
+            "AGENT_ID": "agent-1",
+            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "PWD": cwd,
+            "REPO_NAMESPACE": "/repo/shared",
+        }
+
+        # Agent 1 locks file
+        result = run_lock_script("lock-try.sh", ["shared.py"], base_env)
+        assert result.returncode == 0
+
+        # Agent 2 tries to lock same file in same namespace - should fail
+        env2 = {**base_env, "AGENT_ID": "agent-2"}
+        result2 = run_lock_script("lock-try.sh", ["shared.py"], env2)
+        assert result2.returncode == 1, "Same namespace should conflict"
+
+        # Only one lock
+        locks = list(lock_env.glob("*.lock"))
+        assert len(locks) == 1
+
+    def test_namespace_included_in_holder_lookup(self, lock_env, tmp_path):
+        """Lock holder lookup respects namespace."""
+        cwd = str(tmp_path)
+        env = {
+            **os.environ,
+            "LOCK_DIR": str(lock_env),
+            "AGENT_ID": "ns-agent",
+            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "PWD": cwd,
+            "REPO_NAMESPACE": "/my/repo",
+        }
+
+        # Acquire lock with namespace
+        run_lock_script("lock-try.sh", ["module.py"], env)
+
+        # Check holder with same namespace - should return our agent
+        result = run_lock_script("lock-holder.sh", ["module.py"], env)
+        assert result.stdout.strip() == "ns-agent"
+
+        # Check lock ownership with same namespace
+        result = run_lock_script("lock-check.sh", ["module.py"], env)
+        assert result.returncode == 0, "Should hold lock in same namespace"
+
+    def test_empty_namespace_treated_as_none(self, lock_env, tmp_path):
+        """Empty REPO_NAMESPACE is treated the same as not set."""
+        cwd = str(tmp_path)
+        base_env = {
+            **os.environ,
+            "LOCK_DIR": str(lock_env),
+            "AGENT_ID": "agent-1",
+            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "PWD": cwd,
+        }
+
+        # Lock without namespace
+        result = run_lock_script("lock-try.sh", ["file.py"], base_env)
+        assert result.returncode == 0
+
+        # Try to lock with empty namespace - should conflict (same as no namespace)
+        env_empty = {**base_env, "REPO_NAMESPACE": ""}
+        result2 = run_lock_script("lock-try.sh", ["file.py"], env_empty)
+        assert result2.returncode == 1, "Empty namespace should be same as no namespace"
