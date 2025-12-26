@@ -135,6 +135,7 @@ class MalaOrchestrator:
             issue_id=issue_id,
             repo_path=self.repo_path,
             lock_dir=LOCK_DIR,
+            scripts_dir=SCRIPTS_DIR,
             agent_id=agent_id,
         )
 

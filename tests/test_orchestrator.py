@@ -5,6 +5,7 @@ state transitions without network or actual bd CLI.
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -12,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.beads_client import BeadsClient
-from src.orchestrator import IssueResult, MalaOrchestrator
+from src.orchestrator import IMPLEMENTER_PROMPT_TEMPLATE, IssueResult, MalaOrchestrator
 
 
 @pytest.fixture
@@ -36,6 +37,22 @@ def make_subprocess_result(
         stdout=stdout,
         stderr=stderr,
     )
+
+
+class TestPromptTemplate:
+    """Test implementer prompt template validity."""
+
+    def test_prompt_template_placeholders_match_format_call(self):
+        """Verify prompt template placeholders match what format() provides."""
+        # Extract all {placeholder} from template
+        placeholders = set(re.findall(r"\{(\w+)\}", IMPLEMENTER_PROMPT_TEMPLATE))
+
+        # These are the keys passed to format() in run_implementer
+        expected_keys = {"issue_id", "repo_path", "lock_dir", "scripts_dir", "agent_id"}
+
+        assert placeholders == expected_keys, (
+            f"Mismatch: template has {placeholders}, format expects {expected_keys}"
+        )
 
 
 class TestGetReadyIssues:
