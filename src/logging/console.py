@@ -258,17 +258,3 @@ def log_agent_text(text: str, agent_id: str) -> None:
     print(
         f"  {agent_color}[{agent_id}]{Colors.RESET} {Colors.DIM}{truncated}{Colors.RESET}"
     )
-
-
-def log_result(success: bool, message: str, agent_id: str | None = None):
-    """Log result in Claude Code style."""
-    if agent_id:
-        agent_color = get_agent_color(agent_id)
-        prefix = f"{agent_color}[{agent_id}]{Colors.RESET} "
-    else:
-        prefix = ""
-
-    if success:
-        print(f"  {prefix}{Colors.GREEN}\u2713 {message}{Colors.RESET}")
-    else:
-        print(f"  {prefix}{Colors.RED}\u2717 {message}{Colors.RESET}")
