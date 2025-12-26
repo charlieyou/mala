@@ -595,6 +595,8 @@ class MalaOrchestrator:
             log("●", f"Completed: {success_count}/{total} issues", Colors.GREEN)
         elif success_count > 0:
             log("◐", f"Completed: {success_count}/{total} issues", Colors.YELLOW)
+        elif total == 0:
+            log("○", "No issues to process", Colors.GRAY)
         else:
             log("○", f"Completed: {success_count}/{total} issues", Colors.RED)
 
@@ -625,7 +627,9 @@ class MalaOrchestrator:
                 log("◐", "Auto-closed completed epics", Colors.GRAY, dim=True)
 
         print()
-        return success_count
+        # Return success count for CLI exit code logic
+        # Also indicate if no issues were processed (total == 0 is a no-op, not failure)
+        return (success_count, total)
 
 
 @app.command()
@@ -674,8 +678,10 @@ def run(
         max_issues=max_issues,
     )
 
-    success_count = asyncio.run(orchestrator.run())
-    raise typer.Exit(0 if success_count > 0 else 1)
+    success_count, total = asyncio.run(orchestrator.run())
+    # Exit 0 if: no issues to process (no-op) OR at least one succeeded
+    # Exit 1 only if: issues were processed but all failed
+    raise typer.Exit(0 if success_count > 0 or total == 0 else 1)
 
 
 @app.command()
