@@ -19,6 +19,67 @@ if TYPE_CHECKING:
     )
 
 
+def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
+    """Canonicalize a file path for consistent lock key generation.
+
+    Normalizes paths by:
+    - Resolving symlinks (if the path exists)
+    - Making paths absolute
+    - Making paths repo-relative when a namespace is provided
+    - Normalizing . and .. segments
+
+    Args:
+        filepath: The file path to canonicalize.
+        repo_namespace: Optional repo root path for making paths repo-relative.
+
+    Returns:
+        A canonicalized, repo-relative path string.
+    """
+    path = Path(filepath)
+
+    # When we have a namespace and a relative path, resolve relative to the namespace
+    if repo_namespace and not path.is_absolute():
+        namespace_path = Path(repo_namespace).resolve()
+        candidate = namespace_path / path
+
+        if candidate.exists():
+            # Path exists relative to namespace - resolve symlinks
+            resolved = candidate.resolve()
+        else:
+            # Normalize . and .. segments relative to namespace
+            resolved = Path(os.path.normpath(candidate))
+
+        # Return repo-relative path
+        try:
+            relative = resolved.relative_to(namespace_path)
+            return str(relative)
+        except ValueError:
+            return str(resolved)
+
+    # Absolute path or no namespace
+    if path.exists():
+        resolved = path.resolve()  # Resolves symlinks
+    else:
+        if path.is_absolute():
+            resolved = path
+        else:
+            resolved = Path.cwd() / path
+        # Normalize . and .. segments
+        resolved = Path(os.path.normpath(resolved))
+
+    # Make repo-relative if namespace is provided
+    if repo_namespace:
+        namespace_path = Path(repo_namespace).resolve()
+        try:
+            relative = resolved.relative_to(namespace_path)
+            return str(relative)
+        except ValueError:
+            # Path is not under the repo namespace, return as-is
+            return str(resolved)
+
+    return str(resolved)
+
+
 def _lock_key(filepath: str, repo_namespace: str | None = None) -> str:
     """Build a canonical key for the lock.
 
@@ -29,9 +90,17 @@ def _lock_key(filepath: str, repo_namespace: str | None = None) -> str:
     Returns:
         The canonical key string.
     """
+    # Treat empty namespace as None
+    if repo_namespace == "":
+        repo_namespace = None
+
+    canonical_path = _canonicalize_path(filepath, repo_namespace)
+
     if repo_namespace:
-        return f"{repo_namespace}:{filepath}"
-    return filepath
+        # Normalize namespace too for consistency
+        namespace_key = str(Path(repo_namespace).resolve())
+        return f"{namespace_key}:{canonical_path}"
+    return canonical_path
 
 
 def _lock_path(filepath: str, repo_namespace: str | None = None) -> Path:
