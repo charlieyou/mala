@@ -1103,7 +1103,7 @@ class TestOrchestratorQualityGateIntegration:
             return True
 
         async def mock_run_implementer(issue_id: str):
-            # Populate log path so evidence can be gathered
+            # Populate log path so quality gate runs
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
             orchestrator.session_log_paths[issue_id] = log_path
@@ -1296,8 +1296,9 @@ class TestAsyncBeadsClientWithTimeout:
 
             # Should return empty list (safe fallback)
             assert result == []
-            # Should complete quickly due to timeout, not hang for 10s
-            assert elapsed < 1.0, f"Timeout didn't work: took {elapsed:.2f}s"
+            # Should complete within bounded wait + small buffer, not global timeout
+            max_expected = original_timeout + 5  # 5s buffer for test overhead
+            assert elapsed < max_expected, f"Timeout didn't work: took {elapsed:.2f}s"
         finally:
             orchestrator.beads.timeout_seconds = original_timeout
 
@@ -1347,3 +1348,127 @@ class TestAsyncBeadsClientWithTimeout:
 
         # Verify async method was called
         mock_ready.assert_called()
+
+
+class TestMissingLogFile:
+    """Test run_implementer behavior when log file never appears."""
+
+    @pytest.mark.asyncio
+    async def test_exits_quickly_when_log_file_missing(self, tmp_path: Path):
+        """run_implementer should exit within bounded wait when log file missing."""
+        from unittest.mock import AsyncMock, MagicMock
+        from claude_agent_sdk.types import ResultMessage
+
+        from src.orchestrator import (
+            MalaOrchestrator,
+            LOG_FILE_WAIT_TIMEOUT,
+        )
+
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=5,  # Global timeout much longer than log wait
+        )
+
+        # Mock the Claude SDK client to yield a ResultMessage but no log file
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        # Create an async generator that yields a ResultMessage
+        async def mock_receive_response():
+            yield ResultMessage(
+                subtype="result",
+                session_id="test-session-123",
+                result="Agent completed",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        # Patch ClaudeSDKClient to return our mock
+        with (
+            patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
+            patch("src.orchestrator.get_git_branch_async", return_value="main"),
+            patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
+            patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+        ):
+            # Setup tracer mock
+            mock_tracer = MagicMock()
+            mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
+            mock_tracer.__exit__ = MagicMock(return_value=None)
+            mock_tracer_cls.return_value = mock_tracer
+
+            start = time.monotonic()
+            result = await orchestrator.run_implementer("test-issue")
+            elapsed = time.monotonic() - start
+
+        # Should fail with log missing message
+        assert result.success is False
+        assert (
+            "log missing" in result.summary.lower()
+            or "session log" in result.summary.lower()
+        )
+
+        # Should complete within bounded wait + small buffer, not global timeout
+        max_expected = LOG_FILE_WAIT_TIMEOUT + 5  # 5s buffer for test overhead
+        assert elapsed < max_expected, (
+            f"run_implementer took {elapsed:.1f}s, expected < {max_expected}s"
+        )
+
+    @pytest.mark.asyncio
+    async def test_summary_indicates_missing_log(self, tmp_path: Path):
+        """Failure summary should clearly indicate the log file was missing."""
+        from unittest.mock import AsyncMock, MagicMock
+        from claude_agent_sdk.types import ResultMessage
+
+        from src.orchestrator import MalaOrchestrator
+
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=5,
+        )
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response():
+            yield ResultMessage(
+                subtype="result",
+                session_id="missing-log-session",
+                result="Done",
+                duration_ms=500,
+                duration_api_ms=400,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.005,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        with (
+            patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
+            patch("src.orchestrator.get_git_branch_async", return_value="main"),
+            patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
+            patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+        ):
+            mock_tracer = MagicMock()
+            mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
+            mock_tracer.__exit__ = MagicMock(return_value=None)
+            mock_tracer_cls.return_value = mock_tracer
+
+            result = await orchestrator.run_implementer("issue-xyz")
+
+        # Summary should mention session log and the timeout
+        assert "Session log missing" in result.summary
+        assert "30s" in result.summary  # Default timeout

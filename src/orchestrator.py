@@ -87,6 +87,10 @@ The automated code review found the following issues:
 Note: The orchestrator will re-run both the quality gate and Codex review after your fixes.
 """
 
+# Bounded wait for log file (seconds)
+LOG_FILE_WAIT_TIMEOUT = 30
+LOG_FILE_POLL_INTERVAL = 0.5
+
 
 def get_mcp_servers(repo_path: Path) -> dict:
     """Get MCP servers configuration for agents."""
@@ -350,6 +354,28 @@ class MalaOrchestrator:
                                         self.repo_path, claude_session_id
                                     )
                                     self.session_log_paths[issue_id] = log_path
+
+                                    # Wait for log file with bounded timeout
+                                    wait_elapsed = 0.0
+                                    while not log_path.exists():
+                                        if wait_elapsed >= LOG_FILE_WAIT_TIMEOUT:
+                                            final_result = (
+                                                f"Session log missing after "
+                                                f"{LOG_FILE_WAIT_TIMEOUT}s: {log_path}"
+                                            )
+                                            log(
+                                                "⚠",
+                                                f"Log file not found: {log_path.name}",
+                                                Colors.YELLOW,
+                                                agent_id=issue_id,
+                                            )
+                                            break
+                                        await asyncio.sleep(LOG_FILE_POLL_INTERVAL)
+                                        wait_elapsed += LOG_FILE_POLL_INTERVAL
+
+                                    # Exit retry loop if log file never appeared
+                                    if not log_path.exists():
+                                        break
 
                                     if log_path.exists():
                                         gate_result, new_offset = (
