@@ -131,6 +131,18 @@ class TestCoverageResult:
         assert result.passed is False
         assert result.status == CoverageStatus.ERROR
 
+    def test_parsed_result(self) -> None:
+        result = CoverageResult(
+            percent=90.0,
+            passed=False,
+            status=CoverageStatus.PARSED,
+            report_path=Path("coverage.xml"),
+            line_rate=0.9,
+        )
+        assert result.percent == 90.0
+        assert result.passed is False
+        assert result.status == CoverageStatus.PARSED
+
     def test_short_summary_passed(self) -> None:
         result = CoverageResult(
             percent=90.0,
@@ -159,6 +171,15 @@ class TestCoverageResult:
         )
         assert result.short_summary() == "coverage 50.0% failed"
 
+    def test_short_summary_parsed(self) -> None:
+        result = CoverageResult(
+            percent=75.0,
+            passed=False,
+            status=CoverageStatus.PARSED,
+            report_path=Path("coverage.xml"),
+        )
+        assert result.short_summary() == "coverage 75.0% (threshold not checked)"
+
 
 class TestParseCoverageXml:
     """Test parse_coverage_xml function."""
@@ -170,8 +191,8 @@ class TestParseCoverageXml:
         result = parse_coverage_xml(report)
 
         assert result.percent == 90.0
-        assert result.passed is True
-        assert result.status == CoverageStatus.PASSED
+        assert result.passed is False  # Not checked against threshold yet
+        assert result.status == CoverageStatus.PARSED
         assert result.report_path == report
         assert result.failure_reason is None
         assert result.line_rate == 0.9
@@ -184,6 +205,8 @@ class TestParseCoverageXml:
         result = parse_coverage_xml(report)
 
         assert result.percent == 50.0
+        assert result.passed is False  # Not checked against threshold yet
+        assert result.status == CoverageStatus.PARSED
         assert result.line_rate == 0.5
         assert result.branch_rate == 0.5
 
@@ -194,6 +217,8 @@ class TestParseCoverageXml:
         result = parse_coverage_xml(report)
 
         assert result.percent == 100.0
+        assert result.passed is False  # Not checked against threshold yet
+        assert result.status == CoverageStatus.PARSED
         assert result.line_rate == 1.0
         assert result.branch_rate == 1.0
 
@@ -204,6 +229,8 @@ class TestParseCoverageXml:
         result = parse_coverage_xml(report)
 
         assert result.percent == 75.0
+        assert result.passed is False  # Not checked against threshold yet
+        assert result.status == CoverageStatus.PARSED
         assert result.line_rate == 0.75
         assert result.branch_rate is None
 
@@ -217,6 +244,16 @@ class TestParseCoverageXml:
         assert result.status == CoverageStatus.ERROR
         assert result.report_path == report
         assert "not found" in result.failure_reason  # type: ignore[operator]
+
+    def test_parse_directory_path(self, tmp_path: Path) -> None:
+        """Test that parsing a directory returns an error (OSError case)."""
+        result = parse_coverage_xml(tmp_path)
+
+        assert result.percent is None
+        assert result.passed is False
+        assert result.status == CoverageStatus.ERROR
+        assert result.report_path == tmp_path
+        assert "Cannot read coverage report" in result.failure_reason  # type: ignore[operator]
 
     def test_parse_invalid_xml_syntax(self, tmp_path: Path) -> None:
         report = tmp_path / "coverage.xml"
@@ -269,8 +306,8 @@ class TestCheckCoverageThreshold:
     def test_check_above_threshold(self) -> None:
         result = CoverageResult(
             percent=90.0,
-            passed=True,
-            status=CoverageStatus.PASSED,
+            passed=False,
+            status=CoverageStatus.PARSED,
             report_path=Path("coverage.xml"),
             line_rate=0.9,
         )
@@ -284,8 +321,8 @@ class TestCheckCoverageThreshold:
     def test_check_exactly_at_threshold(self) -> None:
         result = CoverageResult(
             percent=85.0,
-            passed=True,
-            status=CoverageStatus.PASSED,
+            passed=False,
+            status=CoverageStatus.PARSED,
             report_path=Path("coverage.xml"),
             line_rate=0.85,
         )
@@ -298,8 +335,8 @@ class TestCheckCoverageThreshold:
     def test_check_below_threshold(self) -> None:
         result = CoverageResult(
             percent=50.0,
-            passed=True,
-            status=CoverageStatus.PASSED,
+            passed=False,
+            status=CoverageStatus.PARSED,
             report_path=Path("coverage.xml"),
             line_rate=0.5,
         )
@@ -330,8 +367,8 @@ class TestCheckCoverageThreshold:
     def test_check_preserves_metrics(self) -> None:
         result = CoverageResult(
             percent=90.0,
-            passed=True,
-            status=CoverageStatus.PASSED,
+            passed=False,
+            status=CoverageStatus.PARSED,
             report_path=Path("coverage.xml"),
             line_rate=0.9,
             branch_rate=0.85,
@@ -394,3 +431,4 @@ class TestCoverageStatus:
         assert CoverageStatus.PASSED.value == "passed"
         assert CoverageStatus.FAILED.value == "failed"
         assert CoverageStatus.ERROR.value == "error"
+        assert CoverageStatus.PARSED.value == "parsed"

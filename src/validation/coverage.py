@@ -20,6 +20,7 @@ class CoverageStatus(Enum):
     PASSED = "passed"
     FAILED = "failed"
     ERROR = "error"
+    PARSED = "parsed"  # Successfully parsed, but threshold not yet checked
 
 
 @dataclass(frozen=True)
@@ -28,7 +29,7 @@ class CoverageResult:
 
     Attributes:
         percent: Coverage percentage (0.0-100.0), or None if parsing failed.
-        passed: Whether coverage meets the threshold.
+        passed: Whether coverage meets the threshold (False until threshold checked).
         status: Status of the coverage check.
         report_path: Path to the coverage report file.
         failure_reason: Explanation for failure/error (None if passed).
@@ -50,17 +51,22 @@ class CoverageResult:
             return f"coverage {self.percent:.1f}% passed"
         if self.failure_reason:
             return self.failure_reason
+        if self.status == CoverageStatus.PARSED:
+            return f"coverage {self.percent:.1f}% (threshold not checked)"
         return f"coverage {self.percent:.1f}% failed"
 
 
 def parse_coverage_xml(report_path: Path) -> CoverageResult:
     """Parse a coverage.xml file and extract coverage metrics.
 
+    Note: This function returns status=PARSED with passed=False. Callers must
+    use check_coverage_threshold() to determine if coverage meets requirements.
+
     Args:
         report_path: Path to the coverage.xml file.
 
     Returns:
-        CoverageResult with parsed metrics or error information.
+        CoverageResult with parsed metrics (status=PARSED) or error information.
     """
     if not report_path.exists():
         return CoverageResult(
@@ -80,6 +86,14 @@ def parse_coverage_xml(report_path: Path) -> CoverageResult:
             status=CoverageStatus.ERROR,
             report_path=report_path,
             failure_reason=f"Invalid coverage XML: {e}",
+        )
+    except OSError as e:
+        return CoverageResult(
+            percent=None,
+            passed=False,
+            status=CoverageStatus.ERROR,
+            report_path=report_path,
+            failure_reason=f"Cannot read coverage report: {e}",
         )
 
     root = tree.getroot()
@@ -130,8 +144,8 @@ def parse_coverage_xml(report_path: Path) -> CoverageResult:
 
     return CoverageResult(
         percent=percent,
-        passed=True,  # Will be updated by check_coverage_threshold
-        status=CoverageStatus.PASSED,
+        passed=False,  # Must call check_coverage_threshold to set passed=True
+        status=CoverageStatus.PARSED,
         report_path=report_path,
         line_rate=line_rate,
         branch_rate=branch_rate,
@@ -151,7 +165,7 @@ def check_coverage_threshold(
     Returns:
         A new CoverageResult with passed/status updated based on threshold.
     """
-    # If parsing already failed, return as-is
+    # If parsing failed, return as-is
     if result.status == CoverageStatus.ERROR or result.percent is None:
         return result
 
