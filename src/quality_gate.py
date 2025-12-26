@@ -152,6 +152,9 @@ class QualityGate:
     def check_commit_exists(self, issue_id: str) -> CommitResult:
         """Check if a commit with bd-<issue_id> exists in recent history.
 
+        Searches commits from the last 30 days to accommodate long-running
+        work that may span multiple days.
+
         Args:
             issue_id: The issue ID to search for (without bd- prefix).
 
@@ -171,7 +174,7 @@ class QualityGate:
                 pattern,
                 "-n",
                 "1",
-                "--since=1 day ago",
+                "--since=30 days ago",
             ],
             capture_output=True,
             text=True,
@@ -216,7 +219,7 @@ class QualityGate:
         commit_result = self.check_commit_exists(issue_id)
         if not commit_result.exists:
             failure_reasons.append(
-                f"No commit with bd-{issue_id} found in recent history"
+                f"No commit with bd-{issue_id} found in last 30 days"
             )
 
         # Check validation evidence

@@ -763,6 +763,25 @@ class TestQualityGateCommitCheck:
 
         assert result.exists is False
 
+    def test_searches_30_day_window(self, tmp_path: Path):
+        """Quality gate should search commits from the last 30 days."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(
+                stdout="abc1234 bd-issue-123: Long-running work\n"
+            )
+            result = gate.check_commit_exists("issue-123")
+
+            # Verify the git command uses 30-day window
+            call_args = mock_run.call_args
+            git_cmd = call_args[0][0]
+            assert "--since=30 days ago" in git_cmd
+
+        assert result.exists is True
+
 
 class TestQualityGateFullCheck:
     """Test full quality gate check combining all criteria."""
@@ -837,6 +856,39 @@ class TestQualityGateFullCheck:
 
         assert result.passed is False
         assert "commit" in result.failure_reasons[0].lower()
+
+    def test_failure_message_reflects_30_day_window(self, tmp_path: Path):
+        """Quality gate failure message should mention the 30-day window."""
+        from src.quality_gate import QualityGate
+
+        gate = QualityGate(tmp_path)
+
+        # Create log with validation commands
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Bash",
+                                "input": {"command": "uv run pytest"},
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = make_subprocess_result(stdout="")
+            result = gate.check("issue-123", log_path)
+
+        assert result.passed is False
+        assert "30 days" in result.failure_reasons[0]
 
     def test_fails_when_validation_missing(self, tmp_path: Path):
         """Quality gate fails when validation commands didn't run."""
