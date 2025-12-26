@@ -18,6 +18,7 @@ from claude_agent_sdk.types import HookMatcher
 
 from .beads_client import BeadsClient
 from .braintrust_integration import TracedAgentExecution
+from .codex_review import run_codex_review, format_review_issues
 from .git_utils import get_git_commit_async, get_git_branch_async
 from .hooks import (
     MORPH_DISALLOWED_TOOLS,
@@ -65,6 +66,27 @@ The quality gate check failed with the following issues:
 Note: The orchestrator requires NEW validation evidence - re-run all validations even if you ran them before.
 """
 
+# Follow-up prompt for Codex review failures
+CODEX_REVIEW_FOLLOWUP_PROMPT = """## Codex Review Failed (Attempt {attempt}/{max_attempts})
+
+The automated code review found the following issues:
+
+{review_issues}
+
+**Required actions:**
+1. Fix ALL issues marked as ERROR above
+2. Optionally address warnings if appropriate
+3. Re-run the full validation suite:
+   - `uv sync`
+   - `uv run pytest`
+   - `uvx ruff check .`
+   - `uvx ruff format .`
+   - `uvx ty check`
+4. Commit your changes with message: `bd-{issue_id}: <description>`
+
+Note: The orchestrator will re-run both the quality gate and Codex review after your fixes.
+"""
+
 
 def get_mcp_servers(repo_path: Path) -> dict:
     """Get MCP servers configuration for agents."""
@@ -92,13 +114,15 @@ class IssueResult:
     duration_seconds: float = 0.0
     session_id: str | None = None  # Claude SDK session ID
     gate_attempts: int = 1  # Number of gate retry attempts
+    review_attempts: int = 0  # Number of Codex review attempts
 
 
 @dataclass
 class RetryState:
-    """Per-issue state for tracking gate retry attempts."""
+    """Per-issue state for tracking gate and review retry attempts."""
 
-    attempt: int = 1
+    attempt: int = 1  # Gate attempt number
+    review_attempt: int = 0  # Review attempt number (0 = not started)
     log_offset: int = 0  # Byte offset for scoped evidence parsing
     previous_commit_hash: str | None = None
 
@@ -335,7 +359,105 @@ class MalaOrchestrator:
                                         )
 
                                         if gate_result.passed:
-                                            # Gate passed - we're done
+                                            # Gate passed - run Codex review if enabled
+                                            if (
+                                                self.codex_review
+                                                and gate_result.commit_hash
+                                            ):
+                                                retry_state.review_attempt += 1
+                                                log(
+                                                    "◐",
+                                                    f"Running Codex review (attempt {retry_state.review_attempt}/{self.max_review_retries})",
+                                                    Colors.CYAN,
+                                                    agent_id=issue_id,
+                                                )
+
+                                                review_result = await run_codex_review(
+                                                    self.repo_path,
+                                                    gate_result.commit_hash,
+                                                    max_retries=2,  # JSON parse retries
+                                                )
+
+                                                if review_result.passed:
+                                                    # Review passed - we're done
+                                                    log(
+                                                        "✓",
+                                                        "Codex review passed",
+                                                        Colors.GREEN,
+                                                        agent_id=issue_id,
+                                                    )
+                                                    success = True
+                                                    break
+
+                                                # Review failed - check if we can retry
+                                                if (
+                                                    retry_state.review_attempt
+                                                    < self.max_review_retries
+                                                ):
+                                                    # Update log offset for next gate check
+                                                    retry_state.log_offset = new_offset
+                                                    retry_state.previous_commit_hash = (
+                                                        gate_result.commit_hash
+                                                    )
+
+                                                    # Log review failure
+                                                    if review_result.parse_error:
+                                                        log(
+                                                            "⚠",
+                                                            f"Codex review parse error: {review_result.parse_error}",
+                                                            Colors.YELLOW,
+                                                            agent_id=issue_id,
+                                                        )
+                                                    else:
+                                                        error_count = sum(
+                                                            1
+                                                            for i in review_result.issues
+                                                            if i.severity == "error"
+                                                        )
+                                                        log(
+                                                            "↻",
+                                                            f"Review retry {retry_state.review_attempt}/{self.max_review_retries} ({error_count} errors)",
+                                                            Colors.YELLOW,
+                                                            agent_id=issue_id,
+                                                        )
+
+                                                    # Build follow-up prompt with review issues
+                                                    review_issues_text = (
+                                                        format_review_issues(
+                                                            review_result.issues
+                                                        )
+                                                        if review_result.issues
+                                                        else review_result.parse_error
+                                                        or "Unknown review failure"
+                                                    )
+                                                    followup = CODEX_REVIEW_FOLLOWUP_PROMPT.format(
+                                                        attempt=retry_state.review_attempt,
+                                                        max_attempts=self.max_review_retries,
+                                                        review_issues=review_issues_text,
+                                                        issue_id=issue_id,
+                                                    )
+
+                                                    # Resume session with follow-up prompt
+                                                    await client.query(
+                                                        followup,
+                                                        session_id=claude_session_id,
+                                                    )
+                                                    # Continue the retry loop (will re-run gate + review)
+                                                    continue
+
+                                                # No review retries left - fail
+                                                if review_result.parse_error:
+                                                    final_result = f"Codex review failed: {review_result.parse_error}"
+                                                else:
+                                                    error_msgs = [
+                                                        f"{i.file}:{i.line or 0}: {i.message}"
+                                                        for i in review_result.issues
+                                                        if i.severity == "error"
+                                                    ]
+                                                    final_result = f"Codex review failed: {'; '.join(error_msgs[:3])}"
+                                                break
+
+                                            # No Codex review or no commit - we're done
                                             success = True
                                             break
 
@@ -415,6 +537,7 @@ class MalaOrchestrator:
             duration_seconds=duration,
             session_id=claude_session_id,
             gate_attempts=retry_state.attempt,
+            review_attempts=retry_state.review_attempt,
         )
 
     async def spawn_agent(self, issue_id: str) -> bool:
@@ -450,6 +573,13 @@ class MalaOrchestrator:
             Colors.GRAY,
             dim=True,
         )
+        if self.codex_review:
+            log(
+                "◐",
+                f"codex-review: enabled (max-retries: {self.max_review_retries})",
+                Colors.CYAN,
+                dim=True,
+            )
 
         # Report epic filter
         if self.epic_id:
@@ -672,6 +802,7 @@ class MalaOrchestrator:
                                 quality_gate=quality_gate_result,
                                 error=result.summary if not result.success else None,
                                 gate_attempts=result.gate_attempts,
+                                review_attempts=result.review_attempts,
                             )
                             run_metadata.record_issue(issue_run)
 
