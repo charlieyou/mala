@@ -1,4 +1,13 @@
-"""BeadsClient: Wrapper for bd CLI calls used by MalaOrchestrator."""
+"""BeadsClient: Wrapper for bd CLI calls used by MalaOrchestrator.
+
+This module provides an async-only client for interacting with the beads issue
+tracker via the bd CLI. All public methods are async to support non-blocking
+concurrent execution in the orchestrator.
+
+Design note: This client intentionally provides only async implementations.
+Sync versions were removed to eliminate duplication and ensure consistent
+behavior across the codebase.
+"""
 
 from __future__ import annotations
 
