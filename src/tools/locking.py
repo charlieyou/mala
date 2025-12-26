@@ -128,6 +128,82 @@ def release_all_locks() -> None:
             lock.unlink(missing_ok=True)
 
 
+def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) -> bool:
+    """Try to acquire a lock on a file.
+
+    Args:
+        filepath: The file path to lock.
+        agent_id: The agent ID to record in the lock.
+        repo_namespace: Optional repo namespace for cross-repo disambiguation.
+
+    Returns:
+        True if lock was acquired, False if already locked.
+    """
+    lock_path = _lock_path(filepath, repo_namespace)
+    LOCK_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Fast-path if already locked
+    if lock_path.exists():
+        return False
+
+    # Atomic lock creation using temp file + rename
+    import tempfile
+
+    try:
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=f".locktmp.{agent_id}.", dir=LOCK_DIR, text=True
+        )
+        os.write(fd, f"{agent_id}\n".encode())
+        os.close(fd)
+
+        # Atomic hardlink attempt
+        try:
+            os.link(tmp_path, lock_path)
+            os.unlink(tmp_path)
+            return True
+        except OSError:
+            os.unlink(tmp_path)
+            return False
+    except OSError:
+        return False
+
+
+def wait_for_lock(
+    filepath: str,
+    agent_id: str,
+    repo_namespace: str | None = None,
+    timeout_seconds: float = 30.0,
+    poll_interval_ms: int = 100,
+) -> bool:
+    """Wait for and acquire a lock on a file.
+
+    Polls until the lock becomes available or timeout is reached.
+
+    Args:
+        filepath: The file path to lock.
+        agent_id: The agent ID to record in the lock.
+        repo_namespace: Optional repo namespace for cross-repo disambiguation.
+        timeout_seconds: Maximum time to wait for the lock (default 30).
+        poll_interval_ms: Polling interval in milliseconds (default 100).
+
+    Returns:
+        True if lock was acquired, False if timeout.
+    """
+    import time
+
+    deadline = time.monotonic() + timeout_seconds
+    poll_interval_sec = poll_interval_ms / 1000.0
+
+    while True:
+        if try_lock(filepath, agent_id, repo_namespace):
+            return True
+
+        if time.monotonic() >= deadline:
+            return False
+
+        time.sleep(poll_interval_sec)
+
+
 def is_locked(filepath: str, repo_namespace: str | None = None) -> bool:
     """Check if a file is currently locked.
 

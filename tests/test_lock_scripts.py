@@ -608,3 +608,124 @@ class TestNormalizationAcrossAllScripts:
         # Verify lock is released by trying to acquire again
         result2 = run_script("lock-try.sh", [str(test_file)], env)
         assert result2.returncode == 0, "Should be able to reacquire after release"
+
+
+class TestLockWait:
+    """Test the lock-wait.sh script that waits for and acquires locks."""
+
+    def test_acquires_unlocked_file_immediately(self, lock_env):
+        """Should acquire an unlocked file immediately."""
+        result = run_script("lock-wait.sh", ["immediate.py", "5", "50"], lock_env)
+        assert result.returncode == 0
+
+        # Verify lock was acquired
+        lock_path = lock_file_path(lock_env["LOCK_DIR"], "immediate.py")
+        assert lock_path.exists()
+        assert lock_path.read_text().strip() == lock_env["AGENT_ID"]
+
+    def test_times_out_when_lock_held(self, lock_env):
+        """Should timeout when lock is held by another agent."""
+        # First agent acquires lock
+        env1 = {**lock_env, "AGENT_ID": "holder-agent"}
+        run_script("lock-try.sh", ["contested.py"], env1)
+
+        # Second agent tries to wait with short timeout
+        env2 = {**lock_env, "AGENT_ID": "waiter-agent"}
+        result = run_script("lock-wait.sh", ["contested.py", "1", "100"], env2)
+        assert result.returncode == 1  # Timeout
+
+        # Original holder still has lock
+        lock_path = lock_file_path(lock_env["LOCK_DIR"], "contested.py")
+        assert lock_path.read_text().strip() == "holder-agent"
+
+    def test_acquires_after_release(self, lock_env):
+        """Should acquire lock after it's released by another agent."""
+        import threading
+        import time
+
+        env1 = {**lock_env, "AGENT_ID": "holder-agent"}
+        env2 = {**lock_env, "AGENT_ID": "waiter-agent"}
+
+        # First agent acquires lock
+        run_script("lock-try.sh", ["released.py"], env1)
+
+        acquired = threading.Event()
+
+        def wait_for_lock():
+            result = run_script("lock-wait.sh", ["released.py", "5", "50"], env2)
+            if result.returncode == 0:
+                acquired.set()
+
+        # Start waiter in background
+        waiter = threading.Thread(target=wait_for_lock)
+        waiter.start()
+
+        # Give waiter time to start polling
+        time.sleep(0.2)
+
+        # Release lock
+        run_script("lock-release.sh", ["released.py"], env1)
+
+        # Wait for waiter to finish
+        waiter.join(timeout=5)
+        assert acquired.is_set(), "Waiter should have acquired lock after release"
+
+        # Verify waiter holds lock
+        lock_path = lock_file_path(lock_env["LOCK_DIR"], "released.py")
+        assert lock_path.read_text().strip() == "waiter-agent"
+
+    def test_default_timeout_30_seconds(self, lock_env):
+        """Should default to 30 second timeout."""
+        # We can't easily test 30 seconds, but we can verify the script accepts
+        # just a filepath (using defaults)
+        result = run_script("lock-wait.sh", ["defaults.py"], lock_env)
+        assert result.returncode == 0
+
+    def test_respects_repo_namespace(self, lock_env):
+        """Should respect REPO_NAMESPACE for lock disambiguation."""
+        env1 = {**lock_env, "AGENT_ID": "agent-1", "REPO_NAMESPACE": "repo-A"}
+        env2 = {**lock_env, "AGENT_ID": "agent-2", "REPO_NAMESPACE": "repo-B"}
+
+        # Both agents should be able to acquire locks for same path in different repos
+        result1 = run_script("lock-wait.sh", ["namespaced.py", "2", "50"], env1)
+        assert result1.returncode == 0
+
+        result2 = run_script("lock-wait.sh", ["namespaced.py", "2", "50"], env2)
+        assert result2.returncode == 0
+
+    def test_fails_without_required_env(self, lock_env):
+        """Should fail without LOCK_DIR or AGENT_ID."""
+        env_no_lock_dir = {k: v for k, v in lock_env.items() if k != "LOCK_DIR"}
+        result = run_script("lock-wait.sh", ["test.py"], env_no_lock_dir)
+        assert result.returncode == 2
+
+        env_no_agent = {k: v for k, v in lock_env.items() if k != "AGENT_ID"}
+        result = run_script("lock-wait.sh", ["test.py"], env_no_agent)
+        assert result.returncode == 2
+
+    def test_fails_without_filepath(self, lock_env):
+        """Should fail without filepath argument."""
+        result = run_script("lock-wait.sh", [], lock_env)
+        assert result.returncode == 2
+
+    def test_normalizes_path(self, lock_env, tmp_path):
+        """Should normalize paths consistently with other lock scripts."""
+        test_file = tmp_path / "normalized.py"
+        test_file.touch()
+
+        env = {**lock_env}
+        full_env = {**os.environ, **env}
+
+        # Acquire with absolute path using lock-wait
+        result1 = run_script("lock-wait.sh", [str(test_file), "2", "50"], env)
+        assert result1.returncode == 0
+
+        # Try with relative path using lock-try - should fail (same lock)
+        result2 = subprocess.run(
+            f"cd {tmp_path} && {SCRIPTS_DIR}/lock-try.sh normalized.py",
+            shell=True,
+            env=full_env,
+            capture_output=True,
+            text=True,
+        )
+        assert result2.returncode == 1, "Relative path should resolve to same lock"
