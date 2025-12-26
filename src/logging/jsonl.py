@@ -5,7 +5,6 @@ including tool use/results, text blocks, and session metadata.
 """
 
 import json
-import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,23 +19,7 @@ from claude_agent_sdk import (
 )
 
 from ..tools.env import JSONL_LOG_DIR
-
-
-def get_git_branch(cwd: Path) -> str:
-    """Get the current git branch name."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except Exception:
-        pass
-    return ""
+from ..git_utils import get_git_branch
 
 
 class JSONLLogger:

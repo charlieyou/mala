@@ -32,7 +32,6 @@ if _braintrust_api_key:
 
 # Now safe to import claude_agent_sdk (it's been patched if Braintrust is available)
 import asyncio
-import subprocess
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -59,7 +58,8 @@ from .tools.locking import (
     make_stop_hook,
 )
 from .logging.console import Colors, get_agent_color, log, log_tool
-from .logging.jsonl import JSONLLogger, get_git_branch
+from .logging.jsonl import JSONLLogger
+from .git_utils import get_git_commit, get_git_branch
 from .braintrust_integration import TracedAgentExecution
 from .tools.env import load_env
 from .beads_client import BeadsClient
@@ -77,23 +77,6 @@ __version__ = pkg_version("mala")
 # Load implementer prompt from file
 PROMPT_FILE = Path(__file__).parent / "prompts" / "implementer_prompt.md"
 IMPLEMENTER_PROMPT_TEMPLATE = PROMPT_FILE.read_text()
-
-
-def get_git_commit(cwd: Path) -> str:
-    """Get the current git commit hash (short)."""
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except Exception:
-        pass
-    return ""
 
 
 def validate_morph_api_key() -> str:
