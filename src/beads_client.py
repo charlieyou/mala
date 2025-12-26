@@ -57,12 +57,15 @@ class BeadsClient:
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
+        only_ids: set[str] | None = None,
     ) -> list[str]:
         """Get list of ready issue IDs via bd CLI, sorted by priority.
 
         Args:
             exclude_ids: Set of issue IDs to exclude from results.
             epic_id: Optional epic ID to filter by - only return children of this epic.
+            only_ids: Optional set of issue IDs to include exclusively. If provided,
+                only these IDs will be returned (if they exist and are ready).
 
         Returns:
             List of issue IDs sorted by priority (lower = higher priority).
@@ -88,6 +91,17 @@ class BeadsClient:
             return []
         try:
             issues = json.loads(result.stdout)
+            # Get set of ready issue IDs for validation
+            ready_issue_ids = {i["id"] for i in issues}
+
+            # Validate only_ids - warn about IDs that aren't ready
+            if only_ids:
+                not_ready = only_ids - ready_issue_ids
+                if not_ready:
+                    self._log_warning(
+                        f"Specified IDs not ready: {', '.join(sorted(not_ready))}"
+                    )
+
             # Filter and sort by priority (lower number = higher priority)
             filtered = [
                 i
@@ -95,6 +109,7 @@ class BeadsClient:
                 if i["id"] not in exclude_ids
                 and i.get("issue_type") != "epic"  # Skip epics
                 and (epic_children is None or i["id"] in epic_children)
+                and (only_ids is None or i["id"] in only_ids)
             ]
             filtered.sort(key=lambda i: i.get("priority", 999))
             return [i["id"] for i in filtered]

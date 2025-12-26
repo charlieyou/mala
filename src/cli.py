@@ -91,9 +91,27 @@ def run(
             "--epic", "-e", help="Only process tasks that are children of this epic"
         ),
     ] = None,
+    only: Annotated[
+        str | None,
+        typer.Option(
+            "--only",
+            "-o",
+            help="Comma-separated list of issue IDs to process exclusively",
+        ),
+    ] = None,
 ):
     """Run parallel issue processing."""
     repo_path = repo_path.resolve()
+
+    # Parse --only flag into a set of issue IDs
+    only_ids: set[str] | None = None
+    if only:
+        only_ids = {
+            issue_id.strip() for issue_id in only.split(",") if issue_id.strip()
+        }
+        if not only_ids:
+            log("✗", "Invalid --only value: no valid issue IDs found", Colors.RED)
+            raise typer.Exit(1)
 
     # Ensure user config directory exists
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -114,6 +132,7 @@ def run(
         timeout_minutes=timeout,
         max_issues=max_issues,
         epic_id=epic,
+        only_ids=only_ids,
         braintrust_enabled=_braintrust_early_setup_done,
     )
 
