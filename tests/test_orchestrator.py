@@ -1252,18 +1252,20 @@ class TestAsyncBeadsClientWithTimeout:
             await asyncio.sleep(0.05)
             task_completions.append(("fast", time.monotonic() - start))
 
-        def slow_subprocess(*args, **kwargs):
-            # Simulate a slow bd command (0.2s)
-            time.sleep(0.2)
-            return make_subprocess_result(stdout="[]")
+        # Use a real slow command instead of mocking subprocess.run
+        # (since we now use asyncio.create_subprocess_exec)
+        orchestrator.beads.timeout_seconds = 0.5
 
-        with patch("subprocess.run", side_effect=slow_subprocess):
-            # Run slow beads call concurrently with fast task
-            await asyncio.gather(
-                orchestrator.beads.get_ready_async(),
-                fast_task(),
-            )
+        async def slow_beads_call():
+            # Use sleep as a slow command
+            await orchestrator.beads._run_subprocess_async(["sleep", "0.2"])
             task_completions.append(("beads", time.monotonic() - start))
+
+        # Run slow beads call concurrently with fast task
+        await asyncio.gather(
+            slow_beads_call(),
+            fast_task(),
+        )
 
         # The fast task should complete well before the slow beads call
         fast_time = next(t for name, t in task_completions if name == "fast")
@@ -1280,46 +1282,38 @@ class TestAsyncBeadsClientWithTimeout:
     ):
         """When bd command times out, should return safe fallback, not hang."""
         # Use a very short timeout for testing
-        original_timeout = orchestrator.beads.timeout_seconds
         orchestrator.beads.timeout_seconds = 0.1
 
-        def hanging_subprocess(*args, **kwargs):
-            # Simulate hanging forever (well, 10s is enough to prove the point)
-            time.sleep(10)
-            return make_subprocess_result(stdout="[]")
+        start = time.monotonic()
+        # Run a command that would take longer than timeout
+        result = await orchestrator.beads._run_subprocess_async(["sleep", "10"])
+        elapsed = time.monotonic() - start
 
-        try:
-            with patch("subprocess.run", side_effect=hanging_subprocess):
-                start = time.monotonic()
-                result = await orchestrator.beads.get_ready_async()
-                elapsed = time.monotonic() - start
-
-            # Should return empty list (safe fallback)
-            assert result == []
-            # Should complete within bounded wait + small buffer, not global timeout
-            max_expected = original_timeout + 5  # 5s buffer for test overhead
-            assert elapsed < max_expected, f"Timeout didn't work: took {elapsed:.2f}s"
-        finally:
-            orchestrator.beads.timeout_seconds = original_timeout
+        # Should return timeout result
+        assert result.returncode == 1
+        assert result.stderr == "timeout"
+        # Should complete quickly due to timeout, not hang for 10s
+        assert elapsed < 3.0, f"Timeout didn't work: took {elapsed:.2f}s"
 
     @pytest.mark.asyncio
     async def test_claim_timeout_returns_false(self, orchestrator: MalaOrchestrator):
         """When claim times out, should return False (safe fallback)."""
+        from src.beads_client import SubprocessResult
+
         original_timeout = orchestrator.beads.timeout_seconds
         orchestrator.beads.timeout_seconds = 0.1
 
-        def hanging_subprocess(*args, **kwargs):
-            time.sleep(10)
-            return make_subprocess_result(returncode=0)
+        # Mock _run_subprocess_async to simulate timeout
+        async def mock_timeout(*args, **kwargs):
+            return SubprocessResult(args=[], returncode=1, stdout="", stderr="timeout")
 
         try:
-            with patch("subprocess.run", side_effect=hanging_subprocess):
-                start = time.monotonic()
+            with patch.object(
+                orchestrator.beads, "_run_subprocess_async", side_effect=mock_timeout
+            ):
                 result = await orchestrator.beads.claim_async("issue-1")
-                elapsed = time.monotonic() - start
 
             assert result is False
-            assert elapsed < 10.0
         finally:
             orchestrator.beads.timeout_seconds = original_timeout
 
@@ -1472,3 +1466,76 @@ class TestMissingLogFile:
         # Summary should mention session log and the timeout
         assert "Session log missing" in result.summary
         assert "30s" in result.summary  # Default timeout
+
+
+class TestSubprocessTerminationOnTimeout:
+    """Test that timed-out subprocesses are properly terminated."""
+
+    @pytest.mark.asyncio
+    async def test_subprocess_terminated_on_timeout(self, tmp_path: Path):
+        """When a subprocess times out, it should be terminated, not left running."""
+        from src.beads_client import BeadsClient
+
+        warnings: list[str] = []
+        beads = BeadsClient(tmp_path, log_warning=warnings.append, timeout_seconds=0.5)
+
+        # Run a subprocess that would hang forever, verify it gets killed
+        start = time.monotonic()
+        result = await beads._run_subprocess_async(["sleep", "60"])
+        elapsed = time.monotonic() - start
+
+        # Should return timeout result
+        assert result.returncode == 1
+        assert result.stderr == "timeout"
+
+        # Should complete quickly (timeout + termination grace period)
+        assert elapsed < 5.0, f"Took too long: {elapsed:.2f}s"
+
+        # Warning should have been logged
+        assert len(warnings) == 1
+        assert "timed out" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_subprocess_killed_if_terminate_fails(self, tmp_path: Path):
+        """If SIGTERM doesn't work, subprocess should be killed with SIGKILL."""
+        from src.beads_client import BeadsClient
+
+        warnings: list[str] = []
+        beads = BeadsClient(tmp_path, log_warning=warnings.append, timeout_seconds=0.3)
+
+        # Use a script that traps SIGTERM to test the SIGKILL escalation
+        # The shell script ignores SIGTERM, so we need SIGKILL to stop it
+        result = await beads._run_subprocess_async(
+            ["sh", "-c", "trap '' TERM; sleep 60"]
+        )
+
+        # Should still return timeout result (killed via SIGKILL)
+        assert result.returncode == 1
+        assert result.stderr == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_successful_command_not_affected(self, tmp_path: Path):
+        """Fast commands should complete normally without being terminated."""
+        from src.beads_client import BeadsClient
+
+        beads = BeadsClient(tmp_path, timeout_seconds=10.0)
+
+        result = await beads._run_subprocess_async(["echo", "hello"])
+
+        assert result.returncode == 0
+        assert result.stdout.strip() == "hello"
+        assert result.stderr == ""
+
+    @pytest.mark.asyncio
+    async def test_command_stderr_captured(self, tmp_path: Path):
+        """stderr from commands should be captured correctly."""
+        from src.beads_client import BeadsClient
+
+        beads = BeadsClient(tmp_path, timeout_seconds=10.0)
+
+        result = await beads._run_subprocess_async(
+            ["sh", "-c", "echo error >&2; exit 1"]
+        )
+
+        assert result.returncode == 1
+        assert "error" in result.stderr

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,6 +12,22 @@ if TYPE_CHECKING:
 
 # Default timeout for bd/git subprocess calls (seconds)
 DEFAULT_COMMAND_TIMEOUT = 30.0
+
+
+class SubprocessResult:
+    """Result of a subprocess execution, compatible with subprocess.CompletedProcess."""
+
+    def __init__(
+        self,
+        args: list[str],
+        returncode: int,
+        stdout: str = "",
+        stderr: str = "",
+    ):
+        self.args = args
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 class BeadsClient:
@@ -39,43 +54,64 @@ class BeadsClient:
         self,
         cmd: list[str],
         timeout: float | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        """Run subprocess in thread pool with timeout.
+    ) -> SubprocessResult:
+        """Run subprocess asynchronously with timeout and proper termination.
+
+        Uses asyncio subprocess to enable proper process termination on timeout.
+        When a timeout occurs, the subprocess is terminated (SIGTERM) and then
+        killed (SIGKILL) if it doesn't exit promptly.
 
         Args:
             cmd: Command to run.
             timeout: Override timeout (uses self.timeout_seconds if None).
 
         Returns:
-            CompletedProcess result, or a failed result on timeout/error.
+            SubprocessResult, or a failed result on timeout/error.
         """
         effective_timeout = timeout if timeout is not None else self.timeout_seconds
 
-        def run_blocking() -> subprocess.CompletedProcess[str]:
-            return subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 cwd=self.repo_path,
             )
 
-        try:
-            return await asyncio.wait_for(
-                asyncio.to_thread(run_blocking),
-                timeout=effective_timeout,
-            )
-        except TimeoutError:
-            self._log_warning(
-                f"Command timed out after {effective_timeout}s: {' '.join(cmd)}"
-            )
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=1, stdout="", stderr="timeout"
-            )
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=effective_timeout,
+                )
+                return SubprocessResult(
+                    args=cmd,
+                    returncode=proc.returncode or 0,
+                    stdout=stdout_bytes.decode() if stdout_bytes else "",
+                    stderr=stderr_bytes.decode() if stderr_bytes else "",
+                )
+            except TimeoutError:
+                # Terminate the subprocess on timeout
+                self._log_warning(
+                    f"Command timed out after {effective_timeout}s: {' '.join(cmd)}"
+                )
+                try:
+                    proc.terminate()
+                    # Give it a short time to terminate gracefully
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=2.0)
+                    except TimeoutError:
+                        # Force kill if it doesn't terminate
+                        proc.kill()
+                        await proc.wait()
+                except ProcessLookupError:
+                    # Process already exited
+                    pass
+                return SubprocessResult(
+                    args=cmd, returncode=1, stdout="", stderr="timeout"
+                )
         except Exception as e:
             self._log_warning(f"Command failed: {' '.join(cmd)}: {e}")
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=1, stdout="", stderr=str(e)
-            )
+            return SubprocessResult(args=cmd, returncode=1, stdout="", stderr=str(e))
 
     # --- Async methods (non-blocking, use in async context) ---
 
