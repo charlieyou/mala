@@ -117,7 +117,8 @@ class BeadsClient:
         """Terminate a process and all its children.
 
         First sends SIGTERM to the process group (or just the process on Windows),
-        waits up to 2 seconds for graceful exit, then sends SIGKILL if needed.
+        waits up to 2 seconds for graceful exit, then sends SIGKILL to the entire
+        process group to ensure all children are killed (even if the parent exited).
 
         Args:
             proc: The process to terminate.
@@ -127,11 +128,13 @@ class BeadsClient:
             # Process already exited
             return
 
+        pgid = proc.pid if use_process_group else None
+
         try:
-            if use_process_group and proc.pid is not None:
+            if pgid is not None:
                 # Kill the entire process group
                 try:
-                    os.killpg(proc.pid, signal.SIGTERM)
+                    os.killpg(pgid, signal.SIGTERM)
                 except (ProcessLookupError, PermissionError):
                     pass
             else:
@@ -141,14 +144,20 @@ class BeadsClient:
             try:
                 await asyncio.wait_for(proc.wait(), timeout=2.0)
             except TimeoutError:
-                # Force kill if it doesn't terminate
-                if use_process_group and proc.pid is not None:
-                    try:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                    except (ProcessLookupError, PermissionError):
-                        pass
-                else:
-                    proc.kill()
+                pass  # Will force kill below
+
+            # Always SIGKILL the process group after grace period to ensure
+            # all children are killed, even if the parent exited quickly
+            if pgid is not None:
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass  # Group already gone
+            elif proc.returncode is None:
+                proc.kill()
+
+            # Ensure we wait for the main process to fully exit
+            if proc.returncode is None:
                 await proc.wait()
         except ProcessLookupError:
             # Process already exited

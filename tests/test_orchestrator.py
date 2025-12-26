@@ -1555,10 +1555,13 @@ class TestSubprocessTerminationOnTimeout:
 
         # Create a script that spawns a child process that would outlive the parent
         # The child writes its PID to a file so we can check if it was killed
+        # Use $! to get the background job's PID (not $$ which is the parent shell PID)
         pid_file = tmp_path / "child.pid"
         script = f"""
-            # Spawn a child that writes its PID and then sleeps
-            (echo $$ > {pid_file}; sleep 60) &
+            # Spawn a child that sleeps forever
+            sleep 60 &
+            # Capture the child's PID via $! (background job PID)
+            echo $! > {pid_file}
             # Parent also sleeps
             sleep 60
         """
