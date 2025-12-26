@@ -52,6 +52,7 @@ class TestExtractJson:
     def test_handles_strings_with_braces(self):
         text = '{"passed": true, "message": "use {foo} syntax"}'
         result = _extract_json(text)
+        assert result is not None
         parsed = json.loads(result)
         assert parsed["message"] == "use {foo} syntax"
 
