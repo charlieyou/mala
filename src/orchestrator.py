@@ -32,7 +32,7 @@ from .quality_gate import QualityGate, GateResult
 from .tools.env import USER_CONFIG_DIR, RUNS_DIR, SCRIPTS_DIR, get_claude_log_path
 from .tools.locking import (
     LOCK_DIR,
-    release_all_locks,
+    release_run_locks,
     cleanup_agent_locks,
     make_stop_hook,
 )
@@ -859,9 +859,10 @@ class MalaOrchestrator:
                             break
 
         finally:
-            # Final cleanup
-            release_all_locks()
-            log("🧹", "Released all remaining locks", Colors.GRAY, dim=True)
+            # Final cleanup - only release locks owned by this run's agents
+            released = release_run_locks(list(self.agent_ids.values()))
+            if released:
+                log("🧹", f"Released {released} remaining locks", Colors.GRAY, dim=True)
 
         # Summary
         print()

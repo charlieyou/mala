@@ -115,6 +115,34 @@ def release_all_locks() -> None:
             lock.unlink(missing_ok=True)
 
 
+def release_run_locks(agent_ids: list[str]) -> int:
+    """Release locks owned by the specified agent IDs.
+
+    Used by orchestrator shutdown to only clean up locks from this run,
+    leaving locks from other concurrent runs intact.
+
+    Args:
+        agent_ids: List of agent IDs whose locks should be released.
+
+    Returns:
+        Number of locks released.
+    """
+    if not LOCK_DIR.exists() or not agent_ids:
+        return 0
+
+    agent_set = set(agent_ids)
+    released = 0
+    for lock in LOCK_DIR.glob("*.lock"):
+        try:
+            if lock.is_file() and lock.read_text().strip() in agent_set:
+                lock.unlink()
+                released += 1
+        except OSError:
+            pass
+
+    return released
+
+
 def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) -> bool:
     """Try to acquire a lock on a file.
 

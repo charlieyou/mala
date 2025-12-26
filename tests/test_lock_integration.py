@@ -719,3 +719,68 @@ class TestRepoNamespaceIntegration:
         env_empty = {**base_env, "REPO_NAMESPACE": ""}
         result2 = run_lock_script("lock-try.sh", ["file.py"], env_empty)
         assert result2.returncode == 1, "Empty namespace should be same as no namespace"
+
+
+class TestReleaseRunLocks:
+    """Test run-scoped lock cleanup to avoid releasing locks from other runs."""
+
+    def test_release_run_locks_only_removes_owned_locks(self, lock_env, monkeypatch):
+        """Cleanup should only remove locks owned by the specified agent IDs."""
+        from src.tools.locking import release_run_locks, try_lock
+
+        # Patch LOCK_DIR for the locking module
+        monkeypatch.setattr("src.tools.locking.LOCK_DIR", lock_env)
+
+        # Agent IDs from two different runs
+        run1_agents = ["mala-123-aaaa", "mala-456-bbbb"]
+        run2_agents = ["mala-789-cccc"]
+
+        # Run 1 acquires locks
+        assert try_lock("file1.py", run1_agents[0])
+        assert try_lock("file2.py", run1_agents[1])
+
+        # Run 2 acquires locks
+        assert try_lock("file3.py", run2_agents[0])
+
+        # Verify all 3 lock files exist
+        locks_before = set(lock_env.glob("*.lock"))
+        assert len(locks_before) == 3
+
+        # Run 1 shuts down and cleans up only its agents
+        cleaned = release_run_locks(run1_agents)
+        assert cleaned == 2
+
+        # Run 2's lock should remain
+        locks_after = set(lock_env.glob("*.lock"))
+        assert len(locks_after) == 1
+
+        # Verify the remaining lock is from run 2's agent
+        remaining_lock = list(locks_after)[0]
+        assert remaining_lock.read_text().strip() == run2_agents[0]
+
+    def test_release_run_locks_handles_empty_agent_list(self, lock_env, monkeypatch):
+        """Cleanup with empty agent list should not remove any locks."""
+        from src.tools.locking import release_run_locks, try_lock
+
+        monkeypatch.setattr("src.tools.locking.LOCK_DIR", lock_env)
+
+        # Create a lock
+        assert try_lock("some_file.py", "other-agent")
+
+        # Release with empty list
+        cleaned = release_run_locks([])
+        assert cleaned == 0
+
+        # Lock should remain
+        assert len(list(lock_env.glob("*.lock"))) == 1
+
+    def test_release_run_locks_handles_missing_lock_dir(self, tmp_path, monkeypatch):
+        """Cleanup should handle non-existent lock directory gracefully."""
+        from src.tools.locking import release_run_locks
+
+        non_existent = tmp_path / "nonexistent_locks"
+        monkeypatch.setattr("src.tools.locking.LOCK_DIR", non_existent)
+
+        # Should not raise, should return 0
+        cleaned = release_run_locks(["some-agent"])
+        assert cleaned == 0

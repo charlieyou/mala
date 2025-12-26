@@ -368,7 +368,7 @@ class TestRunOrchestrationLoop:
             ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", MagicMock()),
-            patch("src.orchestrator.release_all_locks"),
+            patch("src.orchestrator.release_run_locks"),
         ):
             result = await orchestrator.run()
 
@@ -412,7 +412,7 @@ class TestRunOrchestrationLoop:
             patch.object(orchestrator, "spawn_agent", side_effect=mock_spawn),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", MagicMock()),
-            patch("src.orchestrator.release_all_locks"),
+            patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             # Orchestrator needs active_tasks to be empty to exit
@@ -474,7 +474,7 @@ class TestFailedTaskResetsIssue:
             ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", MagicMock()),
-            patch("src.orchestrator.release_all_locks"),
+            patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -531,7 +531,7 @@ class TestFailedTaskResetsIssue:
             ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", MagicMock()),
-            patch("src.orchestrator.release_all_locks"),
+            patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -1152,7 +1152,7 @@ class TestOrchestratorQualityGateIntegration:
             ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", tmp_path),
-            patch("src.orchestrator.release_all_locks"),
+            patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -1228,7 +1228,7 @@ class TestOrchestratorQualityGateIntegration:
             ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", tmp_path),
-            patch("src.orchestrator.release_all_locks"),
+            patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             success_count, total = await orchestrator.run()
@@ -1336,7 +1336,7 @@ class TestAsyncBeadsClientWithTimeout:
             ) as mock_ready,
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", MagicMock()),
-            patch("src.orchestrator.release_all_locks"),
+            patch("src.orchestrator.release_run_locks"),
         ):
             await orchestrator.run()
 
