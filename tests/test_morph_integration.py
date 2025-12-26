@@ -98,12 +98,25 @@ class TestBlockDangerousCommands:
         assert "force push" in result.get("reason", "").lower()
 
     @pytest.mark.asyncio
-    async def test_allows_force_push_feature_branch(self, make_hook_input):
-        """Force push to feature branch should be allowed."""
+    async def test_blocks_force_push_any_branch(self, make_hook_input):
+        """Force push to ANY branch should now be blocked."""
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Bash", "git push --force origin feature-branch"),
+            None,
+            {"signal": None},
+        )
+        assert result.get("decision") == "block"
+        assert "force push" in result.get("reason", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_allows_force_with_lease(self, make_hook_input):
+        """Force with lease should be allowed (safer alternative)."""
+        from src.hooks import block_dangerous_commands
+
+        result = await block_dangerous_commands(
+            make_hook_input("Bash", "git push --force-with-lease origin feature"),
             None,
             {"signal": None},
         )
@@ -134,6 +147,58 @@ class TestBlockDangerousCommands:
             assert result.get("decision") == "block", (
                 f"Should block for tool_name={tool_name}"
             )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "git reset --hard",
+            "git reset --hard HEAD~1",
+            "git clean -fd",
+            "git clean -f .",
+            "git checkout -- .",
+            "git rebase main",
+            "git rebase -i HEAD~3",
+            "git branch -D feature",
+            "git push --force origin feature",
+            "git push -f origin feature",
+        ],
+    )
+    async def test_blocks_destructive_git_commands(self, make_hook_input, cmd):
+        """Destructive git commands should be blocked."""
+        from src.hooks import block_dangerous_commands
+
+        result = await block_dangerous_commands(
+            make_hook_input("Bash", cmd), None, {"signal": None}
+        )
+        assert result.get("decision") == "block", f"Should block: {cmd}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "git status",
+            "git diff",
+            "git log",
+            "git add .",
+            "git commit -m 'test'",
+            "git push origin main",
+            "git pull",
+            "git fetch",
+            "git branch feature",
+            "git branch -d feature",
+            "git checkout main",
+            "git checkout feature.txt",
+        ],
+    )
+    async def test_allows_safe_git_commands(self, make_hook_input, cmd):
+        """Safe git commands should be allowed."""
+        from src.hooks import block_dangerous_commands
+
+        result = await block_dangerous_commands(
+            make_hook_input("Bash", cmd), None, {"signal": None}
+        )
+        assert result == {}, f"Should allow: {cmd}"
 
 
 class TestMorphDisallowedTools:

@@ -27,6 +27,17 @@ DANGEROUS_PATTERNS = [
     "wget | sh",
 ]
 
+# Destructive git command patterns to block
+DESTRUCTIVE_GIT_PATTERNS = [
+    "git reset --hard",
+    "git clean -fd",
+    "git clean -f",
+    "git checkout -- .",
+    "git rebase",
+    "git branch -D",
+    "git branch -d -f",
+]
+
 # Tool names that should be treated as bash (case-insensitive matching)
 BASH_TOOL_NAMES = frozenset(["bash"])
 
@@ -54,12 +65,23 @@ async def block_dangerous_commands(
                 "reason": f"Blocked dangerous command pattern: {pattern}",
             }
 
-    # Block force push to main/master
-    if "git push" in command and ("--force" in command or "-f" in command):
-        if "main" in command or "master" in command:
+    # Block destructive git patterns
+    for pattern in DESTRUCTIVE_GIT_PATTERNS:
+        if pattern in command:
             return {
                 "decision": "block",
-                "reason": "Blocked force push to main/master branch",
+                "reason": f"Blocked destructive git command: {pattern}",
+            }
+
+    # Block force push to ALL branches (--force-with-lease is allowed as safer alternative)
+    if "git push" in command:
+        # Allow --force-with-lease (safer alternative)
+        if "--force-with-lease" in command:
+            pass  # Allow
+        elif "--force" in command or "-f " in command:
+            return {
+                "decision": "block",
+                "reason": "Blocked force push (use --force-with-lease if needed)",
             }
 
     return {}  # Allow the command
