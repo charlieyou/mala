@@ -19,7 +19,13 @@ uv tool install . --reinstall
 mala run /path/to/repo
 
 # Or with options
-mala run --max-agents 3 --timeout 30 --max-issues 5 /path/to/repo
+mala run --max-agents 5 --timeout 30 --max-issues 10 /path/to/repo
+
+# Process only children of a specific epic
+mala run --epic proj-abc /path/to/repo
+
+# Process specific issues only
+mala run --only issue-1,issue-2 /path/to/repo
 
 # Check status (locks, config, logs)
 mala status
@@ -49,7 +55,7 @@ mala (Python Orchestrator)
 
 1. **Orchestrator** queries `bd ready --json` for available issues
 2. **Filtering**: Epics (`issue_type: "epic"`) are automatically skipped - only tasks/bugs are processed
-3. **Spawning**: Up to N parallel agent tasks (default: 3)
+3. **Spawning**: Up to N parallel agent tasks (unlimited by default)
 4. **Each agent**:
    - Gets assigned an issue (already claimed by orchestrator)
    - Acquires filesystem locks before editing any files
@@ -154,9 +160,12 @@ The next agent can read the issue notes with `bd show <issue_id>` and grep the l
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--max-agents`, `-n` | 3 | Maximum concurrent agents |
+| `--max-agents`, `-n` | unlimited | Maximum concurrent agents |
 | `--timeout`, `-t` | 30 | Timeout per agent in minutes |
 | `--max-issues`, `-i` | unlimited | Maximum total issues to process |
+| `--epic`, `-e` | - | Only process tasks that are children of this epic |
+| `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
+| `--no-truncate` | false | Disable output truncation to show full log lines |
 
 ### Global Configuration
 
