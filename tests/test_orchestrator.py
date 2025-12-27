@@ -2272,3 +2272,200 @@ class TestRunLevelValidation:
         assert "issue-fail" not in close_calls
         # But should be marked needs-followup
         assert "issue-fail" in followup_calls
+
+
+class TestValidationResultMetadata:
+    """Test validation execution and metadata population after commit detection.
+
+    Verifies mala-yg9.2.4: ValidationRunner.run_spec should be invoked after
+    commit detection and ValidationResult should be recorded in IssueRun.
+    """
+
+    @pytest.mark.asyncio
+    async def test_validation_result_populated_in_issue_run(
+        self, tmp_path: Path
+    ) -> None:
+        """Successful gate should populate validation result in IssueRun metadata."""
+        from src.logging.run_metadata import IssueRun, RunMetadata
+        from src.validation.runner import ValidationResult, ValidationRunner
+        from src.validation.spec import ValidationArtifacts
+
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        # Track recorded issues
+        recorded_issues: list[IssueRun] = []
+        original_record = RunMetadata.record_issue
+
+        def capture_record(self: RunMetadata, issue: IssueRun) -> None:
+            recorded_issues.append(issue)
+            original_record(self, issue)
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="Completed successfully",
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-with-validation"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        async def mock_run_spec(
+            spec: object, context: object, log_dir: object = None
+        ) -> ValidationResult:
+            return ValidationResult(
+                passed=True,
+                steps=[],
+                artifacts=ValidationArtifacts(log_dir=tmp_path),
+            )
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(orchestrator.beads, "close_async", return_value=True),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch.object(
+                orchestrator.beads, "close_eligible_epics_async", return_value=False
+            ),
+            patch.object(RunMetadata, "record_issue", capture_record),
+            patch.object(ValidationRunner, "run_spec", mock_run_spec),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch(
+                "subprocess.run",
+                return_value=make_subprocess_result(
+                    stdout="abc1234 bd-issue-with-validation: Implement feature\n"
+                ),
+            ),
+        ):
+            await orchestrator.run()
+
+        # Verify an issue was recorded
+        assert len(recorded_issues) == 1
+        issue_run = recorded_issues[0]
+        assert issue_run.issue_id == "issue-with-validation"
+        # validation field should be populated when validation runs
+        assert issue_run.validation is not None
+        assert issue_run.validation.passed is True
+
+    @pytest.mark.asyncio
+    async def test_validation_runner_invoked_after_commit_detection(
+        self, tmp_path: Path
+    ) -> None:
+        """ValidationRunner.run_spec should be invoked after commit is detected."""
+        from src.logging.run_metadata import IssueRun, RunMetadata
+        from src.validation.runner import ValidationResult, ValidationRunner
+        from src.validation.spec import ValidationArtifacts
+
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+        run_spec_calls: list[str] = []
+
+        # Track recorded issues to verify validation field
+        recorded_issues: list[IssueRun] = []
+        original_record = RunMetadata.record_issue
+
+        def capture_record(self: RunMetadata, issue: IssueRun) -> None:
+            recorded_issues.append(issue)
+            original_record(self, issue)
+
+        async def mock_run_spec(
+            spec: object, context: object, log_dir: object = None
+        ) -> ValidationResult:
+            run_spec_calls.append("called")
+            return ValidationResult(
+                passed=True,
+                steps=[],
+                artifacts=ValidationArtifacts(log_dir=tmp_path),
+            )
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="Completed successfully",
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-run-spec"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        # Mock the validation runner's run_spec method
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(orchestrator.beads, "close_async", return_value=True),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch.object(
+                orchestrator.beads, "close_eligible_epics_async", return_value=False
+            ),
+            patch.object(ValidationRunner, "run_spec", mock_run_spec),
+            patch.object(RunMetadata, "record_issue", capture_record),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch(
+                "subprocess.run",
+                return_value=make_subprocess_result(
+                    stdout="abc1234 bd-issue-run-spec: Implement feature\n"
+                ),
+            ),
+        ):
+            await orchestrator.run()
+
+        # run_spec should have been called for the successful issue
+        assert len(run_spec_calls) == 1
+        # The recorded issue should have validation populated
+        assert len(recorded_issues) == 1
+        assert recorded_issues[0].validation is not None

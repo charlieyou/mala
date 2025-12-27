@@ -28,7 +28,13 @@ from .hooks import (
     make_lock_enforcement_hook,
 )
 from .logging.console import Colors, log, log_tool, log_agent_text, truncate_text
-from .logging.run_metadata import RunMetadata, RunConfig, IssueRun, QualityGateResult
+from .logging.run_metadata import (
+    RunMetadata,
+    RunConfig,
+    IssueRun,
+    QualityGateResult,
+    ValidationResult as MetaValidationResult,
+)
 from .quality_gate import QualityGate, GateResult
 from .tools.env import USER_CONFIG_DIR, RUNS_DIR, SCRIPTS_DIR, get_claude_log_path
 from .tools.locking import (
@@ -37,7 +43,9 @@ from .tools.locking import (
     cleanup_agent_locks,
     make_stop_hook,
 )
+from .validation.runner import ValidationRunner, ValidationConfig
 from .validation.spec import (
+    ValidationContext,
     ValidationScope,
     build_validation_spec,
 )
@@ -829,6 +837,7 @@ class MalaOrchestrator:
                             # Quality gate already run in run_implementer for retry support
                             # Just handle the final result here
                             quality_gate_result: QualityGateResult | None = None
+                            validation_result: MetaValidationResult | None = None
                             log_path = self.session_log_paths.get(issue_id)
 
                             if result.success and log_path and log_path.exists():
@@ -851,6 +860,85 @@ class MalaOrchestrator:
                                     },
                                     failure_reasons=[],
                                 )
+
+                                # Run ValidationRunner.run_spec after commit detection
+                                if commit_result.exists and commit_result.commit_hash:
+                                    try:
+                                        spec = build_validation_spec(
+                                            scope=ValidationScope.PER_ISSUE,
+                                            disable_validations=self.disable_validations,
+                                            coverage_threshold=self.coverage_threshold,
+                                        )
+                                        context = ValidationContext(
+                                            issue_id=issue_id,
+                                            repo_path=self.repo_path,
+                                            commit_hash=commit_result.commit_hash,
+                                            changed_files=[],  # Not needed for per-issue
+                                            scope=ValidationScope.PER_ISSUE,
+                                            log_path=log_path,
+                                        )
+                                        runner = ValidationRunner(
+                                            self.repo_path,
+                                            ValidationConfig(
+                                                run_slow_tests="slow-tests"
+                                                not in (
+                                                    self.disable_validations or set()
+                                                ),
+                                                run_e2e="e2e"
+                                                not in (
+                                                    self.disable_validations or set()
+                                                ),
+                                                coverage="coverage"
+                                                not in (
+                                                    self.disable_validations or set()
+                                                ),
+                                                coverage_min=int(
+                                                    self.coverage_threshold
+                                                ),
+                                            ),
+                                        )
+                                        runner_result = await runner.run_spec(
+                                            spec, context
+                                        )
+                                        # Convert runner result to metadata result
+                                        validation_result = MetaValidationResult(
+                                            passed=runner_result.passed,
+                                            commands_run=[
+                                                s.name for s in runner_result.steps
+                                            ],
+                                            commands_failed=[
+                                                s.name
+                                                for s in runner_result.steps
+                                                if not s.ok
+                                            ],
+                                            artifacts=runner_result.artifacts,
+                                            coverage_percent=runner_result.coverage_result.percent
+                                            if runner_result.coverage_result
+                                            else None,
+                                        )
+                                        log(
+                                            "◐",
+                                            f"Validation: {validation_result.passed}",
+                                            Colors.CYAN
+                                            if validation_result.passed
+                                            else Colors.YELLOW,
+                                            dim=True,
+                                            agent_id=issue_id,
+                                        )
+                                    except Exception as e:
+                                        log(
+                                            "⚠",
+                                            f"Validation runner error: {e}",
+                                            Colors.YELLOW,
+                                            agent_id=issue_id,
+                                        )
+                                        # Still populate a failed validation result
+                                        validation_result = MetaValidationResult(
+                                            passed=False,
+                                            commands_run=[],
+                                            commands_failed=[],
+                                        )
+
                                 # Gate passed - close the issue
                                 if await self.beads.close_async(issue_id):
                                     log(
@@ -905,6 +993,7 @@ class MalaOrchestrator:
                                 error=result.summary if not result.success else None,
                                 gate_attempts=result.gate_attempts,
                                 review_attempts=result.review_attempts,
+                                validation=validation_result,
                             )
                             run_metadata.record_issue(issue_run)
 
