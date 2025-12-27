@@ -161,6 +161,13 @@ def run(
             help="Skip E2E fixture tests when required API keys are unavailable (default: disabled)",
         ),
     ] = False,
+    wip: Annotated[
+        bool,
+        typer.Option(
+            "--wip",
+            help="Prioritize in_progress issues before open issues",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -253,6 +260,7 @@ def run(
         lint_only_for_docs=lint_only_for_docs,
         skip_e2e_if_no_keys=skip_e2e_if_no_keys,
         morph_enabled=morph_enabled,
+        prioritize_wip=wip,
     )
 
     success_count, total = asyncio.run(orchestrator.run())

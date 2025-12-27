@@ -375,6 +375,27 @@ def test_run_validation_flags_defaults(
     assert DummyOrchestrator.last_kwargs["coverage_threshold"] == 85.0
     assert DummyOrchestrator.last_kwargs["lint_only_for_docs"] is False
     assert DummyOrchestrator.last_kwargs["skip_e2e_if_no_keys"] is False
+    assert DummyOrchestrator.last_kwargs["prioritize_wip"] is False
+
+
+def test_run_wip_flag_passed_to_orchestrator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --wip flag is correctly passed to orchestrator."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path, wip=True, verbose=False)
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_kwargs is not None
+    assert DummyOrchestrator.last_kwargs["prioritize_wip"] is True
 
 
 def test_run_coverage_threshold_invalid_negative(

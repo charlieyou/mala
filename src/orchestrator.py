@@ -169,6 +169,7 @@ class MalaOrchestrator:
         lint_only_for_docs: bool = False,
         skip_e2e_if_no_keys: bool = False,
         morph_enabled: bool = True,
+        prioritize_wip: bool = False,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
@@ -185,6 +186,7 @@ class MalaOrchestrator:
         self.lint_only_for_docs = lint_only_for_docs
         self.skip_e2e_if_no_keys = skip_e2e_if_no_keys
         self.morph_enabled = morph_enabled
+        self.prioritize_wip = prioritize_wip
 
         self.active_tasks: dict[str, asyncio.Task] = {}
         self.agent_ids: dict[str, str] = {}
@@ -674,6 +676,15 @@ class MalaOrchestrator:
                 dim=True,
             )
 
+        # Report WIP prioritization
+        if self.prioritize_wip:
+            log(
+                "◐",
+                "wip: prioritizing in_progress issues",
+                Colors.CYAN,
+                dim=True,
+            )
+
         # Report Braintrust status
         if self.braintrust_enabled:
             log(
@@ -756,6 +767,7 @@ class MalaOrchestrator:
                         epic_id=self.epic_id,
                         only_ids=self.only_ids,
                         suppress_warn_ids=suppress_warn_ids,
+                        prioritize_wip=self.prioritize_wip,
                     )
                     if not limit_reached
                     else []

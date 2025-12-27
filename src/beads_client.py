@@ -201,6 +201,7 @@ class BeadsClient:
         epic_id: str | None = None,
         only_ids: set[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
+        prioritize_wip: bool = False,
     ) -> list[str]:
         """Get list of ready issue IDs via bd CLI, sorted by priority (async version).
 
@@ -209,9 +210,11 @@ class BeadsClient:
             epic_id: Optional epic ID to filter by - only return children of this epic.
             only_ids: Optional set of issue IDs to include exclusively.
             suppress_warn_ids: Optional set of issue IDs to suppress from warnings.
+            prioritize_wip: If True, sort in_progress issues before open issues.
 
         Returns:
             List of issue IDs sorted by priority (lower = higher priority).
+            When prioritize_wip is True, in_progress issues come first.
         """
         exclude_ids = exclude_ids or set()
         suppress_warn_ids = suppress_warn_ids or set()
@@ -247,7 +250,19 @@ class BeadsClient:
                 and (epic_children is None or i["id"] in epic_children)
                 and (only_ids is None or i["id"] in only_ids)
             ]
-            filtered.sort(key=lambda i: i.get("priority", 999))
+
+            # Sort by priority, and optionally by status (in_progress first)
+            if prioritize_wip:
+                # in_progress issues get status_order=0, others get 1
+                filtered.sort(
+                    key=lambda i: (
+                        0 if i.get("status") == "in_progress" else 1,
+                        i.get("priority", 999),
+                    )
+                )
+            else:
+                filtered.sort(key=lambda i: i.get("priority", 999))
+
             return [i["id"] for i in filtered]
         except json.JSONDecodeError:
             return []

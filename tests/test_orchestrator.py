@@ -377,6 +377,7 @@ class TestRunOrchestrationLoop:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             return []
 
@@ -407,6 +408,7 @@ class TestRunOrchestrationLoop:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             # Return issues only on first call
             nonlocal call_count
@@ -477,6 +479,7 @@ class TestFailedTaskResetsIssue:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -541,6 +544,7 @@ class TestFailedTaskResetsIssue:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1169,6 +1173,7 @@ class TestOrchestratorQualityGateIntegration:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1236,6 +1241,7 @@ class TestOrchestratorQualityGateIntegration:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1369,6 +1375,7 @@ class TestAsyncBeadsClientWithTimeout:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             return []
 
@@ -1713,6 +1720,7 @@ class TestLockDirNestedCreation:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             return []
 
@@ -1778,6 +1786,7 @@ class TestGateFlowSequencing:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1856,6 +1865,7 @@ class TestGateFlowSequencing:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1934,6 +1944,7 @@ class TestRetryExhaustion:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2000,6 +2011,7 @@ class TestRetryExhaustion:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2078,6 +2090,7 @@ class TestRunLevelValidation:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2148,6 +2161,7 @@ class TestRunLevelValidation:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2222,6 +2236,7 @@ class TestRunLevelValidation:
             epic_id: str | None = None,
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
