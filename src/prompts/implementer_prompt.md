@@ -103,6 +103,14 @@ uvx ty check                                            # Type check
 - Re-run the full suite
 - Do not commit until all checks pass
 
+**CRITICAL - No Gaming Validation:**
+- Run `uvx ty check` with NO path arguments (checks entire codebase)
+- Do NOT pipe to `head`, `tail`, or truncate output in any way
+- Do NOT assume errors are "pre-existing" - verify with `git blame` first
+- If you modified a test file, type errors in that file are YOUR responsibility
+- All checks must pass with ZERO errors before committing
+- If you see errors, FIX THEM - do not claim they are someone else's problem
+
 ### 5. Self-Review
 Verify before committing:
 - Does the code satisfy ALL requirements from the issue?
