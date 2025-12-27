@@ -64,6 +64,19 @@ class ValidationCommand:
 
 
 @dataclass
+class DepsConfig:
+    """Configuration for dependency sync optimization.
+
+    Attributes:
+        skip_if_unchanged: Skip uv sync if pyproject.toml/uv.lock unchanged.
+        force_sync: Always run uv sync regardless of state.
+    """
+
+    skip_if_unchanged: bool = True
+    force_sync: bool = False
+
+
+@dataclass
 class CoverageConfig:
     """Configuration for coverage validation.
 
@@ -159,6 +172,7 @@ class ValidationSpec:
         require_clean_git: Whether git working tree must be clean.
         require_pytest_for_code_changes: If code changed, pytest is required.
         allow_lint_only_for_non_code: Allow skipping tests for non-code changes.
+        deps: Dependency sync configuration.
         coverage: Coverage configuration.
         e2e: E2E configuration.
         scope: The validation scope.
@@ -169,6 +183,7 @@ class ValidationSpec:
     require_clean_git: bool = True
     require_pytest_for_code_changes: bool = True
     allow_lint_only_for_non_code: bool = False
+    deps: DepsConfig = field(default_factory=DepsConfig)
     coverage: CoverageConfig = field(default_factory=CoverageConfig)
     e2e: E2EConfig = field(default_factory=E2EConfig)
 
@@ -247,6 +262,7 @@ def build_validation_spec(
     coverage_threshold: float = 85.0,
     lint_only_for_docs: bool = False,
     changed_files: list[str] | None = None,
+    force_sync: bool = False,
 ) -> ValidationSpec:
     """Build a ValidationSpec from CLI inputs.
 
@@ -269,6 +285,7 @@ def build_validation_spec(
         coverage_threshold: Minimum coverage percentage.
         lint_only_for_docs: If True, skip tests for docs-only changes.
         changed_files: List of changed files (for docs classification).
+        force_sync: If True, always run uv sync regardless of state.
 
     Returns:
         A ValidationSpec configured according to the inputs.
@@ -342,6 +359,12 @@ def build_validation_spec(
             )
         )
 
+    # Configure deps sync
+    deps_config = DepsConfig(
+        skip_if_unchanged=True,
+        force_sync=force_sync,
+    )
+
     # Configure coverage
     coverage_enabled = "coverage" not in disable and not skip_tests
     coverage_config = CoverageConfig(
@@ -364,6 +387,7 @@ def build_validation_spec(
         require_clean_git=True,
         require_pytest_for_code_changes=True,
         allow_lint_only_for_non_code=lint_only_for_docs,
+        deps=deps_config,
         coverage=coverage_config,
         e2e=e2e_config,
     )
