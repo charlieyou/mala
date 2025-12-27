@@ -69,7 +69,7 @@ npm install -g @openai/codex
 codex login
 ```
 
-Codex review can be disabled with `--no-codex-review`.
+Codex review can be disabled with `--disable-validations=codex-review`.
 
 ### Creating Issues Correctly
 
@@ -173,7 +173,7 @@ mala (Python Orchestrator)
 5. **On file conflict**: Agent polls every 1s for lock (up to 60s timeout), returns BLOCKED if unavailable
 6. **Quality gate**: After agent completes, orchestrator verifies commit exists and validation commands ran
 7. **Same-session re-entry**: If gate fails, orchestrator resumes the SAME Claude session with failure context
-8. **Codex review**: After gate passes, automated code review with fix cycle (disable with `--no-codex-review`)
+8. **Codex review**: After gate passes, automated code review with fix cycle (disable with `--disable-validations=codex-review`)
 9. **On success**: Orchestrator closes the issue via `bd close`
 10. **On failure**: After retries exhausted, orchestrator marks issue with `needs-followup` label and records log path in notes
 
@@ -183,7 +183,7 @@ The orchestrator handles epics as follows:
 
 - **Epics are skipped**: Issues with `issue_type: "epic"` are never assigned to agents
 - **Parent-child is non-blocking**: Use `bd dep add <child> <epic> --type parent-child` to link tasks to epics without blocking
-- **Auto-close**: After each run, `bd epic close-eligible` is called to auto-close epics where all children are complete
+- **Immediate auto-close**: Epics are closed immediately after each child completes (not deferred to end of run)
 
 **Workflow:**
 ```bash
@@ -214,19 +214,30 @@ Each spawned agent follows this workflow:
 
 Note: Agents do NOT close issues directly. The orchestrator closes issues only after the quality gate (and optional Codex review) passes.
 
+### Resolution Markers
+
+Agents can signal non-implementation resolutions by printing these markers:
+
+| Marker | Meaning | Outcome |
+|--------|---------|---------|
+| `ISSUE_NO_CHANGE` | Issue requires no code changes (already fixed, docs-only, etc.) | Orchestrator closes issue without requiring commit |
+| `ISSUE_OBSOLETE` | Issue is no longer relevant (superseded, invalid, etc.) | Orchestrator closes issue without requiring commit |
+
+These markers allow agents to handle issues that don't need implementation without failing the quality gate.
+
 ## Quality Gate
 
 After an agent completes an issue, the orchestrator runs a quality gate that verifies:
 
 1. **Commit exists**: A git commit with `bd-<issue_id>` in the message, created during the current run (stale commits from previous runs are rejected via baseline timestamp)
 2. **Validation evidence**: The agent ran ALL required checks (parsed from JSONL logs):
-   - `uv sync` - dependency installation
+   - `uv sync` - dependency installation (skipped if `pyproject.toml`/`uv.lock` unchanged)
    - `pytest` - tests
    - `ruff check` - linting
    - `ruff format` - formatting
    - `ty check` - type checking
 
-All five validation commands must run for the gate to pass. Partial validation (e.g., only tests) is rejected.
+All validation commands must run for the gate to pass. Partial validation (e.g., only tests) is rejected. The required commands are spec-driven via `ValidationSpec`.
 
 ### Same-Session Re-entry
 
@@ -252,7 +263,7 @@ Codex review is enabled by default. After the deterministic gate passes:
    - Instructions to fix errors and re-run validations
 5. **Re-gating**: After fixes, runs both deterministic gate AND Codex review again
 
-Review retries are capped at `max_review_retries` (default: 5). Use `--no-codex-review` to disable.
+Review retries are capped at `max_review_retries` (default: 5). Use `--disable-validations=codex-review` to disable.
 
 ### Failure Handling
 
@@ -386,9 +397,10 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
 | `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
 | `--max-review-retries` | 5 | Maximum Codex review retry attempts per issue |
-| `--codex-review` | enabled | Automated Codex code review after gate passes |
-| `--no-codex-review` | - | Disable Codex review |
-| `--verbose`, `-v` | false | Enable verbose output with full tool arguments |
+| `--disable-validations` | - | Comma-separated: `post-validate`, `run-level-validate`, `slow-tests`, `coverage`, `e2e`, `codex-review`, `followup-on-run-validate-fail` |
+| `--coverage-threshold` | 85.0 | Minimum coverage percentage (0-100) |
+| `--wip` | false | Prioritize in_progress issues before open issues |
+| `--verbose/-q` | verbose | Verbose shows full tool args; quiet (`-q`) shows single line per tool call |
 
 ### Global Configuration
 
@@ -445,15 +457,19 @@ Check log status with:
 mala status    # Shows recent logs and their timestamps
 ```
 
-### Log Truncation
+### Output Verbosity
 
-By default, log output is truncated for readability. Use `--no-truncate` to see full output:
+mala supports three output modes controlled by `--verbose/-q`:
+
+| Mode | Flag | Description |
+|------|------|-------------|
+| **Verbose** | `--verbose` (default) | Full tool arguments in key=value format |
+| **Quiet** | `-q` | Single line per tool call (tool name + abbreviated args) |
 
 ```bash
-mala run --no-truncate /path/to/repo    # Full tool arguments and summaries
+mala run /path/to/repo          # Verbose output (default)
+mala run -q /path/to/repo       # Quiet mode - single line per tool
 ```
-
-Tool calls display abbreviated `key=value` pairs by default, or pretty-printed JSON with `--no-truncate`.
 
 ## Terminal Output
 
