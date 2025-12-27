@@ -234,20 +234,22 @@ class BeadsClient:
         try:
             issues = json.loads(result.stdout)
 
-            # bd ready doesn't include in_progress issues (bug), fetch them separately
-            wip_result = await self._run_subprocess_async(
-                ["bd", "list", "--status", "in_progress", "--json"]
-            )
-            if wip_result.returncode == 0:
-                try:
-                    wip_issues = json.loads(wip_result.stdout)
-                    # Filter to unblocked WIP issues not already in ready list
-                    ready_ids = {i["id"] for i in issues}
-                    for wip in wip_issues:
-                        if wip["id"] not in ready_ids and wip.get("blocked_by") is None:
-                            issues.append(wip)
-                except json.JSONDecodeError:
-                    pass
+            # Only include in_progress issues when --wip flag is set
+            if prioritize_wip:
+                # bd ready doesn't include in_progress issues, fetch them separately
+                wip_result = await self._run_subprocess_async(
+                    ["bd", "list", "--status", "in_progress", "--json"]
+                )
+                if wip_result.returncode == 0:
+                    try:
+                        wip_issues = json.loads(wip_result.stdout)
+                        # Filter to unblocked WIP issues not already in ready list
+                        ready_ids = {i["id"] for i in issues}
+                        for wip in wip_issues:
+                            if wip["id"] not in ready_ids and wip.get("blocked_by") is None:
+                                issues.append(wip)
+                    except json.JSONDecodeError:
+                        pass
 
             ready_issue_ids = {i["id"] for i in issues}
 
