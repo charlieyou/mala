@@ -46,6 +46,27 @@ def make_subprocess_result(
     )
 
 
+def make_ready_mock(ready_json: str) -> AsyncMock:
+    """Create a mock for get_ready_async that handles both bd ready and bd list calls.
+
+    The get_ready_async method now makes two subprocess calls:
+    1. bd ready --json (returns ready issues)
+    2. bd list --status in_progress --json (returns WIP issues to merge in)
+
+    This helper creates a mock that returns ready_json for bd ready
+    and an empty list for bd list --status in_progress.
+    """
+
+    async def mock_run(cmd: list[str]) -> subprocess.CompletedProcess:
+        if cmd == ["bd", "ready", "--json"]:
+            return make_subprocess_result(stdout=ready_json)
+        elif cmd == ["bd", "list", "--status", "in_progress", "--json"]:
+            return make_subprocess_result(stdout="[]")
+        return make_subprocess_result(returncode=1)
+
+    return AsyncMock(side_effect=mock_run)
+
+
 class TestPromptTemplate:
     """Test implementer prompt template validity."""
 
@@ -80,8 +101,7 @@ class TestGetReadyIssuesAsync:
         with patch.object(
             orchestrator.beads,
             "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout=issues_json),
+            make_ready_mock(issues_json),
         ):
             result = await orchestrator.beads.get_ready_async()
 
@@ -100,8 +120,7 @@ class TestGetReadyIssuesAsync:
         with patch.object(
             orchestrator.beads,
             "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout=issues_json),
+            make_ready_mock(issues_json),
         ):
             result = await orchestrator.beads.get_ready_async()
 
@@ -123,8 +142,7 @@ class TestGetReadyIssuesAsync:
         with patch.object(
             orchestrator.beads,
             "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout=issues_json),
+            make_ready_mock(issues_json),
         ):
             result = await orchestrator.beads.get_ready_async(failed_set)
 
@@ -167,7 +185,7 @@ class TestGetReadyIssuesAsync:
     async def test_handles_missing_priority(
         self, orchestrator: MalaOrchestrator
     ) -> None:
-        """Issues without priority should be sorted last (priority 999)."""
+        """Issues without priority should be treated as P0 (highest priority)."""
         issues_json = json.dumps(
             [
                 {"id": "no-prio", "issue_type": "task"},
@@ -177,12 +195,12 @@ class TestGetReadyIssuesAsync:
         with patch.object(
             orchestrator.beads,
             "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout=issues_json),
+            make_ready_mock(issues_json),
         ):
             result = await orchestrator.beads.get_ready_async()
 
-        assert result == ["prio-1", "no-prio"]
+        # Issues without priority default to P0 (0) to match bd CLI behavior
+        assert result == ["no-prio", "prio-1"]
 
     @pytest.mark.asyncio
     async def test_suppresses_warning_for_only_ids_already_processed(
@@ -195,8 +213,7 @@ class TestGetReadyIssuesAsync:
         with patch.object(
             beads,
             "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout=issues_json),
+            make_ready_mock(issues_json),
         ):
             result = await beads.get_ready_async(
                 only_ids={"issue-1"},
@@ -713,8 +730,7 @@ class TestEpicFilterAsync:
         with patch.object(
             orchestrator.beads,
             "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout=ready_json),
+            make_ready_mock(ready_json),
         ):
             result = await orchestrator.beads.get_ready_async()
 

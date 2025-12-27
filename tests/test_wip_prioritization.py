@@ -166,6 +166,78 @@ class TestPrioritizeWipFlag:
         assert result == ["open-1", "wip-1"]
 
 
+class TestWipFetchWorkaround:
+    """Test that in_progress issues are fetched separately from bd ready."""
+
+    @pytest.mark.asyncio
+    async def test_fetches_wip_issues_separately(self, tmp_path: Path) -> None:
+        """in_progress issues should be fetched via bd list when not in bd ready."""
+        beads = BeadsClient(tmp_path)
+
+        # bd ready returns only open issues (simulating the bd bug)
+        ready_json = json.dumps(
+            [{"id": "open-1", "priority": 1, "status": "open", "issue_type": "task"}]
+        )
+        # bd list --status in_progress returns WIP issues
+        wip_json = json.dumps(
+            [
+                {
+                    "id": "wip-1",
+                    "priority": 2,
+                    "status": "in_progress",
+                    "issue_type": "task",
+                    "blocked_by": None,
+                }
+            ]
+        )
+
+        async def mock_subprocess(cmd: list[str]) -> object:
+            if cmd == ["bd", "ready", "--json"]:
+                return make_subprocess_result(stdout=ready_json)
+            elif cmd == ["bd", "list", "--status", "in_progress", "--json"]:
+                return make_subprocess_result(stdout=wip_json)
+            return make_subprocess_result(returncode=1)
+
+        with patch.object(beads, "_run_subprocess_async", side_effect=mock_subprocess):
+            result = await beads.get_ready_async(prioritize_wip=True)
+
+        # WIP issue should be included and come first
+        assert result == ["wip-1", "open-1"]
+
+    @pytest.mark.asyncio
+    async def test_excludes_blocked_wip_issues(self, tmp_path: Path) -> None:
+        """Blocked in_progress issues should not be included."""
+        beads = BeadsClient(tmp_path)
+
+        ready_json = json.dumps(
+            [{"id": "open-1", "priority": 1, "status": "open", "issue_type": "task"}]
+        )
+        wip_json = json.dumps(
+            [
+                {
+                    "id": "wip-blocked",
+                    "priority": 2,
+                    "status": "in_progress",
+                    "issue_type": "task",
+                    "blocked_by": ["some-blocker"],
+                }
+            ]
+        )
+
+        async def mock_subprocess(cmd: list[str]) -> object:
+            if cmd == ["bd", "ready", "--json"]:
+                return make_subprocess_result(stdout=ready_json)
+            elif cmd == ["bd", "list", "--status", "in_progress", "--json"]:
+                return make_subprocess_result(stdout=wip_json)
+            return make_subprocess_result(returncode=1)
+
+        with patch.object(beads, "_run_subprocess_async", side_effect=mock_subprocess):
+            result = await beads.get_ready_async(prioritize_wip=True)
+
+        # Blocked WIP issue should NOT be included
+        assert result == ["open-1"]
+
+
 class TestOrchestratorPrioritizeWip:
     """Test orchestrator stores and uses prioritize_wip flag."""
 
