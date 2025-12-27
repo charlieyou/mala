@@ -1,5 +1,5 @@
 from types import TracebackType
-from typing import Never, Self
+from typing import Any, Never, Self
 
 import pytest
 
@@ -18,7 +18,7 @@ class DummySpan:
     def __init__(self) -> None:
         self.entered = False
         self.exited = False
-        self.logged = None
+        self.logged: dict[str, Any] | None = None
 
     def __enter__(self) -> Self:
         self.entered = True
@@ -34,7 +34,7 @@ class DummySpan:
         return None
 
     def log(self, **kwargs: object) -> None:
-        self.logged = kwargs
+        self.logged = dict(kwargs)
 
 
 def test_is_braintrust_enabled_false_without_key(

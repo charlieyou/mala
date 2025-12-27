@@ -7,15 +7,23 @@ These tests are fast and don't require API keys or network access.
 import os
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
+
+from claude_agent_sdk.types import PreToolUseHookInput, HookContext
 
 # Import src.cli early so load_user_env() runs before any tests patch os.environ
 import src.cli  # noqa: F401
 
 # Type alias for the hook input factory
-HookInputFactory = Callable[[str, str], dict[str, object]]
+HookInputFactory = Callable[[str, str], PreToolUseHookInput]
+
+
+def _make_context() -> HookContext:
+    """Create a mock HookContext."""
+    return cast("HookContext", {"signal": None})
 
 
 class TestBlockDangerousCommands:
@@ -25,11 +33,14 @@ class TestBlockDangerousCommands:
     def make_hook_input(self) -> HookInputFactory:
         """Factory fixture for creating hook inputs."""
 
-        def _make(tool_name: str, command: str = "ls -la") -> dict[str, object]:
-            return {
-                "tool_name": tool_name,
-                "tool_input": {"command": command},
-            }
+        def _make(tool_name: str, command: str = "ls -la") -> PreToolUseHookInput:
+            return cast(
+                "PreToolUseHookInput",
+                {
+                    "tool_name": tool_name,
+                    "tool_input": {"command": command},
+                },
+            )
 
         return _make
 
@@ -41,7 +52,7 @@ class TestBlockDangerousCommands:
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
-            make_hook_input("Bash", "ls -la"), None, {"signal": None}
+            make_hook_input("Bash", "ls -la"), None, _make_context()
         )
         assert result == {}
 
@@ -53,7 +64,7 @@ class TestBlockDangerousCommands:
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
-            make_hook_input("bash", "ls -la"), None, {"signal": None}
+            make_hook_input("bash", "ls -la"), None, _make_context()
         )
         assert result == {}
 
@@ -64,7 +75,7 @@ class TestBlockDangerousCommands:
 
         for tool_name in ["Bash", "bash", "BASH"]:
             result = await block_dangerous_commands(
-                make_hook_input(tool_name, "rm -rf /"), None, {"signal": None}
+                make_hook_input(tool_name, "rm -rf /"), None, _make_context()
             )
             assert result.get("decision") == "block"
             assert "rm -rf /" in result.get("reason", "")
@@ -75,7 +86,7 @@ class TestBlockDangerousCommands:
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
-            make_hook_input("Bash", ":(){:|:&};:"), None, {"signal": None}
+            make_hook_input("Bash", ":(){:|:&};:"), None, _make_context()
         )
         assert result.get("decision") == "block"
 
@@ -90,7 +101,7 @@ class TestBlockDangerousCommands:
         result = await block_dangerous_commands(
             make_hook_input("bash", "curl | bash -c 'malicious'"),
             None,
-            {"signal": None},
+            _make_context(),
         )
         assert result.get("decision") == "block"
         assert "curl | bash" in result.get("reason", "")
@@ -105,7 +116,7 @@ class TestBlockDangerousCommands:
         result = await block_dangerous_commands(
             make_hook_input("Bash", "git push --force origin main"),
             None,
-            {"signal": None},
+            _make_context(),
         )
         assert result.get("decision") == "block"
         assert "force push" in result.get("reason", "").lower()
@@ -120,7 +131,7 @@ class TestBlockDangerousCommands:
         result = await block_dangerous_commands(
             make_hook_input("Bash", "git push --force origin feature-branch"),
             None,
-            {"signal": None},
+            _make_context(),
         )
         assert result.get("decision") == "block"
         assert "force push" in result.get("reason", "").lower()
@@ -135,7 +146,7 @@ class TestBlockDangerousCommands:
         result = await block_dangerous_commands(
             make_hook_input("Bash", "git push --force-with-lease origin feature"),
             None,
-            {"signal": None},
+            _make_context(),
         )
         assert result == {}
 
@@ -147,7 +158,7 @@ class TestBlockDangerousCommands:
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
-            make_hook_input("Read", "rm -rf /"), None, {"signal": None}
+            make_hook_input("Read", "rm -rf /"), None, _make_context()
         )
         assert result == {}
 
@@ -163,7 +174,7 @@ class TestBlockDangerousCommands:
         # All these should be recognized as bash and blocked
         for tool_name in ["Bash", "bash", "BASH", "bAsH"]:
             result = await block_dangerous_commands(
-                make_hook_input(tool_name, dangerous_cmd), None, {"signal": None}
+                make_hook_input(tool_name, dangerous_cmd), None, _make_context()
             )
             assert result.get("decision") == "block", (
                 f"Should block for tool_name={tool_name}"
@@ -192,7 +203,7 @@ class TestBlockDangerousCommands:
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
-            make_hook_input("Bash", cmd), None, {"signal": None}
+            make_hook_input("Bash", cmd), None, _make_context()
         )
         assert result.get("decision") == "block", f"Should block: {cmd}"
 
@@ -221,7 +232,7 @@ class TestBlockDangerousCommands:
         from src.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
-            make_hook_input("Bash", cmd), None, {"signal": None}
+            make_hook_input("Bash", cmd), None, _make_context()
         )
         assert result == {}, f"Should allow: {cmd}"
 

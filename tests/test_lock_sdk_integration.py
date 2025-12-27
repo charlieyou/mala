@@ -404,7 +404,7 @@ class TestStopHookWithSDK:
             model="haiku",
             max_turns=3,
             hooks={
-                "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],
+                "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],  # type: ignore[arg-type]
             },
         )
 

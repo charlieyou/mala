@@ -1,10 +1,12 @@
 """Unit tests for PreToolUse hooks in src/hooks.py."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
+
+from claude_agent_sdk.types import PreToolUseHookInput, HookContext
 
 from src.hooks import (
     make_lock_enforcement_hook,
@@ -15,17 +17,20 @@ from src.hooks import (
 )
 
 
-def make_hook_input(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+def make_hook_input(tool_name: str, tool_input: dict[str, Any]) -> PreToolUseHookInput:
     """Create a mock PreToolUseHookInput."""
-    return {
-        "tool_name": tool_name,
-        "tool_input": tool_input,
-    }
+    return cast(
+        "PreToolUseHookInput",
+        {
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+        },
+    )
 
 
-def make_context(agent_id: str = "test-agent") -> dict[str, Any]:
+def make_context(agent_id: str = "test-agent") -> HookContext:
     """Create a mock HookContext."""
-    return {"agent_id": agent_id}
+    return cast("HookContext", {"agent_id": agent_id})
 
 
 class TestMakeLockEnforcementHook:

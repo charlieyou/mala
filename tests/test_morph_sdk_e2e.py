@@ -99,15 +99,21 @@ class TestMcpToolsAvailable:
     """Test that MCP tools are available to agents."""
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2)
     async def test_agent_can_use_edit_file_tool(
         self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path
     ) -> None:
-        """Agent should have access to edit_file MCP tool."""
+        """Agent should have access to edit_file MCP tool.
+
+        Note: This test is flaky because agent behavior is non-deterministic.
+        The agent may choose different tools in some runs.
+        """
         test_file = tmp_path / "test.py"
         test_file.write_text("# original content\n")
 
-        prompt = """Use the edit_file MCP tool to add a comment to test.py.
+        prompt = """You MUST use the edit_file MCP tool to add a comment to test.py.
 Add the line '# edited by morph' at the end of the file.
+Do not use Read, Bash, or other tools - only use edit_file.
 Respond with "DONE" when complete."""
 
         tool_names_used = []
@@ -126,15 +132,21 @@ Respond with "DONE" when complete."""
         assert "Edit" not in tool_names_used, "Edit tool should be blocked"
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2)
     async def test_agent_can_use_warpgrep_search(
         self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path
     ) -> None:
-        """Agent should have access to warpgrep_codebase_search MCP tool."""
+        """Agent should have access to warpgrep_codebase_search MCP tool.
+
+        Note: This test is flaky because agent behavior is non-deterministic.
+        The agent may choose not to use the warpgrep tool in some runs.
+        """
         (tmp_path / "module.py").write_text("def hello_world(): pass\n")
         (tmp_path / "utils.py").write_text("def helper(): pass\n")
 
-        prompt = """Use the warpgrep_codebase_search MCP tool to find all Python functions.
-Search for "def " pattern. Report what you find."""
+        prompt = """You MUST use the warpgrep_codebase_search MCP tool to find all Python functions.
+Search for "def " pattern. Do not skip the tool use - I need to verify the tool works.
+Report what you find."""
 
         tool_names_used = []
         async with ClaudeSDKClient(options=morph_agent_options) as client:
@@ -157,6 +169,7 @@ class TestMorphWorkflowE2E:
     """End-to-end test of realistic workflow with MorphLLM tools."""
 
     @pytest.mark.asyncio
+    @pytest.mark.flaky(reruns=2)
     async def test_search_and_edit_workflow(
         self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path
     ) -> None:

@@ -12,6 +12,7 @@ import hashlib
 import os
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,6 +20,9 @@ import pytest
 from src.orchestrator import IMPLEMENTER_PROMPT_TEMPLATE
 from src.tools.locking import make_stop_hook
 from src.tools.env import SCRIPTS_DIR
+
+if TYPE_CHECKING:
+    from claude_agent_sdk.types import HookContext, StopHookInput
 
 
 def _canonicalize_path(filepath: str, cwd: str) -> str:
@@ -261,17 +265,20 @@ class TestStopHookIntegration:
         stop_hook = make_stop_hook(agent_id)
 
         # Create mock hook input
-        hook_input = {
-            "session_id": "test-session",
-            "transcript_path": "/tmp/transcript",
-            "cwd": "/tmp",
-            "hook_event_name": "Stop",
-            "stop_hook_active": True,
-        }
+        hook_input = cast(
+            "StopHookInput",
+            {
+                "session_id": "test-session",
+                "transcript_path": "/tmp/transcript",
+                "cwd": "/tmp",
+                "hook_event_name": "Stop",
+                "stop_hook_active": True,
+            },
+        )
 
         # Patch LOCK_DIR to use our test directory
         with patch("src.tools.locking.LOCK_DIR", lock_env):
-            await stop_hook(hook_input, None, MagicMock())
+            await stop_hook(hook_input, None, cast("HookContext", MagicMock()))
 
         # Verify locks are cleaned up
         remaining = list(lock_env.glob("*.lock"))
@@ -305,15 +312,18 @@ class TestStopHookIntegration:
         stop_hook = make_stop_hook(our_agent)
         with patch("src.tools.locking.LOCK_DIR", lock_env):
             await stop_hook(
-                {
-                    "session_id": "test",
-                    "transcript_path": "/tmp/t",
-                    "cwd": "/tmp",
-                    "hook_event_name": "Stop",
-                    "stop_hook_active": True,
-                },
+                cast(
+                    "StopHookInput",
+                    {
+                        "session_id": "test",
+                        "transcript_path": "/tmp/t",
+                        "cwd": "/tmp",
+                        "hook_event_name": "Stop",
+                        "stop_hook_active": True,
+                    },
+                ),
                 None,
-                MagicMock(),
+                cast("HookContext", MagicMock()),
             )
 
         # Our lock should be gone, other's should remain (using hash-based naming)

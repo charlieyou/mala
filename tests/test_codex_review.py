@@ -346,7 +346,7 @@ class TestRunCodexReview:
         # First return invalid JSON, second returns valid
         call_count = 0
 
-        async def mock_subprocess(*args: object, **kwargs: object) -> AsyncMock:
+        async def mock_subprocess(*args: str, **kwargs: object) -> AsyncMock:
             nonlocal call_count
             call_count += 1
             mock_proc = AsyncMock()
@@ -379,7 +379,7 @@ class TestRunCodexReview:
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
 
-        async def mock_subprocess(*args: object, **kwargs: object) -> AsyncMock:
+        async def mock_subprocess(*args: str, **kwargs: object) -> AsyncMock:
             mock_proc = AsyncMock()
             mock_proc.returncode = 0
             mock_proc.communicate.return_value = (b"", b"")
