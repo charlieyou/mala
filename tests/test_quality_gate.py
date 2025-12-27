@@ -2745,4 +2745,5 @@ class TestAlreadyCompleteResolution:
 
         # Should pass without any validation evidence
         assert result.passed is True
+        assert result.resolution is not None
         assert result.resolution.outcome == ResolutionOutcome.ALREADY_COMPLETE
