@@ -420,6 +420,50 @@ class TestBuildValidationSpec:
             elif "pytest" in cmd.name:
                 assert cmd.kind == CommandKind.TEST
 
+    def test_pytest_includes_coverage_flags_when_coverage_enabled(self) -> None:
+        """When coverage is enabled, pytest command includes --cov flags."""
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
+        pytest_cmd = next((cmd for cmd in spec.commands if cmd.name == "pytest"), None)
+        assert pytest_cmd is not None
+        assert spec.coverage.enabled is True
+
+        # The pytest command should include coverage flags
+        cmd_str = " ".join(pytest_cmd.command)
+        assert "--cov=src" in cmd_str
+        assert "--cov-report=xml" in cmd_str
+        assert "--cov-branch" in cmd_str
+        assert f"--cov-fail-under={spec.coverage.min_percent}" in cmd_str
+
+    def test_pytest_excludes_coverage_flags_when_coverage_disabled(self) -> None:
+        """When coverage is disabled, pytest command should not include --cov flags."""
+        spec = build_validation_spec(
+            scope=ValidationScope.PER_ISSUE,
+            disable_validations={"coverage"},
+        )
+
+        pytest_cmd = next((cmd for cmd in spec.commands if cmd.name == "pytest"), None)
+        assert pytest_cmd is not None
+        assert spec.coverage.enabled is False
+
+        # The pytest command should NOT include coverage flags
+        cmd_str = " ".join(pytest_cmd.command)
+        assert "--cov" not in cmd_str
+        assert "--cov-report" not in cmd_str
+
+    def test_coverage_threshold_in_pytest_command(self) -> None:
+        """Coverage threshold is correctly passed to pytest --cov-fail-under."""
+        spec = build_validation_spec(
+            scope=ValidationScope.PER_ISSUE,
+            coverage_threshold=92.5,
+        )
+
+        pytest_cmd = next((cmd for cmd in spec.commands if cmd.name == "pytest"), None)
+        assert pytest_cmd is not None
+
+        cmd_str = " ".join(pytest_cmd.command)
+        assert "--cov-fail-under=92.5" in cmd_str
+
 
 class TestClassifyChangesMultiple:
     """Test classification with multiple changed files."""

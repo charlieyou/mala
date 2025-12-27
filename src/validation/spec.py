@@ -291,6 +291,9 @@ def build_validation_spec(
     # Determine if we should skip tests
     skip_tests = "post-validate" in disable
 
+    # Determine if coverage is enabled early so we can use it for pytest flags
+    coverage_enabled = "coverage" not in disable and not skip_tests
+
     # Build commands list
     commands: list[ValidationCommand] = []
 
@@ -338,6 +341,17 @@ def build_validation_spec(
     if not skip_tests:
         pytest_cmd = ["uv", "run", "pytest"]
 
+        # Add coverage flags when coverage is enabled
+        if coverage_enabled:
+            pytest_cmd.extend(
+                [
+                    "--cov=src",
+                    "--cov-report=xml",
+                    "--cov-branch",
+                    f"--cov-fail-under={coverage_threshold}",
+                ]
+            )
+
         # Add slow tests unless disabled
         if "slow-tests" not in disable:
             pytest_cmd.extend(["-m", "slow or not slow"])
@@ -358,7 +372,6 @@ def build_validation_spec(
     )
 
     # Configure coverage
-    coverage_enabled = "coverage" not in disable and not skip_tests
     coverage_config = CoverageConfig(
         enabled=coverage_enabled,
         min_percent=coverage_threshold,
