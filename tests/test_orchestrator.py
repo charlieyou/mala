@@ -3025,3 +3025,116 @@ class TestQualityGateAsync:
         )
         assert result.passed is True
         assert offset == 0
+
+
+class TestFailedRunQualityGateEvidence:
+    """Test that failed runs record quality_gate evidence in IssueRun metadata.
+
+    When a run fails (result.success=False), the orchestrator should still
+    parse and record validation evidence and failure reasons in the quality_gate
+    field of IssueRun. This enables troubleshooting and follow-up triage.
+    """
+
+    @pytest.mark.asyncio
+    async def test_failed_run_records_quality_gate_evidence(
+        self, tmp_path: Path
+    ) -> None:
+        """Failed run should populate quality_gate with evidence and failure reasons."""
+        from src.logging.run_metadata import IssueRun, RunMetadata
+
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        # Track recorded issues
+        recorded_issues: list[IssueRun] = []
+        original_record = RunMetadata.record_issue
+
+        def capture_record(self: RunMetadata, issue: IssueRun) -> None:
+            recorded_issues.append(issue)
+            original_record(self, issue)
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            # Create log file with validation evidence
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_content = json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Bash",
+                                "input": {"command": "uv run pytest"},
+                            }
+                        ]
+                    },
+                }
+            )
+            log_path.write_text(log_content + "\n")
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=False,  # Run failed
+                summary="Quality gate failed: No commit with bd-issue-fail found; Missing ruff check",
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-fail"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(orchestrator.beads, "close_async", return_value=False),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch.object(
+                orchestrator.beads, "close_eligible_epics_async", return_value=False
+            ),
+            patch.object(
+                orchestrator.beads, "mark_needs_followup_async", return_value=True
+            ),
+            patch.object(RunMetadata, "record_issue", capture_record),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            # Mock subprocess to return no commit found
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            await orchestrator.run()
+
+        # Verify an issue was recorded
+        assert len(recorded_issues) == 1
+        issue_run = recorded_issues[0]
+        assert issue_run.issue_id == "issue-fail"
+        assert issue_run.status == "failed"
+
+        # CRITICAL: quality_gate should be populated for failed runs
+        assert issue_run.quality_gate is not None, (
+            "quality_gate should be populated for failed runs with logs"
+        )
+        assert issue_run.quality_gate.passed is False
+        # Evidence should be parsed from the log
+        assert "pytest_ran" in issue_run.quality_gate.evidence
+        # Failure reasons should be extracted from summary
+        assert len(issue_run.quality_gate.failure_reasons) > 0
