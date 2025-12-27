@@ -1628,7 +1628,11 @@ class TestSubprocessTerminationOnTimeout:
 
 
 class TestAgentEnvInheritance:
-    """Test that agent environment inherits from os.environ."""
+    """Test that agent environment inherits from os.environ.
+
+    Verifies mala-w8w.1: Agent tool calls must see inherited env vars
+    plus lock overrides (PATH/LOCK_DIR/AGENT_ID/REPO_NAMESPACE).
+    """
 
     @pytest.mark.asyncio
     async def test_agent_env_includes_os_environ(self, tmp_path: Path) -> None:
@@ -1703,7 +1707,11 @@ class TestAgentEnvInheritance:
 
 
 class TestLockDirNestedCreation:
-    """Test that LOCK_DIR creation handles nested paths."""
+    """Test that LOCK_DIR creation handles nested paths.
+
+    Verifies mala-w8w.1: Orchestrator startup must succeed when MALA_LOCK_DIR
+    points to a nested, non-existent directory (mkdir uses parents=True).
+    """
 
     @pytest.mark.asyncio
     async def test_lock_dir_created_with_parents(self, tmp_path: Path) -> None:
@@ -2101,6 +2109,12 @@ class TestRunLevelValidation:
         async def mock_claim_async(issue_id: str) -> bool:
             return True
 
+        async def mock_commit_issues_async() -> bool:
+            return True
+
+        async def mock_close_eligible_epics_async() -> bool:
+            return True
+
         with (
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
@@ -2121,7 +2135,6 @@ class TestRunLevelValidation:
         ):
             success_count, _total = await orchestrator.run()
 
-        # Should return 0 successes out of 1 total
         assert success_count == 0
         assert _total == 1
 
@@ -2144,6 +2157,7 @@ class TestRunLevelValidation:
             return True
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
+            # Populate log path so quality gate runs
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
             orchestrator.session_log_paths[issue_id] = log_path
@@ -2170,6 +2184,12 @@ class TestRunLevelValidation:
             return []
 
         async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        async def mock_commit_issues_async() -> bool:
+            return True
+
+        async def mock_close_eligible_epics_async() -> bool:
             return True
 
         with (
@@ -2245,6 +2265,12 @@ class TestRunLevelValidation:
             return []
 
         async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        async def mock_commit_issues_async() -> bool:
+            return True
+
+        async def mock_close_eligible_epics_async() -> bool:
             return True
 
         with (
