@@ -221,7 +221,6 @@ class TestValidationSpec:
         assert spec.commands == []
         assert spec.require_clean_git is True  # default
         assert spec.require_pytest_for_code_changes is True  # default
-        assert spec.allow_lint_only_for_non_code is False  # default
         assert spec.scope == ValidationScope.PER_ISSUE
         assert spec.coverage is not None
         assert spec.e2e is not None
@@ -236,7 +235,6 @@ class TestValidationSpec:
             commands=[cmd],
             require_clean_git=True,
             require_pytest_for_code_changes=True,
-            allow_lint_only_for_non_code=True,
             coverage=CoverageConfig(enabled=True, min_percent=90.0),
             e2e=E2EConfig(enabled=False),
             scope=ValidationScope.RUN_LEVEL,
@@ -396,31 +394,6 @@ class TestBuildValidationSpec:
             coverage_threshold=90.0,
         )
         assert spec.coverage.min_percent == 90.0
-
-    def test_lint_only_for_docs_with_docs_changes(self) -> None:
-        """--lint-only-for-docs skips tests for docs-only changes."""
-        spec = build_validation_spec(
-            scope=ValidationScope.PER_ISSUE,
-            lint_only_for_docs=True,
-            changed_files=["README.md", "docs/guide.md"],
-        )
-        # Should skip test commands for docs-only changes
-        test_cmds = spec.commands_by_kind(CommandKind.TEST)
-        assert len(test_cmds) == 0
-        # But lint commands should still be present
-        lint_cmds = spec.commands_by_kind(CommandKind.LINT)
-        assert len(lint_cmds) > 0
-
-    def test_lint_only_for_docs_with_code_changes(self) -> None:
-        """--lint-only-for-docs still runs tests if code changed."""
-        spec = build_validation_spec(
-            scope=ValidationScope.PER_ISSUE,
-            lint_only_for_docs=True,
-            changed_files=["README.md", "src/app.py"],
-        )
-        # Code changes mean tests must run
-        test_cmds = spec.commands_by_kind(CommandKind.TEST)
-        assert len(test_cmds) > 0
 
     def test_multiple_disable_validations(self) -> None:
         """Multiple comma-separated disable values work."""

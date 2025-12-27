@@ -346,9 +346,9 @@ Changes are classified to determine validation requirements:
 | Category | Paths/Files | Validation |
 |----------|-------------|------------|
 | **Code** | `src/**`, `tests/**`, `commands/**`, `.py`, `.sh`, `.toml` | Full suite (tests + coverage) |
-| **Docs** | `.md`, `.rst`, `.txt` outside code paths | Lint only (optional) |
+| **Docs** | `.md`, `.rst`, `.txt` outside code paths | Full suite (tests still run) |
 
-Use `--lint-only-for-docs` to skip tests for docs-only changes.
+Note: For docs-only issues that need no changes, agents can use `ISSUE_NO_CHANGE` to skip validation entirely.
 
 ### Worktree Validation
 

@@ -178,7 +178,6 @@ class ValidationSpec:
         commands: List of validation commands to run.
         require_clean_git: Whether git working tree must be clean.
         require_pytest_for_code_changes: If code changed, pytest is required.
-        allow_lint_only_for_non_code: Allow skipping tests for non-code changes.
         deps: Dependency sync configuration.
         coverage: Coverage configuration.
         e2e: E2E configuration.
@@ -189,7 +188,6 @@ class ValidationSpec:
     scope: ValidationScope
     require_clean_git: bool = True
     require_pytest_for_code_changes: bool = True
-    allow_lint_only_for_non_code: bool = False
     deps: DepsConfig = field(default_factory=DepsConfig)
     coverage: CoverageConfig = field(default_factory=CoverageConfig)
     e2e: E2EConfig = field(default_factory=E2EConfig)
@@ -258,17 +256,10 @@ def classify_change(file_path: str) -> Literal["code", "docs"]:
     return "docs"
 
 
-def _has_code_changes(changed_files: list[str]) -> bool:
-    """Check if any changed file is classified as code."""
-    return any(classify_change(f) == "code" for f in changed_files)
-
-
 def build_validation_spec(
     scope: ValidationScope,
     disable_validations: set[str] | None = None,
     coverage_threshold: float = 85.0,
-    lint_only_for_docs: bool = False,
-    changed_files: list[str] | None = None,
     force_sync: bool = False,
 ) -> ValidationSpec:
     """Build a ValidationSpec from CLI inputs.
@@ -290,26 +281,15 @@ def build_validation_spec(
         scope: Whether this is per-issue or run-level validation.
         disable_validations: Set of validation types to disable.
         coverage_threshold: Minimum coverage percentage.
-        lint_only_for_docs: If True, skip tests for docs-only changes.
-        changed_files: List of changed files (for docs classification).
         force_sync: If True, always run uv sync regardless of state.
 
     Returns:
         A ValidationSpec configured according to the inputs.
     """
     disable = disable_validations or set()
-    changed = changed_files or []
-
-    # Check if we have code changes
-    has_code = _has_code_changes(changed) if changed else True  # Assume code if unknown
 
     # Determine if we should skip tests
-    skip_tests = False
-    if "post-validate" in disable:
-        skip_tests = True
-    elif lint_only_for_docs and changed and not has_code:
-        # Docs-only changes with --lint-only-for-docs can skip tests
-        skip_tests = True
+    skip_tests = "post-validate" in disable
 
     # Build commands list
     commands: list[ValidationCommand] = []
@@ -400,7 +380,6 @@ def build_validation_spec(
         scope=scope,
         require_clean_git=True,
         require_pytest_for_code_changes=True,
-        allow_lint_only_for_non_code=lint_only_for_docs,
         deps=deps_config,
         coverage=coverage_config,
         e2e=e2e_config,
