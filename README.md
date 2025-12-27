@@ -6,6 +6,25 @@ A multi-agent system for processing beads issues in parallel using the Claude Ag
 
 The name also derives from Sanskrit, where *mala* means "garland" or "string of beads" - fitting for a system that orchestrates beads issues in a continuous loop, like counting prayer beads.
 
+## Why Mala?
+
+**The core insight: agents degrade as context grows.**
+
+LLM agents become unreliable as their context window fills up. Early in a session, an agent follows instructions precisely, catches edge cases, and produces clean code. But as context accumulates—tool outputs, file contents, previous attempts—performance degrades. The agent starts missing requirements, making sloppy mistakes, or getting stuck in loops.
+
+This creates a fundamental tension: complex features require sustained work, but agents can't sustain quality over long sessions.
+
+**The solution: small tasks, fresh context, automated verification.**
+
+Mala addresses this by:
+
+1. **Breaking work into atomic issues** — Each issue is sized to complete within ~100k tokens, small enough that agents finish before context degradation kicks in
+2. **Starting each agent with cleared context** — Every issue gets a fresh agent session with only the issue description and codebase, no accumulated baggage
+3. **Running automated checks after completion** — Linting, tests, type checking, and code review catch mistakes before they compound
+4. **Looping until done** — The orchestrator continuously spawns agents for ready issues, with quality gates ensuring each piece of work is solid before moving on
+
+This architecture turns unreliable long-context agents into reliable short-context workers, each doing one thing well before handing off to the next.
+
 ## Prerequisites
 
 ### Beads (`bd`)
@@ -20,6 +39,26 @@ uv tool install beads
 cd /path/to/repo
 bd init
 ```
+
+### Claude Code
+
+Mala uses the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI as the agent runtime. Install it via npm:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+Requires `ANTHROPIC_API_KEY` in `~/.config/mala/.env`.
+
+### Codex
+
+[Codex](https://github.com/openai/codex) is used for automated code review after agents complete their work. Install it via npm:
+
+```bash
+npm install -g @openai/codex
+```
+
+Requires `OPENAI_API_KEY` in your environment. Codex review can be disabled with `--no-codex-review`.
 
 ### Creating Issues Correctly
 
