@@ -45,6 +45,7 @@ from .tools.locking import (
 )
 from .validation.runner import ValidationRunner, ValidationConfig
 from .validation.spec import (
+    IssueResolution,
     ValidationContext,
     ValidationScope,
     build_validation_spec,
@@ -142,6 +143,7 @@ class IssueResult:
     session_id: str | None = None  # Claude SDK session ID
     gate_attempts: int = 1  # Number of gate retry attempts
     review_attempts: int = 0  # Number of Codex review attempts
+    resolution: IssueResolution | None = None  # Resolution outcome if using markers
 
 
 @dataclass
@@ -624,6 +626,7 @@ class MalaOrchestrator:
             session_id=claude_session_id,
             gate_attempts=retry_state.attempt,
             review_attempts=retry_state.review_attempt,
+            resolution=gate_result.resolution if gate_result else None,
         )
 
     async def spawn_agent(self, issue_id: str) -> bool:
@@ -1009,6 +1012,7 @@ class MalaOrchestrator:
                                 gate_attempts=result.gate_attempts,
                                 review_attempts=result.review_attempts,
                                 validation=validation_result,
+                                resolution=result.resolution,
                             )
                             run_metadata.record_issue(issue_run)
 

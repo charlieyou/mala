@@ -1487,6 +1487,7 @@ class TestMissingLogFile:
             patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
             patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
         ):
+            # Setup tracer mock
             mock_tracer = MagicMock()
             mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
             mock_tracer.__exit__ = MagicMock(return_value=None)
@@ -1971,10 +1972,9 @@ class TestRetryExhaustion:
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
-            success_count, total = await orchestrator.run()
+            success_count, _total = await orchestrator.run()
 
         assert success_count == 0
-        assert total == 1
         assert "issue-retry-fail" in followup_calls
         assert "issue-retry-fail" in orchestrator.failed_issues
 
@@ -2263,6 +2263,11 @@ class TestRunLevelValidation:
             ),
             patch.object(
                 orchestrator.beads,
+                "close_eligible_epics_async",
+                return_value=False,
+            ),
+            patch.object(
+                orchestrator.beads,
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
@@ -2306,6 +2311,7 @@ class TestValidationResultMetadata:
             original_record(self, issue)
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
+            # Populate log path so quality gate runs
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
             orchestrator.session_log_paths[issue_id] = log_path
@@ -2476,6 +2482,277 @@ class TestValidationResultMetadata:
         assert recorded_issues[0].validation is not None
 
 
+class TestResolutionRecordingInMetadata:
+    """Test resolution outcome is recorded in IssueRun metadata.
+
+    Verifies mala-yg9.1.1: When check_with_resolution returns a resolution
+    (NO_CHANGE or OBSOLETE), it should be propagated through IssueResult
+    to IssueRun and persisted via RunMetadata.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_change_resolution_recorded_in_issue_run(
+        self, tmp_path: Path
+    ) -> None:
+        """ISSUE_NO_CHANGE resolution should be recorded in IssueRun metadata."""
+        from src.logging.run_metadata import IssueRun, RunMetadata
+        from src.validation.spec import IssueResolution, ResolutionOutcome
+
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        # Track recorded issues
+        recorded_issues: list[IssueRun] = []
+        original_record = RunMetadata.record_issue
+
+        def capture_record(self: RunMetadata, issue: IssueRun) -> None:
+            recorded_issues.append(issue)
+            original_record(self, issue)
+
+        # Create resolution that should be propagated
+        no_change_resolution = IssueResolution(
+            outcome=ResolutionOutcome.NO_CHANGE,
+            rationale="Already implemented by another agent",
+        )
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="No changes needed - already done",
+                resolution=no_change_resolution,
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-no-change"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(orchestrator.beads, "close_async", return_value=True),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch.object(
+                orchestrator.beads, "close_eligible_epics_async", return_value=False
+            ),
+            patch.object(RunMetadata, "record_issue", capture_record),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            success_count, total = await orchestrator.run()
+
+        # Verify issue was successful
+        assert success_count == 1
+        assert total == 1
+
+        # Verify resolution was recorded in IssueRun
+        assert len(recorded_issues) == 1
+        issue_run = recorded_issues[0]
+        assert issue_run.issue_id == "issue-no-change"
+        assert issue_run.resolution is not None
+        assert issue_run.resolution.outcome == ResolutionOutcome.NO_CHANGE
+        assert issue_run.resolution.rationale == "Already implemented by another agent"
+
+    @pytest.mark.asyncio
+    async def test_obsolete_resolution_recorded_in_issue_run(
+        self, tmp_path: Path
+    ) -> None:
+        """ISSUE_OBSOLETE resolution should be recorded in IssueRun metadata."""
+        from src.logging.run_metadata import IssueRun, RunMetadata
+        from src.validation.spec import IssueResolution, ResolutionOutcome
+
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        # Track recorded issues
+        recorded_issues: list[IssueRun] = []
+        original_record = RunMetadata.record_issue
+
+        def capture_record(self: RunMetadata, issue: IssueRun) -> None:
+            recorded_issues.append(issue)
+            original_record(self, issue)
+
+        # Create obsolete resolution
+        obsolete_resolution = IssueResolution(
+            outcome=ResolutionOutcome.OBSOLETE,
+            rationale="Feature removed in refactoring",
+        )
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="Issue obsolete - no longer relevant",
+                resolution=obsolete_resolution,
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-obsolete"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(orchestrator.beads, "close_async", return_value=True),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch.object(
+                orchestrator.beads, "close_eligible_epics_async", return_value=False
+            ),
+            patch.object(RunMetadata, "record_issue", capture_record),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            success_count, total = await orchestrator.run()
+
+        # Verify issue was successful
+        assert success_count == 1
+        assert total == 1
+
+        # Verify resolution was recorded in IssueRun
+        assert len(recorded_issues) == 1
+        issue_run = recorded_issues[0]
+        assert issue_run.issue_id == "issue-obsolete"
+        assert issue_run.resolution is not None
+        assert issue_run.resolution.outcome == ResolutionOutcome.OBSOLETE
+        assert issue_run.resolution.rationale == "Feature removed in refactoring"
+
+    @pytest.mark.asyncio
+    async def test_normal_success_has_no_resolution(self, tmp_path: Path) -> None:
+        """Normal success (with commit) should have no resolution marker."""
+        from src.logging.run_metadata import IssueRun, RunMetadata
+
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        # Track recorded issues
+        recorded_issues: list[IssueRun] = []
+        original_record = RunMetadata.record_issue
+
+        def capture_record(self: RunMetadata, issue: IssueRun) -> None:
+            recorded_issues.append(issue)
+            original_record(self, issue)
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            # Normal success - no resolution marker
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="Implemented feature successfully",
+                resolution=None,  # No resolution for normal commits
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-normal"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(orchestrator.beads, "close_async", return_value=True),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch.object(
+                orchestrator.beads, "close_eligible_epics_async", return_value=False
+            ),
+            patch.object(RunMetadata, "record_issue", capture_record),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch(
+                "subprocess.run",
+                return_value=make_subprocess_result(
+                    stdout="abc1234 bd-issue-normal: Implement feature\n"
+                ),
+            ),
+        ):
+            success_count, total = await orchestrator.run()
+
+        # Verify issue was successful
+        assert success_count == 1
+        assert total == 1
+
+        # Verify NO resolution in IssueRun (normal commit flow)
+        assert len(recorded_issues) == 1
+        issue_run = recorded_issues[0]
+        assert issue_run.issue_id == "issue-normal"
+        assert issue_run.resolution is None
+
+
 class TestEpicClosureAfterChildCompletion:
     """Test that epics are closed immediately after their last child completes.
 
@@ -2484,10 +2761,8 @@ class TestEpicClosureAfterChildCompletion:
     """
 
     @pytest.mark.asyncio
-    async def test_epic_closure_called_after_issue_closes(
-        self, tmp_path: Path
-    ) -> None:
-        """close_eligible_epics_async should be called after each issue closes."""
+    async def test_epic_closure_called_after_issue_closes(self, tmp_path: Path) -> None:
+        """close_eligible_epics_async should be called after each issue was closed."""
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
 
         epic_closure_calls: list[str] = []
