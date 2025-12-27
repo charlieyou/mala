@@ -63,25 +63,47 @@ REVIEW_OUTPUT_SCHEMA = {
 
 # Prompt template for code review
 CODEX_REVIEW_PROMPT = """\
-Review only the diff introduced by commit {commit_sha} (vs its parent).
-Focus on correctness, security, performance, data integrity, and missing tests.
-Ignore style/formatting or refactors unless they affect correctness.
+Review the diff introduced by commit {commit_sha} (vs its parent).
 
-Severity:
-- error: likely bug, data loss, security issue, failing tests, or behavior mismatch.
-- warning: risk, edge case, or missing test coverage.
-- info: minor improvement.
+## Issue Requirements
+
+{issue_description}
+
+## Review Focus (in priority order)
+
+### 1. Scope Completeness (MOST IMPORTANT)
+Compare the diff against the issue's scope ("In:" items) and acceptance criteria:
+- Flag as ERROR if any scope item is NOT addressed in the diff
+- Flag as ERROR if any acceptance criterion cannot be verified from the changes
+- Be specific: quote the missing scope item in the error message
+
+### 2. Code Correctness
+- Focus on bugs, security issues, data integrity, performance problems
+- Ignore style/formatting unless it affects correctness
+
+### 3. Test Coverage
+- Verify tests exist for new functionality
+- Flag missing test coverage as warning
+
+## Severity
+
+- error: MISSING SCOPE ITEM, bug, security issue, data loss, failing tests
+- warning: partial implementation, risk, edge case, missing test coverage
+- info: minor improvement
+
+## Output Format
 
 For each issue: use repo-relative file path, line if possible (null if file-level),
-and a concise, actionable fix hint. Use file "N/A" for repo-level issues.
+and a concise, actionable message. Use file "N/A" for scope/general issues.
 
-Rules:
-- passed must be false if there are any issues with severity "error"
+## Rules
+
+- passed MUST be false if ANY scope item from the issue description is missing
+- passed MUST be false if there are any issues with severity "error"
 - passed can be true if there are only warnings or info
-- line can be null if the issue is file-level
+- line can be null if the issue is file-level or scope-level
 - Keep messages concise and actionable
-- Use file path "N/A" for general issues not tied to a specific file
-- If no issues, return passed=true and issues=[]
+- If no issues and all scope items addressed, return passed=true and issues=[]
 - Output only JSON that conforms to the provided schema
 """
 
@@ -195,6 +217,7 @@ async def run_codex_review(
     repo_path: Path,
     commit_sha: str,
     max_retries: int = 2,
+    issue_description: str | None = None,
 ) -> CodexReviewResult:
     """Run Codex code review on a commit with JSON output and retry logic.
 
@@ -204,6 +227,8 @@ async def run_codex_review(
         repo_path: Path to the git repository.
         commit_sha: The commit SHA to review.
         max_retries: Maximum number of attempts (default 2 = 1 initial + 1 retry).
+        issue_description: The issue description to verify scope completeness.
+            If provided, Codex will verify the diff addresses all scope items.
 
     Returns:
         CodexReviewResult with review outcome. If JSON parsing fails after
@@ -228,7 +253,11 @@ async def run_codex_review(
 
         try:
             # Build the prompt
-            prompt = CODEX_REVIEW_PROMPT.format(commit_sha=commit_sha)
+            desc = issue_description or "(No issue description provided)"
+            prompt = CODEX_REVIEW_PROMPT.format(
+                commit_sha=commit_sha,
+                issue_description=desc,
+            )
 
             # Run codex exec with output schema
             proc = await asyncio.create_subprocess_exec(

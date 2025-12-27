@@ -305,6 +305,9 @@ class MalaOrchestrator:
         agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
         self.agent_ids[issue_id] = agent_id
 
+        # Fetch issue description for scope verification in codex review
+        issue_description = await self.beads.get_issue_description_async(issue_id)
+
         # Initialize retry state with baseline timestamp to reject stale commits
         # Baseline is captured once per run to avoid false positives in retries
         retry_state = RetryState(baseline_timestamp=int(time.time()))
@@ -474,6 +477,7 @@ class MalaOrchestrator:
                                                     self.repo_path,
                                                     gate_result.commit_hash,
                                                     max_retries=2,  # JSON parse retries
+                                                    issue_description=issue_description,
                                                 )
 
                                                 if review_result.passed:

@@ -323,6 +323,36 @@ class BeadsClient:
             pass
         return None
 
+    async def get_issue_description_async(self, issue_id: str) -> str | None:
+        """Get the description of an issue (async version).
+
+        Args:
+            issue_id: The issue ID to get description for.
+
+        Returns:
+            The issue description string, or None if not found.
+        """
+        result = await self._run_subprocess_async(["bd", "show", issue_id, "--json"])
+        if result.returncode != 0:
+            return None
+        try:
+            issue_data = json.loads(result.stdout)
+            if isinstance(issue_data, list) and issue_data:
+                issue_data = issue_data[0]
+            if isinstance(issue_data, dict):
+                # Build a comprehensive description including title and scope
+                parts = []
+                if title := issue_data.get("title"):
+                    parts.append(f"Title: {title}")
+                if desc := issue_data.get("description"):
+                    parts.append(f"\n{desc}")
+                if acceptance := issue_data.get("acceptance"):
+                    parts.append(f"\nAcceptance Criteria:\n{acceptance}")
+                return "\n".join(parts) if parts else None
+        except json.JSONDecodeError:
+            pass
+        return None
+
     async def commit_issues_async(self) -> bool:
         """Commit .beads/issues.jsonl if it has changes (async version).
 
