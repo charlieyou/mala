@@ -18,15 +18,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..tools.env import LOCK_DIR, SCRIPTS_DIR
+from .e2e import E2EConfig as E2ERunnerConfig
+from .e2e import E2ERunner, E2EStatus
 from .helpers import (
-    annotate_issue,
-    check_e2e_prereqs,
     decode_timeout_output,
     format_step_output,
-    get_ready_issue_id,
-    init_fixture_repo,
     tail,
-    write_fixture_repo,
 )
 from .result import ValidationResult, ValidationStepResult
 
@@ -199,52 +196,66 @@ class LegacyValidationRunner:
         return [str(SCRIPTS_DIR / "test-mutex.sh"), *cmd]
 
     def _run_e2e(self, label: str, env: dict[str, str]) -> ValidationResult:
-        prereq_failure = check_e2e_prereqs(env)
-        if prereq_failure:
+        """Run E2E validation by delegating to E2ERunner.
+
+        Args:
+            label: Label for the validation run.
+            env: Environment variables for subprocess.
+
+        Returns:
+            ValidationResult with E2E execution details.
+        """
+        # Configure E2ERunner with legacy-compatible settings
+        config = E2ERunnerConfig(
+            enabled=True,
+            skip_if_no_keys=False,
+            keep_fixture=False,
+            timeout_seconds=30.0,
+            max_agents=1,
+            max_issues=1,
+        )
+        runner = E2ERunner(config)
+
+        # Run E2E using the centralized runner
+        e2e_result = runner.run(env=env, cwd=self.repo_path)
+
+        # Convert E2EResult to ValidationResult
+        if e2e_result.passed:
+            # Create a step result for tracking
+            step = ValidationStepResult(
+                name="mala e2e",
+                command=["mala", "run", "<fixture>"],
+                ok=True,
+                returncode=e2e_result.returncode,
+                stdout_tail=e2e_result.command_output,
+                stderr_tail="",
+                duration_seconds=e2e_result.duration_seconds,
+            )
+            return ValidationResult(passed=True, steps=[step])
+
+        # Handle failure or skip
+        if e2e_result.status == E2EStatus.SKIPPED:
             return ValidationResult(
                 passed=False,
-                failure_reasons=[prereq_failure],
+                failure_reasons=[e2e_result.failure_reason or "E2E skipped"],
                 retriable=False,
             )
 
-        with tempfile.TemporaryDirectory(prefix=f"mala-e2e-{label}-") as tmp_dir:
-            repo_path = Path(tmp_dir).resolve()
-            write_fixture_repo(repo_path)
-            init_result = init_fixture_repo(repo_path)
-            if init_result:
-                return ValidationResult(
-                    passed=False,
-                    failure_reasons=[init_result],
-                    retriable=False,
-                )
+        # Create a step result for the failure
+        step = ValidationStepResult(
+            name="mala e2e",
+            command=["mala", "run", "<fixture>"],
+            ok=False,
+            returncode=e2e_result.returncode,
+            stdout_tail=e2e_result.command_output,
+            stderr_tail="",
+            duration_seconds=e2e_result.duration_seconds,
+        )
 
-            issue_id = get_ready_issue_id(repo_path)
-            if issue_id:
-                annotate_issue(repo_path, issue_id)
-
-            cmd = [
-                "mala",
-                "run",
-                str(repo_path),
-                "--max-agents",
-                "1",
-                "--max-issues",
-                "1",
-                "--timeout",
-                "30",
-            ]
-            # Keep coverage/slow-tests/codex-review defaults in the nested run.
-            step = self._run_command("mala e2e", cmd, self.repo_path, env)
-            if step.ok:
-                return ValidationResult(passed=True, steps=[step])
-
-            reason = f"mala e2e failed (exit {step.returncode})"
-            details = format_step_output(step.stdout_tail, step.stderr_tail)
-            if details:
-                reason = f"{reason}: {details}"
-            return ValidationResult(
-                passed=False,
-                steps=[step],
-                failure_reasons=[reason],
-                retriable=False,
-            )
+        reason = e2e_result.failure_reason or "E2E failed"
+        return ValidationResult(
+            passed=False,
+            steps=[step],
+            failure_reasons=[reason],
+            retriable=False,
+        )

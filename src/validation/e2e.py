@@ -12,7 +12,6 @@ Key types:
 
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 import tempfile
@@ -21,6 +20,15 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from .helpers import (
+    annotate_issue,
+    decode_timeout_output,
+    get_ready_issue_id,
+    init_fixture_repo,
+    tail,
+    write_fixture_repo,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -237,11 +245,11 @@ class E2ERunner:
         Returns:
             Error message if setup failed, None on success.
         """
-        # Write fixture files
-        _write_fixture_files(repo_path)
+        # Write fixture files using shared helper
+        write_fixture_repo(repo_path)
 
-        # Initialize git and beads
-        return _init_fixture_repo(repo_path)
+        # Initialize git and beads using shared helper
+        return init_fixture_repo(repo_path)
 
     def _run_mala(
         self, fixture_path: Path, env: Mapping[str, str], cwd: Path
@@ -258,10 +266,10 @@ class E2ERunner:
         """
         start_time = time.monotonic()
 
-        # Annotate the issue with context
-        issue_id = _get_ready_issue_id(fixture_path)
+        # Annotate the issue with context using shared helper
+        issue_id = get_ready_issue_id(fixture_path)
         if issue_id:
-            _annotate_issue(fixture_path, issue_id)
+            annotate_issue(fixture_path, issue_id)
 
         cmd = [
             "mala",
@@ -291,11 +299,11 @@ class E2ERunner:
                     passed=True,
                     status=E2EStatus.PASSED,
                     duration_seconds=duration,
-                    command_output=_tail(result.stdout),
+                    command_output=tail(result.stdout),
                     returncode=0,
                 )
 
-            output = _tail(result.stderr or result.stdout)
+            output = tail(result.stderr or result.stdout)
             return E2EResult(
                 passed=False,
                 status=E2EStatus.FAILED,
@@ -307,7 +315,7 @@ class E2ERunner:
 
         except subprocess.TimeoutExpired as exc:
             duration = time.monotonic() - start_time
-            output = _decode_timeout_output(exc.stdout) or _decode_timeout_output(
+            output = decode_timeout_output(exc.stdout) or decode_timeout_output(
                 exc.stderr
             )
             return E2EResult(
@@ -318,159 +326,6 @@ class E2ERunner:
                 command_output=output,
                 returncode=124,
             )
-
-
-# Helper functions
-
-
-def _tail(text: str, max_chars: int = 800, max_lines: int = 20) -> str:
-    """Get the last N lines/chars of text."""
-    if not text:
-        return ""
-    lines = text.splitlines()
-    if len(lines) > max_lines:
-        lines = lines[-max_lines:]
-    clipped = "\n".join(lines)
-    if len(clipped) > max_chars:
-        return clipped[-max_chars:]
-    return clipped
-
-
-def _decode_timeout_output(data: bytes | str | None) -> str:
-    """Decode TimeoutExpired stdout/stderr which may be bytes, str, or None."""
-    if data is None:
-        return ""
-    if isinstance(data, str):
-        return _tail(data)
-    return _tail(data.decode())
-
-
-def _write_fixture_files(repo_path: Path) -> None:
-    """Write the fixture repository files.
-
-    Creates a minimal Python project with a bug in add() that tests catch.
-
-    Args:
-        repo_path: Path to the fixture repository.
-    """
-    (repo_path / "tests").mkdir(parents=True, exist_ok=True)
-
-    # Bug: returns a - b instead of a + b
-    (repo_path / "app.py").write_text(
-        "def add(a: int, b: int) -> int:\n    return a - b\n"
-    )
-
-    (repo_path / "tests" / "test_app.py").write_text(
-        "from app import add\n\n\ndef test_add():\n    assert add(2, 2) == 4\n"
-    )
-
-    (repo_path / "pyproject.toml").write_text(
-        "\n".join(
-            [
-                "[project]",
-                'name = "mala-e2e-fixture"',
-                'version = "0.0.0"',
-                'description = "Fixture repo for mala e2e validation"',
-                'requires-python = ">=3.11"',
-                "dependencies = []",
-                "",
-                "[project.optional-dependencies]",
-                'dev = ["pytest>=8.0.0", "pytest-cov>=4.1.0"]',
-            ]
-        )
-        + "\n"
-    )
-
-
-def _init_fixture_repo(repo_path: Path) -> str | None:
-    """Initialize git and beads in the fixture repo.
-
-    Args:
-        repo_path: Path to the fixture repository.
-
-    Returns:
-        Error message if initialization failed, None on success.
-    """
-    for cmd in (
-        ["git", "init"],
-        ["git", "config", "user.email", "mala-e2e@example.com"],
-        ["git", "config", "user.name", "Mala E2E"],
-        ["git", "add", "."],
-        ["git", "commit", "-m", "initial"],
-        ["bd", "init"],
-        ["bd", "create", "Fix failing add() test", "-p", "1"],
-    ):
-        result = subprocess.run(
-            cmd,
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            stderr = result.stderr.strip()
-            reason = (
-                f"E2E fixture setup failed: {' '.join(cmd)} (exit {result.returncode})"
-            )
-            if stderr:
-                reason = f"{reason}: {_tail(stderr, max_chars=200, max_lines=5)}"
-            return reason
-    return None
-
-
-def _get_ready_issue_id(repo_path: Path) -> str | None:
-    """Get the ID of the first ready issue in the fixture repo.
-
-    Args:
-        repo_path: Path to the fixture repository.
-
-    Returns:
-        Issue ID if found, None otherwise.
-    """
-    result = subprocess.run(
-        ["bd", "ready", "--json"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return None
-    try:
-        issues = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return None
-    for issue in issues:
-        issue_id = issue.get("id")
-        if isinstance(issue_id, str):
-            return issue_id
-    return None
-
-
-def _annotate_issue(repo_path: Path, issue_id: str) -> None:
-    """Add context notes to the fixture issue.
-
-    Args:
-        repo_path: Path to the fixture repository.
-        issue_id: Issue ID to annotate.
-    """
-    notes = "\n".join(
-        [
-            "Context:",
-            "- Tests are failing for add() in app.py",
-            "",
-            "Acceptance Criteria:",
-            "- Fix add() so tests pass",
-            "- Run full validation suite",
-            "",
-            "Test Plan:",
-            "- uv run pytest",
-        ]
-    )
-    subprocess.run(
-        ["bd", "update", issue_id, "--notes", notes],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
 
 
 # For backwards compatibility, export the prereq checker with the old name

@@ -16,13 +16,15 @@ from src.validation.e2e import (
     E2EResult,
     E2ERunner,
     E2EStatus,
-    _annotate_issue,
-    _decode_timeout_output,
-    _get_ready_issue_id,
-    _init_fixture_repo,
-    _tail,
-    _write_fixture_files,
     check_e2e_prereqs,
+)
+from src.validation.helpers import (
+    annotate_issue,
+    decode_timeout_output,
+    get_ready_issue_id,
+    init_fixture_repo,
+    tail,
+    write_fixture_repo,
 )
 
 
@@ -370,25 +372,25 @@ class TestE2ERunnerRun:
 
 
 class TestTailFunction:
-    """Test the _tail helper function."""
+    """Test the tail helper function."""
 
     def test_empty_text(self) -> None:
-        assert _tail("") == ""
+        assert tail("") == ""
 
     def test_short_text_unchanged(self) -> None:
         text = "hello world"
-        assert _tail(text) == text
+        assert tail(text) == text
 
     def test_truncates_long_text(self) -> None:
         text = "x" * 1000
-        result = _tail(text, max_chars=100)
+        result = tail(text, max_chars=100)
         assert len(result) == 100
         assert result == "x" * 100
 
     def test_truncates_many_lines(self) -> None:
         lines = [f"line {i}" for i in range(50)]
         text = "\n".join(lines)
-        result = _tail(text, max_lines=5)
+        result = tail(text, max_lines=5)
         result_lines = result.splitlines()
         assert len(result_lines) == 5
         assert result_lines[0] == "line 45"
@@ -396,23 +398,23 @@ class TestTailFunction:
 
 
 class TestDecodeTimeoutOutput:
-    """Test the _decode_timeout_output helper."""
+    """Test the decode_timeout_output helper."""
 
     def test_none_returns_empty(self) -> None:
-        assert _decode_timeout_output(None) == ""
+        assert decode_timeout_output(None) == ""
 
     def test_string_returned_as_is(self) -> None:
-        assert _decode_timeout_output("hello") == "hello"
+        assert decode_timeout_output("hello") == "hello"
 
     def test_bytes_decoded(self) -> None:
-        assert _decode_timeout_output(b"hello") == "hello"
+        assert decode_timeout_output(b"hello") == "hello"
 
 
 class TestWriteFixtureFiles:
-    """Test the _write_fixture_files helper."""
+    """Test the write_fixture_repo helper."""
 
     def test_creates_expected_files(self, tmp_path: Path) -> None:
-        _write_fixture_files(tmp_path)
+        write_fixture_repo(tmp_path)
 
         assert (tmp_path / "app.py").exists()
         assert (tmp_path / "tests").is_dir()
@@ -420,21 +422,21 @@ class TestWriteFixtureFiles:
         assert (tmp_path / "pyproject.toml").exists()
 
     def test_app_py_has_bug(self, tmp_path: Path) -> None:
-        _write_fixture_files(tmp_path)
+        write_fixture_repo(tmp_path)
 
         content = (tmp_path / "app.py").read_text()
         assert "return a - b" in content  # The bug
 
 
 class TestInitFixtureRepo:
-    """Test the _init_fixture_repo helper."""
+    """Test the init_fixture_repo helper."""
 
     def test_returns_none_on_success(self, tmp_path: Path) -> None:
         mock_result = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="", stderr=""
         )
         with patch("subprocess.run", return_value=mock_result):
-            result = _init_fixture_repo(tmp_path)
+            result = init_fixture_repo(tmp_path)
             assert result is None
 
     def test_returns_error_on_failure(self, tmp_path: Path) -> None:
@@ -442,13 +444,13 @@ class TestInitFixtureRepo:
             args=[], returncode=1, stdout="", stderr="git init failed"
         )
         with patch("subprocess.run", return_value=mock_result):
-            result = _init_fixture_repo(tmp_path)
+            result = init_fixture_repo(tmp_path)
             assert result is not None
             assert "fixture setup failed" in result
 
 
 class TestGetReadyIssueId:
-    """Test the _get_ready_issue_id helper."""
+    """Test the get_ready_issue_id helper."""
 
     def test_returns_issue_id(self, tmp_path: Path) -> None:
         mock_result = subprocess.CompletedProcess(
@@ -458,7 +460,7 @@ class TestGetReadyIssueId:
             stderr="",
         )
         with patch("subprocess.run", return_value=mock_result):
-            result = _get_ready_issue_id(tmp_path)
+            result = get_ready_issue_id(tmp_path)
             assert result == "test-123"
 
     def test_returns_none_on_failure(self, tmp_path: Path) -> None:
@@ -466,7 +468,7 @@ class TestGetReadyIssueId:
             args=[], returncode=1, stdout="", stderr=""
         )
         with patch("subprocess.run", return_value=mock_result):
-            result = _get_ready_issue_id(tmp_path)
+            result = get_ready_issue_id(tmp_path)
             assert result is None
 
     def test_returns_none_on_invalid_json(self, tmp_path: Path) -> None:
@@ -474,7 +476,7 @@ class TestGetReadyIssueId:
             args=[], returncode=0, stdout="not json", stderr=""
         )
         with patch("subprocess.run", return_value=mock_result):
-            result = _get_ready_issue_id(tmp_path)
+            result = get_ready_issue_id(tmp_path)
             assert result is None
 
     def test_returns_none_on_empty_list(self, tmp_path: Path) -> None:
@@ -482,12 +484,12 @@ class TestGetReadyIssueId:
             args=[], returncode=0, stdout="[]", stderr=""
         )
         with patch("subprocess.run", return_value=mock_result):
-            result = _get_ready_issue_id(tmp_path)
+            result = get_ready_issue_id(tmp_path)
             assert result is None
 
 
 class TestAnnotateIssue:
-    """Test the _annotate_issue helper."""
+    """Test the annotate_issue helper."""
 
     def test_calls_bd_update(self, tmp_path: Path) -> None:
         mock_run = MagicMock(
@@ -496,7 +498,7 @@ class TestAnnotateIssue:
             )
         )
         with patch("subprocess.run", mock_run):
-            _annotate_issue(tmp_path, "test-123")
+            annotate_issue(tmp_path, "test-123")
 
             mock_run.assert_called_once()
             args = mock_run.call_args
