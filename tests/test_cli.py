@@ -304,3 +304,61 @@ def test_run_validation_flags_defaults(
     assert DummyOrchestrator.last_kwargs["coverage_threshold"] == 85.0
     assert DummyOrchestrator.last_kwargs["lint_only_for_docs"] is False
     assert DummyOrchestrator.last_kwargs["skip_e2e_if_no_keys"] is False
+
+
+def test_run_coverage_threshold_invalid_negative(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that negative --coverage-threshold value produces error."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    logs: list[tuple[object, ...]] = []
+
+    def _log(*args: object, **_kwargs: object) -> None:
+        logs.append(args)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "log", _log)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            coverage_threshold=-10.0,
+            verbose=False,
+        )
+
+    assert excinfo.value.exit_code == 1
+    error_msg = str(logs[-1])
+    assert "Invalid --coverage-threshold" in error_msg
+    assert "-10.0" in error_msg
+
+
+def test_run_coverage_threshold_invalid_over_100(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --coverage-threshold over 100 produces error."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    logs: list[tuple[object, ...]] = []
+
+    def _log(*args: object, **_kwargs: object) -> None:
+        logs.append(args)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "log", _log)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            coverage_threshold=150.0,
+            verbose=False,
+        )
+
+    assert excinfo.value.exit_code == 1
+    error_msg = str(logs[-1])
+    assert "Invalid --coverage-threshold" in error_msg
+    assert "150.0" in error_msg

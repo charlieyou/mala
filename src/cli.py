@@ -150,7 +150,7 @@ def run(
         float,
         typer.Option(
             "--coverage-threshold",
-            help="Minimum coverage percentage (default: 85.0)",
+            help="Minimum coverage percentage, 0-100 (default: 85.0)",
         ),
     ] = 85.0,
     lint_only_for_docs: Annotated[
@@ -164,7 +164,7 @@ def run(
         bool,
         typer.Option(
             "--skip-e2e-if-no-keys/--no-skip-e2e-if-no-keys",
-            help="Skip E2E tests if MORPH_API_KEY is not set (default: disabled)",
+            help="Skip E2E fixture tests when required API keys are unavailable (default: disabled)",
         ),
     ] = False,
     verbose: Annotated[
@@ -216,6 +216,15 @@ def run(
                 Colors.RED,
             )
             raise typer.Exit(1)
+
+    # Validate coverage threshold range
+    if not 0 <= coverage_threshold <= 100:
+        log(
+            "✗",
+            f"Invalid --coverage-threshold value: {coverage_threshold}. Must be between 0 and 100.",
+            Colors.RED,
+        )
+        raise typer.Exit(1)
 
     # Ensure user config directory exists
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
