@@ -130,6 +130,28 @@ git commit -m "bd-{issue_id}: <summary>"
 - Do NOT push - only commit locally
 - Do NOT commit `.beads/issues.jsonl` - orchestrator handles that
 
+### 6a. If No Code Changes Required
+
+Sometimes an issue requires no changes (already fixed, duplicate, or obsolete). In these cases, skip the commit and output a resolution marker instead.
+
+**When to use:**
+- `ISSUE_NO_CHANGE: <rationale>` - Issue already addressed or no changes needed
+- `ISSUE_OBSOLETE: <rationale>` - Issue no longer relevant (code removed, feature deprecated, etc.)
+
+**Requirements:**
+1. Working tree must be clean (`git status` shows no changes)
+2. Provide a clear rationale explaining why no changes are needed
+
+**Example output:**
+```
+ISSUE_NO_CHANGE: The validation logic already exists in src/validator.py:45-52
+```
+```
+ISSUE_OBSOLETE: The legacy API endpoint was removed in commit abc123
+```
+
+After outputting the marker, proceed to release locks (step 7).
+
 ### 7. Release Locks (after commit)
 ```bash
 # Verify commit succeeded
