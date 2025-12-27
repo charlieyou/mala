@@ -1213,3 +1213,68 @@ class TestSpecBasedValidation:
             # Verify remove_worktree was called with validation_passed=True
             assert len(remove_worktree_called_with) == 1
             assert remove_worktree_called_with[0][1] is True
+
+    def test_run_spec_worktree_cleanup_on_exception(self, tmp_path: Path) -> None:
+        """Test that worktree is cleaned up even when execution raises an exception."""
+        from src.validation.worktree import WorktreeContext, WorktreeState
+
+        # Create mock for worktree creation
+        mock_worktree_created = MagicMock(spec=WorktreeContext)
+        mock_worktree_created.state = WorktreeState.CREATED
+        mock_worktree_created.path = tmp_path / "worktree"
+        mock_worktree_created.path.mkdir()
+
+        # Create mock for worktree removal (kept on failure)
+        mock_worktree_kept = MagicMock(spec=WorktreeContext)
+        mock_worktree_kept.state = WorktreeState.KEPT
+
+        config = ValidationConfig(use_test_mutex=False)
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        runner = ValidationRunner(repo_path, config)
+
+        context = ValidationContext(
+            issue_id="test-123",
+            repo_path=repo_path,
+            commit_hash="abc123",
+            changed_files=[],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command=["echo", "test"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=False),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        remove_worktree_called_with: list[tuple[object, bool]] = []
+
+        def mock_remove(ctx: object, validation_passed: bool) -> MagicMock:
+            remove_worktree_called_with.append((ctx, validation_passed))
+            return mock_worktree_kept
+
+        # Simulate an exception during command execution
+        def raise_exception(*args: object, **kwargs: object) -> None:
+            raise FileNotFoundError("Command not found")
+
+        with (
+            patch(
+                "src.validation.runner.create_worktree",
+                return_value=mock_worktree_created,
+            ),
+            patch("src.validation.runner.remove_worktree", side_effect=mock_remove),
+            patch("subprocess.run", side_effect=raise_exception),
+            pytest.raises(FileNotFoundError),
+        ):
+            runner._run_spec_sync(spec, context, log_dir=tmp_path)
+
+        # Verify remove_worktree was called with validation_passed=False
+        assert len(remove_worktree_called_with) == 1
+        assert remove_worktree_called_with[0][1] is False

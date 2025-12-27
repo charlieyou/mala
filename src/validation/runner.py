@@ -367,27 +367,30 @@ class ValidationRunner:
             # No commit specified, validate in place
             validation_cwd = context.repo_path
 
-        # Execute commands and capture result
-        result = self._execute_spec_commands(
-            spec=spec,
-            context=context,
-            cwd=validation_cwd,
-            artifacts=artifacts,
-            log_dir=log_dir,
-            run_id=run_id,
-        )
-
-        # Clean up worktree with correct pass/fail status
-        if worktree_ctx is not None:
-            worktree_ctx = remove_worktree(
-                worktree_ctx, validation_passed=result.passed
+        # Execute commands and capture result, ensuring worktree cleanup on exceptions
+        result: ValidationResult | None = None
+        try:
+            result = self._execute_spec_commands(
+                spec=spec,
+                context=context,
+                cwd=validation_cwd,
+                artifacts=artifacts,
+                log_dir=log_dir,
+                run_id=run_id,
             )
-            if worktree_ctx.state == WorktreeState.KEPT:
-                artifacts.worktree_state = "kept"
-            elif worktree_ctx.state == WorktreeState.REMOVED:
-                artifacts.worktree_state = "removed"
-
-        return result
+            return result
+        finally:
+            # Clean up worktree with correct pass/fail status
+            # On exception, result is None so we treat as failed (validation_passed=False)
+            if worktree_ctx is not None:
+                validation_passed = result.passed if result is not None else False
+                worktree_ctx = remove_worktree(
+                    worktree_ctx, validation_passed=validation_passed
+                )
+                if worktree_ctx.state == WorktreeState.KEPT:
+                    artifacts.worktree_state = "kept"
+                elif worktree_ctx.state == WorktreeState.REMOVED:
+                    artifacts.worktree_state = "removed"
 
     def _execute_spec_commands(
         self,
