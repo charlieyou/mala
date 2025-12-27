@@ -462,7 +462,11 @@ class TestE2EValidation:
             assert result.passed is True
 
     def test_run_e2e_command_uses_valid_flags(self, tmp_path: Path) -> None:
-        """Test that E2E command only uses flags supported by the mala CLI."""
+        """Test that E2E command only uses flags supported by the mala CLI.
+
+        Ensures --no-post-validate and --no-e2e are not used since they don't
+        exist in the CLI. This covers the acceptance criteria from mala-w8w.2.
+        """
         config = ValidationConfig(run_e2e=True, use_test_mutex=False)
         runner = ValidationRunner(tmp_path, config)
 
@@ -494,7 +498,12 @@ class TestE2EValidation:
 
 
 class TestTimeoutHandling:
-    """Test timeout handling for str/bytes output types."""
+    """Test timeout handling for str/bytes output types.
+
+    These tests ensure TimeoutExpired outputs are handled robustly regardless
+    of whether they are bytes (text=False), str (text=True), or None.
+    This covers the acceptance criteria from mala-w8w.2.
+    """
 
     def test_run_command_timeout_with_string_output(self, tmp_path: Path) -> None:
         """TimeoutExpired may have str stdout/stderr when text=True is used."""
