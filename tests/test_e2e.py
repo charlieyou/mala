@@ -133,10 +133,22 @@ class TestE2ERunnerPrereqs:
             assert result.ok is True
             assert result.missing == []
 
+    def test_prereqs_ok_without_morph_api_key(self) -> None:
+        """E2E prereqs should pass even without MORPH_API_KEY.
+
+        The MORPH_API_KEY is only needed for Morph-specific tests,
+        not for the core E2E validation to run.
+        """
+        runner = E2ERunner()
+        with patch("shutil.which", return_value="/usr/bin/fake"):
+            result = runner.check_prereqs({})
+            assert result.ok is True
+            assert result.missing == []
+
     def test_missing_mala_cli(self) -> None:
         runner = E2ERunner()
         with patch("shutil.which", return_value=None):
-            result = runner.check_prereqs({"MORPH_API_KEY": "test-key"})
+            result = runner.check_prereqs({})
             assert result.ok is False
             assert any("mala CLI" in m for m in result.missing)
 
@@ -149,56 +161,57 @@ class TestE2ERunnerPrereqs:
             return None
 
         with patch("shutil.which", side_effect=mock_which):
-            result = runner.check_prereqs({"MORPH_API_KEY": "test-key"})
+            result = runner.check_prereqs({})
             assert result.ok is False
             assert any("bd CLI" in m for m in result.missing)
-
-    def test_missing_morph_api_key(self) -> None:
-        runner = E2ERunner()
-        with patch("shutil.which", return_value="/usr/bin/fake"):
-            result = runner.check_prereqs({})
-            assert result.ok is False
-            assert any("MORPH_API_KEY" in m for m in result.missing)
-
-    def test_can_skip_when_missing_key(self) -> None:
-        config = E2EConfig(skip_if_no_keys=True)
-        runner = E2ERunner(config)
-        with patch("shutil.which", return_value="/usr/bin/fake"):
-            result = runner.check_prereqs({})
-            assert result.ok is False
-            assert result.can_skip is True
-
-    def test_cannot_skip_when_missing_cli(self) -> None:
-        config = E2EConfig(skip_if_no_keys=True)
-        runner = E2ERunner(config)
-        with patch("shutil.which", return_value=None):
-            result = runner.check_prereqs({})
-            assert result.ok is False
-            # Can't skip for missing CLI, only for missing key
-            assert result.can_skip is False
 
     def test_uses_os_environ_when_none(self) -> None:
         runner = E2ERunner()
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch.dict("os.environ", {"MORPH_API_KEY": "test"}, clear=True),
+            patch.dict("os.environ", {}, clear=True),
         ):
             result = runner.check_prereqs(None)
+            # Should pass even without MORPH_API_KEY
             assert result.ok is True
 
 
 class TestE2ERunnerRun:
     """Test E2ERunner.run method."""
 
-    def test_run_skips_on_missing_key_when_configured(self) -> None:
-        config = E2EConfig(skip_if_no_keys=True)
+    def test_run_proceeds_without_morph_api_key(self, tmp_path: Path) -> None:
+        """E2E run should proceed even without MORPH_API_KEY.
+
+        MORPH_API_KEY is not a hard prereq - E2E validation can run
+        without it (Morph-specific tests will just be skipped).
+        """
+        config = E2EConfig(keep_fixture=False)
         runner = E2ERunner(config)
 
-        with patch("shutil.which", return_value="/usr/bin/fake"):
-            result = runner.run(env={})
+        def mock_run(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            cmd: list[str] = list(args[0]) if args else list(kwargs.get("args", []))  # type: ignore[arg-type]
+            return subprocess.CompletedProcess(
+                args=cmd,
+                returncode=0,
+                stdout='[{"id": "test-123"}]' if "ready" in cmd else "ok",
+                stderr="",
+            )
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/fake"),
+            patch("subprocess.run", side_effect=mock_run),
+            patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
+            patch("shutil.rmtree"),
+        ):
+            (tmp_path / "fixture").mkdir()
+            (tmp_path / "fixture" / "tests").mkdir()
+
+            # Run WITHOUT MORPH_API_KEY - should still work
+            result = runner.run(env={}, cwd=tmp_path)
             assert result.passed is True
-            assert result.status == E2EStatus.SKIPPED
-            assert "MORPH_API_KEY" in (result.failure_reason or "")
+            assert result.status == E2EStatus.PASSED
 
     def test_run_fails_on_missing_prereqs(self) -> None:
         runner = E2ERunner()
@@ -227,7 +240,7 @@ class TestE2ERunnerRun:
             patch("pathlib.Path.write_text"),
             patch("shutil.rmtree"),
         ):
-            result = runner.run(env={"MORPH_API_KEY": "test"})
+            result = runner.run(env={})
             assert result.passed is False
             assert "fixture setup" in (result.failure_reason or "")
 
@@ -260,7 +273,7 @@ class TestE2ERunnerRun:
             (tmp_path / "fixture").mkdir()
             (tmp_path / "fixture" / "tests").mkdir()
 
-            result = runner.run(env={"MORPH_API_KEY": "test"}, cwd=tmp_path)
+            result = runner.run(env={}, cwd=tmp_path)
             assert result.passed is True
             assert result.status == E2EStatus.PASSED
 
@@ -290,7 +303,7 @@ class TestE2ERunnerRun:
             (tmp_path / "fixture").mkdir()
             (tmp_path / "fixture" / "tests").mkdir()
 
-            runner.run(env={"MORPH_API_KEY": "test"}, cwd=tmp_path)
+            runner.run(env={}, cwd=tmp_path)
             assert cleanup_called["value"] is True
 
     def test_run_keeps_fixture_when_configured(self, tmp_path: Path) -> None:
@@ -314,7 +327,7 @@ class TestE2ERunnerRun:
             (tmp_path / "fixture").mkdir()
             (tmp_path / "fixture" / "tests").mkdir()
 
-            result = runner.run(env={"MORPH_API_KEY": "test"}, cwd=tmp_path)
+            result = runner.run(env={}, cwd=tmp_path)
             # rmtree should not be called when keeping fixture
             mock_rmtree.assert_not_called()
             # fixture_path should be set
@@ -350,7 +363,7 @@ class TestE2ERunnerRun:
             (tmp_path / "fixture").mkdir()
             (tmp_path / "fixture" / "tests").mkdir()
 
-            result = runner.run(env={"MORPH_API_KEY": "test"}, cwd=tmp_path)
+            result = runner.run(env={}, cwd=tmp_path)
             assert result.passed is False
             assert "timed out" in (result.failure_reason or "")
             assert result.returncode == 124
@@ -498,10 +511,11 @@ class TestCheckE2EPrereqsLegacy:
 
     def test_returns_none_when_ok(self) -> None:
         with patch("shutil.which", return_value="/usr/bin/fake"):
-            result = check_e2e_prereqs({"MORPH_API_KEY": "test"})
+            # MORPH_API_KEY is not required for prereqs to pass
+            result = check_e2e_prereqs({})
             assert result is None
 
-    def test_returns_error_when_missing(self) -> None:
+    def test_returns_error_when_missing_cli(self) -> None:
         with patch("shutil.which", return_value=None):
             result = check_e2e_prereqs({})
             assert result is not None

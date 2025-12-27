@@ -94,7 +94,8 @@ class E2EConfig:
 
     Attributes:
         enabled: Whether E2E is enabled.
-        skip_if_no_keys: Skip (don't fail) if MORPH_API_KEY is missing.
+        skip_if_no_keys: Deprecated, kept for backward compatibility.
+            MORPH_API_KEY is no longer a hard prereq for E2E validation.
         keep_fixture: Keep fixture repo after completion (for debugging).
         timeout_seconds: Timeout for the mala run command.
         max_agents: Maximum agents for the mala run.
@@ -128,6 +129,11 @@ class E2ERunner:
 
         Returns:
             E2EPrereqResult with details about missing prerequisites.
+
+        Note:
+            MORPH_API_KEY is NOT checked here - it's not a hard prerequisite
+            for E2E validation. Morph-specific tests will skip when the key
+            is missing, but the overall E2E validation can still run.
         """
         import os
 
@@ -144,17 +150,12 @@ class E2ERunner:
         if not shutil.which("bd"):
             missing.append("bd CLI not found in PATH")
 
-        # Check for MORPH_API_KEY
-        if not env.get("MORPH_API_KEY"):
-            missing.append("MORPH_API_KEY not set")
+        # Note: MORPH_API_KEY is intentionally NOT checked here.
+        # E2E validation should not fail just because the key is missing.
+        # Morph-specific tests will skip when the key is absent.
 
         if missing:
-            # Determine if this can be skipped
-            # Only skip if the ONLY missing prereq is the API key
-            can_skip = self.config.skip_if_no_keys and missing == [
-                "MORPH_API_KEY not set"
-            ]
-            return E2EPrereqResult(ok=False, missing=missing, can_skip=can_skip)
+            return E2EPrereqResult(ok=False, missing=missing, can_skip=False)
 
         return E2EPrereqResult(ok=True)
 
