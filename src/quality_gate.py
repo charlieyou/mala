@@ -332,18 +332,28 @@ class QualityGate:
             return evidence, 0
 
         try:
-            with open(log_path) as f:
-                # Seek to the starting offset
+            # Read file in binary mode for accurate byte offset tracking
+            # (must match parse_issue_resolution_from_offset's binary mode)
+            with open(log_path, "rb") as f:
                 f.seek(offset)
+                current_offset = offset
 
-                for line in f:
-                    line = line.strip()
+                for line_bytes in f:
+                    line_len = len(line_bytes)
+                    try:
+                        line = line_bytes.decode("utf-8").strip()
+                    except UnicodeDecodeError:
+                        current_offset += line_len
+                        continue
+
                     if not line:
+                        current_offset += line_len
                         continue
 
                     try:
                         entry = json.loads(line)
                     except json.JSONDecodeError:
+                        current_offset += line_len
                         continue
 
                     # Look for Bash tool_use entries
@@ -374,14 +384,14 @@ class QualityGate:
                         if self.VALIDATION_PATTERNS["ty_check"].search(command):
                             evidence.ty_check_ran = True
 
-                # Get the new offset (current file position)
-                new_offset = f.tell()
+                    current_offset += line_len
+
+                # Return final position
+                return evidence, f.tell()
 
         except OSError:
             # File read error - return empty evidence
             return evidence, 0
-
-        return evidence, new_offset
 
     def check_no_progress(
         self,

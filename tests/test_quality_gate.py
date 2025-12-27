@@ -1665,3 +1665,266 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
         # Should fail because second attempt is missing pytest, format, ty check
         assert result.passed is False
         assert any("pytest" in r.lower() for r in result.failure_reasons)
+
+
+class TestByteOffsetConsistency:
+    """Regression tests: byte offsets must be consistent between resolution and evidence parsing.
+
+    Both parse_issue_resolution_from_offset and parse_validation_evidence_from_offset
+    use byte-based offsets. If one parser used text mode and the other binary mode,
+    the offsets would be inconsistent, causing retry-scoped parsing to fail.
+    """
+
+    def test_offsets_consistent_across_multiple_attempts(self, tmp_path: Path) -> None:
+        """Offsets from resolution parsing should be valid for evidence parsing.
+
+        This is the core regression test: when the orchestrator parses resolution
+        markers and then uses the returned offset to scope evidence parsing to the
+        current retry attempt, both offsets must use the same byte-based contract.
+        """
+        log_path = tmp_path / "session.jsonl"
+
+        # First attempt: has evidence but no resolution marker
+        attempt1_entries = [
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Bash",
+                                "input": {"command": "uv run pytest"},
+                            }
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Bash",
+                                "input": {"command": "uvx ruff check ."},
+                            }
+                        ]
+                    },
+                }
+            ),
+        ]
+
+        # Second attempt: has different evidence and no resolution marker
+        attempt2_entries = [
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Bash",
+                                "input": {"command": "uv sync"},
+                            }
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Bash",
+                                "input": {"command": "uvx ty check"},
+                            }
+                        ]
+                    },
+                }
+            ),
+        ]
+
+        # Write all entries
+        content = (
+            "\n".join(attempt1_entries) + "\n" + "\n".join(attempt2_entries) + "\n"
+        )
+        log_path.write_text(content)
+
+        gate = QualityGate(tmp_path)
+
+        # Get offset at end of first attempt using byte-based calculation
+        first_attempt_bytes = ("\n".join(attempt1_entries) + "\n").encode("utf-8")
+        expected_offset = len(first_attempt_bytes)
+
+        # Parse evidence starting from that offset
+        evidence_after_offset, _ = gate.parse_validation_evidence_from_offset(
+            log_path, offset=expected_offset
+        )
+
+        # Should only see attempt2 evidence (uv_sync, ty_check), NOT attempt1 (pytest, ruff_check)
+        assert evidence_after_offset.pytest_ran is False, (
+            "pytest from attempt1 should not be seen"
+        )
+        assert evidence_after_offset.ruff_check_ran is False, (
+            "ruff check from attempt1 should not be seen"
+        )
+        assert evidence_after_offset.uv_sync_ran is True, (
+            "uv sync from attempt2 should be seen"
+        )
+        assert evidence_after_offset.ty_check_ran is True, (
+            "ty check from attempt2 should be seen"
+        )
+
+    def test_evidence_parser_returns_correct_byte_offset(self, tmp_path: Path) -> None:
+        """Evidence parser should return byte-based offset matching file.tell() in binary mode."""
+        log_path = tmp_path / "session.jsonl"
+
+        entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(entry + "\n")
+
+        gate = QualityGate(tmp_path)
+        _, returned_offset = gate.parse_validation_evidence_from_offset(
+            log_path, offset=0
+        )
+
+        # The returned offset should match the byte size of the content
+        expected_byte_size = len((entry + "\n").encode("utf-8"))
+        assert returned_offset == expected_byte_size, (
+            f"Expected byte offset {expected_byte_size}, got {returned_offset}"
+        )
+
+    def test_resolution_and_evidence_offsets_compatible(self, tmp_path: Path) -> None:
+        """Offset returned by resolution parser should work correctly with evidence parser.
+
+        This tests the exact usage pattern in the orchestrator where:
+        1. Resolution parser runs and returns an offset
+        2. Evidence parser uses that offset to scope to current attempt
+        """
+        log_path = tmp_path / "session.jsonl"
+
+        # First entry: text content (like resolution parsing would encounter)
+        first_entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Analyzing the issue...",
+                        }
+                    ]
+                },
+            }
+        )
+        # Second entry: validation command
+        second_entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(first_entry + "\n" + second_entry + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        # Resolution parser processes entire file and returns final offset
+        _, resolution_offset = gate.parse_issue_resolution_from_offset(
+            log_path, offset=0
+        )
+
+        # Now use that same offset with evidence parser for a "retry"
+        # Starting at EOF offset means we shouldn't find the pytest evidence from earlier
+        evidence_at_eof, _ = gate.parse_validation_evidence_from_offset(
+            log_path, offset=resolution_offset
+        )
+
+        # At EOF, no evidence should be found
+        assert evidence_at_eof.pytest_ran is False, (
+            "Evidence parser should find nothing when started at EOF offset"
+        )
+
+        # Verify the offset is actually at EOF
+        expected_eof = len((first_entry + "\n" + second_entry + "\n").encode("utf-8"))
+        assert resolution_offset == expected_eof, (
+            f"Resolution parser should return EOF offset {expected_eof}, got {resolution_offset}"
+        )
+
+    def test_unicode_content_uses_byte_offsets(self, tmp_path: Path) -> None:
+        """Multi-byte unicode should not break offset calculations.
+
+        Text mode would count characters, binary mode counts bytes.
+        The emoji in this test is 4 bytes in UTF-8, demonstrating the difference.
+        """
+        log_path = tmp_path / "session.jsonl"
+
+        # Entry with multi-byte unicode
+        entry_with_emoji = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Checking code... 🔍 Done!",
+                        }
+                    ]
+                },
+            }
+        )
+        validation_entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+
+        content = entry_with_emoji + "\n" + validation_entry + "\n"
+        log_path.write_text(content)
+
+        gate = QualityGate(tmp_path)
+
+        # Calculate byte offset after first entry (including newline)
+        byte_offset = len((entry_with_emoji + "\n").encode("utf-8"))
+
+        # Parse evidence starting at the byte offset
+        evidence, _ = gate.parse_validation_evidence_from_offset(
+            log_path, offset=byte_offset
+        )
+
+        # Should find the pytest command
+        assert evidence.pytest_ran is True, (
+            "Evidence parser should correctly find pytest after byte-offset with unicode"
+        )
