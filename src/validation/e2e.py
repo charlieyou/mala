@@ -13,7 +13,6 @@ Key types:
 from __future__ import annotations
 
 import shutil
-import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -21,12 +20,11 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .command_runner import CommandRunner
 from .helpers import (
     annotate_issue,
-    decode_timeout_output,
     get_ready_issue_id,
     init_fixture_repo,
-    tail,
     write_fixture_repo,
 )
 
@@ -264,8 +262,6 @@ class E2ERunner:
         Returns:
             E2EResult with command execution details.
         """
-        start_time = time.monotonic()
-
         # Annotate the issue with context using shared helper
         issue_id = get_ready_issue_id(fixture_path)
         if issue_id:
@@ -283,49 +279,40 @@ class E2ERunner:
             str(int(self.config.timeout_seconds)),
         ]
 
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=cwd,
-                env=dict(env),
-                capture_output=True,
-                text=True,
-                timeout=self.config.timeout_seconds + 30,  # Buffer for cleanup
-            )
-            duration = time.monotonic() - start_time
+        # Use CommandRunner with buffer for cleanup time
+        runner = CommandRunner(
+            cwd=cwd, timeout_seconds=self.config.timeout_seconds + 30
+        )
+        result = runner.run(cmd, env=dict(env))
 
-            if result.returncode == 0:
-                return E2EResult(
-                    passed=True,
-                    status=E2EStatus.PASSED,
-                    duration_seconds=duration,
-                    command_output=tail(result.stdout),
-                    returncode=0,
-                )
-
-            output = tail(result.stderr or result.stdout)
+        if result.ok:
             return E2EResult(
-                passed=False,
-                status=E2EStatus.FAILED,
-                failure_reason=f"mala exited {result.returncode}: {output}",
-                duration_seconds=duration,
-                command_output=output,
-                returncode=result.returncode,
+                passed=True,
+                status=E2EStatus.PASSED,
+                duration_seconds=result.duration_seconds,
+                command_output=result.stdout_tail(),
+                returncode=0,
             )
 
-        except subprocess.TimeoutExpired as exc:
-            duration = time.monotonic() - start_time
-            output = decode_timeout_output(exc.stdout) or decode_timeout_output(
-                exc.stderr
-            )
+        if result.timed_out:
             return E2EResult(
                 passed=False,
                 status=E2EStatus.FAILED,
                 failure_reason=f"mala timed out after {self.config.timeout_seconds}s",
-                duration_seconds=duration,
-                command_output=output,
+                duration_seconds=result.duration_seconds,
+                command_output=result.stderr_tail() or result.stdout_tail(),
                 returncode=124,
             )
+
+        output = result.stderr_tail() or result.stdout_tail()
+        return E2EResult(
+            passed=False,
+            status=E2EStatus.FAILED,
+            failure_reason=f"mala exited {result.returncode}: {output}",
+            duration_seconds=result.duration_seconds,
+            command_output=output,
+            returncode=result.returncode,
+        )
 
 
 # For backwards compatibility, export the prereq checker with the old name

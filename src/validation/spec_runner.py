@@ -8,19 +8,18 @@ from __future__ import annotations
 
 import asyncio
 import os
-import subprocess
 import tempfile
-import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..tools.env import LOCK_DIR, SCRIPTS_DIR
+from .command_runner import CommandRunner
 from .coverage import CoverageResult, CoverageStatus, parse_and_check_coverage
 from .deps_sync import DepsSyncState
 from .e2e import E2EConfig as E2ERunnerConfig
 from .e2e import E2ERunner, E2EStatus
-from .helpers import decode_timeout_output, format_step_output, tail
+from .helpers import format_step_output
 from .spec import CommandKind, ValidationArtifacts
 from .worktree import (
     WorktreeConfig,
@@ -312,37 +311,17 @@ class SpecValidationRunner:
             self._wrap_with_mutex(cmd.command) if cmd.use_test_mutex else cmd.command
         )
 
-        start = time.monotonic()
-        try:
-            result = subprocess.run(
-                full_cmd,
-                cwd=cwd,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=self.step_timeout_seconds,
-            )
-            duration = time.monotonic() - start
-            return ValidationStepResult(
-                name=cmd.name,
-                command=cmd.command,
-                ok=result.returncode == 0,
-                returncode=result.returncode,
-                stdout_tail=tail(result.stdout),
-                stderr_tail=tail(result.stderr),
-                duration_seconds=duration,
-            )
-        except subprocess.TimeoutExpired as exc:
-            duration = time.monotonic() - start
-            return ValidationStepResult(
-                name=cmd.name,
-                command=cmd.command,
-                ok=False,
-                returncode=124,
-                stdout_tail=decode_timeout_output(exc.stdout),
-                stderr_tail=decode_timeout_output(exc.stderr),
-                duration_seconds=duration,
-            )
+        runner = CommandRunner(cwd=cwd, timeout_seconds=self.step_timeout_seconds)
+        result = runner.run(full_cmd, env=env)
+        return ValidationStepResult(
+            name=cmd.name,
+            command=cmd.command,
+            ok=result.ok,
+            returncode=result.returncode,
+            stdout_tail=result.stdout_tail(),
+            stderr_tail=result.stderr_tail(),
+            duration_seconds=result.duration_seconds,
+        )
 
     def _wrap_with_mutex(self, cmd: list[str]) -> list[str]:
         """Wrap a command with the test mutex script."""

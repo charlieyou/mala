@@ -134,7 +134,12 @@ class ValidationRunner:
         self, name: str, cmd: list[str], cwd: Path, env: dict[str, str]
     ) -> ValidationStepResult:
         """Run a single command (for testing)."""
-        return self._legacy_runner._run_command(name, cmd, cwd, env)
+        from .command_runner import CommandRunner
+
+        runner = CommandRunner(
+            cwd=cwd, timeout_seconds=self.config.step_timeout_seconds
+        )
+        return self._legacy_runner._run_command(name, cmd, runner, env)
 
     def _run_validation_steps(
         self, cwd: Path, label: str, include_e2e: bool

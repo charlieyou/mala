@@ -13,18 +13,14 @@ import os
 import shutil
 import subprocess
 import tempfile
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..tools.env import LOCK_DIR, SCRIPTS_DIR
+from .command_runner import CommandRunner
 from .e2e import E2EConfig as E2ERunnerConfig
 from .e2e import E2ERunner, E2EStatus
-from .helpers import (
-    decode_timeout_output,
-    format_step_output,
-    tail,
-)
+from .helpers import format_step_output
 from .result import ValidationResult, ValidationStepResult
 
 
@@ -74,6 +70,8 @@ class LegacyValidationRunner:
                 text=True,
             )
             if add_result.returncode != 0:
+                from .helpers import tail
+
                 reason = f"Post-validation failed: git worktree add exited {add_result.returncode}"
                 if add_result.stderr.strip():
                     reason += f" ({tail(add_result.stderr.strip())})"
@@ -107,9 +105,12 @@ class LegacyValidationRunner:
         }
 
         steps: list[ValidationStepResult] = []
+        runner = CommandRunner(
+            cwd=cwd, timeout_seconds=self.config.step_timeout_seconds
+        )
 
         for name, cmd in self._build_validation_commands():
-            step = self._run_command(name, cmd, cwd, env)
+            step = self._run_command(name, cmd, runner, env)
             steps.append(step)
             if not step.ok:
                 reason = f"{name} failed (exit {step.returncode})"
@@ -153,44 +154,23 @@ class LegacyValidationRunner:
         return commands
 
     def _run_command(
-        self, name: str, cmd: list[str], cwd: Path, env: dict[str, str]
+        self,
+        name: str,
+        cmd: list[str],
+        runner: CommandRunner,
+        env: dict[str, str],
     ) -> ValidationStepResult:
         full_cmd = self._wrap_with_mutex(cmd) if self.config.use_test_mutex else cmd
-        start = time.monotonic()
-        try:
-            result = subprocess.run(
-                full_cmd,
-                cwd=cwd,
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=self.config.step_timeout_seconds,
-            )
-            duration = time.monotonic() - start
-            stdout_tail = tail(result.stdout)
-            stderr_tail = tail(result.stderr)
-            return ValidationStepResult(
-                name=name,
-                command=cmd,
-                ok=result.returncode == 0,
-                returncode=result.returncode,
-                stdout_tail=stdout_tail,
-                stderr_tail=stderr_tail,
-                duration_seconds=duration,
-            )
-        except subprocess.TimeoutExpired as exc:
-            duration = time.monotonic() - start
-            stdout_tail = decode_timeout_output(exc.stdout)
-            stderr_tail = decode_timeout_output(exc.stderr)
-            return ValidationStepResult(
-                name=name,
-                command=cmd,
-                ok=False,
-                returncode=124,
-                stdout_tail=stdout_tail,
-                stderr_tail=stderr_tail,
-                duration_seconds=duration,
-            )
+        result = runner.run(full_cmd, env=env)
+        return ValidationStepResult(
+            name=name,
+            command=cmd,
+            ok=result.ok,
+            returncode=result.returncode,
+            stdout_tail=result.stdout_tail(),
+            stderr_tail=result.stderr_tail(),
+            duration_seconds=result.duration_seconds,
+        )
 
     def _wrap_with_mutex(self, cmd: list[str]) -> list[str]:
         return [str(SCRIPTS_DIR / "test-mutex.sh"), *cmd]

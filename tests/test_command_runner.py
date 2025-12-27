@@ -1,0 +1,225 @@
+"""Unit tests for CommandRunner - standardized subprocess execution.
+
+Tests cover:
+- Basic command execution (sync and async)
+- Timeout handling with process-group termination
+- Output capture and tailing
+- Error handling
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import time
+from typing import TYPE_CHECKING
+
+import pytest
+
+from src.validation.command_runner import (
+    CommandResult,
+    CommandRunner,
+    run_command,
+    run_command_async,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+class TestCommandResult:
+    """Test CommandResult dataclass."""
+
+    def test_basic_result(self) -> None:
+        result = CommandResult(
+            command=["echo", "hello"],
+            returncode=0,
+            stdout="hello\n",
+            stderr="",
+            duration_seconds=0.1,
+            timed_out=False,
+        )
+        assert result.ok is True
+        assert result.command == ["echo", "hello"]
+        assert result.returncode == 0
+        assert result.stdout == "hello\n"
+
+    def test_failed_result(self) -> None:
+        result = CommandResult(
+            command=["false"],
+            returncode=1,
+            stdout="",
+            stderr="error",
+            duration_seconds=0.05,
+            timed_out=False,
+        )
+        assert result.ok is False
+        assert result.returncode == 1
+
+    def test_timed_out_result(self) -> None:
+        result = CommandResult(
+            command=["sleep", "10"],
+            returncode=124,
+            stdout="",
+            stderr="",
+            duration_seconds=1.0,
+            timed_out=True,
+        )
+        assert result.ok is False
+        assert result.timed_out is True
+        assert result.returncode == 124
+
+    def test_stdout_tail(self) -> None:
+        long_output = "\n".join([f"line {i}" for i in range(100)])
+        result = CommandResult(
+            command=["cmd"],
+            returncode=0,
+            stdout=long_output,
+            stderr="",
+            duration_seconds=0.1,
+            timed_out=False,
+        )
+        # Default tail is 20 lines
+        tail = result.stdout_tail()
+        lines = tail.strip().splitlines()
+        assert len(lines) <= 20
+        assert "line 99" in tail  # Should have last line
+
+    def test_stderr_tail(self) -> None:
+        long_error = "x" * 2000
+        result = CommandResult(
+            command=["cmd"],
+            returncode=1,
+            stdout="",
+            stderr=long_error,
+            duration_seconds=0.1,
+            timed_out=False,
+        )
+        # Default tail is 800 chars
+        tail = result.stderr_tail()
+        assert len(tail) <= 800
+
+
+class TestCommandRunner:
+    """Test CommandRunner class."""
+
+    def test_run_simple_command(self, tmp_path: Path) -> None:
+        runner = CommandRunner(cwd=tmp_path)
+        result = runner.run(["echo", "hello"])
+        assert result.ok is True
+        assert "hello" in result.stdout
+        assert result.timed_out is False
+
+    def test_run_failing_command(self, tmp_path: Path) -> None:
+        runner = CommandRunner(cwd=tmp_path)
+        result = runner.run(["false"])
+        assert result.ok is False
+        assert result.returncode != 0
+
+    def test_run_with_timeout(self, tmp_path: Path) -> None:
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
+        result = runner.run(["sleep", "10"])
+        assert result.ok is False
+        assert result.timed_out is True
+        assert result.returncode == 124
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    def test_timeout_kills_process_group(self, tmp_path: Path) -> None:
+        """Verify that timeout kills entire process group, not just parent."""
+        # Create a script that spawns a child process
+        script = tmp_path / "spawner.sh"
+        script.write_text(
+            """#!/bin/bash
+            # Spawn a child that writes to a file
+            (sleep 10; echo "child survived" > "$1/child_output.txt") &
+            # Parent sleeps forever
+            sleep 10
+            """
+        )
+        script.chmod(0o755)
+
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
+        result = runner.run([str(script), str(tmp_path)])
+
+        assert result.timed_out is True
+
+        # Give a moment for any surviving child to write
+        time.sleep(0.3)
+
+        # Child should NOT have survived to write the file
+        child_output = tmp_path / "child_output.txt"
+        assert not child_output.exists(), "Child process should have been killed"
+
+    def test_run_with_env(self, tmp_path: Path) -> None:
+        runner = CommandRunner(cwd=tmp_path)
+        result = runner.run(
+            ["sh", "-c", "echo $MY_VAR"],
+            env={"MY_VAR": "test_value"},
+        )
+        assert result.ok is True
+        assert "test_value" in result.stdout
+
+    def test_run_captures_stderr(self, tmp_path: Path) -> None:
+        runner = CommandRunner(cwd=tmp_path)
+        result = runner.run(["sh", "-c", "echo error >&2; exit 1"])
+        assert result.ok is False
+        assert "error" in result.stderr
+
+
+class TestAsyncCommandRunner:
+    """Test async command execution."""
+
+    @pytest.mark.asyncio
+    async def test_run_async_simple(self, tmp_path: Path) -> None:
+        runner = CommandRunner(cwd=tmp_path)
+        result = await runner.run_async(["echo", "async hello"])
+        assert result.ok is True
+        assert "async hello" in result.stdout
+
+    @pytest.mark.asyncio
+    async def test_run_async_with_timeout(self, tmp_path: Path) -> None:
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
+        result = await runner.run_async(["sleep", "10"])
+        assert result.ok is False
+        assert result.timed_out is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    async def test_async_timeout_kills_process_group(self, tmp_path: Path) -> None:
+        """Verify that async timeout kills entire process group."""
+        script = tmp_path / "spawner.sh"
+        script.write_text(
+            """#!/bin/bash
+            (sleep 10; echo "child survived" > "$1/child_output.txt") &
+            sleep 10
+            """
+        )
+        script.chmod(0o755)
+
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
+        result = await runner.run_async([str(script), str(tmp_path)])
+
+        assert result.timed_out is True
+        await asyncio.sleep(0.3)
+
+        child_output = tmp_path / "child_output.txt"
+        assert not child_output.exists(), "Child process should have been killed"
+
+
+class TestConvenienceFunctions:
+    """Test module-level convenience functions."""
+
+    def test_run_command(self, tmp_path: Path) -> None:
+        result = run_command(["echo", "convenience"], cwd=tmp_path)
+        assert result.ok is True
+        assert "convenience" in result.stdout
+
+    def test_run_command_with_timeout(self, tmp_path: Path) -> None:
+        result = run_command(["sleep", "10"], cwd=tmp_path, timeout_seconds=0.5)
+        assert result.timed_out is True
+
+    @pytest.mark.asyncio
+    async def test_run_command_async(self, tmp_path: Path) -> None:
+        result = await run_command_async(["echo", "async"], cwd=tmp_path)
+        assert result.ok is True
+        assert "async" in result.stdout
