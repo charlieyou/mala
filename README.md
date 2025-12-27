@@ -268,6 +268,8 @@ File locks are enforced at two levels:
 1. **Advisory locks**: Agents acquire locks before editing files via `lock-try.sh`
 2. **PreToolUse hook**: A hook blocks file-write tool calls (`Write`, `NotebookEdit`, `mcp__morphllm__edit_file`) unless the agent holds the lock for that file
 
+**Edit tool blocking**: The built-in `Edit` tool is always blocked (regardless of MorphLLM configuration) because the lock enforcement hook doesn't cover it. Agents must use either `Write` (which is lock-enforced) or MorphLLM's `edit_file` tool.
+
 Lock keys are canonicalized so equivalent paths (absolute/relative, with `./..` segments) produce identical locks. When `REPO_NAMESPACE` is set, paths become repo-relative.
 
 ## Git Safety
@@ -422,7 +424,7 @@ for agents. It is **optional** and enabled when `MORPH_API_KEY` is present.
 
 **When disabled** (MORPH_API_KEY not set):
 - No MCP server is configured
-- Agents use built-in `Edit` and `Grep` tools
+- Agents use built-in `Grep` tool (Edit remains blocked for lock safety)
 - Startup logs show "morph: disabled (MORPH_API_KEY not set)"
 
 To enable MorphLLM:
@@ -476,7 +478,7 @@ All ty rules are set to `error` level in `pyproject.toml` for maximum strictness
 
 ### Test Coverage
 
-Tests require 72% minimum coverage:
+Tests require 85% minimum coverage:
 
 ```bash
 uv run pytest                              # Unit tests only (default, excludes slow)
@@ -484,7 +486,7 @@ uv run pytest -m slow -n auto              # Slow/integration tests in parallel
 uv run pytest -m "slow or not slow"        # All tests
 uv run pytest --reruns 2                   # Auto-retry flaky tests (2 retries)
 uv run pytest -m slow -n auto --reruns 2   # Parallel + auto-retry
-uv run pytest --cov-fail-under=80          # Override coverage threshold
+uv run pytest --cov-fail-under=90          # Override coverage threshold
 ```
 
 - **Parallel execution**: Use `-n auto` for parallel test runs (pytest-xdist)
