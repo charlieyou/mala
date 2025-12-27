@@ -410,13 +410,22 @@ To enable Braintrust tracing for agent sessions, add your API key to the global 
 echo "BRAINTRUST_API_KEY=your-key" >> ~/.config/mala/.env
 ```
 
-### MorphLLM MCP
+### MorphLLM MCP (Optional)
 
-mala configures the MorphLLM MCP server for all agents and requires `MORPH_API_KEY` to run.
-The server is launched via `npx -y @morphllm/morphmcp`, and agents use MCP tools like
-`edit_file` and `warpgrep_codebase_search` (prefixed as `mcp__morphllm__*`). The built-in
-`Edit` and `Grep` tools are blocked to enforce MCP usage.
+MorphLLM MCP provides enhanced editing and search tools (`edit_file`, `warpgrep_codebase_search`)
+for agents. It is **optional** and enabled when `MORPH_API_KEY` is present.
 
+**When enabled** (MORPH_API_KEY set):
+- MCP server is launched via `npx -y @morphllm/morphmcp`
+- Agents use MCP tools (prefixed as `mcp__morphllm__*`)
+- Built-in `Edit` and `Grep` tools are blocked to enforce MCP usage
+
+**When disabled** (MORPH_API_KEY not set):
+- No MCP server is configured
+- Agents use built-in `Edit` and `Grep` tools
+- Startup logs show "morph: disabled (MORPH_API_KEY not set)"
+
+To enable MorphLLM:
 ```bash
 echo "MORPH_API_KEY=your-key" >> ~/.config/mala/.env
 ```

@@ -127,7 +127,7 @@ E2EConfig:
   enabled: bool
   fixture_root: Path
   command: list[str]  # e.g. ["uv", "run", "mala", "run", ...]
-  required_env: list[str]  # e.g. MORPH_API_KEY, CLAUDE auth presence
+  required_env: list[str]  # e.g. CLAUDE auth presence (MORPH_API_KEY is optional)
 
 E2EResult:
   passed: bool
@@ -273,8 +273,8 @@ Fixture repo plan (run-level only):
 
 Preconditions:
 - Claude CLI authenticated
-- MORPH_API_KEY present
 - `bd` installed and available
+- MORPH_API_KEY (optional; enables MorphLLM MCP tools when present)
 
 Strict default: fail closed if missing and E2E is enabled
 (i.e., `--disable-validations` does not include `e2e`).
