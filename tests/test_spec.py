@@ -379,14 +379,19 @@ class TestBuildValidationSpec:
         assert spec.e2e.enabled is False
 
     def test_disable_post_validate(self) -> None:
-        """--disable-validations=post-validate removes test commands."""
+        """--disable-validations=post-validate removes pytest/ruff/ty commands."""
         spec = build_validation_spec(
             scope=ValidationScope.PER_ISSUE,
             disable_validations={"post-validate"},
         )
-        # Should only have lint/format/typecheck, no test commands
-        test_cmds = spec.commands_by_kind(CommandKind.TEST)
-        assert len(test_cmds) == 0
+        # Should only have uv sync, no pytest/ruff/ty commands
+        command_names = [cmd.name for cmd in spec.commands]
+        assert "uv sync" in command_names
+        assert "pytest" not in command_names
+        assert "ruff format" not in command_names
+        assert "ruff check" not in command_names
+        assert "ty check" not in command_names
+        assert len(spec.commands) == 1  # Only uv sync
 
     def test_custom_coverage_threshold(self) -> None:
         spec = build_validation_spec(

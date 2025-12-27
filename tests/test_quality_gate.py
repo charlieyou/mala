@@ -1328,11 +1328,11 @@ class TestCheckEvidenceAgainstSpec:
         evidence = ValidationEvidence(
             uv_sync_ran=True,
             pytest_ran=False,  # Not run
-            ruff_check_ran=True,
-            ruff_format_ran=True,
-            ty_check_ran=True,
+            ruff_check_ran=False,  # Not run (post-validate disables ruff/ty too)
+            ruff_format_ran=False,  # Not run
+            ty_check_ran=False,  # Not run
         )
-        # Disable post-validate (which disables pytest)
+        # Disable post-validate (which disables pytest/ruff/ty)
         spec = build_validation_spec(
             scope=ValidationScope.PER_ISSUE,
             disable_validations={"post-validate"},
@@ -1341,8 +1341,11 @@ class TestCheckEvidenceAgainstSpec:
         passed, missing = check_evidence_against_spec(evidence, spec)
 
         assert passed is True
-        # pytest should not be required when post-validate is disabled
+        # pytest, ruff, ty should not be required when post-validate is disabled
         assert "pytest" not in missing
+        assert "ruff check" not in missing
+        assert "ruff format" not in missing
+        assert "ty check" not in missing
 
 
 class TestCheckWithResolutionSpec:

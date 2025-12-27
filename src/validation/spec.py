@@ -307,35 +307,34 @@ def build_validation_spec(
         )
     )
 
-    # Always include format check
-    commands.append(
-        ValidationCommand(
-            name="ruff format",
-            command=["uvx", "ruff", "format", "--check", "."],
-            kind=CommandKind.FORMAT,
-            detection_pattern=re.compile(r"\b(uvx\s+)?ruff\s+format\b"),
+    # Include format/lint/typecheck unless skip_tests (post-validate disables all)
+    if not skip_tests:
+        commands.append(
+            ValidationCommand(
+                name="ruff format",
+                command=["uvx", "ruff", "format", "--check", "."],
+                kind=CommandKind.FORMAT,
+                detection_pattern=re.compile(r"\b(uvx\s+)?ruff\s+format\b"),
+            )
         )
-    )
 
-    # Always include lint
-    commands.append(
-        ValidationCommand(
-            name="ruff check",
-            command=["uvx", "ruff", "check", "."],
-            kind=CommandKind.LINT,
-            detection_pattern=re.compile(r"\b(uvx\s+)?ruff\s+check\b"),
+        commands.append(
+            ValidationCommand(
+                name="ruff check",
+                command=["uvx", "ruff", "check", "."],
+                kind=CommandKind.LINT,
+                detection_pattern=re.compile(r"\b(uvx\s+)?ruff\s+check\b"),
+            )
         )
-    )
 
-    # Always include typecheck
-    commands.append(
-        ValidationCommand(
-            name="ty check",
-            command=["uvx", "ty", "check"],
-            kind=CommandKind.TYPECHECK,
-            detection_pattern=re.compile(r"\b(uvx\s+)?ty\s+check\b"),
+        commands.append(
+            ValidationCommand(
+                name="ty check",
+                command=["uvx", "ty", "check"],
+                kind=CommandKind.TYPECHECK,
+                detection_pattern=re.compile(r"\b(uvx\s+)?ty\s+check\b"),
+            )
         )
-    )
 
     # Add pytest unless skipping tests
     if not skip_tests:
