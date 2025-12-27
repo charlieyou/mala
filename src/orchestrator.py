@@ -47,6 +47,7 @@ from .tools.locking import (
 from .validation.runner import ValidationRunner, ValidationConfig
 from .validation.spec import (
     IssueResolution,
+    ResolutionOutcome,
     ValidationContext,
     ValidationScope,
     build_validation_spec,
@@ -60,6 +61,15 @@ if TYPE_CHECKING:
 from importlib.metadata import version as pkg_version
 
 __version__ = pkg_version("mala")
+
+# Resolution outcomes that skip codex review (no new code to review)
+_SKIP_REVIEW_OUTCOMES = frozenset(
+    {
+        ResolutionOutcome.NO_CHANGE,
+        ResolutionOutcome.OBSOLETE,
+        ResolutionOutcome.ALREADY_COMPLETE,
+    }
+)
 
 # Load implementer prompt from file
 PROMPT_FILE = Path(__file__).parent / "prompts" / "implementer_prompt.md"
@@ -780,9 +790,16 @@ class MalaOrchestrator:
                                                     self.disable_validations or set()
                                                 )
                                             )
+                                            # Skip review for resolutions with no new code
+                                            resolution_skips_review = (
+                                                gate_result.resolution is not None
+                                                and gate_result.resolution.outcome
+                                                in _SKIP_REVIEW_OUTCOMES
+                                            )
                                             if (
                                                 codex_review_enabled
                                                 and gate_result.commit_hash
+                                                and not resolution_skips_review
                                             ):
                                                 retry_state.review_attempt += 1
                                                 log(
