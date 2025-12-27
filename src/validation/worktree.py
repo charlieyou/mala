@@ -242,13 +242,18 @@ def remove_worktree(
         text=True,
     )
 
-    # Track git command failure separately from directory cleanup
+    # Track git command failure
     git_failed = result.returncode != 0
     git_error = _format_git_error("git worktree remove", result) if git_failed else None
 
-    # Try to clean up the directory even if git worktree remove failed
+    # Only attempt directory cleanup if:
+    # 1. Git worktree remove succeeded, OR
+    # 2. force_remove is True (user explicitly requested forced cleanup)
+    # This protects uncommitted changes when force_remove=False and git remove fails
     dir_cleanup_failed = False
-    if ctx.path.exists():
+    should_cleanup_dir = not git_failed or ctx.config.force_remove
+
+    if should_cleanup_dir and ctx.path.exists():
         try:
             shutil.rmtree(ctx.path)
         except OSError as e:
@@ -266,8 +271,7 @@ def remove_worktree(
         text=True,
     )
 
-    # Report failure if git command failed (even if directory was cleaned up)
-    # This ensures stale git metadata issues are surfaced
+    # Report failure if git command failed or directory cleanup failed
     if git_failed or dir_cleanup_failed:
         ctx.state = WorktreeState.FAILED
         ctx.error = git_error

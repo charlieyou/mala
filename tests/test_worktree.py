@@ -667,6 +667,89 @@ class TestRemoveWorktreeFailurePropagation:
         assert ctx.state == WorktreeState.FAILED
         assert "Permission denied" in (ctx.error or "")
 
+    def test_preserves_directory_on_git_failure_when_force_remove_false(
+        self, tmp_path: Path
+    ) -> None:
+        """Should NOT delete directory when git fails and force_remove=False.
+
+        This protects uncommitted changes in dirty worktrees.
+        """
+        config = WorktreeConfig(
+            base_dir=tmp_path / "worktrees",
+            force_remove=False,  # Key: force_remove is False
+        )
+        ctx = WorktreeContext(
+            config=config,
+            repo_path=tmp_path / "repo",
+            run_id="run-1",
+            issue_id="mala-10",
+            attempt=1,
+            state=WorktreeState.CREATED,
+        )
+        ctx._validated = True
+        ctx._path = config.base_dir / "run-1" / "mala-10" / "1"
+
+        # Create the directory with some content (simulating uncommitted changes)
+        ctx._path.mkdir(parents=True, exist_ok=True)
+        (ctx._path / "uncommitted.txt").write_text("precious data")
+
+        # Git command fails (e.g., dirty worktree without --force)
+        mock_git_fail = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="fatal: worktree has uncommitted changes",
+        )
+
+        with patch("subprocess.run", return_value=mock_git_fail):
+            result_ctx = remove_worktree(ctx, validation_passed=True)
+
+        # Should fail
+        assert result_ctx.state == WorktreeState.FAILED
+        assert "uncommitted changes" in (result_ctx.error or "")
+        # Directory should still exist (preserving uncommitted changes)
+        assert ctx._path.exists()
+        assert (ctx._path / "uncommitted.txt").exists()
+
+    def test_deletes_directory_on_git_failure_when_force_remove_true(
+        self, tmp_path: Path
+    ) -> None:
+        """Should delete directory when git fails but force_remove=True.
+
+        User explicitly requested forced cleanup, so we clean up anyway.
+        """
+        config = WorktreeConfig(
+            base_dir=tmp_path / "worktrees",
+            force_remove=True,  # Key: force_remove is True
+        )
+        ctx = WorktreeContext(
+            config=config,
+            repo_path=tmp_path / "repo",
+            run_id="run-1",
+            issue_id="mala-10",
+            attempt=1,
+            state=WorktreeState.CREATED,
+        )
+        ctx._validated = True
+        ctx._path = config.base_dir / "run-1" / "mala-10" / "1"
+
+        # Create the directory
+        ctx._path.mkdir(parents=True, exist_ok=True)
+        (ctx._path / "some_file.txt").write_text("data")
+
+        # Git command fails but force_remove=True means we still cleanup
+        mock_git_fail = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="git worktree remove failed"
+        )
+
+        with patch("subprocess.run", return_value=mock_git_fail):
+            result_ctx = remove_worktree(ctx, validation_passed=True)
+
+        # Should fail (git command failed)
+        assert result_ctx.state == WorktreeState.FAILED
+        # But directory should be deleted (force_remove=True)
+        assert not ctx._path.exists()
+
 
 class TestStalePathCleanup:
     """Test stale path cleanup error handling."""
