@@ -2648,3 +2648,151 @@ class TestValidationExitCodeParsing:
         assert result.passed is True, (
             f"Gate should pass when command fails then succeeds. Failures: {result.failure_reasons}"
         )
+
+
+class TestAlreadyCompleteResolution:
+    """Test ISSUE_ALREADY_COMPLETE resolution for pre-existing commits."""
+
+    def test_already_complete_passes_with_valid_commit(self, tmp_path: Path) -> None:
+        """ALREADY_COMPLETE should pass if commit exists (ignoring baseline)."""
+        from src.validation.spec import ResolutionOutcome
+
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_ALREADY_COMPLETE: Work committed in 238e17f (bd-test-123: Add feature)",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        with patch("src.quality_gate.subprocess.run") as mock_run:
+            # Return a commit that exists (even if before baseline)
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="238e17f 1703400000 bd-test-123: Add feature\n",
+                stderr="",
+            )
+            result = gate.check_with_resolution(
+                issue_id="test-123",
+                log_path=log_path,
+                baseline_timestamp=1703500000,  # Commit is BEFORE baseline
+            )
+
+        assert result.passed is True
+        assert result.resolution is not None
+        assert result.resolution.outcome == ResolutionOutcome.ALREADY_COMPLETE
+        assert result.commit_hash == "238e17f"
+
+    def test_already_complete_fails_without_commit(self, tmp_path: Path) -> None:
+        """ALREADY_COMPLETE should fail if no matching commit exists."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_ALREADY_COMPLETE: Work committed in 238e17f",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        with patch("src.quality_gate.subprocess.run") as mock_run:
+            # No matching commit found
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="",  # No commit output
+                stderr="",
+            )
+            result = gate.check_with_resolution(
+                issue_id="test-123",
+                log_path=log_path,
+            )
+
+        assert result.passed is False
+        assert any("requires a commit" in r for r in result.failure_reasons)
+
+    def test_already_complete_requires_rationale(self, tmp_path: Path) -> None:
+        """ALREADY_COMPLETE should fail without rationale."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_ALREADY_COMPLETE:   ",  # Empty rationale
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        result = gate.check_with_resolution(
+            issue_id="test-123",
+            log_path=log_path,
+        )
+
+        assert result.passed is False
+        assert any("requires a rationale" in r for r in result.failure_reasons)
+
+    def test_already_complete_skips_validation_evidence(self, tmp_path: Path) -> None:
+        """ALREADY_COMPLETE should not require validation evidence."""
+        from src.validation.spec import ResolutionOutcome
+
+        log_path = tmp_path / "session.jsonl"
+        # Only ALREADY_COMPLETE marker, no validation commands
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_ALREADY_COMPLETE: Commit 238e17f exists from prior run",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        with patch("src.quality_gate.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="238e17f 1703400000 bd-test-123: Add feature\n",
+                stderr="",
+            )
+            result = gate.check_with_resolution(
+                issue_id="test-123",
+                log_path=log_path,
+            )
+
+        # Should pass without any validation evidence
+        assert result.passed is True
+        assert result.resolution.outcome == ResolutionOutcome.ALREADY_COMPLETE

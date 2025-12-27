@@ -46,6 +46,7 @@ class ResolutionOutcome(Enum):
     SUCCESS = "success"
     NO_CHANGE = "no_change"
     OBSOLETE = "obsolete"
+    ALREADY_COMPLETE = "already_complete"
 
 
 @dataclass(frozen=True)

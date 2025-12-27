@@ -164,6 +164,9 @@ class QualityGate:
     RESOLUTION_PATTERNS: ClassVar[dict[str, re.Pattern[str]]] = {
         "no_change": re.compile(r"ISSUE_NO_CHANGE:\s*(.*)$", re.MULTILINE),
         "obsolete": re.compile(r"ISSUE_OBSOLETE:\s*(.*)$", re.MULTILINE),
+        "already_complete": re.compile(
+            r"ISSUE_ALREADY_COMPLETE:\s*(.*)$", re.MULTILINE
+        ),
     }
 
     def __init__(self, repo_path: Path):
@@ -268,6 +271,20 @@ class QualityGate:
                             return (
                                 IssueResolution(
                                     outcome=ResolutionOutcome.OBSOLETE,
+                                    rationale=rationale,
+                                ),
+                                current_offset + line_len,
+                            )
+
+                        # Check for already_complete marker
+                        match = self.RESOLUTION_PATTERNS["already_complete"].search(
+                            text
+                        )
+                        if match:
+                            rationale = match.group(1).strip()
+                            return (
+                                IssueResolution(
+                                    outcome=ResolutionOutcome.ALREADY_COMPLETE,
                                     rationale=rationale,
                                 ),
                                 current_offset + line_len,
@@ -778,11 +795,17 @@ class QualityGate:
         This method is scope-aware and handles special resolution outcomes:
         - ISSUE_NO_CHANGE: Issue already addressed, no commit needed
         - ISSUE_OBSOLETE: Issue no longer relevant, no commit needed
+        - ISSUE_ALREADY_COMPLETE: Work done in previous run, verify commit exists
 
         For no-op/obsolete resolutions:
         - Gate 2 (commit check) is skipped
         - Gate 3 (validation evidence) is skipped
         - Requires clean working tree and rationale
+
+        For already_complete resolutions:
+        - Gate 2 (commit check) runs WITHOUT baseline timestamp (accepts stale commits)
+        - Gate 3 (validation evidence) is skipped
+        - Requires rationale and valid pre-existing commit
 
         When a ValidationSpec is provided, evidence requirements are derived
         from the spec rather than using hardcoded defaults. This ensures:
@@ -838,6 +861,42 @@ class QualityGate:
                 # No-op/obsolete with rationale and clean tree passes
                 return GateResult(
                     passed=True,
+                    resolution=resolution,
+                )
+
+            # Already complete resolution - verify pre-existing commit
+            if resolution.outcome == ResolutionOutcome.ALREADY_COMPLETE:
+                # Require rationale
+                if not resolution.rationale.strip():
+                    failure_reasons.append(
+                        "ALREADY_COMPLETE resolution requires a rationale"
+                    )
+                    return GateResult(
+                        passed=False,
+                        failure_reasons=failure_reasons,
+                        resolution=resolution,
+                    )
+
+                # Verify commit exists WITHOUT baseline check (accepts stale commits)
+                commit_result = self.check_commit_exists(
+                    issue_id, baseline_timestamp=None
+                )
+                if not commit_result.exists:
+                    failure_reasons.append(
+                        f"ALREADY_COMPLETE resolution requires a commit with bd-{issue_id} "
+                        "but none was found"
+                    )
+                    return GateResult(
+                        passed=False,
+                        failure_reasons=failure_reasons,
+                        resolution=resolution,
+                    )
+
+                # Already complete with rationale and valid commit passes
+                # (skip validation evidence - was validated in prior run)
+                return GateResult(
+                    passed=True,
+                    commit_hash=commit_result.commit_hash,
                     resolution=resolution,
                 )
 

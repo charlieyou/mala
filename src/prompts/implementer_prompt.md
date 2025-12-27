@@ -141,10 +141,15 @@ Sometimes an issue requires no changes (already fixed, duplicate, or obsolete). 
 **When to use:**
 - `ISSUE_NO_CHANGE: <rationale>` - Issue already addressed or no changes needed
 - `ISSUE_OBSOLETE: <rationale>` - Issue no longer relevant (code removed, feature deprecated, etc.)
+- `ISSUE_ALREADY_COMPLETE: <rationale>` - Work was done in a previous run (commit exists with correct issue ID)
 
-**Requirements:**
+**Requirements for NO_CHANGE / OBSOLETE:**
 1. Working tree must be clean (`git status` shows no changes)
 2. Provide a clear rationale explaining why no changes are needed
+
+**Requirements for ALREADY_COMPLETE:**
+1. A commit with `bd-<issue_id>` prefix must exist (created in a prior run)
+2. Provide a clear rationale including the commit hash
 
 **Example output:**
 ```
@@ -152,6 +157,9 @@ ISSUE_NO_CHANGE: The validation logic already exists in src/validator.py:45-52
 ```
 ```
 ISSUE_OBSOLETE: The legacy API endpoint was removed in commit abc123
+```
+```
+ISSUE_ALREADY_COMPLETE: Work committed in 238e17f (bd-issue-123: Add feature X)
 ```
 
 After outputting the marker, proceed to release locks (step 7).
