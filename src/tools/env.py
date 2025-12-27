@@ -12,8 +12,17 @@ from dotenv import load_dotenv
 # User config directory (stores .env, runs, etc.)
 USER_CONFIG_DIR = Path.home() / ".config" / "mala"
 
+
 # Run metadata directory
-RUNS_DIR = USER_CONFIG_DIR / "runs"
+# Can be overridden via MALA_RUNS_DIR environment variable
+def get_runs_dir() -> Path:
+    """Get the runs directory, respecting MALA_RUNS_DIR env var."""
+    return Path(os.environ.get("MALA_RUNS_DIR", str(USER_CONFIG_DIR / "runs")))
+
+
+# For backwards compatibility, expose as module-level constant
+# Note: This is evaluated at import time, so env var must be set before import
+RUNS_DIR = get_runs_dir()
 
 # Lock directory for multi-agent coordination
 # Can be overridden via MALA_LOCK_DIR environment variable
@@ -66,11 +75,25 @@ def encode_repo_path(repo_path: Path) -> str:
     return "-" + "-".join(resolved.parts[1:])
 
 
+def get_claude_config_dir() -> Path:
+    """Get the Claude config directory, respecting CLAUDE_CONFIG_DIR env var.
+
+    Claude SDK uses ~/.claude by default, but this can be overridden
+    via CLAUDE_CONFIG_DIR environment variable for testing.
+
+    Returns:
+        Path to the Claude config directory.
+    """
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
+
+
 def get_claude_log_path(repo_path: Path, session_id: str) -> Path:
     """Get path to Claude SDK's session log file.
 
     Claude SDK writes session logs to:
-    ~/.claude/projects/{encoded-repo-path}/{session_id}.jsonl
+    {claude_config_dir}/projects/{encoded-repo-path}/{session_id}.jsonl
+
+    The base directory can be overridden via CLAUDE_CONFIG_DIR env var.
 
     Args:
         repo_path: Repository path the session was run in.
@@ -80,4 +103,4 @@ def get_claude_log_path(repo_path: Path, session_id: str) -> Path:
         Path to the JSONL log file.
     """
     encoded = encode_repo_path(repo_path)
-    return Path.home() / ".claude" / "projects" / encoded / f"{session_id}.jsonl"
+    return get_claude_config_dir() / "projects" / encoded / f"{session_id}.jsonl"
