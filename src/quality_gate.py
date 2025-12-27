@@ -190,6 +190,9 @@ class QualityGate:
     ) -> tuple[IssueResolution | None, int]:
         """Parse JSONL log file for issue resolution markers starting at offset.
 
+        Only parses assistant messages to prevent user prompts from triggering
+        resolution markers.
+
         Args:
             log_path: Path to the JSONL log file from agent session.
             offset: Byte offset to start reading from (default 0 = beginning).
@@ -201,72 +204,86 @@ class QualityGate:
             return None, 0
 
         try:
-            # Read file content to avoid issues with f.tell() during iteration
-            content = log_path.read_text()
-            lines = content[offset:].split("\n")
-            current_offset = offset
+            # Read file in binary mode for accurate byte offset tracking
+            with open(log_path, "rb") as f:
+                f.seek(offset)
+                current_offset = offset
 
-            for line in lines:
-                line_bytes = len(line.encode("utf-8")) + 1  # +1 for newline
-                line = line.strip()
-                if not line:
-                    current_offset += line_bytes
-                    continue
-
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    current_offset += line_bytes
-                    continue
-
-                # Look for text blocks in assistant messages
-                message = entry.get("message", {})
-                message_content = message.get("content", [])
-
-                for block in message_content:
-                    if not isinstance(block, dict):
-                        continue
-                    if block.get("type") != "text":
+                for line_bytes in f:
+                    line_len = len(line_bytes)
+                    try:
+                        line = line_bytes.decode("utf-8").strip()
+                    except UnicodeDecodeError:
+                        current_offset += line_len
                         continue
 
-                    text = block.get("text", "")
+                    if not line:
+                        current_offset += line_len
+                        continue
 
-                    # Check for no_change marker
-                    match = self.RESOLUTION_PATTERNS["no_change"].search(text)
-                    if match:
-                        rationale = match.group(1).strip()
-                        return (
-                            IssueResolution(
-                                outcome=ResolutionOutcome.NO_CHANGE,
-                                rationale=rationale,
-                            ),
-                            current_offset + line_bytes,
-                        )
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        current_offset += line_len
+                        continue
 
-                    # Check for obsolete marker
-                    match = self.RESOLUTION_PATTERNS["obsolete"].search(text)
-                    if match:
-                        rationale = match.group(1).strip()
-                        return (
-                            IssueResolution(
-                                outcome=ResolutionOutcome.OBSOLETE,
-                                rationale=rationale,
-                            ),
-                            current_offset + line_bytes,
-                        )
+                    # Only parse assistant messages to prevent user prompt injection
+                    entry_type = entry.get("type", "")
+                    entry_role = entry.get("message", {}).get("role", "")
+                    if entry_type != "assistant" and entry_role != "assistant":
+                        current_offset += line_len
+                        continue
 
-                current_offset += line_bytes
+                    # Look for text blocks in assistant messages
+                    message = entry.get("message", {})
+                    message_content = message.get("content", [])
+
+                    for block in message_content:
+                        if not isinstance(block, dict):
+                            continue
+                        if block.get("type") != "text":
+                            continue
+
+                        text = block.get("text", "")
+
+                        # Check for no_change marker
+                        match = self.RESOLUTION_PATTERNS["no_change"].search(text)
+                        if match:
+                            rationale = match.group(1).strip()
+                            return (
+                                IssueResolution(
+                                    outcome=ResolutionOutcome.NO_CHANGE,
+                                    rationale=rationale,
+                                ),
+                                current_offset + line_len,
+                            )
+
+                        # Check for obsolete marker
+                        match = self.RESOLUTION_PATTERNS["obsolete"].search(text)
+                        if match:
+                            rationale = match.group(1).strip()
+                            return (
+                                IssueResolution(
+                                    outcome=ResolutionOutcome.OBSOLETE,
+                                    rationale=rationale,
+                                ),
+                                current_offset + line_len,
+                            )
+
+                    current_offset += line_len
+
+                # Return final position
+                return None, f.tell()
 
         except OSError:
             return None, 0
-
-        return None, current_offset
 
     def check_working_tree_clean(self) -> tuple[bool, str]:
         """Check if the git working tree is clean (no uncommitted changes).
 
         Returns:
-            Tuple of (is_clean, status_output).
+            Tuple of (is_clean, status_output). On git failure, returns
+            (False, error_message) to treat unknown state as dirty.
         """
         result = subprocess.run(
             ["git", "status", "--porcelain"],
@@ -274,6 +291,10 @@ class QualityGate:
             text=True,
             cwd=self.repo_path,
         )
+        # Treat git failures as dirty/unknown state
+        if result.returncode != 0:
+            error_msg = result.stderr.strip() or "git status failed"
+            return False, f"git error: {error_msg}"
         output = result.stdout.strip()
         return len(output) == 0, output
 
@@ -632,8 +653,8 @@ class QualityGate:
                     f"No commit with bd-{issue_id} found in last 30 days"
                 )
 
-        # Check validation evidence
-        evidence = self.parse_validation_evidence(log_path)
+        # Check validation evidence from the given offset (scopes to current attempt)
+        evidence, _ = self.parse_validation_evidence_from_offset(log_path, log_offset)
 
         # Use spec-aware checking if spec provided, otherwise use default
         if spec is not None:
