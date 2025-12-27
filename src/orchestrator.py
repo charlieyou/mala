@@ -220,26 +220,15 @@ class MalaOrchestrator:
                 dim=True,
             )
 
-    def _run_quality_gate(
+    def _run_quality_gate_sync(
         self,
         issue_id: str,
         log_path: Path,
         retry_state: RetryState,
     ) -> tuple[GateResult, int]:
-        """Run quality gate check with attempt-scoped evidence.
+        """Synchronous quality gate check (blocking I/O).
 
-        Uses check_with_resolution to properly handle:
-        - Normal commits with validation evidence
-        - No-op resolutions (ISSUE_NO_CHANGE marker)
-        - Obsolete resolutions (ISSUE_OBSOLETE marker)
-
-        Args:
-            issue_id: The issue being checked.
-            log_path: Path to the session log file.
-            retry_state: Current retry state for this issue.
-
-        Returns:
-            Tuple of (GateResult, new_log_offset).
+        This is the blocking implementation that gets run via asyncio.to_thread.
         """
         # Build a per-issue validation spec to derive expected evidence
         spec = build_validation_spec(
@@ -287,6 +276,29 @@ class MalaOrchestrator:
                 )
 
         return (gate_result, new_offset)
+
+    async def _run_quality_gate_async(
+        self,
+        issue_id: str,
+        log_path: Path,
+        retry_state: RetryState,
+    ) -> tuple[GateResult, int]:
+        """Run quality gate check asynchronously via to_thread.
+
+        Wraps the blocking _run_quality_gate_sync to avoid stalling the event loop.
+        This allows the orchestrator to service other agents while a gate runs.
+
+        Args:
+            issue_id: The issue being checked.
+            log_path: Path to the session log file.
+            retry_state: Current retry state for this issue.
+
+        Returns:
+            Tuple of (GateResult, new_log_offset).
+        """
+        return await asyncio.to_thread(
+            self._run_quality_gate_sync, issue_id, log_path, retry_state
+        )
 
     async def run_implementer(self, issue_id: str) -> IssueResult:
         """Run implementer agent for a single issue with gate retry support."""
@@ -431,10 +443,11 @@ class MalaOrchestrator:
                                         break
 
                                     if log_path.exists():
-                                        gate_result, new_offset = (
-                                            self._run_quality_gate(
-                                                issue_id, log_path, retry_state
-                                            )
+                                        (
+                                            gate_result,
+                                            new_offset,
+                                        ) = await self._run_quality_gate_async(
+                                            issue_id, log_path, retry_state
                                         )
 
                                         if gate_result.passed:

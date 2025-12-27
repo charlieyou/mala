@@ -2971,3 +2971,57 @@ class TestEpicClosureAfterChildCompletion:
         assert len(issues_processed) == 2
         # Epic closure should have been called for each successful issue
         assert len(epic_closure_calls) == 2
+
+
+class TestQualityGateAsync:
+    """Test that quality gate checks are non-blocking."""
+
+    @pytest.mark.asyncio
+    async def test_run_quality_gate_uses_to_thread(
+        self, orchestrator: MalaOrchestrator, tmp_path: Path
+    ) -> None:
+        """Quality gate should use asyncio.to_thread to avoid blocking the event loop."""
+        from src.quality_gate import GateResult
+
+        # Create a mock session log
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("{}\n")
+
+        # Create a mock RetryState
+        from src.orchestrator import RetryState
+
+        retry_state = RetryState(baseline_timestamp=int(time.time()))
+
+        # Create mock GateResult
+        mock_gate_result = GateResult(
+            passed=True,
+            failure_reasons=[],
+            commit_hash="abc123",
+            validation_evidence=None,
+        )
+
+        # Track whether to_thread was called
+        to_thread_called = False
+        original_func_captured = None
+
+        async def mock_to_thread(
+            func: object, *args: object, **kwargs: object
+        ) -> tuple[GateResult, int]:
+            nonlocal to_thread_called, original_func_captured
+            to_thread_called = True
+            original_func_captured = func
+            # Return mock result
+            return (mock_gate_result, 0)
+
+        with (
+            patch("src.orchestrator.asyncio.to_thread", side_effect=mock_to_thread),
+        ):
+            result, offset = await orchestrator._run_quality_gate_async(
+                "test-issue", log_path, retry_state
+            )
+
+        assert to_thread_called, (
+            "asyncio.to_thread should be called for non-blocking execution"
+        )
+        assert result.passed is True
+        assert offset == 0
