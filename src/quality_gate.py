@@ -393,6 +393,112 @@ class QualityGate:
             # File read error - return empty evidence
             return evidence, 0
 
+    def parse_validation_evidence_with_spec(
+        self, log_path: Path, spec: ValidationSpec, offset: int = 0
+    ) -> ValidationEvidence:
+        """Parse JSONL log for validation evidence using spec-defined patterns.
+
+        This method derives detection patterns from the ValidationSpec, ensuring
+        that evidence parsing is driven from spec command definitions. When spec
+        commands change, evidence detection updates automatically.
+
+        For commands without a detection_pattern, falls back to hardcoded
+        VALIDATION_PATTERNS for backward compatibility.
+
+        Args:
+            log_path: Path to the JSONL log file from agent session.
+            spec: The ValidationSpec defining commands and their detection patterns.
+            offset: Byte offset to start reading from (default 0 = beginning).
+
+        Returns:
+            ValidationEvidence with flags for each detected command.
+        """
+        evidence = ValidationEvidence()
+
+        if not log_path.exists():
+            return evidence
+
+        # Build mapping from CommandKind to detection patterns
+        # Use spec patterns when available, fall back to hardcoded patterns
+        kind_patterns: dict[CommandKind, list[re.Pattern[str]]] = {}
+        for cmd in spec.commands:
+            if cmd.kind not in kind_patterns:
+                kind_patterns[cmd.kind] = []
+            if cmd.detection_pattern is not None:
+                kind_patterns[cmd.kind].append(cmd.detection_pattern)
+            else:
+                # Fall back to hardcoded patterns
+                fallback = self._get_fallback_pattern(cmd.kind)
+                if fallback is not None:
+                    kind_patterns[cmd.kind].append(fallback)
+
+        try:
+            with open(log_path, "rb") as f:
+                f.seek(offset)
+
+                for line_bytes in f:
+                    try:
+                        line = line_bytes.decode("utf-8").strip()
+                    except UnicodeDecodeError:
+                        continue
+
+                    if not line:
+                        continue
+
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    # Look for Bash tool_use entries
+                    message = entry.get("message", {})
+                    content = message.get("content", [])
+
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        if block.get("type") != "tool_use":
+                            continue
+                        if block.get("name") != "Bash":
+                            continue
+
+                        # Extract command from input
+                        input_data = block.get("input", {})
+                        command = input_data.get("command", "")
+
+                        # Check against spec-defined patterns
+                        for kind, patterns in kind_patterns.items():
+                            for pattern in patterns:
+                                if pattern.search(command):
+                                    # Map CommandKind to evidence flags
+                                    if kind == CommandKind.DEPS:
+                                        evidence.uv_sync_ran = True
+                                    elif kind == CommandKind.TEST:
+                                        evidence.pytest_ran = True
+                                    elif kind == CommandKind.LINT:
+                                        evidence.ruff_check_ran = True
+                                    elif kind == CommandKind.FORMAT:
+                                        evidence.ruff_format_ran = True
+                                    elif kind == CommandKind.TYPECHECK:
+                                        evidence.ty_check_ran = True
+                                    break  # Found match for this kind
+
+        except OSError:
+            pass  # File read error - return empty evidence
+
+        return evidence
+
+    def _get_fallback_pattern(self, kind: CommandKind) -> re.Pattern[str] | None:
+        """Get fallback pattern for a CommandKind when spec pattern is missing."""
+        fallback_map = {
+            CommandKind.DEPS: self.VALIDATION_PATTERNS["uv_sync"],
+            CommandKind.TEST: self.VALIDATION_PATTERNS["pytest"],
+            CommandKind.LINT: self.VALIDATION_PATTERNS["ruff_check"],
+            CommandKind.FORMAT: self.VALIDATION_PATTERNS["ruff_format"],
+            CommandKind.TYPECHECK: self.VALIDATION_PATTERNS["ty_check"],
+        }
+        return fallback_map.get(kind)
+
     def check_no_progress(
         self,
         log_path: Path,

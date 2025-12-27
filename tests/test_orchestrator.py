@@ -1184,12 +1184,6 @@ class TestOrchestratorQualityGateIntegration:
         async def mock_claim_async(issue_id: str) -> bool:
             return True
 
-        async def mock_commit_issues_async() -> bool:
-            return True
-
-        async def mock_close_eligible_epics_async() -> bool:
-            return True
-
         with (
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
@@ -1250,12 +1244,6 @@ class TestOrchestratorQualityGateIntegration:
             return []
 
         async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        async def mock_commit_issues_async() -> bool:
-            return True
-
-        async def mock_close_eligible_epics_async() -> bool:
             return True
 
         with (
@@ -2109,12 +2097,6 @@ class TestRunLevelValidation:
         async def mock_claim_async(issue_id: str) -> bool:
             return True
 
-        async def mock_commit_issues_async() -> bool:
-            return True
-
-        async def mock_close_eligible_epics_async() -> bool:
-            return True
-
         with (
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
@@ -2184,12 +2166,6 @@ class TestRunLevelValidation:
             return []
 
         async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        async def mock_commit_issues_async() -> bool:
-            return True
-
-        async def mock_close_eligible_epics_async() -> bool:
             return True
 
         with (
@@ -2265,12 +2241,6 @@ class TestRunLevelValidation:
             return []
 
         async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        async def mock_commit_issues_async() -> bool:
-            return True
-
-        async def mock_close_eligible_epics_async() -> bool:
             return True
 
         with (

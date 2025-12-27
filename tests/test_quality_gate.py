@@ -10,7 +10,11 @@ from pathlib import Path
 import subprocess
 from unittest.mock import patch
 
-from src.quality_gate import QualityGate, ValidationEvidence
+from src.quality_gate import (
+    QualityGate,
+    ValidationEvidence,
+    check_evidence_against_spec,
+)
 
 
 class TestOffsetBasedParsing:
@@ -1928,3 +1932,136 @@ class TestByteOffsetConsistency:
         assert evidence.pytest_ran is True, (
             "Evidence parser should correctly find pytest after byte-offset with unicode"
         )
+
+
+class TestSpecDrivenEvidencePatterns:
+    """Test that evidence detection is driven from ValidationSpec command definitions.
+
+    This ensures that updating spec commands automatically updates gate expectations,
+    preventing false failures when commands change but evidence parsing does not.
+    """
+
+    def test_all_spec_commands_have_detection_patterns(self) -> None:
+        """Every ValidationCommand in build_validation_spec should have a detection_pattern.
+
+        This test fails if a command is added to build_validation_spec without a pattern,
+        ensuring evidence parsing will work for all spec commands.
+        """
+        from src.validation.spec import ValidationScope, build_validation_spec
+
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
+        for cmd in spec.commands:
+            assert cmd.detection_pattern is not None, (
+                f"Command '{cmd.name}' missing detection_pattern in build_validation_spec"
+            )
+            # Pattern should be a non-empty compiled regex
+            assert hasattr(cmd.detection_pattern, "search"), (
+                f"Command '{cmd.name}' detection_pattern is not a compiled regex"
+            )
+
+    def test_spec_patterns_match_their_own_commands(self) -> None:
+        """Each command's detection_pattern should match the command itself.
+
+        This validates that patterns are correct - if we change a command,
+        we must also update the pattern to match.
+        """
+        from src.validation.spec import ValidationScope, build_validation_spec
+
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
+        for cmd in spec.commands:
+            if cmd.detection_pattern is None:
+                continue  # Skip commands without patterns (use fallback)
+            command_str = " ".join(cmd.command)
+            assert cmd.detection_pattern.search(command_str), (
+                f"Command '{cmd.name}' pattern does not match its own command: {command_str}"
+            )
+
+    def test_quality_gate_uses_spec_patterns_for_evidence(
+        self, tmp_path: Path
+    ) -> None:
+        """QualityGate should use patterns from the spec, not hardcoded patterns.
+
+        This ensures evidence parsing is driven from spec command definitions.
+        """
+        from src.validation.spec import ValidationScope, build_validation_spec
+
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
+        # Create log with all commands from the spec
+        log_path = tmp_path / "session.jsonl"
+        lines = []
+        for cmd in spec.commands:
+            command_str = " ".join(cmd.command)
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": "Bash",
+                                    "input": {"command": command_str},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        gate = QualityGate(tmp_path)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        # All commands in the spec should be detected
+        passed, missing = check_evidence_against_spec(evidence, spec)
+        assert passed is True, f"Missing evidence for spec commands: {missing}"
+
+    def test_fallback_to_hardcoded_patterns_when_no_spec_pattern(
+        self, tmp_path: Path
+    ) -> None:
+        """Should fall back to hardcoded patterns when command has no detection_pattern."""
+        from src.validation.spec import (
+            CommandKind,
+            ValidationCommand,
+            ValidationScope,
+            ValidationSpec,
+        )
+
+        # Create a command without detection_pattern
+        cmd_without_pattern = ValidationCommand(
+            name="pytest",
+            command=["uv", "run", "pytest"],
+            kind=CommandKind.TEST,
+            # detection_pattern=None (default)
+        )
+        spec = ValidationSpec(
+            commands=[cmd_without_pattern],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        # Create log with pytest command
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest tests/"},
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        # Should detect pytest via fallback pattern
+        assert evidence.pytest_ran is True

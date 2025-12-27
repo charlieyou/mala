@@ -15,7 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Literal
+import re
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from re import Pattern
 
 
 class ValidationScope(Enum):
@@ -52,6 +56,8 @@ class ValidationCommand:
         name: Human-readable name (e.g., "pytest", "ruff check").
         command: The command as a list of strings.
         kind: Classification of the command type.
+        detection_pattern: Compiled regex to detect this command in log evidence.
+            If None, falls back to hardcoded patterns in QualityGate.
         use_test_mutex: Whether to wrap with test mutex.
         allow_fail: If True, failure doesn't stop the pipeline.
     """
@@ -59,6 +65,7 @@ class ValidationCommand:
     name: str
     command: list[str]
     kind: CommandKind
+    detection_pattern: Pattern[str] | None = None
     use_test_mutex: bool = False
     allow_fail: bool = False
 
@@ -313,6 +320,7 @@ def build_validation_spec(
             name="uv sync",
             command=["uv", "sync", "--all-extras"],
             kind=CommandKind.DEPS,
+            detection_pattern=re.compile(r"\buv\s+sync\b"),
         )
     )
 
@@ -322,6 +330,7 @@ def build_validation_spec(
             name="ruff format",
             command=["uvx", "ruff", "format", "--check", "."],
             kind=CommandKind.FORMAT,
+            detection_pattern=re.compile(r"\b(uvx\s+)?ruff\s+format\b"),
         )
     )
 
@@ -331,6 +340,7 @@ def build_validation_spec(
             name="ruff check",
             command=["uvx", "ruff", "check", "."],
             kind=CommandKind.LINT,
+            detection_pattern=re.compile(r"\b(uvx\s+)?ruff\s+check\b"),
         )
     )
 
@@ -340,6 +350,7 @@ def build_validation_spec(
             name="ty check",
             command=["uvx", "ty", "check"],
             kind=CommandKind.TYPECHECK,
+            detection_pattern=re.compile(r"\b(uvx\s+)?ty\s+check\b"),
         )
     )
 
@@ -356,6 +367,7 @@ def build_validation_spec(
                 name="pytest",
                 command=pytest_cmd,
                 kind=CommandKind.TEST,
+                detection_pattern=re.compile(r"\b(uv\s+run\s+)?pytest\b"),
             )
         )
 
