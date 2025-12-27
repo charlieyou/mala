@@ -25,6 +25,17 @@ Mala addresses this by:
 
 This architecture turns unreliable long-context agents into reliable short-context workers, each doing one thing well before handing off to the next.
 
+### Limitations
+
+**This project is a work in progress.** Expect rough edges, breaking changes, and incomplete features.
+
+Current constraints:
+- **Python-only**: The validation system, quality gates, and tooling are tailored for Python projects (pytest, ruff, ty). Other languages aren't supported yet.
+- **Opinionated stack**: Assumes uv for package management, ruff for linting/formatting, and ty for type checking
+- **Single-repo focus**: Designed for monorepo workflows; multi-repo coordination isn't implemented
+- **Run in a sandbox**: Agent permissions are permissive; run in an isolated environment (container, VM) to limit blast radius
+- **Garbage in, garbage out**: Agent output quality depends entirely on issue quality. Vague or poorly-scoped issues produce poor results.
+
 ## Prerequisites
 
 ### Beads (`bd`)
