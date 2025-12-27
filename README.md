@@ -42,23 +42,23 @@ bd init
 
 ### Claude Code
 
-Mala uses the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI as the agent runtime. Install it via npm:
+Mala uses the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI as the agent runtime. Install and authenticate:
 
 ```bash
 npm install -g @anthropic-ai/claude-code
+claude login
 ```
-
-Requires `ANTHROPIC_API_KEY` in `~/.config/mala/.env`.
 
 ### Codex
 
-[Codex](https://github.com/openai/codex) is used for automated code review after agents complete their work. Install it via npm:
+[Codex](https://github.com/openai/codex) is used for automated code review after agents complete their work. Install and authenticate:
 
 ```bash
 npm install -g @openai/codex
+codex login
 ```
 
-Requires `OPENAI_API_KEY` in your environment. Codex review can be disabled with `--no-codex-review`.
+Codex review can be disabled with `--no-codex-review`.
 
 ### Creating Issues Correctly
 

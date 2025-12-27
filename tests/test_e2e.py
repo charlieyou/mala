@@ -237,8 +237,10 @@ class TestE2ERunnerRun:
 
         call_count = {"value": 0}
 
-        def mock_run(*args, **kwargs):  # type: ignore[no-untyped-def]
-            cmd = args[0] if args else kwargs.get("args", [])
+        def mock_run(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            cmd: list[str] = list(args[0]) if args else list(kwargs.get("args", []))  # type: ignore[arg-type]
             call_count["value"] += 1
             # Return success for all commands
             return subprocess.CompletedProcess(
@@ -268,11 +270,13 @@ class TestE2ERunnerRun:
 
         cleanup_called = {"value": False}
 
-        def mock_rmtree(*args, **kwargs):  # type: ignore[no-untyped-def]
+        def mock_rmtree(*args: object, **kwargs: object) -> None:
             cleanup_called["value"] = True
 
-        def mock_run(*args, **kwargs):  # type: ignore[no-untyped-def]
-            cmd = args[0] if args else []
+        def mock_run(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            cmd: list[str] = list(args[0]) if args else []  # type: ignore[arg-type]
             return subprocess.CompletedProcess(
                 args=cmd, returncode=0, stdout="", stderr=""
             )
@@ -293,8 +297,10 @@ class TestE2ERunnerRun:
         config = E2EConfig(keep_fixture=True)
         runner = E2ERunner(config)
 
-        def mock_run(*args, **kwargs):  # type: ignore[no-untyped-def]
-            cmd = args[0] if args else []
+        def mock_run(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            cmd: list[str] = list(args[0]) if args else []  # type: ignore[arg-type]
             return subprocess.CompletedProcess(
                 args=cmd, returncode=0, stdout="", stderr=""
             )
@@ -320,8 +326,10 @@ class TestE2ERunnerRun:
 
         call_count = {"value": 0}
 
-        def mock_run(*args, **kwargs):  # type: ignore[no-untyped-def]
-            cmd = args[0] if args else []
+        def mock_run(
+            *args: object, **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            cmd: list[str] = list(args[0]) if args else []  # type: ignore[arg-type]
             call_count["value"] += 1
             # First N calls for setup succeed
             if "mala" in cmd:
