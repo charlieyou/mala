@@ -335,7 +335,9 @@ class MalaOrchestrator:
             mcp_servers=get_mcp_servers(
                 self.repo_path, morph_enabled=self.morph_enabled
             ),
-            disallowed_tools=MORPH_DISALLOWED_TOOLS if self.morph_enabled else [],
+            # Always block Edit since lock enforcement doesn't cover it.
+            # When morph enabled, also block Grep (replaced by warpgrep).
+            disallowed_tools=MORPH_DISALLOWED_TOOLS if self.morph_enabled else ["Edit"],
             env=agent_env,
             hooks={
                 "PreToolUse": [
