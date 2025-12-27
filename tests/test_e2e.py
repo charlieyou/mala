@@ -339,28 +339,44 @@ class TestE2ERunnerRun:
         config = E2EConfig(timeout_seconds=1.0)
         runner = E2ERunner(config)
 
-        call_count = {"value": 0}
-
         def mock_run(
             *args: object, **kwargs: object
         ) -> subprocess.CompletedProcess[str]:
-            cmd: list[str] = list(args[0]) if args else []  # type: ignore[arg-type]
-            call_count["value"] += 1
-            # First N calls for setup succeed
-            if "mala" in cmd:
-                exc = subprocess.TimeoutExpired(cmd=cmd, timeout=1.0)
-                exc.stdout = b"partial output"
-                exc.stderr = b""
-                raise exc
+            """Mock subprocess.run for fixture setup commands (git, bd)."""
             return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="", stderr=""
+                args=args[0] if args else [], returncode=0, stdout="", stderr=""
             )
+
+        def mock_popen(*args: object, **kwargs: object) -> MagicMock:
+            """Mock subprocess.Popen for CommandRunner (mala command)."""
+            cmd: list[str] = list(args[0]) if args else []  # type: ignore[arg-type]
+            mock_proc = MagicMock()
+            mock_proc.pid = 12345
+            call_count = {"value": 0}
+
+            def communicate_timeout(timeout: float | None = None) -> tuple[str, str]:
+                call_count["value"] += 1
+                # Only timeout on first call (main command); subsequent calls are
+                # during cleanup/termination and should return output
+                if call_count["value"] == 1:
+                    exc = subprocess.TimeoutExpired(cmd=cmd, timeout=1.0)
+                    exc.stdout = b"partial output"
+                    exc.stderr = b""
+                    raise exc
+                return ("partial output", "")
+
+            mock_proc.communicate = communicate_timeout
+            return mock_proc
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
             patch("subprocess.run", side_effect=mock_run),
+            patch(
+                "src.validation.command_runner.subprocess.Popen", side_effect=mock_popen
+            ),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
+            patch("src.validation.command_runner.os.killpg"),  # Mock process group kill
         ):
             (tmp_path / "fixture").mkdir()
             (tmp_path / "fixture" / "tests").mkdir()
