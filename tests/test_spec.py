@@ -13,6 +13,7 @@ from src.validation.spec import (
     CoverageConfig,
     E2EConfig,
     IssueResolution,
+    RepoType,
     ResolutionOutcome,
     ValidationArtifacts,
     ValidationCommand,
@@ -21,6 +22,7 @@ from src.validation.spec import (
     ValidationSpec,
     build_validation_spec,
     classify_change,
+    detect_repo_type,
 )
 
 
@@ -489,3 +491,134 @@ class TestClassifyChangesMultiple:
         files: list[str] = []
         has_code = any(classify_change(f) == "code" for f in files)
         assert has_code is False
+
+
+class TestRepoType:
+    """Test RepoType enum."""
+
+    def test_repo_type_values(self) -> None:
+        assert RepoType.PYTHON.value == "python"
+        assert RepoType.GENERIC.value == "generic"
+
+
+class TestDetectRepoType:
+    """Test detect_repo_type function."""
+
+    def test_detects_python_from_pyproject_toml(self, tmp_path: Path) -> None:
+        """Repo with pyproject.toml is detected as Python."""
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+        assert detect_repo_type(tmp_path) == RepoType.PYTHON
+
+    def test_detects_python_from_uv_lock(self, tmp_path: Path) -> None:
+        """Repo with uv.lock is detected as Python."""
+        (tmp_path / "uv.lock").write_text("version = 1\n")
+        assert detect_repo_type(tmp_path) == RepoType.PYTHON
+
+    def test_detects_python_from_requirements_txt(self, tmp_path: Path) -> None:
+        """Repo with requirements.txt is detected as Python."""
+        (tmp_path / "requirements.txt").write_text("requests==2.28.0\n")
+        assert detect_repo_type(tmp_path) == RepoType.PYTHON
+
+    def test_generic_for_empty_repo(self, tmp_path: Path) -> None:
+        """Empty repo is detected as generic."""
+        assert detect_repo_type(tmp_path) == RepoType.GENERIC
+
+    def test_generic_for_non_python_repo(self, tmp_path: Path) -> None:
+        """Repo without Python markers is detected as generic."""
+        (tmp_path / "package.json").write_text('{"name": "test"}\n')
+        (tmp_path / "index.js").write_text("console.log('hello');\n")
+        assert detect_repo_type(tmp_path) == RepoType.GENERIC
+
+    def test_pyproject_toml_takes_priority(self, tmp_path: Path) -> None:
+        """pyproject.toml is checked first for detection."""
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+        (tmp_path / "package.json").write_text('{"name": "test"}\n')
+        assert detect_repo_type(tmp_path) == RepoType.PYTHON
+
+
+class TestBuildValidationSpecWithRepoPath:
+    """Test build_validation_spec with repo_path parameter."""
+
+    def test_python_repo_includes_all_commands(self, tmp_path: Path) -> None:
+        """Python repo gets all Python validation commands."""
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+
+        spec = build_validation_spec(
+            scope=ValidationScope.PER_ISSUE, repo_path=tmp_path
+        )
+
+        command_names = [cmd.name for cmd in spec.commands]
+        assert "uv sync" in command_names
+        assert "pytest" in command_names
+        assert "ruff check" in command_names
+        assert "ruff format" in command_names
+        assert "ty check" in command_names
+
+    def test_generic_repo_has_no_python_commands(self, tmp_path: Path) -> None:
+        """Generic (non-Python) repo gets no Python validation commands."""
+        # Empty tmp_path = generic repo
+        spec = build_validation_spec(
+            scope=ValidationScope.PER_ISSUE, repo_path=tmp_path
+        )
+
+        command_names = [cmd.name for cmd in spec.commands]
+        assert "uv sync" not in command_names
+        assert "pytest" not in command_names
+        assert "ruff check" not in command_names
+        assert "ruff format" not in command_names
+        assert "ty check" not in command_names
+
+    def test_generic_repo_has_empty_commands_list(self, tmp_path: Path) -> None:
+        """Generic repo with no Python markers has empty commands list."""
+        spec = build_validation_spec(
+            scope=ValidationScope.PER_ISSUE, repo_path=tmp_path
+        )
+
+        # No Python commands, and E2E is only for run-level
+        assert len(spec.commands) == 0
+
+    def test_no_repo_path_defaults_to_python(self) -> None:
+        """When repo_path is not provided, default to Python (backward compat)."""
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
+        command_names = [cmd.name for cmd in spec.commands]
+        assert "uv sync" in command_names
+        assert "pytest" in command_names
+
+    def test_generic_repo_still_respects_disable_validations(
+        self, tmp_path: Path
+    ) -> None:
+        """Disable validations work even for generic repos."""
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+
+        spec = build_validation_spec(
+            scope=ValidationScope.PER_ISSUE,
+            repo_path=tmp_path,
+            disable_validations={"post-validate"},
+        )
+
+        command_names = [cmd.name for cmd in spec.commands]
+        # uv sync is always included for Python repos
+        assert "uv sync" in command_names
+        # But pytest/ruff/ty are disabled by post-validate
+        assert "pytest" not in command_names
+        assert "ruff check" not in command_names
+
+    def test_e2e_enabled_for_run_level_python_repo(self, tmp_path: Path) -> None:
+        """E2E is enabled for run-level scope with Python repo."""
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+
+        spec = build_validation_spec(
+            scope=ValidationScope.RUN_LEVEL, repo_path=tmp_path
+        )
+
+        assert spec.e2e.enabled is True
+
+    def test_e2e_enabled_for_run_level_generic_repo(self, tmp_path: Path) -> None:
+        """E2E is still enabled for run-level scope even with generic repo."""
+        spec = build_validation_spec(
+            scope=ValidationScope.RUN_LEVEL, repo_path=tmp_path
+        )
+
+        # E2E is controlled by scope, not repo type
+        assert spec.e2e.enabled is True

@@ -49,6 +49,7 @@ from .spec import (
     DepsConfig,
     E2EConfig,
     IssueResolution,
+    RepoType,
     ResolutionOutcome,
     ValidationArtifacts,
     ValidationCommand,
@@ -57,6 +58,7 @@ from .spec import (
     ValidationSpec,
     build_validation_spec,
     classify_change,
+    detect_repo_type,
 )
 from .spec_runner import SpecValidationRunner
 from .worktree import (
@@ -89,6 +91,8 @@ __all__ = [
     "IssueResolution",
     # Runners
     "LegacyValidationRunner",
+    # Repo type detection
+    "RepoType",
     "ResolutionOutcome",
     "SpecValidationRunner",
     "ValidationArtifacts",
@@ -119,6 +123,7 @@ __all__ = [
     "cleanup_stale_worktrees",
     "create_worktree",
     "decode_timeout_output",
+    "detect_repo_type",
     "format_step_output",
     "get_ready_issue_id",
     "init_fixture_repo",

@@ -235,6 +235,7 @@ class MalaOrchestrator:
             scope=ValidationScope.PER_ISSUE,
             disable_validations=self.disable_validations,
             coverage_threshold=self.coverage_threshold,
+            repo_path=self.repo_path,
         )
 
         # Use check_with_resolution which handles no-op/obsolete cases
@@ -888,6 +889,7 @@ class MalaOrchestrator:
                                             scope=ValidationScope.PER_ISSUE,
                                             disable_validations=self.disable_validations,
                                             coverage_threshold=self.coverage_threshold,
+                                            repo_path=self.repo_path,
                                         )
                                         context = ValidationContext(
                                             issue_id=issue_id,

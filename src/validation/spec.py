@@ -8,6 +8,7 @@ This module provides:
 - IssueResolution: how an issue was resolved
 - Code vs docs classification helper
 - Disable list handling for spec omissions
+- Repo type detection for conditional validation
 """
 
 from __future__ import annotations
@@ -20,6 +21,13 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from re import Pattern
+
+
+class RepoType(Enum):
+    """Type of repository for validation purposes."""
+
+    PYTHON = "python"  # Python project with uv/pyproject.toml
+    GENERIC = "generic"  # Non-Python or unknown project type
 
 
 class ValidationScope(Enum):
@@ -212,6 +220,40 @@ CODE_EXTENSIONS = frozenset({".py", ".sh", ".toml", ".yml", ".yaml", ".json"})
 DOC_EXTENSIONS = frozenset({".md", ".rst", ".txt"})
 
 
+def detect_repo_type(repo_path: Path) -> RepoType:
+    """Detect the type of repository for validation purposes.
+
+    Checks for Python project markers to determine if Python-specific
+    validation commands (uv sync, ruff, ty, pytest) should be required.
+
+    Detection rules:
+    - pyproject.toml exists => Python
+    - uv.lock exists => Python
+    - requirements.txt exists => Python (pip-based)
+    - Otherwise => Generic
+
+    Args:
+        repo_path: Path to the repository root.
+
+    Returns:
+        RepoType indicating the detected project type.
+    """
+    # Check for uv/modern Python project
+    if (repo_path / "pyproject.toml").exists():
+        return RepoType.PYTHON
+
+    # Check for uv lock file
+    if (repo_path / "uv.lock").exists():
+        return RepoType.PYTHON
+
+    # Check for pip-based Python project
+    if (repo_path / "requirements.txt").exists():
+        return RepoType.PYTHON
+
+    # Default to generic (no Python validation required)
+    return RepoType.GENERIC
+
+
 def classify_change(file_path: str) -> Literal["code", "docs"]:
     """Classify a file change as code or docs.
 
@@ -262,12 +304,16 @@ def build_validation_spec(
     disable_validations: set[str] | None = None,
     coverage_threshold: float = 85.0,
     force_sync: bool = False,
+    repo_path: Path | None = None,
 ) -> ValidationSpec:
     """Build a ValidationSpec from CLI inputs.
 
     This implements the strict-by-default policy from quality-hardening-plan.md:
     - All validations are ON by default
     - Disable flags explicitly turn off validations
+
+    Repo-type aware: Python-specific commands (uv sync, ruff, ty, pytest) are
+    only included when the target repo is detected as a Python project.
 
     Disable values:
     - "post-validate": Skip test commands entirely
@@ -283,11 +329,19 @@ def build_validation_spec(
         disable_validations: Set of validation types to disable.
         coverage_threshold: Minimum coverage percentage.
         force_sync: If True, always run uv sync regardless of state.
+        repo_path: Path to the target repository. If provided, enables
+            repo-type detection to conditionally include Python commands.
 
     Returns:
         A ValidationSpec configured according to the inputs.
     """
     disable = disable_validations or set()
+
+    # Detect repo type if path provided
+    is_python_repo = True  # Default to Python for backward compatibility
+    if repo_path is not None:
+        repo_type = detect_repo_type(repo_path)
+        is_python_repo = repo_type == RepoType.PYTHON
 
     # Determine if we should skip tests
     skip_tests = "post-validate" in disable
@@ -298,18 +352,19 @@ def build_validation_spec(
     # Build commands list
     commands: list[ValidationCommand] = []
 
-    # Always include deps sync
-    commands.append(
-        ValidationCommand(
-            name="uv sync",
-            command=["uv", "sync", "--all-extras"],
-            kind=CommandKind.DEPS,
-            detection_pattern=re.compile(r"\buv\s+sync\b"),
+    # Include deps sync only for Python repos
+    if is_python_repo:
+        commands.append(
+            ValidationCommand(
+                name="uv sync",
+                command=["uv", "sync", "--all-extras"],
+                kind=CommandKind.DEPS,
+                detection_pattern=re.compile(r"\buv\s+sync\b"),
+            )
         )
-    )
 
-    # Include format/lint/typecheck unless skip_tests (post-validate disables all)
-    if not skip_tests:
+    # Include format/lint/typecheck for Python repos (unless skip_tests)
+    if is_python_repo and not skip_tests:
         commands.append(
             ValidationCommand(
                 name="ruff format",
@@ -337,8 +392,8 @@ def build_validation_spec(
             )
         )
 
-    # Add pytest unless skipping tests
-    if not skip_tests:
+    # Add pytest for Python repos (unless skipping tests)
+    if is_python_repo and not skip_tests:
         pytest_cmd = ["uv", "run", "pytest"]
 
         # Add coverage flags when coverage is enabled
