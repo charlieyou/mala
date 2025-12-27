@@ -11,6 +11,14 @@ from .coverage import (
     parse_and_check_coverage,
     parse_coverage_xml,
 )
+from .e2e import (
+    E2EConfig as E2ERunnerConfig,
+    E2EPrereqResult,
+    E2EResult,
+    E2ERunner,
+    E2EStatus,
+    check_e2e_prereqs,
+)
 from .runner import (
     ValidationConfig,
     ValidationResult,
@@ -50,6 +58,11 @@ __all__ = [
     "CoverageResult",
     "CoverageStatus",
     "E2EConfig",
+    "E2EPrereqResult",
+    "E2EResult",
+    "E2ERunner",
+    "E2ERunnerConfig",
+    "E2EStatus",
     "IssueResolution",
     "ResolutionOutcome",
     "ValidationArtifacts",
@@ -70,6 +83,7 @@ __all__ = [
     "_tail",
     "build_validation_spec",
     "check_coverage_threshold",
+    "check_e2e_prereqs",
     "classify_change",
     "cleanup_stale_worktrees",
     "create_worktree",

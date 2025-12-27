@@ -1,0 +1,487 @@
+"""E2E fixture runner for mala validation.
+
+This module provides end-to-end validation using a fixture repository.
+It creates a temporary repo with a known bug, runs mala to fix it,
+and validates the result.
+
+Key types:
+- E2EResult: Result of an E2E validation run
+- E2EConfig: Configuration for E2E validation
+- E2ERunner: Orchestrates the E2E validation flow
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import tempfile
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+
+class E2EStatus(Enum):
+    """Status of E2E validation."""
+
+    PASSED = "passed"
+    FAILED = "failed"
+    SKIPPED = "skipped"  # Skipped due to missing prerequisites
+
+
+@dataclass
+class E2EPrereqResult:
+    """Result of prerequisite check.
+
+    Attributes:
+        ok: Whether all prerequisites are met.
+        missing: List of missing prerequisites.
+        can_skip: Whether E2E can be skipped rather than failed.
+    """
+
+    ok: bool
+    missing: list[str] = field(default_factory=list)
+    can_skip: bool = False
+
+    def failure_reason(self) -> str | None:
+        """Return failure reason string, or None if ok."""
+        if self.ok:
+            return None
+        if not self.missing:
+            return "E2E prerequisites not met"
+        return f"E2E prereq missing: {', '.join(self.missing)}"
+
+
+@dataclass
+class E2EResult:
+    """Result of an E2E validation run.
+
+    Attributes:
+        passed: Whether E2E validation passed.
+        status: Status code for the E2E run.
+        failure_reason: Explanation for failure (None if passed).
+        fixture_path: Path to the fixture repo (if created).
+        duration_seconds: How long the E2E run took.
+        command_output: Output from the mala command (truncated).
+        returncode: Exit code from the mala command.
+    """
+
+    passed: bool
+    status: E2EStatus
+    failure_reason: str | None = None
+    fixture_path: Path | None = None
+    duration_seconds: float = 0.0
+    command_output: str = ""
+    returncode: int = 0
+
+    def short_summary(self) -> str:
+        """One-line summary for logs/prompts."""
+        if self.status == E2EStatus.SKIPPED:
+            return f"E2E skipped: {self.failure_reason or 'prerequisites not met'}"
+        if self.passed:
+            return "E2E passed"
+        return f"E2E failed: {self.failure_reason or 'unknown error'}"
+
+
+@dataclass
+class E2EConfig:
+    """Configuration for E2E validation.
+
+    Attributes:
+        enabled: Whether E2E is enabled.
+        skip_if_no_keys: Skip (don't fail) if MORPH_API_KEY is missing.
+        keep_fixture: Keep fixture repo after completion (for debugging).
+        timeout_seconds: Timeout for the mala run command.
+        max_agents: Maximum agents for the mala run.
+        max_issues: Maximum issues to process in the mala run.
+    """
+
+    enabled: bool = True
+    skip_if_no_keys: bool = False
+    keep_fixture: bool = False
+    timeout_seconds: float = 120.0
+    max_agents: int = 1
+    max_issues: int = 1
+
+
+class E2ERunner:
+    """Orchestrates E2E validation using a fixture repository."""
+
+    def __init__(self, config: E2EConfig | None = None):
+        """Initialize the E2E runner.
+
+        Args:
+            config: E2E configuration. Uses defaults if None.
+        """
+        self.config = config or E2EConfig()
+
+    def check_prereqs(self, env: Mapping[str, str] | None = None) -> E2EPrereqResult:
+        """Check if all E2E prerequisites are met.
+
+        Args:
+            env: Environment variables to check. Uses os.environ if None.
+
+        Returns:
+            E2EPrereqResult with details about missing prerequisites.
+        """
+        import os
+
+        if env is None:
+            env = os.environ
+
+        missing: list[str] = []
+
+        # Check for mala CLI
+        if not shutil.which("mala"):
+            missing.append("mala CLI not found in PATH")
+
+        # Check for bd CLI
+        if not shutil.which("bd"):
+            missing.append("bd CLI not found in PATH")
+
+        # Check for MORPH_API_KEY
+        if not env.get("MORPH_API_KEY"):
+            missing.append("MORPH_API_KEY not set")
+
+        if missing:
+            # Determine if this can be skipped
+            # Only skip if the ONLY missing prereq is the API key
+            can_skip = self.config.skip_if_no_keys and missing == [
+                "MORPH_API_KEY not set"
+            ]
+            return E2EPrereqResult(ok=False, missing=missing, can_skip=can_skip)
+
+        return E2EPrereqResult(ok=True)
+
+    def run(
+        self, env: Mapping[str, str] | None = None, cwd: Path | None = None
+    ) -> E2EResult:
+        """Run E2E validation.
+
+        Creates a fixture repo, runs mala on it, and validates the result.
+        Cleans up the fixture repo unless keep_fixture is True.
+
+        Args:
+            env: Environment variables for subprocess. Uses os.environ if None.
+            cwd: Working directory for mala command. Uses current directory if None.
+
+        Returns:
+            E2EResult with details about the validation.
+        """
+        import os
+
+        if env is None:
+            env = dict(os.environ)
+        else:
+            env = dict(env)
+
+        if cwd is None:
+            cwd = Path.cwd()
+
+        # Check prerequisites
+        prereq = self.check_prereqs(env)
+        if not prereq.ok:
+            if prereq.can_skip:
+                return E2EResult(
+                    passed=True,  # Skipped is considered "not failed"
+                    status=E2EStatus.SKIPPED,
+                    failure_reason=prereq.failure_reason(),
+                )
+            return E2EResult(
+                passed=False,
+                status=E2EStatus.FAILED,
+                failure_reason=prereq.failure_reason(),
+            )
+
+        # Create fixture repo
+        fixture_path = Path(tempfile.mkdtemp(prefix="mala-e2e-fixture-"))
+        start_time = time.monotonic()
+
+        try:
+            # Write fixture files
+            setup_error = self._setup_fixture(fixture_path)
+            if setup_error:
+                duration = time.monotonic() - start_time
+                return E2EResult(
+                    passed=False,
+                    status=E2EStatus.FAILED,
+                    failure_reason=setup_error,
+                    fixture_path=fixture_path if self.config.keep_fixture else None,
+                    duration_seconds=duration,
+                )
+
+            # Run mala
+            result = self._run_mala(fixture_path, env, cwd)
+            result.fixture_path = fixture_path if self.config.keep_fixture else None
+
+            return result
+
+        finally:
+            duration = time.monotonic() - start_time
+            # Cleanup fixture unless keeping it
+            if not self.config.keep_fixture and fixture_path.exists():
+                shutil.rmtree(fixture_path, ignore_errors=True)
+
+    def _setup_fixture(self, repo_path: Path) -> str | None:
+        """Set up the fixture repository.
+
+        Args:
+            repo_path: Path to create the fixture repo in.
+
+        Returns:
+            Error message if setup failed, None on success.
+        """
+        # Write fixture files
+        _write_fixture_files(repo_path)
+
+        # Initialize git and beads
+        return _init_fixture_repo(repo_path)
+
+    def _run_mala(
+        self, fixture_path: Path, env: Mapping[str, str], cwd: Path
+    ) -> E2EResult:
+        """Run mala on the fixture repo.
+
+        Args:
+            fixture_path: Path to the fixture repository.
+            env: Environment variables for subprocess.
+            cwd: Working directory for the mala command.
+
+        Returns:
+            E2EResult with command execution details.
+        """
+        start_time = time.monotonic()
+
+        # Annotate the issue with context
+        issue_id = _get_ready_issue_id(fixture_path)
+        if issue_id:
+            _annotate_issue(fixture_path, issue_id)
+
+        cmd = [
+            "mala",
+            "run",
+            str(fixture_path),
+            "--max-agents",
+            str(self.config.max_agents),
+            "--max-issues",
+            str(self.config.max_issues),
+            "--timeout",
+            str(int(self.config.timeout_seconds)),
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=cwd,
+                env=dict(env),
+                capture_output=True,
+                text=True,
+                timeout=self.config.timeout_seconds + 30,  # Buffer for cleanup
+            )
+            duration = time.monotonic() - start_time
+
+            if result.returncode == 0:
+                return E2EResult(
+                    passed=True,
+                    status=E2EStatus.PASSED,
+                    duration_seconds=duration,
+                    command_output=_tail(result.stdout),
+                    returncode=0,
+                )
+
+            output = _tail(result.stderr or result.stdout)
+            return E2EResult(
+                passed=False,
+                status=E2EStatus.FAILED,
+                failure_reason=f"mala exited {result.returncode}: {output}",
+                duration_seconds=duration,
+                command_output=output,
+                returncode=result.returncode,
+            )
+
+        except subprocess.TimeoutExpired as exc:
+            duration = time.monotonic() - start_time
+            output = _decode_timeout_output(exc.stdout) or _decode_timeout_output(
+                exc.stderr
+            )
+            return E2EResult(
+                passed=False,
+                status=E2EStatus.FAILED,
+                failure_reason=f"mala timed out after {self.config.timeout_seconds}s",
+                duration_seconds=duration,
+                command_output=output,
+                returncode=124,
+            )
+
+
+# Helper functions
+
+
+def _tail(text: str, max_chars: int = 800, max_lines: int = 20) -> str:
+    """Get the last N lines/chars of text."""
+    if not text:
+        return ""
+    lines = text.splitlines()
+    if len(lines) > max_lines:
+        lines = lines[-max_lines:]
+    clipped = "\n".join(lines)
+    if len(clipped) > max_chars:
+        return clipped[-max_chars:]
+    return clipped
+
+
+def _decode_timeout_output(data: bytes | str | None) -> str:
+    """Decode TimeoutExpired stdout/stderr which may be bytes, str, or None."""
+    if data is None:
+        return ""
+    if isinstance(data, str):
+        return _tail(data)
+    return _tail(data.decode())
+
+
+def _write_fixture_files(repo_path: Path) -> None:
+    """Write the fixture repository files.
+
+    Creates a minimal Python project with a bug in add() that tests catch.
+
+    Args:
+        repo_path: Path to the fixture repository.
+    """
+    (repo_path / "tests").mkdir(parents=True, exist_ok=True)
+
+    # Bug: returns a - b instead of a + b
+    (repo_path / "app.py").write_text(
+        "def add(a: int, b: int) -> int:\n    return a - b\n"
+    )
+
+    (repo_path / "tests" / "test_app.py").write_text(
+        "from app import add\n\n\ndef test_add():\n    assert add(2, 2) == 4\n"
+    )
+
+    (repo_path / "pyproject.toml").write_text(
+        "\n".join(
+            [
+                "[project]",
+                'name = "mala-e2e-fixture"',
+                'version = "0.0.0"',
+                'description = "Fixture repo for mala e2e validation"',
+                'requires-python = ">=3.11"',
+                "dependencies = []",
+                "",
+                "[project.optional-dependencies]",
+                'dev = ["pytest>=8.0.0", "pytest-cov>=4.1.0"]',
+            ]
+        )
+        + "\n"
+    )
+
+
+def _init_fixture_repo(repo_path: Path) -> str | None:
+    """Initialize git and beads in the fixture repo.
+
+    Args:
+        repo_path: Path to the fixture repository.
+
+    Returns:
+        Error message if initialization failed, None on success.
+    """
+    for cmd in (
+        ["git", "init"],
+        ["git", "config", "user.email", "mala-e2e@example.com"],
+        ["git", "config", "user.name", "Mala E2E"],
+        ["git", "add", "."],
+        ["git", "commit", "-m", "initial"],
+        ["bd", "init"],
+        ["bd", "create", "Fix failing add() test", "-p", "1"],
+    ):
+        result = subprocess.run(
+            cmd,
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            reason = (
+                f"E2E fixture setup failed: {' '.join(cmd)} (exit {result.returncode})"
+            )
+            if stderr:
+                reason = f"{reason}: {_tail(stderr, max_chars=200, max_lines=5)}"
+            return reason
+    return None
+
+
+def _get_ready_issue_id(repo_path: Path) -> str | None:
+    """Get the ID of the first ready issue in the fixture repo.
+
+    Args:
+        repo_path: Path to the fixture repository.
+
+    Returns:
+        Issue ID if found, None otherwise.
+    """
+    result = subprocess.run(
+        ["bd", "ready", "--json"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        issues = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    for issue in issues:
+        issue_id = issue.get("id")
+        if isinstance(issue_id, str):
+            return issue_id
+    return None
+
+
+def _annotate_issue(repo_path: Path, issue_id: str) -> None:
+    """Add context notes to the fixture issue.
+
+    Args:
+        repo_path: Path to the fixture repository.
+        issue_id: Issue ID to annotate.
+    """
+    notes = "\n".join(
+        [
+            "Context:",
+            "- Tests are failing for add() in app.py",
+            "",
+            "Acceptance Criteria:",
+            "- Fix add() so tests pass",
+            "- Run full validation suite",
+            "",
+            "Test Plan:",
+            "- uv run pytest",
+        ]
+    )
+    subprocess.run(
+        ["bd", "update", issue_id, "--notes", notes],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+
+
+# For backwards compatibility, export the prereq checker with the old name
+def check_e2e_prereqs(env: Mapping[str, str]) -> str | None:
+    """Check E2E prerequisites (legacy interface).
+
+    Args:
+        env: Environment variables to check.
+
+    Returns:
+        Error message if prerequisites not met, None if all ok.
+    """
+    runner = E2ERunner()
+    result = runner.check_prereqs(env)
+    return result.failure_reason()
