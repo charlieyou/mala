@@ -340,6 +340,13 @@ class TestBuildValidationSpec:
         spec = build_validation_spec(scope=ValidationScope.RUN_LEVEL)
         assert spec.e2e.enabled is True
 
+    def test_e2e_does_not_require_morph_api_key(self) -> None:
+        """E2E should not require MORPH_API_KEY since MorphLLM is optional."""
+        spec = build_validation_spec(scope=ValidationScope.RUN_LEVEL)
+        assert spec.e2e.enabled is True
+        # MORPH_API_KEY should not be in required_env since Morph is optional
+        assert "MORPH_API_KEY" not in spec.e2e.required_env
+
     def test_per_issue_spec_e2e_disabled(self) -> None:
         """E2E is only for run-level, not per-issue."""
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)

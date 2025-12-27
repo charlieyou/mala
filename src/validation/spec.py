@@ -378,7 +378,9 @@ def build_validation_spec(
     e2e_enabled = scope == ValidationScope.RUN_LEVEL and "e2e" not in disable
     e2e_config = E2EConfig(
         enabled=e2e_enabled,
-        required_env=["MORPH_API_KEY"] if e2e_enabled else [],
+        # Note: MORPH_API_KEY is not required here since MorphLLM is optional.
+        # The e2e runner handles missing Morph gracefully.
+        required_env=[],
     )
 
     return ValidationSpec(
