@@ -2183,6 +2183,11 @@ class TestRunLevelValidation:
             ),
             patch.object(
                 orchestrator.beads,
+                "close_eligible_epics_async",
+                return_value=False,
+            ),
+            patch.object(
+                orchestrator.beads,
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
@@ -2469,3 +2474,225 @@ class TestValidationResultMetadata:
         # The recorded issue should have validation populated
         assert len(recorded_issues) == 1
         assert recorded_issues[0].validation is not None
+
+
+class TestEpicClosureAfterChildCompletion:
+    """Test that epics are closed immediately after their last child completes.
+
+    Verifies mala-0k7: Epics should close after each agent completion, not just
+    at run end, so other agents can see updated epic status during the run.
+    """
+
+    @pytest.mark.asyncio
+    async def test_epic_closure_called_after_issue_closes(
+        self, tmp_path: Path
+    ) -> None:
+        """close_eligible_epics_async should be called after each issue closes."""
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        epic_closure_calls: list[str] = []
+
+        async def mock_close_eligible_epics_async() -> bool:
+            epic_closure_calls.append("called")
+            return True  # Simulate epic was closed
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="Completed successfully",
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["child-issue"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(orchestrator.beads, "close_async", return_value=True),
+            patch.object(
+                orchestrator.beads,
+                "close_eligible_epics_async",
+                side_effect=mock_close_eligible_epics_async,
+            ),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            await orchestrator.run()
+
+        # Epic closure should have been called after the issue was closed
+        assert len(epic_closure_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_epic_closure_not_called_when_issue_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """close_eligible_epics_async should NOT be called when issue fails."""
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        epic_closure_calls: list[str] = []
+
+        async def mock_close_eligible_epics_async() -> bool:
+            epic_closure_calls.append("called")
+            return True
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=False,  # Gate failed
+                summary="Quality gate failed: Missing commit",
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["failing-child"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(orchestrator.beads, "close_async", return_value=True),
+            patch.object(
+                orchestrator.beads,
+                "close_eligible_epics_async",
+                side_effect=mock_close_eligible_epics_async,
+            ),
+            patch.object(
+                orchestrator.beads, "mark_needs_followup_async", return_value=True
+            ),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            await orchestrator.run()
+
+        # Epic closure should NOT have been called since issue failed
+        assert len(epic_closure_calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_multiple_issues_trigger_epic_closure_check_each_time(
+        self, tmp_path: Path
+    ) -> None:
+        """Each successful issue closure should check for epic closure."""
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=2)
+
+        epic_closure_calls: list[str] = []
+        issues_processed = []
+
+        async def mock_close_eligible_epics_async() -> bool:
+            epic_closure_calls.append("called")
+            # First call closes an epic, second doesn't
+            return len(epic_closure_calls) == 1
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            issues_processed.append(issue_id)
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="Completed successfully",
+            )
+
+        call_count = 0
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
+        ) -> list[str]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ["child-1", "child-2"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(orchestrator.beads, "close_async", return_value=True),
+            patch.object(
+                orchestrator.beads,
+                "close_eligible_epics_async",
+                side_effect=mock_close_eligible_epics_async,
+            ),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            await orchestrator.run()
+
+        # Both issues should have been processed
+        assert len(issues_processed) == 2
+        # Epic closure should have been called for each successful issue
+        assert len(epic_closure_calls) == 2

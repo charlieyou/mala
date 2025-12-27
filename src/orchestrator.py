@@ -948,35 +948,50 @@ class MalaOrchestrator:
                                         dim=True,
                                         agent_id=issue_id,
                                     )
-                            elif not result.success and log_path and log_path.exists():
-                                # Gate failed - record evidence for metadata
-                                evidence = self.quality_gate.parse_validation_evidence(
-                                    log_path
-                                )
-                                commit_result = self.quality_gate.check_commit_exists(
-                                    issue_id
-                                )
-                                # Extract failure reasons from result summary
-                                failure_reasons = []
-                                if "Quality gate failed:" in result.summary:
-                                    reasons_part = result.summary.replace(
-                                        "Quality gate failed: ", ""
+                                    # Check if this closes any parent epics
+                                    if await self.beads.close_eligible_epics_async():
+                                        log(
+                                            "◐",
+                                            "Auto-closed completed epic(s)",
+                                            Colors.GRAY,
+                                            dim=True,
+                                            agent_id=issue_id,
+                                        )
+                                elif (
+                                    not result.success
+                                    and log_path
+                                    and log_path.exists()
+                                ):
+                                    # Gate failed - record evidence for metadata
+                                    evidence = (
+                                        self.quality_gate.parse_validation_evidence(
+                                            log_path
+                                        )
                                     )
-                                    failure_reasons = [
-                                        r.strip() for r in reasons_part.split(";")
-                                    ]
-                                quality_gate_result = QualityGateResult(
-                                    passed=False,
-                                    evidence={
-                                        "pytest_ran": evidence.pytest_ran,
-                                        "ruff_check_ran": evidence.ruff_check_ran,
-                                        "ruff_format_ran": evidence.ruff_format_ran,
-                                        "uv_sync_ran": evidence.uv_sync_ran,
-                                        "ty_check_ran": evidence.ty_check_ran,
-                                        "commit_found": commit_result.exists,
-                                    },
-                                    failure_reasons=failure_reasons,
-                                )
+                                    commit_result = (
+                                        self.quality_gate.check_commit_exists(issue_id)
+                                    )
+                                    # Extract failure reasons from result summary
+                                    failure_reasons = []
+                                    if "Quality gate failed:" in result.summary:
+                                        reasons_part = result.summary.replace(
+                                            "Quality gate failed: ", ""
+                                        )
+                                        failure_reasons = [
+                                            r.strip() for r in reasons_part.split(";")
+                                        ]
+                                    quality_gate_result = QualityGateResult(
+                                        passed=False,
+                                        evidence={
+                                            "pytest_ran": evidence.pytest_ran,
+                                            "ruff_check_ran": evidence.ruff_check_ran,
+                                            "ruff_format_ran": evidence.ruff_format_ran,
+                                            "uv_sync_ran": evidence.uv_sync_ran,
+                                            "ty_check_ran": evidence.ty_check_ran,
+                                            "commit_found": commit_result.exists,
+                                        },
+                                        failure_reasons=failure_reasons,
+                                    )
 
                             self.completed.append(result)
                             del self.active_tasks[issue_id]
@@ -1047,10 +1062,6 @@ class MalaOrchestrator:
         if success_count > 0:
             if await self.beads.commit_issues_async():
                 log("◐", "Committed .beads/issues.jsonl", Colors.GRAY, dim=True)
-
-            # Auto-close epics where all children are complete
-            if await self.beads.close_eligible_epics_async():
-                log("◐", "Auto-closed completed epics", Colors.GRAY, dim=True)
 
         # Save run metadata
         if total > 0:
