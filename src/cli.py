@@ -150,16 +150,15 @@ def run(
     verbose: Annotated[
         bool,
         typer.Option(
-            "--verbose",
-            "-v",
-            help="Enable verbose output with full tool arguments and code",
+            "--verbose/--quiet",
+            "-v/-q",
+            help="Verbose output shows full tool arguments; quiet mode shows single line per tool call",
         ),
-    ] = False,
+    ] = True,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
-    if verbose:
-        set_verbose(True)
+    set_verbose(verbose)
 
     repo_path = repo_path.resolve()
 

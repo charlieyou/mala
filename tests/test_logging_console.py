@@ -58,7 +58,7 @@ def test_log_tool_and_agent_text_output(
     monkeypatch.setattr(console, "_agent_color_map", {})
     monkeypatch.setattr(console, "_agent_color_index", 0)
 
-    console.set_verbose(False)
+    console.set_verbose(True)
     console.log_tool(
         "Edit",
         description="update file",
@@ -74,3 +74,112 @@ def test_log_tool_and_agent_text_output(
     assert "flag" in output
     assert "hello world" in output
     assert "message" in output
+
+    console.set_verbose(False)
+
+
+def test_quiet_summary_file_tools() -> None:
+    """Test that file tools show file path in quiet mode."""
+    # Read tool with file_path
+    summary = console._get_quiet_summary("Read", "", {"file_path": "/path/to/file.py"})
+    assert summary == "/path/to/file.py"
+
+    # Edit tool with path (Morph edit)
+    summary = console._get_quiet_summary(
+        "mcp__morphllm__edit_file",
+        "",
+        {"path": "/path/to/edited.py", "code_edit": "..."},
+    )
+    assert summary == "/path/to/edited.py"
+
+    # Glob with pattern
+    summary = console._get_quiet_summary("Glob", "", {"pattern": "**/*.py"})
+    assert summary == "**/*.py"
+
+
+def test_quiet_summary_bash_uses_description() -> None:
+    """Test that Bash tool shows description field in quiet mode."""
+    # From description parameter
+    summary = console._get_quiet_summary("Bash", "Run tests", {"command": "pytest"})
+    assert summary == "Run tests"
+
+    # From arguments when description param is empty
+    summary = console._get_quiet_summary(
+        "Bash", "", {"command": "pytest", "description": "Execute test suite"}
+    )
+    assert summary == "Execute test suite"
+
+
+def test_quiet_summary_other_tools_truncated_args() -> None:
+    """Test that other tools show truncated args dict in quiet mode."""
+    # Few args
+    summary = console._get_quiet_summary("CustomTool", "", {"a": 1, "b": 2})
+    assert "{a=..., b=...}" == summary
+
+    # Many args (more than 3)
+    summary = console._get_quiet_summary(
+        "CustomTool", "", {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}
+    )
+    assert "a=..." in summary
+    assert "+2 more" in summary
+
+
+def test_quiet_summary_empty_args() -> None:
+    """Test that tools without args return empty summary."""
+    summary = console._get_quiet_summary("SomeTool", "", None)
+    assert summary == ""
+
+    summary = console._get_quiet_summary("SomeTool", "", {})
+    assert summary == ""
+
+
+def test_log_tool_quiet_mode_output(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test log_tool in quiet mode produces single-line output."""
+    monkeypatch.setattr(console, "_agent_color_map", {})
+    monkeypatch.setattr(console, "_agent_color_index", 0)
+
+    console.set_verbose(False)
+
+    # Read tool should show file path
+    console.log_tool("Read", arguments={"file_path": "/src/main.py"})
+    output = capsys.readouterr().out
+    assert "Read" in output
+    assert "/src/main.py" in output
+    assert "\n    " not in output  # No multi-line args
+
+    # Bash should show description
+    console.log_tool(
+        "Bash", description="Install deps", arguments={"command": "npm install"}
+    )
+    output = capsys.readouterr().out
+    assert "Bash" in output
+    assert "Install deps" in output
+    assert "npm install" not in output  # Command not shown in quiet mode
+
+    console.set_verbose(False)
+
+
+def test_log_tool_verbose_mode_output(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test log_tool in verbose mode shows full arguments."""
+    monkeypatch.setattr(console, "_agent_color_map", {})
+    monkeypatch.setattr(console, "_agent_color_index", 0)
+
+    console.set_verbose(True)
+
+    console.log_tool(
+        "Read",
+        description="reading file",
+        arguments={"file_path": "/src/main.py", "offset": 100},
+    )
+    output = capsys.readouterr().out
+    assert "Read" in output
+    assert "file_path" in output
+    assert "/src/main.py" in output
+    assert "offset" in output
+    assert "100" in output
+
+    console.set_verbose(False)

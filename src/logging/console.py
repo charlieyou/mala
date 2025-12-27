@@ -73,6 +73,18 @@ EDIT_TOOLS = frozenset(
     }
 )
 
+# Tools that show file path in quiet mode
+FILE_TOOLS = frozenset(
+    {
+        "mcp__morphllm__edit_file",
+        "Edit",
+        "Write",
+        "NotebookEdit",
+        "Read",
+        "Glob",
+    }
+)
+
 # Fields in edit tools that contain code (should be pretty-printed with newlines)
 CODE_FIELDS = frozenset(
     {
@@ -227,11 +239,14 @@ def log_tool(
         description: Brief description of the tool action.
         agent_id: Optional agent ID for color coding.
         arguments: Optional tool arguments to display.
+
+    In quiet mode (non-verbose), shows single line per tool call:
+    - File tools (Read/Edit/Write/etc): show file_path or path
+    - Bash: show description field
+    - Other tools: show truncated args dict
     """
     icon = "\u2699"
-    # Apply truncation to description
-    desc_text = truncate_text(description, 50) if description else ""
-    desc = f" {Colors.DIM}{desc_text}{Colors.RESET}" if desc_text else ""
+    verbose = is_verbose_enabled()
 
     if agent_id:
         agent_color = get_agent_color(agent_id)
@@ -240,16 +255,73 @@ def log_tool(
         agent_color = Colors.CYAN
         prefix = ""
 
+    if not verbose:
+        # Quiet mode: single line output
+        summary = _get_quiet_summary(tool_name, description, arguments)
+        if summary:
+            print(
+                f"  {prefix}{Colors.CYAN}{icon} {tool_name}{Colors.RESET} "
+                f"{Colors.DIM}{summary}{Colors.RESET}"
+            )
+        else:
+            print(f"  {prefix}{Colors.CYAN}{icon} {tool_name}{Colors.RESET}")
+        return
+
+    # Verbose mode: full output with arguments
+    desc_text = truncate_text(description, 50) if description else ""
+    desc = f" {Colors.DIM}{desc_text}{Colors.RESET}" if desc_text else ""
+
     # Format arguments if provided
     args_output = ""
     if arguments:
-        verbose = is_verbose_enabled()
         formatted_args = _format_arguments(arguments, verbose, tool_name, agent_color)
         if formatted_args:
             # Multi-line key:value format (no "args:" prefix)
             args_output = f"\n    {formatted_args}"
 
     print(f"  {prefix}{Colors.CYAN}{icon} {tool_name}{Colors.RESET}{desc}{args_output}")
+
+
+def _get_quiet_summary(
+    tool_name: str, description: str, arguments: dict[str, Any] | None
+) -> str:
+    """Get single-line summary for quiet mode output.
+
+    Args:
+        tool_name: Name of the tool being called.
+        description: Brief description of the tool action.
+        arguments: Tool arguments.
+
+    Returns:
+        Single-line summary string.
+    """
+    # File tools: show file path
+    if tool_name in FILE_TOOLS and arguments:
+        path = (
+            arguments.get("file_path")
+            or arguments.get("path")
+            or arguments.get("pattern")
+        )
+        if path:
+            return str(path)
+
+    # Bash: show description field
+    if tool_name == "Bash":
+        if description:
+            return description
+        if arguments and arguments.get("description"):
+            return str(arguments["description"])
+
+    # Other tools: truncated args dict
+    if arguments:
+        keys = list(arguments.keys())[:3]
+        if keys:
+            preview = ", ".join(f"{k}=..." for k in keys)
+            if len(arguments) > 3:
+                preview += f", +{len(arguments) - 3} more"
+            return f"{{{preview}}}"
+
+    return ""
 
 
 def log_agent_text(text: str, agent_id: str) -> None:

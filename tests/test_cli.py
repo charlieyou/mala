@@ -71,7 +71,7 @@ def test_run_without_morph_api_key_continues(
     monkeypatch.setattr(cli, "log", _log)
 
     with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, verbose=False)
+        cli.run(repo_path=tmp_path)
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_kwargs is not None
@@ -95,7 +95,7 @@ def test_run_with_morph_api_key_enabled(
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, verbose=False)
+        cli.run(repo_path=tmp_path)
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_kwargs is not None
@@ -112,9 +112,10 @@ def test_run_invalid_only_exits(
         logs.append(args)
 
     monkeypatch.setattr(cli, "log", _log)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, only=" , ", verbose=False)
+        cli.run(repo_path=tmp_path, only=" , ")
 
     assert excinfo.value.exit_code == 1
     assert logs
@@ -124,7 +125,7 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     cli = _reload_cli(monkeypatch)
     monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
-    verbose_calls = {"enabled": False}
+    verbose_calls = {"enabled": None}
 
     def _set_verbose(value: bool) -> None:
         verbose_calls["enabled"] = value
@@ -155,6 +156,53 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert config_dir.exists()
 
 
+def test_run_quiet_mode_sets_verbose_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --quiet flag sets verbose to False."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    verbose_calls = {"enabled": None}
+
+    def _set_verbose(value: bool) -> None:
+        verbose_calls["enabled"] = value
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", _set_verbose)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path, verbose=False)
+
+    assert excinfo.value.exit_code == 0
+    assert verbose_calls["enabled"] is False
+
+
+def test_run_default_verbose_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that default is verbose (True)."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    verbose_calls = {"enabled": None}
+
+    def _set_verbose(value: bool) -> None:
+        verbose_calls["enabled"] = value
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", _set_verbose)
+
+    with pytest.raises(typer.Exit):
+        cli.run(repo_path=tmp_path)
+
+    assert verbose_calls["enabled"] is True
+
+
 def test_run_repo_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cli = _reload_cli(monkeypatch)
     monkeypatch.setenv("MORPH_API_KEY", "test-key")
@@ -167,6 +215,7 @@ def test_run_repo_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     monkeypatch.setattr(cli, "log", _log)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     missing_repo = tmp_path / "missing"
 
@@ -254,7 +303,6 @@ def test_run_disable_validations_valid(
         cli.run(
             repo_path=tmp_path,
             disable_validations="coverage,slow-tests,e2e",
-            verbose=False,
         )
 
     assert excinfo.value.exit_code == 0
@@ -281,12 +329,12 @@ def test_run_disable_validations_invalid_value(
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     monkeypatch.setattr(cli, "log", _log)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
             disable_validations="coverage,invalid-value,bad-option",
-            verbose=False,
         )
 
     assert excinfo.value.exit_code == 1
@@ -313,12 +361,12 @@ def test_run_disable_validations_empty_value(
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     monkeypatch.setattr(cli, "log", _log)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
             disable_validations=" , , ",
-            verbose=False,
         )
 
     assert excinfo.value.exit_code == 1
@@ -341,7 +389,6 @@ def test_run_validation_flags_passed_to_orchestrator(
             repo_path=tmp_path,
             disable_validations="post-validate",
             coverage_threshold=72.5,
-            verbose=False,
         )
 
     assert excinfo.value.exit_code == 0
@@ -363,7 +410,7 @@ def test_run_validation_flags_defaults(
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit):
-        cli.run(repo_path=tmp_path, verbose=False)
+        cli.run(repo_path=tmp_path)
 
     assert DummyOrchestrator.last_kwargs is not None
     assert DummyOrchestrator.last_kwargs["disable_validations"] is None
@@ -384,7 +431,7 @@ def test_run_wip_flag_passed_to_orchestrator(
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, wip=True, verbose=False)
+        cli.run(repo_path=tmp_path, wip=True)
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_kwargs is not None
@@ -407,7 +454,6 @@ def test_run_codex_review_disabled_via_disable_validations(
         cli.run(
             repo_path=tmp_path,
             disable_validations="codex-review",
-            verbose=False,
         )
 
     assert excinfo.value.exit_code == 0
@@ -430,12 +476,12 @@ def test_run_coverage_threshold_invalid_negative(
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     monkeypatch.setattr(cli, "log", _log)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
             coverage_threshold=-10.0,
-            verbose=False,
         )
 
     assert excinfo.value.exit_code == 1
@@ -459,12 +505,12 @@ def test_run_coverage_threshold_invalid_over_100(
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     monkeypatch.setattr(cli, "log", _log)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
             coverage_threshold=150.0,
-            verbose=False,
         )
 
     assert excinfo.value.exit_code == 1
