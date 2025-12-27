@@ -2170,3 +2170,334 @@ class TestSpecDrivenEvidencePatterns:
         assert result.passed is True, (
             f"Gate should use spec patterns, not hardcoded. Failures: {result.failure_reasons}"
         )
+
+
+class TestValidationExitCodeParsing:
+    """Test that quality gate fails when validation commands exit non-zero.
+
+    The gate should not only check that commands ran, but also that they succeeded
+    (exit code 0). This prevents marking issues as successful when pytest/ruff/ty failed.
+    """
+
+    def test_gate_fails_when_pytest_exits_nonzero(self, tmp_path: Path) -> None:
+        """Gate should fail when pytest ran but exited with non-zero exit code."""
+        log_path = tmp_path / "session.jsonl"
+
+        # Tool use for pytest
+        tool_use_entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_pytest_123",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+        # Tool result showing pytest FAILED (is_error=true, Exit code 1)
+        tool_result_entry = json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_pytest_123",
+                            "content": "Exit code 1\n===== FAILURES =====\ntest_foo failed\n1 failed",
+                            "is_error": True,
+                        }
+                    ]
+                },
+            }
+        )
+        # Other commands succeed
+        other_commands = [
+            ("toolu_sync_1", "uv sync", False),
+            ("toolu_ruff_check_1", "uvx ruff check .", False),
+            ("toolu_ruff_format_1", "uvx ruff format .", False),
+            ("toolu_ty_check_1", "uvx ty check", False),
+        ]
+        lines = [tool_use_entry, tool_result_entry]
+        for tool_id, cmd, is_error in other_commands:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "id": tool_id,
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_id,
+                                    "content": "Success",
+                                    "is_error": is_error,
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        with patch("src.quality_gate.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="abc1234 1703502000 bd-test-123: Fix\n",
+                stderr="",
+            )
+            result = gate.check_with_resolution(
+                issue_id="test-123",
+                log_path=log_path,
+                baseline_timestamp=1703501000,
+            )
+
+        # Should fail because pytest exited non-zero
+        assert result.passed is False
+        assert any(
+            "pytest" in r.lower() and ("failed" in r.lower() or "exit" in r.lower())
+            for r in result.failure_reasons
+        )
+
+    def test_gate_fails_when_ruff_check_exits_nonzero(self, tmp_path: Path) -> None:
+        """Gate should fail when ruff check ran but exited with non-zero exit code."""
+        log_path = tmp_path / "session.jsonl"
+
+        # All commands run, but ruff check fails
+        commands = [
+            ("toolu_sync_1", "uv sync", False, "Synced"),
+            ("toolu_pytest_1", "uv run pytest", False, "5 passed"),
+            (
+                "toolu_ruff_check_1",
+                "uvx ruff check .",
+                True,
+                "Exit code 1\nFound 3 errors",
+            ),
+            ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
+            ("toolu_ty_check_1", "uvx ty check", False, "No errors"),
+        ]
+        lines = []
+        for tool_id, cmd, is_error, output in commands:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "id": tool_id,
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_id,
+                                    "content": output,
+                                    "is_error": is_error,
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        with patch("src.quality_gate.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="abc1234 1703502000 bd-test-123: Fix\n",
+                stderr="",
+            )
+            result = gate.check_with_resolution(
+                issue_id="test-123",
+                log_path=log_path,
+                baseline_timestamp=1703501000,
+            )
+
+        assert result.passed is False
+        assert any(
+            "ruff" in r.lower() and ("failed" in r.lower() or "exit" in r.lower())
+            for r in result.failure_reasons
+        )
+
+    def test_gate_passes_when_all_commands_succeed(self, tmp_path: Path) -> None:
+        """Gate should pass when all validation commands exit with code 0."""
+        log_path = tmp_path / "session.jsonl"
+
+        # All commands succeed
+        commands = [
+            ("toolu_sync_1", "uv sync", False, "Synced"),
+            ("toolu_pytest_1", "uv run pytest", False, "5 passed"),
+            ("toolu_ruff_check_1", "uvx ruff check .", False, "All checks passed"),
+            ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
+            ("toolu_ty_check_1", "uvx ty check", False, "No errors"),
+        ]
+        lines = []
+        for tool_id, cmd, is_error, output in commands:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "id": tool_id,
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_id,
+                                    "content": output,
+                                    "is_error": is_error,
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        with patch("src.quality_gate.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="abc1234 1703502000 bd-test-123: Fix\n",
+                stderr="",
+            )
+            result = gate.check_with_resolution(
+                issue_id="test-123",
+                log_path=log_path,
+                baseline_timestamp=1703501000,
+            )
+
+        assert result.passed is True
+
+    def test_failure_reason_includes_exit_details(self, tmp_path: Path) -> None:
+        """Failure reason should include which command failed and its exit code."""
+        log_path = tmp_path / "session.jsonl"
+
+        # ty check fails with exit code 2
+        commands = [
+            ("toolu_sync_1", "uv sync", False, "Synced"),
+            ("toolu_pytest_1", "uv run pytest", False, "5 passed"),
+            ("toolu_ruff_check_1", "uvx ruff check .", False, "All checks passed"),
+            ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
+            (
+                "toolu_ty_check_1",
+                "uvx ty check",
+                True,
+                "Exit code 2\nerror: invalid-type-form at foo.py:10",
+            ),
+        ]
+        lines = []
+        for tool_id, cmd, is_error, output in commands:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "id": tool_id,
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_id,
+                                    "content": output,
+                                    "is_error": is_error,
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        with patch("src.quality_gate.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="abc1234 1703502000 bd-test-123: Fix\n",
+                stderr="",
+            )
+            result = gate.check_with_resolution(
+                issue_id="test-123",
+                log_path=log_path,
+                baseline_timestamp=1703501000,
+            )
+
+        assert result.passed is False
+        # Failure reason should mention the failed command
+        failure_text = " ".join(result.failure_reasons).lower()
+        assert "ty" in failure_text or "typecheck" in failure_text
+        # Should mention it failed or had non-zero exit
+        assert "failed" in failure_text or "exit" in failure_text

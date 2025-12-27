@@ -36,6 +36,9 @@ class ValidationEvidence:
     ruff_format_ran: bool = False
     ty_check_ran: bool = False
 
+    # Track which validation commands failed (exited non-zero)
+    failed_commands: list[str] = field(default_factory=list)
+
     def has_minimum_validation(self) -> bool:
         """Check if minimum required validation was performed.
 
@@ -318,6 +321,9 @@ class QualityGate:
         This allows scoping evidence to a specific attempt by starting from
         the byte offset where the previous attempt ended.
 
+        Also checks tool_result entries for failures (is_error=true), tracking
+        which validation commands exited non-zero.
+
         Args:
             log_path: Path to the JSONL log file from agent session.
             offset: Byte offset to start reading from (default 0 = beginning).
@@ -330,6 +336,9 @@ class QualityGate:
 
         if not log_path.exists():
             return evidence, 0
+
+        # Map tool_use_id to validation command name for tracking failures
+        tool_id_to_command: dict[str, str] = {}
 
         try:
             # Read file in binary mode for accurate byte offset tracking
@@ -356,33 +365,57 @@ class QualityGate:
                         current_offset += line_len
                         continue
 
-                    # Look for Bash tool_use entries
+                    entry_type = entry.get("type", "")
                     message = entry.get("message", {})
                     content = message.get("content", [])
 
-                    for block in content:
-                        if not isinstance(block, dict):
-                            continue
-                        if block.get("type") != "tool_use":
-                            continue
-                        if block.get("name") != "Bash":
-                            continue
+                    # Process assistant messages for tool_use entries
+                    if entry_type == "assistant":
+                        for block in content:
+                            if not isinstance(block, dict):
+                                continue
+                            if block.get("type") != "tool_use":
+                                continue
+                            if block.get("name") != "Bash":
+                                continue
 
-                        # Extract command from input
-                        input_data = block.get("input", {})
-                        command = input_data.get("command", "")
+                            tool_id = block.get("id", "")
+                            input_data = block.get("input", {})
+                            command = input_data.get("command", "")
 
-                        # Check against validation patterns
-                        if self.VALIDATION_PATTERNS["uv_sync"].search(command):
-                            evidence.uv_sync_ran = True
-                        if self.VALIDATION_PATTERNS["pytest"].search(command):
-                            evidence.pytest_ran = True
-                        if self.VALIDATION_PATTERNS["ruff_check"].search(command):
-                            evidence.ruff_check_ran = True
-                        if self.VALIDATION_PATTERNS["ruff_format"].search(command):
-                            evidence.ruff_format_ran = True
-                        if self.VALIDATION_PATTERNS["ty_check"].search(command):
-                            evidence.ty_check_ran = True
+                            # Check against validation patterns and record tool_id mapping
+                            if self.VALIDATION_PATTERNS["uv_sync"].search(command):
+                                evidence.uv_sync_ran = True
+                                tool_id_to_command[tool_id] = "uv sync"
+                            if self.VALIDATION_PATTERNS["pytest"].search(command):
+                                evidence.pytest_ran = True
+                                tool_id_to_command[tool_id] = "pytest"
+                            if self.VALIDATION_PATTERNS["ruff_check"].search(command):
+                                evidence.ruff_check_ran = True
+                                tool_id_to_command[tool_id] = "ruff check"
+                            if self.VALIDATION_PATTERNS["ruff_format"].search(command):
+                                evidence.ruff_format_ran = True
+                                tool_id_to_command[tool_id] = "ruff format"
+                            if self.VALIDATION_PATTERNS["ty_check"].search(command):
+                                evidence.ty_check_ran = True
+                                tool_id_to_command[tool_id] = "ty check"
+
+                    # Process user messages for tool_result entries (check for failures)
+                    elif entry_type == "user":
+                        for block in content:
+                            if not isinstance(block, dict):
+                                continue
+                            if block.get("type") != "tool_result":
+                                continue
+
+                            tool_use_id = block.get("tool_use_id", "")
+                            is_error = block.get("is_error", False)
+
+                            # If this is a failed result for a validation command, track it
+                            if is_error and tool_use_id in tool_id_to_command:
+                                cmd_name = tool_id_to_command[tool_use_id]
+                                if cmd_name not in evidence.failed_commands:
+                                    evidence.failed_commands.append(cmd_name)
 
                     current_offset += line_len
 
@@ -404,6 +437,9 @@ class QualityGate:
 
         For commands without a detection_pattern, falls back to hardcoded
         VALIDATION_PATTERNS for backward compatibility.
+
+        Also checks tool_result entries for failures (is_error=true), tracking
+        which validation commands exited non-zero.
 
         Args:
             log_path: Path to the JSONL log file from agent session.
@@ -432,6 +468,18 @@ class QualityGate:
                 if fallback is not None:
                     kind_patterns[cmd.kind].append(fallback)
 
+        # Map CommandKind to human-readable names for failure reporting
+        kind_to_name: dict[CommandKind, str] = {
+            CommandKind.DEPS: "uv sync",
+            CommandKind.TEST: "pytest",
+            CommandKind.LINT: "ruff check",
+            CommandKind.FORMAT: "ruff format",
+            CommandKind.TYPECHECK: "ty check",
+        }
+
+        # Map tool_use_id to command name for tracking failures
+        tool_id_to_command: dict[str, str] = {}
+
         try:
             with open(log_path, "rb") as f:
                 f.seek(offset)
@@ -450,38 +498,62 @@ class QualityGate:
                     except json.JSONDecodeError:
                         continue
 
-                    # Look for Bash tool_use entries
+                    entry_type = entry.get("type", "")
                     message = entry.get("message", {})
                     content = message.get("content", [])
 
-                    for block in content:
-                        if not isinstance(block, dict):
-                            continue
-                        if block.get("type") != "tool_use":
-                            continue
-                        if block.get("name") != "Bash":
-                            continue
+                    # Process assistant messages for tool_use entries
+                    if entry_type == "assistant":
+                        for block in content:
+                            if not isinstance(block, dict):
+                                continue
+                            if block.get("type") != "tool_use":
+                                continue
+                            if block.get("name") != "Bash":
+                                continue
 
-                        # Extract command from input
-                        input_data = block.get("input", {})
-                        command = input_data.get("command", "")
+                            tool_id = block.get("id", "")
+                            input_data = block.get("input", {})
+                            command = input_data.get("command", "")
 
-                        # Check against spec-defined patterns
-                        for kind, patterns in kind_patterns.items():
-                            for pattern in patterns:
-                                if pattern.search(command):
-                                    # Map CommandKind to evidence flags
-                                    if kind == CommandKind.DEPS:
-                                        evidence.uv_sync_ran = True
-                                    elif kind == CommandKind.TEST:
-                                        evidence.pytest_ran = True
-                                    elif kind == CommandKind.LINT:
-                                        evidence.ruff_check_ran = True
-                                    elif kind == CommandKind.FORMAT:
-                                        evidence.ruff_format_ran = True
-                                    elif kind == CommandKind.TYPECHECK:
-                                        evidence.ty_check_ran = True
-                                    break  # Found match for this kind
+                            # Check against spec-defined patterns
+                            for kind, patterns in kind_patterns.items():
+                                for pattern in patterns:
+                                    if pattern.search(command):
+                                        # Map CommandKind to evidence flags
+                                        if kind == CommandKind.DEPS:
+                                            evidence.uv_sync_ran = True
+                                        elif kind == CommandKind.TEST:
+                                            evidence.pytest_ran = True
+                                        elif kind == CommandKind.LINT:
+                                            evidence.ruff_check_ran = True
+                                        elif kind == CommandKind.FORMAT:
+                                            evidence.ruff_format_ran = True
+                                        elif kind == CommandKind.TYPECHECK:
+                                            evidence.ty_check_ran = True
+                                        # Record tool_id mapping for failure tracking
+                                        if kind in kind_to_name:
+                                            tool_id_to_command[tool_id] = kind_to_name[
+                                                kind
+                                            ]
+                                        break  # Found match for this kind
+
+                    # Process user messages for tool_result entries (check for failures)
+                    elif entry_type == "user":
+                        for block in content:
+                            if not isinstance(block, dict):
+                                continue
+                            if block.get("type") != "tool_result":
+                                continue
+
+                            tool_use_id = block.get("tool_use_id", "")
+                            is_error = block.get("is_error", False)
+
+                            # If this is a failed result for a validation command, track it
+                            if is_error and tool_use_id in tool_id_to_command:
+                                cmd_name = tool_id_to_command[tool_use_id]
+                                if cmd_name not in evidence.failed_commands:
+                                    evidence.failed_commands.append(cmd_name)
 
         except OSError:
             pass  # File read error - return empty evidence
@@ -790,6 +862,12 @@ class QualityGate:
                 failure_reasons.append(
                     f"Missing validation commands: {', '.join(missing)}"
                 )
+
+        # Check for validation commands that failed (exited non-zero)
+        if evidence.failed_commands:
+            failure_reasons.append(
+                f"Validation commands failed (non-zero exit): {', '.join(evidence.failed_commands)}"
+            )
 
         return GateResult(
             passed=len(failure_reasons) == 0,
