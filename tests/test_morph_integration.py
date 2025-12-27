@@ -308,3 +308,34 @@ class TestMcpServerConfig:
             config = get_mcp_servers(Path("/tmp/repo"))
 
             assert config["morphllm"]["env"]["WORKSPACE_MODE"] == "true"
+
+    def test_get_mcp_servers_disabled_returns_empty(self) -> None:
+        """get_mcp_servers should return empty dict when morph_enabled=False."""
+        from src.orchestrator import get_mcp_servers
+
+        config = get_mcp_servers(Path("/tmp/repo"), morph_enabled=False)
+
+        assert config == {}
+
+    def test_get_mcp_servers_enabled_explicitly(self) -> None:
+        """get_mcp_servers should return config when morph_enabled=True."""
+        with patch.dict(os.environ, {"MORPH_API_KEY": "test-key"}):
+            from src.orchestrator import get_mcp_servers
+
+            config = get_mcp_servers(Path("/tmp/repo"), morph_enabled=True)
+
+            assert "morphllm" in config
+
+
+class TestMorphEnabledGating:
+    """Test morph_enabled gating in orchestrator."""
+
+    def test_get_mcp_servers_defaults_to_enabled(self) -> None:
+        """get_mcp_servers should default to morph_enabled=True for backward compat."""
+        with patch.dict(os.environ, {"MORPH_API_KEY": "test-key"}):
+            from src.orchestrator import get_mcp_servers
+
+            # No morph_enabled param - should default to True (enabled)
+            config = get_mcp_servers(Path("/tmp/repo"))
+
+            assert "morphllm" in config

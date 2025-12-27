@@ -93,8 +93,18 @@ LOG_FILE_WAIT_TIMEOUT = 30
 LOG_FILE_POLL_INTERVAL = 0.5
 
 
-def get_mcp_servers(repo_path: Path) -> dict:
-    """Get MCP servers configuration for agents."""
+def get_mcp_servers(repo_path: Path, morph_enabled: bool = True) -> dict:
+    """Get MCP servers configuration for agents.
+
+    Args:
+        repo_path: Path to the repository.
+        morph_enabled: Whether to enable Morph MCP server. Defaults to True.
+
+    Returns:
+        Dictionary of MCP server configurations. Empty if morph_enabled=False.
+    """
+    if not morph_enabled:
+        return {}
     return {
         "morphllm": {
             "command": "npx",
@@ -154,6 +164,7 @@ class MalaOrchestrator:
         coverage_threshold: float = 85.0,
         lint_only_for_docs: bool = False,
         skip_e2e_if_no_keys: bool = False,
+        morph_enabled: bool = True,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
@@ -169,6 +180,7 @@ class MalaOrchestrator:
         self.coverage_threshold = coverage_threshold
         self.lint_only_for_docs = lint_only_for_docs
         self.skip_e2e_if_no_keys = skip_e2e_if_no_keys
+        self.morph_enabled = morph_enabled
 
         self.active_tasks: dict[str, asyncio.Task] = {}
         self.agent_ids: dict[str, str] = {}
@@ -295,24 +307,31 @@ class MalaOrchestrator:
             "REPO_NAMESPACE": str(self.repo_path),
         }
 
+        # Build hooks list - always include dangerous commands and lock enforcement
+        pre_tool_hooks: list = [
+            block_dangerous_commands,
+            make_lock_enforcement_hook(agent_id, str(self.repo_path)),
+        ]
+        # Add Morph-related hook only when Morph is enabled
+        if self.morph_enabled:
+            pre_tool_hooks.insert(1, block_morph_replaced_tools)
+
         options = ClaudeAgentOptions(
             cwd=str(self.repo_path),
             permission_mode="bypassPermissions",
             model="opus",
             system_prompt={"type": "preset", "preset": "claude_code"},
             setting_sources=["project", "user"],
-            mcp_servers=get_mcp_servers(self.repo_path),
-            disallowed_tools=MORPH_DISALLOWED_TOOLS,
+            mcp_servers=get_mcp_servers(
+                self.repo_path, morph_enabled=self.morph_enabled
+            ),
+            disallowed_tools=MORPH_DISALLOWED_TOOLS if self.morph_enabled else [],
             env=agent_env,
             hooks={
                 "PreToolUse": [
                     HookMatcher(
                         matcher=None,
-                        hooks=[
-                            block_dangerous_commands,
-                            block_morph_replaced_tools,
-                            make_lock_enforcement_hook(agent_id, str(self.repo_path)),
-                        ],  # type: ignore[arg-type]
+                        hooks=pre_tool_hooks,  # type: ignore[arg-type]
                     )
                 ],
                 "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],  # type: ignore[arg-type]
@@ -660,18 +679,26 @@ class MalaOrchestrator:
             )
 
         # Report Morph MCP status
-        log(
-            "◐",
-            "morph: enabled (edit_file, warpgrep_codebase_search)",
-            Colors.CYAN,
-            dim=True,
-        )
-        log(
-            "◐",
-            f"morph: blocked tools: {', '.join(MORPH_DISALLOWED_TOOLS)}",
-            Colors.GRAY,
-            dim=True,
-        )
+        if self.morph_enabled:
+            log(
+                "◐",
+                "morph: enabled (edit_file, warpgrep_codebase_search)",
+                Colors.CYAN,
+                dim=True,
+            )
+            log(
+                "◐",
+                f"morph: blocked tools: {', '.join(MORPH_DISALLOWED_TOOLS)}",
+                Colors.GRAY,
+                dim=True,
+            )
+        else:
+            log(
+                "◐",
+                "morph: disabled (MORPH_API_KEY not set)",
+                Colors.GRAY,
+                dim=True,
+            )
         print()
 
         # Setup directories
