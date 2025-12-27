@@ -246,24 +246,29 @@ class TestMorphDisallowedTools:
 class TestMorphApiKeyValidation:
     """Test API key validation."""
 
-    def test_missing_api_key_raises_system_exit(self) -> None:
-        """validate_morph_api_key should raise SystemExit if key is missing."""
-        # Need to reimport after patching environment
-
+    def test_missing_api_key_returns_none(self) -> None:
+        """get_morph_api_key should return None if key is missing."""
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("MORPH_API_KEY", None)
-            from src.cli import validate_morph_api_key
+            from src.cli import get_morph_api_key
 
-            with pytest.raises(SystemExit) as exc_info:
-                validate_morph_api_key()
-            assert "MORPH_API_KEY" in str(exc_info.value)
+            result = get_morph_api_key()
+            assert result is None
+
+    def test_empty_api_key_returns_none(self) -> None:
+        """get_morph_api_key should return None if key is empty string."""
+        with patch.dict(os.environ, {"MORPH_API_KEY": ""}):
+            from src.cli import get_morph_api_key
+
+            result = get_morph_api_key()
+            assert result is None
 
     def test_api_key_present_returns_key(self) -> None:
-        """validate_morph_api_key should return the key if present."""
+        """get_morph_api_key should return the key if present."""
         with patch.dict(os.environ, {"MORPH_API_KEY": "test-key-123"}):
-            from src.cli import validate_morph_api_key
+            from src.cli import get_morph_api_key
 
-            result = validate_morph_api_key()
+            result = get_morph_api_key()
             assert result == "test-key-123"
 
 
