@@ -6,6 +6,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from claude_agent_sdk import (
     ClaudeSDKClient,
@@ -50,6 +51,9 @@ from .validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
+
+if TYPE_CHECKING:
+    from .validation.result import ValidationResult
 
 
 # Version (from package metadata)
@@ -99,6 +103,32 @@ The automated code review found the following issues:
 4. Commit your changes with message: `bd-{issue_id}: <description>`
 
 Note: The orchestrator will re-run both the quality gate and Codex review after your fixes.
+"""
+
+# Fixer agent prompt for run-level validation failures (Gate 4)
+RUN_LEVEL_FIXER_PROMPT = """## Run-Level Validation Failed (Attempt {attempt}/{max_attempts})
+
+The run-level validation (Gate 4) found issues that need to be fixed:
+
+{failure_output}
+
+**Required actions:**
+1. Analyze the validation failure output above
+2. Identify and fix all issues causing the failure
+3. Re-run the full validation suite:
+   - `uv sync`
+   - `uv run pytest`
+   - `uvx ruff check .`
+   - `uvx ruff format .`
+   - `uvx ty check`
+4. Commit your changes with message: `bd-run-validation: <description>`
+
+**Context:**
+- This is a run-level validation that runs after all per-issue work is complete
+- Your fix should address the root cause, not just suppress the error
+- The orchestrator will re-run validation after your fix
+
+Do not release any locks - the orchestrator handles that.
 """
 
 # Bounded wait for log file (seconds)
@@ -300,6 +330,288 @@ class MalaOrchestrator:
         return await asyncio.to_thread(
             self._run_quality_gate_sync, issue_id, log_path, retry_state
         )
+
+    async def _run_run_level_validation(
+        self,
+        run_metadata: RunMetadata,
+    ) -> bool:
+        """Run Gate 4 validation after all issues complete.
+
+        This runs validation with RUN_LEVEL scope, which includes E2E tests.
+        On failure, spawns a fixer agent and retries up to max_gate_retries times.
+
+        Args:
+            run_metadata: Run metadata tracker to record validation results.
+
+        Returns:
+            True if validation passed (or was skipped), False if failed after retries.
+        """
+        # Check if run-level validation is disabled
+        if "run-level-validate" in (self.disable_validations or set()):
+            log("◐", "Run-level validation disabled", Colors.GRAY, dim=True)
+            return True
+
+        # Get current HEAD commit
+        commit_hash = await get_git_commit_async(self.repo_path)
+        if not commit_hash:
+            log(
+                "⚠", "Could not get HEAD commit for run-level validation", Colors.YELLOW
+            )
+            return True  # Don't fail the run if we can't get the commit
+
+        log("◐", "Running Gate 4 (run-level validation)...", Colors.CYAN)
+
+        # Build run-level validation spec
+        spec = build_validation_spec(
+            scope=ValidationScope.RUN_LEVEL,
+            disable_validations=self.disable_validations,
+            coverage_threshold=self.coverage_threshold,
+            repo_path=self.repo_path,
+        )
+
+        # Build validation context
+        context = ValidationContext(
+            issue_id=None,  # Run-level, no specific issue
+            repo_path=self.repo_path,
+            commit_hash=commit_hash,
+            changed_files=[],  # Not needed for run-level
+            scope=ValidationScope.RUN_LEVEL,
+        )
+
+        # Create validation runner
+        runner = ValidationRunner(
+            self.repo_path,
+            ValidationConfig(
+                run_slow_tests="slow-tests" not in (self.disable_validations or set()),
+                run_e2e="e2e" not in (self.disable_validations or set()),
+                coverage="coverage" not in (self.disable_validations or set()),
+                coverage_min=int(self.coverage_threshold),
+            ),
+        )
+
+        # Retry loop with fixer agent
+        for attempt in range(1, self.max_gate_retries + 1):
+            log(
+                "◐",
+                f"Gate 4 attempt {attempt}/{self.max_gate_retries}",
+                Colors.CYAN,
+                dim=True,
+            )
+
+            # Run validation
+            try:
+                result = await runner.run_spec(spec, context)
+            except Exception as e:
+                log("⚠", f"Validation runner error: {e}", Colors.YELLOW)
+                result = None
+
+            if result and result.passed:
+                log("✓", "Gate 4 passed", Colors.GREEN)
+                # Record in metadata
+                meta_result = MetaValidationResult(
+                    passed=True,
+                    commands_run=[s.name for s in result.steps],
+                    commands_failed=[],
+                    artifacts=result.artifacts,
+                    coverage_percent=result.coverage_result.percent
+                    if result.coverage_result
+                    else None,
+                    e2e_passed=True,  # If we got here, E2E passed
+                )
+                run_metadata.record_run_validation(meta_result)
+                return True
+
+            # Validation failed - build failure output for fixer
+            failure_output = self._build_validation_failure_output(result)
+
+            # Record failure in metadata (will be overwritten on success)
+            if result:
+                meta_result = MetaValidationResult(
+                    passed=False,
+                    commands_run=[s.name for s in result.steps],
+                    commands_failed=[s.name for s in result.steps if not s.ok],
+                    artifacts=result.artifacts,
+                    coverage_percent=result.coverage_result.percent
+                    if result.coverage_result
+                    else None,
+                    e2e_passed=False,
+                )
+                run_metadata.record_run_validation(meta_result)
+
+            # Check if we have retries left
+            if attempt >= self.max_gate_retries:
+                log(
+                    "✗",
+                    f"Gate 4 failed after {attempt} attempts",
+                    Colors.RED,
+                )
+                return False
+
+            # Spawn fixer agent
+            log(
+                "↻",
+                f"Spawning fixer agent (attempt {attempt}/{self.max_gate_retries})",
+                Colors.YELLOW,
+            )
+
+            fixer_success = await self._run_fixer_agent(
+                failure_output=failure_output,
+                attempt=attempt,
+            )
+
+            if not fixer_success:
+                log("⚠", "Fixer agent did not complete successfully", Colors.YELLOW)
+                # Continue to retry validation anyway - fixer may have made progress
+
+            # Update commit hash for next validation attempt
+            new_commit = await get_git_commit_async(self.repo_path)
+            if new_commit and new_commit != commit_hash:
+                commit_hash = new_commit
+                context = ValidationContext(
+                    issue_id=None,
+                    repo_path=self.repo_path,
+                    commit_hash=commit_hash,
+                    changed_files=[],
+                    scope=ValidationScope.RUN_LEVEL,
+                )
+
+        return False
+
+    def _build_validation_failure_output(
+        self, result: "ValidationResult | None"
+    ) -> str:
+        """Build failure output string for fixer agent prompt.
+
+        Args:
+            result: Validation result, or None if validation crashed.
+
+        Returns:
+            Human-readable failure output.
+        """
+        if result is None:
+            return "Validation crashed - check logs for details."
+
+        lines: list[str] = []
+        if result.failure_reasons:
+            lines.append("**Failure reasons:**")
+            for reason in result.failure_reasons:
+                lines.append(f"- {reason}")
+            lines.append("")
+
+        # Add step details for failed steps
+        failed_steps = [s for s in result.steps if not s.ok]
+        if failed_steps:
+            lines.append("**Failed validation steps:**")
+            for step in failed_steps:
+                lines.append(f"\n### {step.name} (exit {step.returncode})")
+                if step.stderr_tail:
+                    lines.append("```")
+                    lines.append(step.stderr_tail[:2000])  # Truncate
+                    lines.append("```")
+                elif step.stdout_tail:
+                    lines.append("```")
+                    lines.append(step.stdout_tail[:2000])  # Truncate
+                    lines.append("```")
+
+        return (
+            "\n".join(lines) if lines else "Validation failed (no details available)."
+        )
+
+    async def _run_fixer_agent(
+        self,
+        failure_output: str,
+        attempt: int,
+    ) -> bool:
+        """Spawn a fixer agent to address run-level validation failures.
+
+        Args:
+            failure_output: Human-readable description of what failed.
+            attempt: Current attempt number.
+
+        Returns:
+            True if fixer agent completed successfully, False otherwise.
+        """
+        agent_id = f"fixer-{uuid.uuid4().hex[:8]}"
+
+        prompt = RUN_LEVEL_FIXER_PROMPT.format(
+            attempt=attempt,
+            max_attempts=self.max_gate_retries,
+            failure_output=failure_output,
+        )
+
+        # Set up environment
+        agent_env = {
+            **os.environ,
+            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
+            "LOCK_DIR": str(LOCK_DIR),
+            "AGENT_ID": agent_id,
+            "REPO_NAMESPACE": str(self.repo_path),
+        }
+
+        # Build hooks - similar to implementer but without lock enforcement
+        pre_tool_hooks: list = [block_dangerous_commands]
+        if self.morph_enabled:
+            pre_tool_hooks.append(block_morph_replaced_tools)
+
+        options = ClaudeAgentOptions(
+            cwd=str(self.repo_path),
+            permission_mode="bypassPermissions",
+            model="opus",
+            system_prompt={"type": "preset", "preset": "claude_code"},
+            setting_sources=["project", "user"],
+            mcp_servers=get_mcp_servers(
+                self.repo_path, morph_enabled=self.morph_enabled
+            ),
+            disallowed_tools=MORPH_DISALLOWED_TOOLS if self.morph_enabled else ["Edit"],
+            env=agent_env,
+            hooks={
+                "PreToolUse": [
+                    HookMatcher(
+                        matcher=None,
+                        hooks=pre_tool_hooks,  # type: ignore[arg-type]
+                    )
+                ],
+                "Stop": [
+                    HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])  # type: ignore[arg-type]
+                ],
+            },
+        )
+
+        try:
+            async with asyncio.timeout(self.timeout_seconds):
+                async with ClaudeSDKClient(options=options) as client:
+                    await client.query(prompt)
+
+                    async for message in client.receive_response():
+                        # Log progress
+                        if isinstance(message, AssistantMessage):
+                            for block in message.content:
+                                if isinstance(block, TextBlock):
+                                    log_agent_text(block.text, f"fixer-{attempt}")
+                                elif isinstance(block, ToolUseBlock):
+                                    log_tool(
+                                        block.name,
+                                        agent_id=f"fixer-{attempt}",
+                                        arguments=block.input,
+                                    )
+                        elif isinstance(message, ResultMessage):
+                            log(
+                                "◐",
+                                f"Fixer completed: {truncate_text(message.result or '', 50)}",
+                                Colors.GRAY,
+                                dim=True,
+                            )
+
+            return True
+
+        except TimeoutError:
+            log("⚠", "Fixer agent timed out", Colors.YELLOW)
+            return False
+        except Exception as e:
+            log("⚠", f"Fixer agent error: {e}", Colors.YELLOW)
+            return False
+        finally:
+            self._cleanup_agent_locks(agent_id)
 
     async def run_implementer(self, issue_id: str) -> IssueResult:
         """Run implementer agent for a single issue with gate retry support."""
@@ -1062,15 +1374,30 @@ class MalaOrchestrator:
             if released:
                 log("🧹", f"Released {released} remaining locks", Colors.GRAY, dim=True)
 
-        # Summary
-        print()
+        # Calculate success_count before Gate 4
         success_count = sum(1 for r in self.completed if r.success)
         total = len(self.completed)
 
-        if success_count == total and total > 0:
+        # Run Gate 4 (run-level validation) after all issues complete
+        # Only run if there were successful issues (something to validate)
+        run_validation_passed = True
+        if success_count > 0:
+            run_validation_passed = await self._run_run_level_validation(run_metadata)
+
+        # Summary
+        print()
+
+        if success_count == total and total > 0 and run_validation_passed:
             log("●", f"Completed: {success_count}/{total} issues", Colors.GREEN)
         elif success_count > 0:
-            log("◐", f"Completed: {success_count}/{total} issues", Colors.YELLOW)
+            if not run_validation_passed:
+                log(
+                    "◐",
+                    f"Completed: {success_count}/{total} issues (Gate 4 failed)",
+                    Colors.YELLOW,
+                )
+            else:
+                log("◐", f"Completed: {success_count}/{total} issues", Colors.YELLOW)
         elif total == 0:
             log("○", "No issues to process", Colors.GRAY)
         else:
@@ -1088,5 +1415,9 @@ class MalaOrchestrator:
 
         print()
         # Return success count for CLI exit code logic
+        # Run-level validation failure should cause non-zero exit
         # Also indicate if no issues were processed (total == 0 is a no-op, not failure)
+        if not run_validation_passed:
+            # Gate 4 failed - return 0 successes to trigger non-zero exit
+            return (0, total)
         return (success_count, total)

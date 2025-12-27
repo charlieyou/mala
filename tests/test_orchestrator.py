@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -32,6 +32,20 @@ def orchestrator(tmp_path: Path) -> MalaOrchestrator:
         timeout_minutes=1,
         max_issues=5,
     )
+
+
+@pytest.fixture(autouse=True)
+def skip_run_level_validation() -> Generator[None, None, None]:
+    """Skip Gate 4 (run-level validation) in all tests.
+
+    Run-level validation spawns a real Claude agent which is too slow for
+    unit tests. Tests for run-level validation are in test_run_level_validation.py.
+    """
+    with patch(
+        "src.orchestrator.MalaOrchestrator._run_run_level_validation",
+        return_value=True,
+    ):
+        yield
 
 
 def make_subprocess_result(
