@@ -31,6 +31,30 @@ from src.validation import (
 )
 
 
+def mock_popen_success(
+    stdout: str = "", stderr: str = "", returncode: int = 0
+) -> MagicMock:
+    """Create a mock Popen object that returns successfully."""
+    mock_proc = MagicMock()
+    mock_proc.communicate.return_value = (stdout, stderr)
+    mock_proc.returncode = returncode
+    mock_proc.pid = 12345
+    return mock_proc
+
+
+def mock_popen_timeout() -> MagicMock:
+    """Create a mock Popen object that times out then terminates cleanly."""
+    mock_proc = MagicMock()
+    # First call times out, subsequent calls succeed (for termination)
+    mock_proc.communicate.side_effect = [
+        subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1),
+        ("", ""),  # Response after SIGTERM
+    ]
+    mock_proc.pid = 12345
+    mock_proc.returncode = None
+    return mock_proc
+
+
 class TestValidationConfig:
     """Test ValidationConfig dataclass defaults."""
 
@@ -317,26 +341,20 @@ class TestValidationRunner:
         assert "slow or not slow" in pytest_cmd
 
     def test_run_command_success(self, runner: ValidationRunner) -> None:
-        mock_result = subprocess.CompletedProcess(
-            args=["echo", "hello"],
-            returncode=0,
-            stdout="hello\n",
-            stderr="",
-        )
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = mock_popen_success(stdout="hello\n", stderr="", returncode=0)
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_command("echo", ["echo", "hello"], Path("."), {})
             assert result.ok is True
             assert result.returncode == 0
             assert result.name == "echo"
 
     def test_run_command_failure(self, runner: ValidationRunner) -> None:
-        mock_result = subprocess.CompletedProcess(
-            args=["false"],
-            returncode=1,
-            stdout="",
-            stderr="command failed",
-        )
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = mock_popen_success(stdout="", stderr="command failed", returncode=1)
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_command("false", ["false"], Path("."), {})
             assert result.ok is False
             assert result.returncode == 1
@@ -349,25 +367,19 @@ class TestValidationRunner:
         )
         runner = ValidationRunner(tmp_path, config)
 
-        exc = subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1)
-        exc.stdout = b"partial output"
-        exc.stderr = b"timeout error"
-
-        with patch("subprocess.run", side_effect=exc):
+        mock_proc = mock_popen_timeout()
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_command("sleep", ["sleep", "10"], Path("."), {})
             assert result.ok is False
             assert result.returncode == 124  # Standard timeout exit code
-            assert "partial output" in result.stdout_tail
-            assert "timeout error" in result.stderr_tail
 
     def test_run_validation_steps_all_pass(self, runner: ValidationRunner) -> None:
-        mock_result = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout="ok",
-            stderr="",
-        )
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_validation_steps(Path("."), "test", include_e2e=False)
             assert result.passed is True
             assert (
@@ -375,13 +387,10 @@ class TestValidationRunner:
             )  # uv sync, ruff format, ruff check, ty, pytest
 
     def test_run_validation_steps_first_fails(self, runner: ValidationRunner) -> None:
-        mock_result = subprocess.CompletedProcess(
-            args=[],
-            returncode=1,
-            stdout="",
-            stderr="sync failed",
-        )
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = mock_popen_success(stdout="", stderr="sync failed", returncode=1)
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_validation_steps(Path("."), "test", include_e2e=False)
             assert result.passed is False
             assert len(result.steps) == 1  # Stops after first failure
@@ -406,16 +415,25 @@ class TestValidationRunner:
         self, runner: ValidationRunner
     ) -> None:
         """Test that validate_commit properly wraps the sync method."""
-        mock_result = subprocess.CompletedProcess(
+        # Mock git worktree commands (still uses subprocess.run)
+        mock_git_result = subprocess.CompletedProcess(
             args=[],
             returncode=0,
             stdout="ok",
             stderr="",
         )
-        with patch("subprocess.run", return_value=mock_result):
-            with patch("shutil.rmtree"):
-                result = await runner.validate_commit("abc123", "test")
-                assert result.passed is True
+        # Mock validation commands (uses Popen)
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+        with (
+            patch("subprocess.run", return_value=mock_git_result),
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                return_value=mock_proc,
+            ),
+            patch("shutil.rmtree"),
+        ):
+            result = await runner.validate_commit("abc123", "test")
+            assert result.passed is True
 
 
 class TestValidationRunnerWithMutex:
@@ -472,18 +490,26 @@ class TestE2EValidation:
 
         captured_cmd: list[str] = []
 
-        def capture_run(
-            *args: object, **kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
-            if args and isinstance(args[0], list):
-                captured_cmd.extend(args[0])
-            return subprocess.CompletedProcess(
-                args=[], returncode=0, stdout="", stderr=""
-            )
+        def capture_popen(cmd: list[str], **kwargs: object) -> MagicMock:
+            captured_cmd.extend(cmd)
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("", "")
+            mock_proc.returncode = 0
+            mock_proc.pid = 12345
+            return mock_proc
+
+        # Also mock subprocess.run for git init, etc. in fixture setup
+        mock_run_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("subprocess.run", side_effect=capture_run),
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                side_effect=capture_popen,
+            ),
+            patch("subprocess.run", return_value=mock_run_result),
         ):
             runner._run_e2e("test", {"MORPH_API_KEY": "test-key"})
 
@@ -498,45 +524,58 @@ class TestE2EValidation:
 
 
 class TestTimeoutHandling:
-    """Test timeout handling for str/bytes output types.
+    """Test timeout handling for CommandRunner.
 
-    These tests ensure TimeoutExpired outputs are handled robustly regardless
-    of whether they are bytes (text=False), str (text=True), or None.
-    This covers the acceptance criteria from mala-w8w.2.
+    These tests ensure timeout is properly detected and the process
+    is terminated with proper process-group killing.
     """
 
     def test_run_command_timeout_with_string_output(self, tmp_path: Path) -> None:
-        """TimeoutExpired may have str stdout/stderr when text=True is used."""
+        """Timeout returns output captured during termination."""
         config = ValidationConfig(
             use_test_mutex=False,
             step_timeout_seconds=0.1,
         )
         runner = ValidationRunner(tmp_path, config)
 
-        exc = subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1)
-        exc.stdout = "string output"  # type: ignore[assignment]  # Already a string, not bytes
-        exc.stderr = "string error"  # type: ignore[assignment]
+        # Mock Popen that times out, then returns output on terminate
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1),
+            ("terminated output", "terminated error"),  # Output from terminate
+        ]
+        mock_proc.pid = 12345
+        mock_proc.returncode = None
 
-        with patch("subprocess.run", side_effect=exc):
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_command("sleep", ["sleep", "10"], Path("."), {})
             assert result.ok is False
             assert result.returncode == 124
-            assert "string output" in result.stdout_tail
-            assert "string error" in result.stderr_tail
+            assert "terminated output" in result.stdout_tail
+            assert "terminated error" in result.stderr_tail
 
     def test_run_command_timeout_with_none_output(self, tmp_path: Path) -> None:
-        """TimeoutExpired may have None stdout/stderr."""
+        """Timeout with no output captured."""
         config = ValidationConfig(
             use_test_mutex=False,
             step_timeout_seconds=0.1,
         )
         runner = ValidationRunner(tmp_path, config)
 
-        exc = subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1)
-        exc.stdout = None
-        exc.stderr = None
+        # Mock Popen that times out with no output
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1),
+            ("", ""),  # No output from terminate
+        ]
+        mock_proc.pid = 12345
+        mock_proc.returncode = None
 
-        with patch("subprocess.run", side_effect=exc):
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_command("sleep", ["sleep", "10"], Path("."), {})
             assert result.ok is False
             assert result.returncode == 124
@@ -544,23 +583,30 @@ class TestTimeoutHandling:
             assert result.stderr_tail == ""
 
     def test_run_command_timeout_with_bytes_output(self, tmp_path: Path) -> None:
-        """TimeoutExpired may have bytes stdout/stderr when text=False."""
+        """Timeout - CommandRunner now uses text=True so output is always str."""
         config = ValidationConfig(
             use_test_mutex=False,
             step_timeout_seconds=0.1,
         )
         runner = ValidationRunner(tmp_path, config)
 
-        exc = subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1)
-        exc.stdout = b"bytes output"
-        exc.stderr = b"bytes error"
+        # With text=True, Popen returns strings not bytes
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1),
+            ("string output", "string error"),
+        ]
+        mock_proc.pid = 12345
+        mock_proc.returncode = None
 
-        with patch("subprocess.run", side_effect=exc):
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_command("sleep", ["sleep", "10"], Path("."), {})
             assert result.ok is False
             assert result.returncode == 124
-            assert "bytes output" in result.stdout_tail
-            assert "bytes error" in result.stderr_tail
+            assert "string output" in result.stdout_tail
+            assert "string error" in result.stderr_tail
 
 
 class TestSpecBasedValidation:
@@ -613,13 +659,10 @@ class TestSpecBasedValidation:
         tmp_path: Path,
     ) -> None:
         """Test run_spec with a single passing command."""
-        mock_result = subprocess.CompletedProcess(
-            args=["echo", "hello"],
-            returncode=0,
-            stdout="hello\n",
-            stderr="",
-        )
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = mock_popen_success(stdout="hello\n", stderr="", returncode=0)
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
             assert result.passed is True
             assert len(result.steps) == 1
@@ -636,13 +679,10 @@ class TestSpecBasedValidation:
         tmp_path: Path,
     ) -> None:
         """Test run_spec with a single failing command."""
-        mock_result = subprocess.CompletedProcess(
-            args=["echo", "hello"],
-            returncode=1,
-            stdout="",
-            stderr="error occurred",
-        )
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = mock_popen_success(stdout="", stderr="error occurred", returncode=1)
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
             assert result.passed is False
             assert len(result.steps) == 1
@@ -675,13 +715,10 @@ class TestSpecBasedValidation:
             e2e=E2EConfig(enabled=False),
         )
 
-        mock_result = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout="ok",
-            stderr="",
-        )
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is True
             assert len(result.steps) == 3
@@ -715,20 +752,23 @@ class TestSpecBasedValidation:
 
         call_count = 0
 
-        def mock_run(
-            *args: object, **kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
+        def mock_popen_calls(cmd: list[str], **kwargs: object) -> MagicMock:
             nonlocal call_count
             call_count += 1
+            mock_proc = MagicMock()
+            mock_proc.pid = 12345
             if call_count == 2:
-                return subprocess.CompletedProcess(
-                    args=[], returncode=1, stdout="", stderr="lint error"
-                )
-            return subprocess.CompletedProcess(
-                args=[], returncode=0, stdout="ok", stderr=""
-            )
+                mock_proc.communicate.return_value = ("", "lint error")
+                mock_proc.returncode = 1
+            else:
+                mock_proc.communicate.return_value = ("ok", "")
+                mock_proc.returncode = 0
+            return mock_proc
 
-        with patch("subprocess.run", side_effect=mock_run):
+        with patch(
+            "src.validation.command_runner.subprocess.Popen",
+            side_effect=mock_popen_calls,
+        ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is False
             assert len(result.steps) == 2  # Stopped after fail2
@@ -764,20 +804,23 @@ class TestSpecBasedValidation:
 
         call_count = 0
 
-        def mock_run(
-            *args: object, **kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
+        def mock_popen_calls(cmd: list[str], **kwargs: object) -> MagicMock:
             nonlocal call_count
             call_count += 1
+            mock_proc = MagicMock()
+            mock_proc.pid = 12345
             if call_count == 2:
-                return subprocess.CompletedProcess(
-                    args=[], returncode=1, stdout="", stderr="lint warning"
-                )
-            return subprocess.CompletedProcess(
-                args=[], returncode=0, stdout="ok", stderr=""
-            )
+                mock_proc.communicate.return_value = ("", "lint warning")
+                mock_proc.returncode = 1
+            else:
+                mock_proc.communicate.return_value = ("ok", "")
+                mock_proc.returncode = 0
+            return mock_proc
 
-        with patch("subprocess.run", side_effect=mock_run):
+        with patch(
+            "src.validation.command_runner.subprocess.Popen",
+            side_effect=mock_popen_calls,
+        ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is True  # Passed despite step 2 failing
             assert len(result.steps) == 3  # All steps ran
@@ -802,15 +845,17 @@ class TestSpecBasedValidation:
 
         captured_cmd: list[str] = []
 
-        def capture_run(
-            cmd: list[str], *args: object, **kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
+        def capture_popen(cmd: list[str], **kwargs: object) -> MagicMock:
             captured_cmd.extend(cmd)
-            return subprocess.CompletedProcess(
-                args=cmd, returncode=0, stdout="ok", stderr=""
-            )
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("ok", "")
+            mock_proc.returncode = 0
+            mock_proc.pid = 12345
+            return mock_proc
 
-        with patch("subprocess.run", side_effect=capture_run):
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", side_effect=capture_popen
+        ):
             runner._run_spec_sync(spec, context, log_dir=tmp_path)
 
         assert "test-mutex.sh" in captured_cmd[0]
@@ -824,13 +869,12 @@ class TestSpecBasedValidation:
         tmp_path: Path,
     ) -> None:
         """Test that stdout/stderr are written to log files."""
-        mock_result = subprocess.CompletedProcess(
-            args=["echo", "hello"],
-            returncode=0,
-            stdout="stdout content\n",
-            stderr="stderr content\n",
+        mock_proc = mock_popen_success(
+            stdout="stdout content\n", stderr="stderr content\n", returncode=0
         )
-        with patch("subprocess.run", return_value=mock_result):
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
             assert result.passed is True
 
@@ -869,10 +913,10 @@ class TestSpecBasedValidation:
             e2e=E2EConfig(enabled=False),
         )
 
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="ok", stderr=""
-        )
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is True
             assert result.coverage_result is not None
@@ -906,10 +950,10 @@ class TestSpecBasedValidation:
             e2e=E2EConfig(enabled=False),
         )
 
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="ok", stderr=""
-        )
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is False
             assert result.coverage_result is not None
@@ -938,13 +982,15 @@ class TestSpecBasedValidation:
             e2e=E2EConfig(enabled=False),
         )
 
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="ok", stderr=""
-        )
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is False
-            assert "not found" in result.failure_reasons[0]
+            assert result.coverage_result is not None
+            assert result.coverage_result.passed is False
+            assert "not found" in (result.coverage_result.failure_reason or "")
 
     def test_run_spec_e2e_only_for_run_level(
         self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
@@ -1025,10 +1071,10 @@ class TestSpecBasedValidation:
         tmp_path: Path,
     ) -> None:
         """Test run_spec async wrapper."""
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="ok", stderr=""
-        )
-        with patch("subprocess.run", return_value=mock_result):
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = await runner.run_spec(basic_spec, context, log_dir=tmp_path)
             assert result.passed is True
 
@@ -1040,11 +1086,17 @@ class TestSpecBasedValidation:
         tmp_path: Path,
     ) -> None:
         """Test that command timeout is handled correctly."""
-        exc = subprocess.TimeoutExpired(cmd=["sleep"], timeout=1.0)
-        exc.stdout = b"partial"
-        exc.stderr = b"timeout"
+        mock_proc = MagicMock()
+        mock_proc.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd=["sleep"], timeout=1.0),
+            ("partial", "timeout"),  # Output after termination
+        ]
+        mock_proc.pid = 12345
+        mock_proc.returncode = None
 
-        with patch("subprocess.run", side_effect=exc):
+        with patch(
+            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
             assert result.passed is False
             assert result.steps[0].returncode == 124
@@ -1088,9 +1140,7 @@ class TestSpecBasedValidation:
             e2e=E2EConfig(enabled=False),
         )
 
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="ok", stderr=""
-        )
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
 
         with (
             patch(
@@ -1101,7 +1151,10 @@ class TestSpecBasedValidation:
                 "src.validation.spec_runner.remove_worktree",
                 return_value=mock_worktree_ctx,
             ),
-            patch("subprocess.run", return_value=mock_result),
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                return_value=mock_proc,
+            ),
         ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is True
@@ -1205,9 +1258,7 @@ class TestSpecBasedValidation:
             e2e=E2EConfig(enabled=False),
         )
 
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="ok", stderr=""
-        )
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
 
         remove_worktree_called_with: list[tuple[object, bool]] = []
 
@@ -1223,7 +1274,10 @@ class TestSpecBasedValidation:
             patch(
                 "src.validation.spec_runner.remove_worktree", side_effect=mock_remove
             ),
-            patch("subprocess.run", return_value=mock_result),
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                return_value=mock_proc,
+            ),
         ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is True
@@ -1243,7 +1297,7 @@ class TestSpecBasedValidation:
         mock_worktree_created.path = tmp_path / "worktree"
         mock_worktree_created.path.mkdir()
 
-        # Create mock for worktree removal (kept on failure)
+        # Create mock for worktree removal (kept due to failure)
         mock_worktree_kept = MagicMock(spec=WorktreeContext)
         mock_worktree_kept.state = WorktreeState.KEPT
 
@@ -1279,9 +1333,8 @@ class TestSpecBasedValidation:
             remove_worktree_called_with.append((ctx, validation_passed))
             return mock_worktree_kept
 
-        # Simulate an exception during command execution
-        def raise_exception(*args: object, **kwargs: object) -> None:
-            raise FileNotFoundError("Command not found")
+        def mock_popen_raises(*args: object, **kwargs: object) -> MagicMock:
+            raise RuntimeError("Command execution failed")
 
         with (
             patch(
@@ -1291,11 +1344,14 @@ class TestSpecBasedValidation:
             patch(
                 "src.validation.spec_runner.remove_worktree", side_effect=mock_remove
             ),
-            patch("subprocess.run", side_effect=raise_exception),
-            pytest.raises(FileNotFoundError),
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                side_effect=mock_popen_raises,
+            ),
         ):
-            runner._run_spec_sync(spec, context, log_dir=tmp_path)
+            with pytest.raises(RuntimeError, match="Command execution failed"):
+                runner._run_spec_sync(spec, context, log_dir=tmp_path)
 
-        # Verify remove_worktree was called with validation_passed=False
-        assert len(remove_worktree_called_with) == 1
-        assert remove_worktree_called_with[0][1] is False
+            # Verify remove_worktree was called with validation_passed=False
+            assert len(remove_worktree_called_with) == 1
+            assert remove_worktree_called_with[0][1] is False

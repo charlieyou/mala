@@ -126,25 +126,27 @@ class TestCommandRunner:
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
     def test_timeout_kills_process_group(self, tmp_path: Path) -> None:
         """Verify that timeout kills entire process group, not just parent."""
-        # Create a script that spawns a child process
+        # Create a script that spawns a child process that writes after delay
+        # We timeout at 0.1s, child tries to write at 0.3s
+        # If child survives the kill, it will write the file
         script = tmp_path / "spawner.sh"
         script.write_text(
             """#!/bin/bash
-            # Spawn a child that writes to a file
-            (sleep 10; echo "child survived" > "$1/child_output.txt") &
+            # Spawn a child that writes to a file after delay
+            (sleep 0.3; echo "child survived" > "$1/child_output.txt") &
             # Parent sleeps forever
             sleep 10
             """
         )
         script.chmod(0o755)
 
-        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.1)
         result = runner.run([str(script), str(tmp_path)])
 
         assert result.timed_out is True
 
-        # Give a moment for any surviving child to write
-        time.sleep(0.3)
+        # Wait for child to have time to write (if it survived)
+        time.sleep(0.5)
 
         # Child should NOT have survived to write the file
         child_output = tmp_path / "child_output.txt"
@@ -187,20 +189,27 @@ class TestAsyncCommandRunner:
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
     async def test_async_timeout_kills_process_group(self, tmp_path: Path) -> None:
         """Verify that async timeout kills entire process group."""
+        # Create a script that spawns a child process that writes after delay
+        # We timeout at 0.1s, child tries to write at 0.3s
+        # If child survives the kill, it will write the file
         script = tmp_path / "spawner.sh"
         script.write_text(
             """#!/bin/bash
-            (sleep 10; echo "child survived" > "$1/child_output.txt") &
+            # Spawn a child that writes to a file after delay
+            (sleep 0.3; echo "child survived" > "$1/child_output.txt") &
+            # Parent sleeps forever
             sleep 10
             """
         )
         script.chmod(0o755)
 
-        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.1)
         result = await runner.run_async([str(script), str(tmp_path)])
 
         assert result.timed_out is True
-        await asyncio.sleep(0.3)
+
+        # Wait for child to have time to write (if it survived)
+        await asyncio.sleep(0.5)
 
         child_output = tmp_path / "child_output.txt"
         assert not child_output.exists(), "Child process should have been killed"

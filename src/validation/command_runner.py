@@ -131,6 +131,10 @@ class CommandRunner:
     ) -> CommandResult:
         """Run a command synchronously.
 
+        Uses Popen with process-group termination on timeout. When timeout
+        occurs, sends SIGTERM to the process group, waits kill_grace_seconds,
+        then sends SIGKILL if still running.
+
         Args:
             cmd: Command and arguments to run.
             env: Environment variables (merged with os.environ).
@@ -146,30 +150,31 @@ class CommandRunner:
         use_process_group = sys.platform != "win32"
 
         start = time.monotonic()
+        proc = subprocess.Popen(
+            cmd,
+            cwd=self.cwd,
+            env=merged_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=use_process_group,
+        )
+
         try:
-            result = subprocess.run(
-                cmd,
-                cwd=self.cwd,
-                env=merged_env,
-                capture_output=True,
-                text=True,
-                timeout=effective_timeout,
-                start_new_session=use_process_group,
-            )
+            stdout, stderr = proc.communicate(timeout=effective_timeout)
             duration = time.monotonic() - start
             return CommandResult(
                 command=cmd,
-                returncode=result.returncode,
-                stdout=result.stdout,
-                stderr=result.stderr,
+                returncode=proc.returncode,
+                stdout=stdout or "",
+                stderr=stderr or "",
                 duration_seconds=duration,
                 timed_out=False,
             )
-        except subprocess.TimeoutExpired as exc:
+        except subprocess.TimeoutExpired:
+            # Terminate the process group properly
             duration = time.monotonic() - start
-            # subprocess.run handles termination, but we need to decode output
-            stdout = self._decode_output(exc.stdout)
-            stderr = self._decode_output(exc.stderr)
+            stdout, stderr = self._terminate_process_sync(proc, use_process_group)
             return CommandResult(
                 command=cmd,
                 returncode=TIMEOUT_EXIT_CODE,
@@ -178,6 +183,54 @@ class CommandRunner:
                 duration_seconds=duration,
                 timed_out=True,
             )
+
+    def _terminate_process_sync(
+        self,
+        proc: subprocess.Popen[str],
+        use_process_group: bool,
+    ) -> tuple[str, str]:
+        """Terminate a process and all its children synchronously.
+
+        Sends SIGTERM to the process group, waits kill_grace_seconds,
+        then sends SIGKILL if still running.
+
+        Args:
+            proc: The Popen process to terminate.
+            use_process_group: Whether to kill the entire process group.
+
+        Returns:
+            Tuple of (stdout, stderr) captured before termination.
+        """
+        pgid = proc.pid if use_process_group else None
+
+        # Send SIGTERM to process group
+        if pgid is not None:
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+        else:
+            proc.terminate()
+
+        # Wait for grace period
+        try:
+            stdout, stderr = proc.communicate(timeout=self.kill_grace_seconds)
+            return stdout or "", stderr or ""
+        except subprocess.TimeoutExpired:
+            pass
+
+        # Force kill if still running
+        if pgid is not None:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        else:
+            proc.kill()
+
+        # Wait for process to exit and capture any remaining output
+        stdout, stderr = proc.communicate()
+        return stdout or "", stderr or ""
 
     async def run_async(
         self,
