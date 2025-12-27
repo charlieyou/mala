@@ -74,7 +74,6 @@ The quality gate check failed with the following issues:
 **Required actions:**
 1. Fix the issues listed above
 2. Re-run the full validation suite:
-   - `uv sync`
    - `uv run pytest`
    - `uvx ruff check .`
    - `uvx ruff format .`
@@ -95,7 +94,6 @@ The automated code review found the following issues:
 1. Fix ALL issues marked as ERROR above
 2. Optionally address warnings if appropriate
 3. Re-run the full validation suite:
-   - `uv sync`
    - `uv run pytest`
    - `uvx ruff check .`
    - `uvx ruff format .`
@@ -116,7 +114,6 @@ The run-level validation (Gate 4) found issues that need to be fixed:
 1. Analyze the validation failure output above
 2. Identify and fix all issues causing the failure
 3. Re-run the full validation suite:
-   - `uv sync`
    - `uv run pytest`
    - `uvx ruff check .`
    - `uvx ruff format .`
@@ -1187,7 +1184,6 @@ class MalaOrchestrator:
                                         "pytest_ran": evidence.pytest_ran,
                                         "ruff_check_ran": evidence.ruff_check_ran,
                                         "ruff_format_ran": evidence.ruff_format_ran,
-                                        "uv_sync_ran": evidence.uv_sync_ran,
                                         "ty_check_ran": evidence.ty_check_ran,
                                         "commit_found": commit_result.exists,
                                     },
@@ -1315,7 +1311,6 @@ class MalaOrchestrator:
                                         "pytest_ran": evidence.pytest_ran,
                                         "ruff_check_ran": evidence.ruff_check_ran,
                                         "ruff_format_ran": evidence.ruff_format_ran,
-                                        "uv_sync_ran": evidence.uv_sync_ran,
                                         "ty_check_ran": evidence.ty_check_ran,
                                         "commit_found": commit_result.exists,
                                     },

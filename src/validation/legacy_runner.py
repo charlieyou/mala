@@ -133,7 +133,6 @@ class LegacyValidationRunner:
 
     def _build_validation_commands(self) -> list[tuple[str, list[str]]]:
         commands: list[tuple[str, list[str]]] = [
-            ("uv sync", ["uv", "sync", "--all-extras"]),
             ("ruff format", ["uvx", "ruff", "format", "--check", "."]),
             ("ruff check", ["uvx", "ruff", "check", "."]),
             ("ty check", ["uvx", "ty", "check"]),

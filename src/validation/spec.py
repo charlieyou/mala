@@ -40,7 +40,6 @@ class ValidationScope(Enum):
 class CommandKind(Enum):
     """Kind of validation command."""
 
-    DEPS = "deps"
     LINT = "lint"
     FORMAT = "format"
     TYPECHECK = "typecheck"
@@ -77,19 +76,6 @@ class ValidationCommand:
     detection_pattern: Pattern[str] | None = None
     use_test_mutex: bool = False
     allow_fail: bool = False
-
-
-@dataclass
-class DepsConfig:
-    """Configuration for dependency sync optimization.
-
-    Attributes:
-        skip_if_unchanged: Skip uv sync if pyproject.toml/uv.lock unchanged.
-        force_sync: Always run uv sync regardless of state.
-    """
-
-    skip_if_unchanged: bool = True
-    force_sync: bool = False
 
 
 @dataclass
@@ -187,7 +173,6 @@ class ValidationSpec:
         commands: List of validation commands to run.
         require_clean_git: Whether git working tree must be clean.
         require_pytest_for_code_changes: If code changed, pytest is required.
-        deps: Dependency sync configuration.
         coverage: Coverage configuration.
         e2e: E2E configuration.
         scope: The validation scope.
@@ -197,7 +182,6 @@ class ValidationSpec:
     scope: ValidationScope
     require_clean_git: bool = True
     require_pytest_for_code_changes: bool = True
-    deps: DepsConfig = field(default_factory=DepsConfig)
     coverage: CoverageConfig = field(default_factory=CoverageConfig)
     e2e: E2EConfig = field(default_factory=E2EConfig)
 
@@ -303,7 +287,6 @@ def build_validation_spec(
     scope: ValidationScope,
     disable_validations: set[str] | None = None,
     coverage_threshold: float = 85.0,
-    force_sync: bool = False,
     repo_path: Path | None = None,
 ) -> ValidationSpec:
     """Build a ValidationSpec from CLI inputs.
@@ -312,7 +295,7 @@ def build_validation_spec(
     - All validations are ON by default
     - Disable flags explicitly turn off validations
 
-    Repo-type aware: Python-specific commands (uv sync, ruff, ty, pytest) are
+    Repo-type aware: Python-specific commands (ruff, ty, pytest) are
     only included when the target repo is detected as a Python project.
 
     Disable values:
@@ -328,7 +311,6 @@ def build_validation_spec(
         scope: Whether this is per-issue or run-level validation.
         disable_validations: Set of validation types to disable.
         coverage_threshold: Minimum coverage percentage.
-        force_sync: If True, always run uv sync regardless of state.
         repo_path: Path to the target repository. If provided, enables
             repo-type detection to conditionally include Python commands.
 
@@ -351,17 +333,6 @@ def build_validation_spec(
 
     # Build commands list
     commands: list[ValidationCommand] = []
-
-    # Include deps sync only for Python repos
-    if is_python_repo:
-        commands.append(
-            ValidationCommand(
-                name="uv sync",
-                command=["uv", "sync", "--all-extras"],
-                kind=CommandKind.DEPS,
-                detection_pattern=re.compile(r"\buv\s+sync\b"),
-            )
-        )
 
     # Include format/lint/typecheck for Python repos (unless skip_tests)
     if is_python_repo and not skip_tests:
@@ -420,12 +391,6 @@ def build_validation_spec(
             )
         )
 
-    # Configure deps sync
-    deps_config = DepsConfig(
-        skip_if_unchanged=True,
-        force_sync=force_sync,
-    )
-
     # Configure coverage
     coverage_config = CoverageConfig(
         enabled=coverage_enabled,
@@ -448,7 +413,6 @@ def build_validation_spec(
         scope=scope,
         require_clean_git=True,
         require_pytest_for_code_changes=True,
-        deps=deps_config,
         coverage=coverage_config,
         e2e=e2e_config,
     )

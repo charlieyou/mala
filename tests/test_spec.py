@@ -38,7 +38,6 @@ class TestCommandKind:
     """Test CommandKind enum."""
 
     def test_kind_values(self) -> None:
-        assert CommandKind.DEPS.value == "deps"
         assert CommandKind.LINT.value == "lint"
         assert CommandKind.FORMAT.value == "format"
         assert CommandKind.TYPECHECK.value == "typecheck"
@@ -325,7 +324,6 @@ class TestBuildValidationSpec:
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         command_names = [cmd.name for cmd in spec.commands]
-        assert "uv sync" in command_names
         assert "ruff format" in command_names
         assert "ruff check" in command_names
         assert "ty check" in command_names
@@ -386,14 +384,13 @@ class TestBuildValidationSpec:
             scope=ValidationScope.PER_ISSUE,
             disable_validations={"post-validate"},
         )
-        # Should only have uv sync, no pytest/ruff/ty commands
+        # Should have no validation commands when post-validate is disabled
         command_names = [cmd.name for cmd in spec.commands]
-        assert "uv sync" in command_names
         assert "pytest" not in command_names
         assert "ruff format" not in command_names
         assert "ruff check" not in command_names
         assert "ty check" not in command_names
-        assert len(spec.commands) == 1  # Only uv sync
+        assert len(spec.commands) == 0
 
     def test_custom_coverage_threshold(self) -> None:
         spec = build_validation_spec(
@@ -416,9 +413,7 @@ class TestBuildValidationSpec:
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         for cmd in spec.commands:
-            if "sync" in cmd.name:
-                assert cmd.kind == CommandKind.DEPS
-            elif "format" in cmd.name:
+            if "format" in cmd.name:
                 assert cmd.kind == CommandKind.FORMAT
             elif "ruff check" in cmd.name:
                 assert cmd.kind == CommandKind.LINT
@@ -548,7 +543,6 @@ class TestBuildValidationSpecWithRepoPath:
         )
 
         command_names = [cmd.name for cmd in spec.commands]
-        assert "uv sync" in command_names
         assert "pytest" in command_names
         assert "ruff check" in command_names
         assert "ruff format" in command_names
@@ -562,7 +556,6 @@ class TestBuildValidationSpecWithRepoPath:
         )
 
         command_names = [cmd.name for cmd in spec.commands]
-        assert "uv sync" not in command_names
         assert "pytest" not in command_names
         assert "ruff check" not in command_names
         assert "ruff format" not in command_names
@@ -582,7 +575,6 @@ class TestBuildValidationSpecWithRepoPath:
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         command_names = [cmd.name for cmd in spec.commands]
-        assert "uv sync" in command_names
         assert "pytest" in command_names
 
     def test_generic_repo_still_respects_disable_validations(
@@ -598,9 +590,7 @@ class TestBuildValidationSpecWithRepoPath:
         )
 
         command_names = [cmd.name for cmd in spec.commands]
-        # uv sync is always included for Python repos
-        assert "uv sync" in command_names
-        # But pytest/ruff/ty are disabled by post-validate
+        # pytest/ruff/ty are disabled by post-validate
         assert "pytest" not in command_names
         assert "ruff check" not in command_names
 

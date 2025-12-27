@@ -17,7 +17,6 @@ from .coverage import (
     parse_and_check_coverage,
     parse_coverage_xml,
 )
-from .deps_sync import DepsSyncState
 from .e2e import (
     E2EConfig as E2ERunnerConfig,
     E2EPrereqResult,
@@ -46,7 +45,6 @@ from .runner import (
 from .spec import (
     CommandKind,
     CoverageConfig,
-    DepsConfig,
     E2EConfig,
     IssueResolution,
     RepoType,
@@ -78,9 +76,6 @@ __all__ = [
     # Coverage
     "CoverageResult",
     "CoverageStatus",
-    # Deps
-    "DepsConfig",
-    "DepsSyncState",
     # E2E
     "E2EConfig",
     "E2EPrereqResult",

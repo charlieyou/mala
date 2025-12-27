@@ -16,11 +16,10 @@ from typing import TYPE_CHECKING
 from ..tools.env import LOCK_DIR, SCRIPTS_DIR
 from .command_runner import CommandRunner
 from .coverage import CoverageResult, CoverageStatus, parse_and_check_coverage
-from .deps_sync import DepsSyncState
 from .e2e import E2EConfig as E2ERunnerConfig
 from .e2e import E2ERunner, E2EStatus
 from .helpers import format_step_output
-from .spec import CommandKind, ValidationArtifacts
+from .spec import ValidationArtifacts
 from .worktree import (
     WorktreeConfig,
     WorktreeState,
@@ -191,27 +190,8 @@ class SpecValidationRunner:
         steps: list[ValidationStepResult] = []
         coverage_result: CoverageResult | None = None
 
-        # Check if we need to run uv sync (for deps optimization)
-        deps_state = DepsSyncState(cwd, force=spec.deps.force_sync)
-        skip_deps_sync = spec.deps.skip_if_unchanged and not deps_state.needs_sync()
-
         # Execute each command in order
         for cmd in spec.commands:
-            # Skip deps sync if dependencies unchanged
-            if cmd.kind == CommandKind.DEPS and skip_deps_sync:
-                # Record a skipped step for visibility
-                steps.append(
-                    ValidationStepResult(
-                        name=f"{cmd.name} (skipped - deps unchanged)",
-                        command=cmd.command,
-                        ok=True,
-                        returncode=0,
-                        stdout_tail="Skipped: pyproject.toml/uv.lock unchanged",
-                        duration_seconds=0.0,
-                    )
-                )
-                continue
-
             step = self._run_spec_command(cmd, cwd, env, log_dir)
             steps.append(step)
 
@@ -229,10 +209,6 @@ class SpecValidationRunner:
                     failure_reasons=[reason],
                     artifacts=artifacts,
                 )
-
-            # Mark deps as synced after successful uv sync
-            if cmd.kind == CommandKind.DEPS and step.ok:
-                deps_state.mark_synced()
 
         # Handle coverage if enabled
         if spec.coverage.enabled:

@@ -309,7 +309,6 @@ class TestValidationRunner:
     def test_build_validation_commands_minimal(self, runner: ValidationRunner) -> None:
         commands = runner._build_validation_commands()
         names = [name for name, _ in commands]
-        assert "uv sync" in names
         assert "ruff format" in names
         assert "ruff check" in names
         assert "ty check" in names
@@ -382,9 +381,7 @@ class TestValidationRunner:
         ):
             result = runner._run_validation_steps(Path("."), "test", include_e2e=False)
             assert result.passed is True
-            assert (
-                len(result.steps) == 5
-            )  # uv sync, ruff format, ruff check, ty, pytest
+            assert len(result.steps) == 4  # ruff format, ruff check, ty, pytest
 
     def test_run_validation_steps_first_fails(self, runner: ValidationRunner) -> None:
         mock_proc = mock_popen_success(stdout="", stderr="sync failed", returncode=1)
@@ -394,7 +391,7 @@ class TestValidationRunner:
             result = runner._run_validation_steps(Path("."), "test", include_e2e=False)
             assert result.passed is False
             assert len(result.steps) == 1  # Stops after first failure
-            assert "uv sync failed" in result.failure_reasons[0]
+            assert "ruff format failed" in result.failure_reasons[0]
 
     def test_validate_commit_worktree_add_fails(self, runner: ValidationRunner) -> None:
         mock_result = subprocess.CompletedProcess(
@@ -697,7 +694,7 @@ class TestSpecBasedValidation:
                 ValidationCommand(
                     name="step1",
                     command=["echo", "1"],
-                    kind=CommandKind.DEPS,
+                    kind=CommandKind.FORMAT,
                 ),
                 ValidationCommand(
                     name="step2",
@@ -732,7 +729,7 @@ class TestSpecBasedValidation:
                 ValidationCommand(
                     name="pass1",
                     command=["echo", "1"],
-                    kind=CommandKind.DEPS,
+                    kind=CommandKind.FORMAT,
                 ),
                 ValidationCommand(
                     name="fail2",
@@ -783,7 +780,7 @@ class TestSpecBasedValidation:
                 ValidationCommand(
                     name="pass1",
                     command=["echo", "1"],
-                    kind=CommandKind.DEPS,
+                    kind=CommandKind.FORMAT,
                 ),
                 ValidationCommand(
                     name="fail2",

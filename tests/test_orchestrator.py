@@ -888,32 +888,6 @@ class TestQualityGateValidationEvidence:
 
         assert evidence.ty_check_ran is True
 
-    def test_detects_uv_sync_command(self, tmp_path: Path) -> None:
-        """Quality gate should detect uv sync execution."""
-        from src.quality_gate import QualityGate
-
-        log_path = tmp_path / "session.jsonl"
-        log_content = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uv sync"},
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(log_content + "\n")
-
-        gate = QualityGate(tmp_path)
-        evidence = gate.parse_validation_evidence(log_path)
-
-        assert evidence.uv_sync_ran is True
-
     def test_returns_empty_evidence_for_missing_log(self, tmp_path: Path) -> None:
         """Quality gate should return empty evidence for missing log file."""
         from src.quality_gate import QualityGate
@@ -926,7 +900,6 @@ class TestQualityGateValidationEvidence:
         assert evidence.ruff_check_ran is False
         assert evidence.ruff_format_ran is False
         assert evidence.ty_check_ran is False
-        assert evidence.uv_sync_ran is False
 
 
 class TestQualityGateCommitCheck:
@@ -1006,7 +979,6 @@ class TestQualityGateFullCheck:
         # Create log with all validation commands
         log_path = tmp_path / "session.jsonl"
         commands = [
-            "uv sync",
             "uv run pytest",
             "uvx ruff check .",
             "uvx ruff format .",

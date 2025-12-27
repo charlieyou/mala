@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 class ValidationEvidence:
     """Evidence of validation commands executed during agent run."""
 
-    uv_sync_ran: bool = False
     pytest_ran: bool = False
     ruff_check_ran: bool = False
     ruff_format_ran: bool = False
@@ -43,15 +42,13 @@ class ValidationEvidence:
         """Check if minimum required validation was performed.
 
         Requires the full validation suite:
-        - uv sync (ensure dependencies are current)
         - pytest (run tests)
         - ruff check (lint)
         - ruff format (format)
         - ty check (type check)
         """
         return (
-            self.uv_sync_ran
-            and self.pytest_ran
+            self.pytest_ran
             and self.ruff_check_ran
             and self.ruff_format_ran
             and self.ty_check_ran
@@ -60,8 +57,6 @@ class ValidationEvidence:
     def missing_commands(self) -> list[str]:
         """List validation commands that didn't run."""
         missing = []
-        if not self.uv_sync_ran:
-            missing.append("uv sync")
         if not self.pytest_ran:
             missing.append("pytest")
         if not self.ruff_check_ran:
@@ -110,7 +105,6 @@ def check_evidence_against_spec(
 
     # Map CommandKind to evidence flags and display names
     kind_to_evidence: dict[CommandKind, tuple[bool, str]] = {
-        CommandKind.DEPS: (evidence.uv_sync_ran, "uv sync"),
         CommandKind.TEST: (evidence.pytest_ran, "pytest"),
         CommandKind.LINT: (evidence.ruff_check_ran, "ruff check"),
         CommandKind.FORMAT: (evidence.ruff_format_ran, "ruff format"),
@@ -153,7 +147,6 @@ class QualityGate:
 
     # Patterns for detecting validation commands in Bash tool calls
     VALIDATION_PATTERNS: ClassVar[dict[str, re.Pattern[str]]] = {
-        "uv_sync": re.compile(r"\buv\s+sync\b"),
         "pytest": re.compile(r"\b(uv\s+run\s+)?pytest\b"),
         "ruff_check": re.compile(r"\b(uvx\s+)?ruff\s+check\b"),
         "ruff_format": re.compile(r"\b(uvx\s+)?ruff\s+format\b"),
@@ -404,9 +397,6 @@ class QualityGate:
                             command = input_data.get("command", "")
 
                             # Check against validation patterns and record tool_id mapping
-                            if self.VALIDATION_PATTERNS["uv_sync"].search(command):
-                                evidence.uv_sync_ran = True
-                                tool_id_to_command[tool_id] = "uv sync"
                             if self.VALIDATION_PATTERNS["pytest"].search(command):
                                 evidence.pytest_ran = True
                                 tool_id_to_command[tool_id] = "pytest"
@@ -494,7 +484,6 @@ class QualityGate:
 
         # Map CommandKind to human-readable names for failure reporting
         kind_to_name: dict[CommandKind, str] = {
-            CommandKind.DEPS: "uv sync",
             CommandKind.TEST: "pytest",
             CommandKind.LINT: "ruff check",
             CommandKind.FORMAT: "ruff format",
@@ -547,9 +536,7 @@ class QualityGate:
                                 for pattern in patterns:
                                     if pattern.search(command):
                                         # Map CommandKind to evidence flags
-                                        if kind == CommandKind.DEPS:
-                                            evidence.uv_sync_ran = True
-                                        elif kind == CommandKind.TEST:
+                                        if kind == CommandKind.TEST:
                                             evidence.pytest_ran = True
                                         elif kind == CommandKind.LINT:
                                             evidence.ruff_check_ran = True
@@ -593,7 +580,6 @@ class QualityGate:
     def _get_fallback_pattern(self, kind: CommandKind) -> re.Pattern[str] | None:
         """Get fallback pattern for a CommandKind when spec pattern is missing."""
         fallback_map = {
-            CommandKind.DEPS: self.VALIDATION_PATTERNS["uv_sync"],
             CommandKind.TEST: self.VALIDATION_PATTERNS["pytest"],
             CommandKind.LINT: self.VALIDATION_PATTERNS["ruff_check"],
             CommandKind.FORMAT: self.VALIDATION_PATTERNS["ruff_format"],
@@ -641,8 +627,7 @@ class QualityGate:
 
         # Any new validation evidence counts as progress
         has_new_evidence = (
-            evidence.uv_sync_ran
-            or evidence.pytest_ran
+            evidence.pytest_ran
             or evidence.ruff_check_ran
             or evidence.ruff_format_ran
             or evidence.ty_check_ran

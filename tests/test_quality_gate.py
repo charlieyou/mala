@@ -191,7 +191,6 @@ class TestOffsetBasedParsing:
         # Write entries for all validation commands
         entries = []
         commands = [
-            "uv sync",
             "uv run pytest tests/",
             "uvx ruff check .",
             "uvx ruff format .",
@@ -219,7 +218,6 @@ class TestOffsetBasedParsing:
         gate = QualityGate(tmp_path)
         evidence, _ = gate.parse_validation_evidence_from_offset(log_path, offset=0)
 
-        assert evidence.uv_sync_ran is True
         assert evidence.pytest_ran is True
         assert evidence.ruff_check_ran is True
         assert evidence.ruff_format_ran is True
@@ -395,30 +393,18 @@ class TestHasMinimumValidation:
     """Test has_minimum_validation() requires full validation suite."""
 
     def test_fails_when_only_pytest_ran(self) -> None:
-        """Should fail when only pytest ran (missing uv sync, ruff, ty check)."""
+        """Should fail when only pytest ran (missing ruff, ty check)."""
         evidence = ValidationEvidence(pytest_ran=True)
         assert evidence.has_minimum_validation() is False
 
     def test_fails_when_only_ruff_ran(self) -> None:
-        """Should fail when only ruff check/format ran (missing uv sync, pytest, ty check)."""
+        """Should fail when only ruff check/format ran (missing pytest, ty check)."""
         evidence = ValidationEvidence(ruff_check_ran=True, ruff_format_ran=True)
-        assert evidence.has_minimum_validation() is False
-
-    def test_fails_when_missing_uv_sync(self) -> None:
-        """Should fail when uv sync is missing."""
-        evidence = ValidationEvidence(
-            uv_sync_ran=False,
-            pytest_ran=True,
-            ruff_check_ran=True,
-            ruff_format_ran=True,
-            ty_check_ran=True,
-        )
         assert evidence.has_minimum_validation() is False
 
     def test_fails_when_missing_ty_check(self) -> None:
         """Should fail when ty check is missing."""
         evidence = ValidationEvidence(
-            uv_sync_ran=True,
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=True,
@@ -429,7 +415,6 @@ class TestHasMinimumValidation:
     def test_fails_when_missing_pytest(self) -> None:
         """Should fail when pytest is missing."""
         evidence = ValidationEvidence(
-            uv_sync_ran=True,
             pytest_ran=False,
             ruff_check_ran=True,
             ruff_format_ran=True,
@@ -440,7 +425,6 @@ class TestHasMinimumValidation:
     def test_fails_when_missing_ruff_check(self) -> None:
         """Should fail when ruff check is missing."""
         evidence = ValidationEvidence(
-            uv_sync_ran=True,
             pytest_ran=True,
             ruff_check_ran=False,
             ruff_format_ran=True,
@@ -451,7 +435,6 @@ class TestHasMinimumValidation:
     def test_fails_when_missing_ruff_format(self) -> None:
         """Should fail when ruff format is missing."""
         evidence = ValidationEvidence(
-            uv_sync_ran=True,
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=False,
@@ -462,7 +445,6 @@ class TestHasMinimumValidation:
     def test_passes_when_all_commands_ran(self) -> None:
         """Should pass when all required commands ran."""
         evidence = ValidationEvidence(
-            uv_sync_ran=True,
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=True,
@@ -472,13 +454,7 @@ class TestHasMinimumValidation:
 
 
 class TestMissingCommands:
-    """Test missing_commands() includes uv sync and ty check."""
-
-    def test_includes_uv_sync_when_missing(self) -> None:
-        """Should include 'uv sync' when it didn't run."""
-        evidence = ValidationEvidence(uv_sync_ran=False)
-        missing = evidence.missing_commands()
-        assert "uv sync" in missing
+    """Test missing_commands() includes ty check."""
 
     def test_includes_ty_check_when_missing(self) -> None:
         """Should include 'ty check' when it didn't run."""
@@ -490,7 +466,6 @@ class TestMissingCommands:
         """Should list all missing commands."""
         evidence = ValidationEvidence()  # All default to False
         missing = evidence.missing_commands()
-        assert "uv sync" in missing
         assert "pytest" in missing
         assert "ruff check" in missing
         assert "ruff format" in missing
@@ -499,7 +474,6 @@ class TestMissingCommands:
     def test_excludes_commands_that_ran(self) -> None:
         """Should not list commands that ran."""
         evidence = ValidationEvidence(
-            uv_sync_ran=True,
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=True,
@@ -584,7 +558,6 @@ class TestCommitBaselineCheck:
         # Create log with all validation commands
         log_path = tmp_path / "session.jsonl"
         commands = [
-            "uv sync",
             "uv run pytest",
             "uvx ruff check .",
             "uvx ruff format .",
@@ -636,7 +609,6 @@ class TestCommitBaselineCheck:
         # Create log with all validation commands
         log_path = tmp_path / "session.jsonl"
         commands = [
-            "uv sync",
             "uv run pytest",
             "uvx ruff check .",
             "uvx ruff format .",
@@ -1118,7 +1090,6 @@ class TestClearFailureMessages:
         log_path = tmp_path / "session.jsonl"
         # Log with all validation commands but no actual commit made
         commands = [
-            "uv sync",
             "uv run pytest",
             "uvx ruff check .",
             "uvx ruff format .",
@@ -1187,7 +1158,6 @@ class TestClearFailureMessages:
         # Should mention missing commands
         missing_msg = [r for r in result.failure_reasons if "missing" in r.lower()]
         assert len(missing_msg) > 0
-        assert "uv sync" in missing_msg[0].lower()
         assert "ruff" in missing_msg[0].lower()
         assert "ty check" in missing_msg[0].lower()
 
@@ -1229,10 +1199,9 @@ class TestGetRequiredEvidenceKinds:
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         kinds = get_required_evidence_kinds(spec)
 
-        # Per-issue spec should have DEPS, TEST, LINT, FORMAT, TYPECHECK
+        # Per-issue spec should have TEST, LINT, FORMAT, TYPECHECK
         from src.validation.spec import CommandKind
 
-        assert CommandKind.DEPS in kinds
         assert CommandKind.TEST in kinds
         assert CommandKind.LINT in kinds
         assert CommandKind.FORMAT in kinds
@@ -1255,7 +1224,7 @@ class TestGetRequiredEvidenceKinds:
         # Run-level may have E2E if not disabled
         # Note: E2E is enabled for run-level by default but not added to commands
         # E2E is handled separately via e2e config, not commands list
-        assert CommandKind.DEPS in kinds
+        assert CommandKind.TEST in kinds
 
 
 class TestCheckEvidenceAgainstSpec:
@@ -1267,7 +1236,6 @@ class TestCheckEvidenceAgainstSpec:
         from src.validation.spec import ValidationScope, build_validation_spec
 
         evidence = ValidationEvidence(
-            uv_sync_ran=True,
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=True,
@@ -1286,7 +1254,6 @@ class TestCheckEvidenceAgainstSpec:
         from src.validation.spec import ValidationScope, build_validation_spec
 
         evidence = ValidationEvidence(
-            uv_sync_ran=True,
             pytest_ran=False,  # Missing pytest
             ruff_check_ran=True,
             ruff_format_ran=True,
@@ -1305,7 +1272,6 @@ class TestCheckEvidenceAgainstSpec:
         from src.validation.spec import ValidationScope, build_validation_spec
 
         evidence = ValidationEvidence(
-            uv_sync_ran=True,
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=True,
@@ -1326,7 +1292,6 @@ class TestCheckEvidenceAgainstSpec:
         from src.validation.spec import ValidationScope, build_validation_spec
 
         evidence = ValidationEvidence(
-            uv_sync_ran=True,
             pytest_ran=False,  # Not run
             ruff_check_ran=False,  # Not run (post-validate disables ruff/ty too)
             ruff_format_ran=False,  # Not run
@@ -1358,7 +1323,6 @@ class TestCheckWithResolutionSpec:
         log_path = tmp_path / "session.jsonl"
         # Log with all commands EXCEPT pytest
         commands = [
-            "uv sync",
             "uvx ruff check .",
             "uvx ruff format .",
             "uvx ty check",
@@ -1413,7 +1377,6 @@ class TestCheckWithResolutionSpec:
         log_path = tmp_path / "session.jsonl"
         # Log without pytest (will fail default check)
         commands = [
-            "uv sync",
             "uvx ruff check .",
             "uvx ruff format .",
             "uvx ty check",
@@ -1603,7 +1566,6 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
 
         # First attempt: all validation commands
         first_commands = [
-            "uv sync",
             "uv run pytest",
             "uvx ruff check .",
             "uvx ruff format .",
@@ -1630,7 +1592,7 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
         first_content = "\n".join(lines) + "\n"
 
         # Second attempt: only partial commands
-        second_commands = ["uv sync", "uvx ruff check ."]
+        second_commands = ["uvx ruff check ."]
         second_lines = []
         for cmd in second_commands:
             second_lines.append(
@@ -1733,7 +1695,7 @@ class TestByteOffsetConsistency:
                             {
                                 "type": "tool_use",
                                 "name": "Bash",
-                                "input": {"command": "uv sync"},
+                                "input": {"command": "uvx ruff format ."},
                             }
                         ]
                     },
@@ -1772,15 +1734,15 @@ class TestByteOffsetConsistency:
             log_path, offset=expected_offset
         )
 
-        # Should only see attempt2 evidence (uv_sync, ty_check), NOT attempt1 (pytest, ruff_check)
+        # Should only see attempt2 evidence (ruff_format, ty_check), NOT attempt1 (pytest, ruff_check)
         assert evidence_after_offset.pytest_ran is False, (
             "pytest from attempt1 should not be seen"
         )
         assert evidence_after_offset.ruff_check_ran is False, (
             "ruff check from attempt1 should not be seen"
         )
-        assert evidence_after_offset.uv_sync_ran is True, (
-            "uv sync from attempt2 should be seen"
+        assert evidence_after_offset.ruff_format_ran is True, (
+            "ruff format from attempt2 should be seen"
         )
         assert evidence_after_offset.ty_check_ran is True, (
             "ty check from attempt2 should be seen"
@@ -2094,12 +2056,6 @@ class TestSpecDrivenEvidencePatterns:
         # Include other required commands with their patterns
         spec = ValidationSpec(
             commands=[
-                ValidationCommand(
-                    name="uv sync",
-                    command=["uv", "sync"],
-                    kind=CommandKind.DEPS,
-                    detection_pattern=re.compile(r"\buv\s+sync\b"),
-                ),
                 custom_test_cmd,
                 ValidationCommand(
                     name="ruff check",
@@ -2126,7 +2082,6 @@ class TestSpecDrivenEvidencePatterns:
         # Create log with custom_test (NOT pytest) - should pass with spec pattern
         log_path = tmp_path / "session.jsonl"
         commands = [
-            "uv sync",
             "custom_test run",  # This matches spec pattern but NOT hardcoded pytest pattern
             "ruff check .",
             "ruff format .",
@@ -2220,7 +2175,6 @@ class TestValidationExitCodeParsing:
         )
         # Other commands succeed
         other_commands = [
-            ("toolu_sync_1", "uv sync", False),
             ("toolu_ruff_check_1", "uvx ruff check .", False),
             ("toolu_ruff_format_1", "uvx ruff format .", False),
             ("toolu_ty_check_1", "uvx ty check", False),
@@ -2291,7 +2245,6 @@ class TestValidationExitCodeParsing:
 
         # All commands run, but ruff check fails
         commands = [
-            ("toolu_sync_1", "uv sync", False, "Synced"),
             ("toolu_pytest_1", "uv run pytest", False, "5 passed"),
             (
                 "toolu_ruff_check_1",
@@ -2367,7 +2320,6 @@ class TestValidationExitCodeParsing:
 
         # All commands succeed
         commands = [
-            ("toolu_sync_1", "uv sync", False, "Synced"),
             ("toolu_pytest_1", "uv run pytest", False, "5 passed"),
             ("toolu_ruff_check_1", "uvx ruff check .", False, "All checks passed"),
             ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
@@ -2434,7 +2386,6 @@ class TestValidationExitCodeParsing:
 
         # ty check fails with exit code 2
         commands = [
-            ("toolu_sync_1", "uv sync", False, "Synced"),
             ("toolu_pytest_1", "uv run pytest", False, "5 passed"),
             ("toolu_ruff_check_1", "uvx ruff check .", False, "All checks passed"),
             ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
@@ -2587,7 +2538,6 @@ class TestValidationExitCodeParsing:
         )
         # Other commands all succeed
         other_commands = [
-            ("toolu_sync_1", "uv sync", False, "Synced"),
             ("toolu_ruff_check_1", "uvx ruff check .", False, "All checks passed"),
             ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
             ("toolu_ty_check_1", "uvx ty check", False, "No errors"),

@@ -89,11 +89,6 @@ lock-wait.sh utils.py 900 1000  # Wait up to 900s, poll every 1000ms
 **Before committing, run the full validation suite.** Use isolated cache directories to allow parallel validation:
 
 ```bash
-# Sync dependencies only if needed (skip if pyproject.toml/uv.lock unchanged and .venv exists)
-if [ ! -d .venv ] || git diff --name-only HEAD~10 2>/dev/null | grep -qE '^(pyproject\.toml|uv\.lock)$'; then
-  uv sync --all-extras
-fi
-
 uv run pytest --cache-dir=/tmp/pytest-$AGENT_ID         # Isolated pytest cache
 uvx ruff check . --cache-dir=/tmp/ruff-$AGENT_ID        # Isolated ruff cache
 uvx ruff format .                                       # Format (no cache concerns)
