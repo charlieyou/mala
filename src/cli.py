@@ -63,15 +63,9 @@ app = typer.Typer(
 )
 
 
-def validate_morph_api_key() -> str:
-    """Validate MORPH_API_KEY is set. Raises SystemExit if missing."""
-    api_key = os.environ.get("MORPH_API_KEY")
-    if not api_key:
-        raise SystemExit(
-            f"Error: MORPH_API_KEY is required.\n"
-            f"Add it to {USER_CONFIG_DIR}/.env or set as environment variable."
-        )
-    return api_key
+def get_morph_api_key() -> str | None:
+    """Get MORPH_API_KEY from environment. Returns None if missing."""
+    return os.environ.get("MORPH_API_KEY") or None
 
 
 @app.command()
@@ -229,8 +223,15 @@ def run(
     # Ensure user config directory exists
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Validate Morph API key (required)
-    validate_morph_api_key()
+    # Check Morph API key (optional - enables morph features when present)
+    morph_api_key = get_morph_api_key()
+    morph_enabled = morph_api_key is not None
+    if not morph_enabled:
+        log(
+            "⚠",
+            "MORPH_API_KEY not set - Morph MCP features disabled",
+            Colors.YELLOW,
+        )
 
     if not repo_path.exists():
         log("✗", f"Repository not found: {repo_path}", Colors.RED)
@@ -251,6 +252,7 @@ def run(
         coverage_threshold=coverage_threshold,
         lint_only_for_docs=lint_only_for_docs,
         skip_e2e_if_no_keys=skip_e2e_if_no_keys,
+        morph_enabled=morph_enabled,
     )
 
     success_count, total = asyncio.run(orchestrator.run())
