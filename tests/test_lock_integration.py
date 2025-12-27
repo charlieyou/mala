@@ -85,8 +85,10 @@ def lock_env(tmp_path: Path) -> Path:
 def agent_env(lock_env: Path, tmp_path: Path) -> dict[str, str]:
     """Simulate agent environment as set up by prompt template."""
     cwd = str(tmp_path)
+    # Start with os.environ but exclude REPO_NAMESPACE to ensure clean test isolation
+    env = {k: v for k, v in os.environ.items() if k != "REPO_NAMESPACE"}
     return {
-        **os.environ,
+        **env,
         "LOCK_DIR": str(lock_env),
         "AGENT_ID": "bd-42-abc12345",
         "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
@@ -295,8 +297,10 @@ class TestStopHookIntegration:
         other_agent = "bd-other-agent"
         cwd = str(tmp_path)
 
+        # Exclude REPO_NAMESPACE from os.environ to ensure clean test isolation
+        clean_env = {k: v for k, v in os.environ.items() if k != "REPO_NAMESPACE"}
         our_env = {
-            **os.environ,
+            **clean_env,
             "LOCK_DIR": str(lock_env),
             "AGENT_ID": our_agent,
             "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
@@ -739,8 +743,10 @@ class TestRepoNamespaceIntegration:
     ) -> None:
         """Empty REPO_NAMESPACE is treated the same as not set."""
         cwd = str(tmp_path)
+        # Exclude REPO_NAMESPACE from os.environ to ensure clean test isolation
+        clean_env = {k: v for k, v in os.environ.items() if k != "REPO_NAMESPACE"}
         base_env = {
-            **os.environ,
+            **clean_env,
             "LOCK_DIR": str(lock_env),
             "AGENT_ID": "agent-1",
             "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",

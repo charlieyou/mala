@@ -245,8 +245,8 @@ def test_clean_removes_locks_and_logs(
     def _log(*args: object, **_kwargs: object) -> None:
         logs.append(args)
 
-    monkeypatch.setattr(cli, "LOCK_DIR", lock_dir)
-    monkeypatch.setattr(cli, "RUNS_DIR", run_dir)
+    monkeypatch.setattr(cli, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
     monkeypatch.setattr(cli, "log", _log)
     monkeypatch.setattr(cli.typer, "confirm", lambda _msg: True)
 
@@ -276,8 +276,8 @@ def test_status_outputs_summary(
     (run_dir / "two.json").write_text("{}")
 
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "LOCK_DIR", lock_dir)
-    monkeypatch.setattr(cli, "RUNS_DIR", run_dir)
+    monkeypatch.setattr(cli, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
 
     cli.status()
 
@@ -517,3 +517,81 @@ def test_run_coverage_threshold_invalid_over_100(
     error_msg = str(logs[-1])
     assert "Invalid --coverage-threshold" in error_msg
     assert "150.0" in error_msg
+
+
+def test_env_overrides_runs_dir_from_dotenv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that MALA_RUNS_DIR from .env file overrides default RUNS_DIR."""
+    # Clear cached modules first
+    for mod_name in list(sys.modules.keys()):
+        if mod_name.startswith("src.tools.env") or mod_name.startswith("src.cli"):
+            del sys.modules[mod_name]
+
+    # Create a temporary .env file with custom MALA_RUNS_DIR
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    custom_runs_dir = tmp_path / "custom_runs"
+    env_file = config_dir / ".env"
+    env_file.write_text(f"MALA_RUNS_DIR={custom_runs_dir}\n")
+
+    # Clear any existing env var to ensure we test .env loading
+    monkeypatch.delenv("MALA_RUNS_DIR", raising=False)
+
+    # Import env module with patched USER_CONFIG_DIR
+    import src.tools.env as env_module
+
+    monkeypatch.setattr(env_module, "USER_CONFIG_DIR", config_dir)
+    env_module.load_user_env()
+    result = env_module.get_runs_dir()
+
+    assert result == custom_runs_dir
+
+
+def test_env_overrides_lock_dir_from_dotenv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that MALA_LOCK_DIR from .env file overrides default LOCK_DIR."""
+    # Clear cached modules first
+    for mod_name in list(sys.modules.keys()):
+        if mod_name.startswith("src.tools.env") or mod_name.startswith("src.cli"):
+            del sys.modules[mod_name]
+
+    # Create a temporary .env file with custom MALA_LOCK_DIR
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    custom_lock_dir = tmp_path / "custom_locks"
+    env_file = config_dir / ".env"
+    env_file.write_text(f"MALA_LOCK_DIR={custom_lock_dir}\n")
+
+    # Clear any existing env var to ensure we test .env loading
+    monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
+
+    # Import env module with patched USER_CONFIG_DIR
+    import src.tools.env as env_module
+
+    monkeypatch.setattr(env_module, "USER_CONFIG_DIR", config_dir)
+    env_module.load_user_env()
+    result = env_module.get_lock_dir()
+
+    assert result == custom_lock_dir
+
+
+def test_env_defaults_when_no_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that defaults are used when env vars are not set."""
+    # Clear any existing env vars
+    monkeypatch.delenv("MALA_RUNS_DIR", raising=False)
+    monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
+
+    # Clear cached modules
+    for mod_name in list(sys.modules.keys()):
+        if mod_name.startswith("src.tools.env") or mod_name.startswith("src.cli"):
+            del sys.modules[mod_name]
+
+    from src.tools.env import USER_CONFIG_DIR, get_lock_dir, get_runs_dir
+
+    runs_dir = get_runs_dir()
+    lock_dir = get_lock_dir()
+
+    assert runs_dir == USER_CONFIG_DIR / "runs"
+    assert lock_dir == Path("/tmp/mala-locks")

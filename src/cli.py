@@ -14,7 +14,7 @@ Usage:
 import os
 from pathlib import Path
 
-from .tools.env import USER_CONFIG_DIR, RUNS_DIR, load_user_env
+from .tools.env import USER_CONFIG_DIR, get_runs_dir, load_user_env
 
 # Load environment variables early (needed for BRAINTRUST_API_KEY)
 load_user_env()
@@ -38,7 +38,7 @@ from typing import Annotated, Never
 import typer
 
 from .logging.console import Colors, log, set_verbose
-from .tools.locking import LOCK_DIR
+from .tools.locking import get_lock_dir
 from .orchestrator import MalaOrchestrator
 
 
@@ -250,19 +250,19 @@ def clean() -> None:
     cleaned_locks = 0
     cleaned_logs = 0
 
-    if LOCK_DIR.exists():
-        for lock in LOCK_DIR.glob("*.lock"):
+    if get_lock_dir().exists():
+        for lock in get_lock_dir().glob("*.lock"):
             lock.unlink()
             cleaned_locks += 1
 
     if cleaned_locks:
         log("🧹", f"Removed {cleaned_locks} lock files", Colors.GREEN)
 
-    if RUNS_DIR.exists():
-        run_count = len(list(RUNS_DIR.glob("*.json")))
+    if get_runs_dir().exists():
+        run_count = len(list(get_runs_dir().glob("*.json")))
         if run_count > 0:
             if typer.confirm(f"Remove {run_count} run metadata files?"):
-                for run_file in RUNS_DIR.glob("*.json"):
+                for run_file in get_runs_dir().glob("*.json"):
                     run_file.unlink()
                     cleaned_logs += 1
                 log("🧹", f"Removed {cleaned_logs} run metadata files", Colors.GREEN)
@@ -284,8 +284,8 @@ def status() -> None:
     print()
 
     # Check locks
-    if LOCK_DIR.exists():
-        locks = list(LOCK_DIR.glob("*.lock"))
+    if get_lock_dir().exists():
+        locks = list(get_lock_dir().glob("*.lock"))
         if locks:
             log("⚠", f"{len(locks)} active locks", Colors.YELLOW)
             for lock in locks[:5]:
@@ -302,12 +302,12 @@ def status() -> None:
         log("○", "No active locks", Colors.GRAY)
 
     # Check run metadata
-    if RUNS_DIR.exists():
-        run_files = list(RUNS_DIR.glob("*.json"))
+    if get_runs_dir().exists():
+        run_files = list(get_runs_dir().glob("*.json"))
         if run_files:
             log(
                 "◐",
-                f"{len(run_files)} run metadata files in {RUNS_DIR}",
+                f"{len(run_files)} run metadata files in {get_runs_dir()}",
                 Colors.GRAY,
                 dim=True,
             )

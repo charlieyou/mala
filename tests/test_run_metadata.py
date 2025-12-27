@@ -333,13 +333,12 @@ class TestRunMetadataSerialization:
 
     def test_save_and_load_roundtrip(self, metadata_with_issues: RunMetadata) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Override RUNS_DIR for test
-            from src.logging import run_metadata
+            # Override get_runs_dir for test using patch
+            from unittest.mock import patch
 
-            original_runs_dir = run_metadata.RUNS_DIR
-            run_metadata.RUNS_DIR = Path(tmpdir)
-
-            try:
+            with patch(
+                "src.logging.run_metadata.get_runs_dir", return_value=Path(tmpdir)
+            ):
                 # Save
                 path = metadata_with_issues.save()
                 assert path.exists()
@@ -377,9 +376,6 @@ class TestRunMetadataSerialization:
                 assert loaded.run_validation is not None
                 assert loaded.run_validation.passed is True
                 assert loaded.run_validation.e2e_passed is True
-
-            finally:
-                run_metadata.RUNS_DIR = original_runs_dir
 
     def test_load_handles_missing_optional_fields(self) -> None:
         """Test that load handles files without new optional fields."""

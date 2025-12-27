@@ -11,7 +11,7 @@ from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any, Literal
 
-from ..tools.env import RUNS_DIR
+from ..tools.env import get_runs_dir
 from ..validation.spec import (
     IssueResolution,
     ResolutionOutcome,
@@ -338,8 +338,8 @@ class RunMetadata:
             Path to the saved metadata file.
         """
         self.completed_at = datetime.now(UTC)
-        RUNS_DIR.mkdir(parents=True, exist_ok=True)
-        path = RUNS_DIR / f"{self.run_id}.json"
+        get_runs_dir().mkdir(parents=True, exist_ok=True)
+        path = get_runs_dir() / f"{self.run_id}.json"
         with open(path, "w") as f:
             json.dump(self._to_dict(), f, indent=2)
         return path

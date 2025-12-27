@@ -16,17 +16,30 @@ USER_CONFIG_DIR = Path.home() / ".config" / "mala"
 # Run metadata directory
 # Can be overridden via MALA_RUNS_DIR environment variable
 def get_runs_dir() -> Path:
-    """Get the runs directory, respecting MALA_RUNS_DIR env var."""
+    """Get the runs directory, respecting MALA_RUNS_DIR env var.
+
+    This function evaluates the env var at call time, so it respects
+    values loaded from .env via load_user_env().
+    """
     return Path(os.environ.get("MALA_RUNS_DIR", str(USER_CONFIG_DIR / "runs")))
 
 
-# For backwards compatibility, expose as module-level constant
-# Note: This is evaluated at import time, so env var must be set before import
-RUNS_DIR = get_runs_dir()
-
 # Lock directory for multi-agent coordination
 # Can be overridden via MALA_LOCK_DIR environment variable
-LOCK_DIR = Path(os.environ.get("MALA_LOCK_DIR", "/tmp/mala-locks"))
+def get_lock_dir() -> Path:
+    """Get the lock directory, respecting MALA_LOCK_DIR env var.
+
+    This function evaluates the env var at call time, so it respects
+    values loaded from .env via load_user_env().
+    """
+    return Path(os.environ.get("MALA_LOCK_DIR", "/tmp/mala-locks"))
+
+
+# For backwards compatibility, expose as module-level constants
+# WARNING: These are evaluated at import time, before .env is loaded.
+# Prefer using get_runs_dir() and get_lock_dir() for correct behavior.
+RUNS_DIR = get_runs_dir()
+LOCK_DIR = get_lock_dir()
 
 # Lock scripts directory (relative to this file: src/tools/env.py -> src/scripts/)
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"

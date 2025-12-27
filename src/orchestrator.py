@@ -36,7 +36,7 @@ from .logging.run_metadata import (
     ValidationResult as MetaValidationResult,
 )
 from .quality_gate import QualityGate, GateResult
-from .tools.env import USER_CONFIG_DIR, RUNS_DIR, SCRIPTS_DIR, get_claude_log_path
+from .tools.env import USER_CONFIG_DIR, SCRIPTS_DIR, get_claude_log_path, get_runs_dir
 from .tools.locking import (
     LOCK_DIR,
     release_run_locks,
@@ -750,7 +750,7 @@ class MalaOrchestrator:
 
         # Setup directories
         LOCK_DIR.mkdir(parents=True, exist_ok=True)
-        RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        get_runs_dir().mkdir(parents=True, exist_ok=True)
 
         # Create run metadata tracker
         run_config = RunConfig(

@@ -15,13 +15,32 @@ from claude_agent_sdk.types import (
     SyncHookJSONOutput,
 )
 
-from .env import LOCK_DIR, SCRIPTS_DIR
+from .env import SCRIPTS_DIR, get_lock_dir
+
+# Re-export for backwards compatibility
+# Note: LOCK_DIR is evaluated at import time. Prefer get_lock_dir() for
+# code that runs after load_user_env() to respect .env overrides.
+LOCK_DIR = get_lock_dir()
+
+__all__ = ["LOCK_DIR", "get_lock_dir"]
 
 # Type alias for Stop hooks
 StopHook = Callable[
     [StopHookInput, str | None, HookContext],
     Awaitable[SyncHookJSONOutput],
 ]
+
+
+def _get_lock_dir() -> Path:
+    """Get the lock directory, using module-level LOCK_DIR.
+
+    This allows tests to patch src.tools.locking.LOCK_DIR and have the
+    patched value used by all functions in this module.
+    """
+    # Import here to get the current module-level value (supports patching)
+    import src.tools.locking
+
+    return src.tools.locking.LOCK_DIR
 
 
 def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
@@ -110,13 +129,14 @@ def _lock_path(filepath: str, repo_namespace: str | None = None) -> Path:
     """
     key = _lock_key(filepath, repo_namespace)
     key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
-    return LOCK_DIR / f"{key_hash}.lock"
+    return _get_lock_dir() / f"{key_hash}.lock"
 
 
 def release_all_locks() -> None:
     """Release all locks in the lock directory."""
-    if LOCK_DIR.exists():
-        for lock in LOCK_DIR.glob("*.lock"):
+    lock_dir = _get_lock_dir()
+    if lock_dir.exists():
+        for lock in lock_dir.glob("*.lock"):
             lock.unlink(missing_ok=True)
 
 
@@ -132,12 +152,13 @@ def release_run_locks(agent_ids: list[str]) -> int:
     Returns:
         Number of locks released.
     """
-    if not LOCK_DIR.exists() or not agent_ids:
+    lock_dir = _get_lock_dir()
+    if not lock_dir.exists() or not agent_ids:
         return 0
 
     agent_set = set(agent_ids)
     released = 0
-    for lock in LOCK_DIR.glob("*.lock"):
+    for lock in lock_dir.glob("*.lock"):
         try:
             if lock.is_file() and lock.read_text().strip() in agent_set:
                 lock.unlink()
@@ -160,7 +181,8 @@ def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) ->
         True if lock was acquired, False if already locked.
     """
     lock_path = _lock_path(filepath, repo_namespace)
-    LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    lock_dir = _get_lock_dir()
+    lock_dir.mkdir(parents=True, exist_ok=True)
 
     # Fast-path if already locked
     if lock_path.exists():
@@ -171,7 +193,7 @@ def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) ->
 
     try:
         fd, tmp_path = tempfile.mkstemp(
-            prefix=f".locktmp.{agent_id}.", dir=LOCK_DIR, text=True
+            prefix=f".locktmp.{agent_id}.", dir=lock_dir, text=True
         )
         os.write(fd, f"{agent_id}\n".encode())
         os.close(fd)
@@ -265,11 +287,11 @@ def cleanup_agent_locks(agent_id: str) -> int:
     Returns:
         Number of locks cleaned up.
     """
-    if not LOCK_DIR.exists():
+    if not _get_lock_dir().exists():
         return 0
 
     cleaned = 0
-    for lock in LOCK_DIR.glob("*.lock"):
+    for lock in _get_lock_dir().glob("*.lock"):
         try:
             if lock.is_file() and lock.read_text().strip() == agent_id:
                 lock.unlink()
@@ -302,7 +324,7 @@ def make_stop_hook(agent_id: str) -> StopHook:
                 [str(script)],
                 env={
                     **os.environ,
-                    "LOCK_DIR": str(LOCK_DIR),
+                    "LOCK_DIR": str(_get_lock_dir()),
                     "AGENT_ID": agent_id,
                 },
                 check=False,

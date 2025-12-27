@@ -11,6 +11,16 @@ import pytest
 SCRIPTS_DIR = Path(__file__).parent.parent / "src" / "scripts"
 
 
+def _clean_os_environ() -> dict[str, str]:
+    """Get os.environ without REPO_NAMESPACE for test isolation.
+
+    Tests should use this instead of os.environ directly when building
+    full_env dicts to avoid inheriting REPO_NAMESPACE from the outer
+    environment (e.g., when tests run inside an agent).
+    """
+    return {k: v for k, v in os.environ.items() if k != "REPO_NAMESPACE"}
+
+
 @pytest.fixture
 def lock_env(tmp_path: Path) -> dict[str, str]:
     """Provide a clean lock environment for each test."""
@@ -429,7 +439,7 @@ class TestPathNormalization:
         # Same agent trying the relative path should fail (same lock)
         rel_path = "target.py"
         # We need to cd to tmp_path for relative to work - use a subshell
-        full_env = {**os.environ, **env1}
+        full_env = {**_clean_os_environ(), **env1}
         result2 = subprocess.run(
             f"cd {tmp_path} && {SCRIPTS_DIR}/lock-try.sh {rel_path}",
             shell=True,
@@ -450,7 +460,7 @@ class TestPathNormalization:
         test_file.touch()
 
         env = {**lock_env}
-        full_env = {**os.environ, **env}
+        full_env = {**_clean_os_environ(), **env}
 
         # Lock with ./foo.py
         result1 = subprocess.run(
@@ -483,7 +493,7 @@ class TestPathNormalization:
         test_file.touch()
 
         env = {**lock_env}
-        full_env = {**os.environ, **env}
+        full_env = {**_clean_os_environ(), **env}
 
         # Lock from tmp_path using absolute path
         result1 = run_script("lock-try.sh", [str(test_file)], env)
@@ -534,7 +544,7 @@ class TestPathNormalization:
 
         # Agent2 same namespace, relative path (from tmp_path) - should collide
         env2 = {**lock_env, "REPO_NAMESPACE": "repo-A", "AGENT_ID": "agent-2"}
-        full_env2 = {**os.environ, **env2}
+        full_env2 = {**_clean_os_environ(), **env2}
         result2 = subprocess.run(
             f"cd {tmp_path} && {SCRIPTS_DIR}/lock-try.sh file.py",
             shell=True,
@@ -573,7 +583,7 @@ class TestNormalizationAcrossAllScripts:
         test_file.touch()
 
         env = {**lock_env}
-        full_env = {**os.environ, **env}
+        full_env = {**_clean_os_environ(), **env}
 
         # Lock with absolute path
         result1 = run_script("lock-try.sh", [str(test_file)], env)
@@ -597,7 +607,7 @@ class TestNormalizationAcrossAllScripts:
         test_file.touch()
 
         env = {**lock_env, "AGENT_ID": "my-agent"}
-        full_env = {**os.environ, **env}
+        full_env = {**_clean_os_environ(), **env}
 
         # Lock with absolute path
         run_script("lock-try.sh", [str(test_file)], env)
@@ -620,7 +630,7 @@ class TestNormalizationAcrossAllScripts:
         test_file.touch()
 
         env = {**lock_env}
-        full_env = {**os.environ, **env}
+        full_env = {**_clean_os_environ(), **env}
 
         # Lock with absolute path
         run_script("lock-try.sh", [str(test_file)], env)
@@ -744,7 +754,7 @@ class TestLockWait:
         test_file.touch()
 
         env = {**lock_env}
-        full_env = {**os.environ, **env}
+        full_env = {**_clean_os_environ(), **env}
 
         # Acquire with absolute path using lock-wait
         result1 = run_script("lock-wait.sh", [str(test_file), "2", "50"], env)
