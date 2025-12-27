@@ -63,7 +63,7 @@ REVIEW_OUTPUT_SCHEMA = {
 
 # Prompt template for code review
 CODEX_REVIEW_PROMPT = """\
-Review the diff introduced by commit {commit_sha} (vs its parent).
+Review the diff {diff_description}.
 
 ## Issue Requirements
 
@@ -218,6 +218,7 @@ async def run_codex_review(
     commit_sha: str,
     max_retries: int = 2,
     issue_description: str | None = None,
+    baseline_commit: str | None = None,
 ) -> CodexReviewResult:
     """Run Codex code review on a commit with JSON output and retry logic.
 
@@ -229,6 +230,10 @@ async def run_codex_review(
         max_retries: Maximum number of attempts (default 2 = 1 initial + 1 retry).
         issue_description: The issue description to verify scope completeness.
             If provided, Codex will verify the diff addresses all scope items.
+        baseline_commit: Optional baseline commit for cumulative diff review.
+            If provided, reviews the diff from baseline to commit_sha instead of
+            commit vs its parent. This is used for retry scenarios where multiple
+            fix commits have been made.
 
     Returns:
         CodexReviewResult with review outcome. If JSON parsing fails after
@@ -252,11 +257,16 @@ async def run_codex_review(
             schema_file.flush()
 
         try:
-            # Build the prompt
+            # Build the prompt with appropriate diff description
             desc = issue_description or "(No issue description provided)"
+            if baseline_commit:
+                diff_description = f"from commit {baseline_commit} to {commit_sha} (cumulative changes)"
+            else:
+                diff_description = f"introduced by commit {commit_sha} (vs its parent)"
             prompt = CODEX_REVIEW_PROMPT.format(
                 commit_sha=commit_sha,
                 issue_description=desc,
+                diff_description=diff_description,
             )
 
             # Run codex exec with output schema

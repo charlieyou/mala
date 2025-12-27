@@ -447,3 +447,106 @@ class TestCodexExecApproach:
         assert "--output-schema" in args, f"Should use --output-schema: {args}"
         # Should have -o for output file
         assert "-o" in args, f"Should use -o for output file: {args}"
+
+
+class TestBaselineCommitParameter:
+    """Tests for the baseline_commit parameter in run_codex_review.
+
+    When a baseline_commit is provided, the review should look at the cumulative
+    diff from baseline to the current commit, rather than just the current commit
+    vs its parent. This is important for retry scenarios.
+    """
+
+    @pytest.mark.asyncio
+    async def test_uses_baseline_in_prompt_when_provided(
+        self, tmp_path: Path, mock_codex_script: tuple[Path, Path]
+    ) -> None:
+        """When baseline_commit is provided, the prompt should describe cumulative diff."""
+        script_path, invocation_log = mock_codex_script
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+
+        env = {
+            **os.environ,
+            "PATH": f"{script_path.parent}:{os.environ.get('PATH', '')}",
+            "MOCK_CODEX_STDOUT": '{"passed": true, "issues": []}',
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            await run_codex_review(
+                repo_path,
+                "currentsha",
+                baseline_commit="baselinesha",
+            )
+
+        invocations = [
+            json.loads(line) for line in invocation_log.read_text().strip().split("\n")
+        ]
+        assert len(invocations) == 1
+
+        # The prompt (last argument) should mention both baseline and current commit
+        prompt_arg = invocations[0]["args"][-1]
+        assert "baselinesha" in prompt_arg, "Prompt should include baseline commit"
+        assert "currentsha" in prompt_arg, "Prompt should include current commit"
+        assert "cumulative" in prompt_arg, "Prompt should mention cumulative changes"
+
+    @pytest.mark.asyncio
+    async def test_uses_parent_diff_when_no_baseline(
+        self, tmp_path: Path, mock_codex_script: tuple[Path, Path]
+    ) -> None:
+        """Without baseline_commit, the prompt should describe commit vs parent."""
+        script_path, invocation_log = mock_codex_script
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+
+        env = {
+            **os.environ,
+            "PATH": f"{script_path.parent}:{os.environ.get('PATH', '')}",
+            "MOCK_CODEX_STDOUT": '{"passed": true, "issues": []}',
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            await run_codex_review(repo_path, "abc1234")
+
+        invocations = [
+            json.loads(line) for line in invocation_log.read_text().strip().split("\n")
+        ]
+        assert len(invocations) == 1
+
+        # The prompt (last argument) should mention "vs its parent"
+        prompt_arg = invocations[0]["args"][-1]
+        assert "abc1234" in prompt_arg, "Prompt should include commit SHA"
+        assert "parent" in prompt_arg, "Prompt should mention parent comparison"
+        assert "cumulative" not in prompt_arg, (
+            "Should not mention cumulative without baseline"
+        )
+
+    @pytest.mark.asyncio
+    async def test_baseline_none_uses_parent_diff(
+        self, tmp_path: Path, mock_codex_script: tuple[Path, Path]
+    ) -> None:
+        """Explicitly passing None for baseline_commit should behave same as omitting it."""
+        script_path, invocation_log = mock_codex_script
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+
+        env = {
+            **os.environ,
+            "PATH": f"{script_path.parent}:{os.environ.get('PATH', '')}",
+            "MOCK_CODEX_STDOUT": '{"passed": true, "issues": []}',
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            await run_codex_review(
+                repo_path,
+                "def5678",
+                baseline_commit=None,
+            )
+
+        invocations = [
+            json.loads(line) for line in invocation_log.read_text().strip().split("\n")
+        ]
+        assert len(invocations) == 1
+
+        prompt_arg = invocations[0]["args"][-1]
+        assert "parent" in prompt_arg, "Should use parent diff when baseline is None"

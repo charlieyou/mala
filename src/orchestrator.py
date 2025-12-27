@@ -184,6 +184,9 @@ class RetryState:
     baseline_timestamp: int = (
         0  # Unix timestamp when run started (reject older commits)
     )
+    baseline_commit_hash: str | None = (
+        None  # Commit hash before agent started (for cumulative diff review)
+    )
 
 
 class MalaOrchestrator:
@@ -618,9 +621,15 @@ class MalaOrchestrator:
         # Fetch issue description for scope verification in codex review
         issue_description = await self.beads.get_issue_description_async(issue_id)
 
+        # Capture baseline commit hash before agent starts (for cumulative diff review)
+        baseline_commit = await get_git_commit_async(self.repo_path)
+
         # Initialize retry state with baseline timestamp to reject stale commits
         # Baseline is captured once per run to avoid false positives in retries
-        retry_state = RetryState(baseline_timestamp=int(time.time()))
+        retry_state = RetryState(
+            baseline_timestamp=int(time.time()),
+            baseline_commit_hash=baseline_commit,
+        )
 
         # Claude session ID will be captured from ResultMessage
         claude_session_id: str | None = None
@@ -788,6 +797,7 @@ class MalaOrchestrator:
                                                     gate_result.commit_hash,
                                                     max_retries=2,  # JSON parse retries
                                                     issue_description=issue_description,
+                                                    baseline_commit=retry_state.baseline_commit_hash,
                                                 )
 
                                                 if review_result.passed:
