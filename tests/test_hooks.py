@@ -263,6 +263,23 @@ class TestBlockDangerousCommands:
             assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
 
     @pytest.mark.asyncio
+    async def test_blocks_git_restore(self) -> None:
+        """git restore should be blocked."""
+        restore_commands = [
+            "git restore .",
+            "git restore file.py",
+            "git restore --staged file.py",
+            "git restore --source HEAD~1 file.py",
+        ]
+        context = make_context()
+
+        for cmd in restore_commands:
+            hook_input = make_hook_input("Bash", {"command": cmd})
+            result = await block_dangerous_commands(hook_input, None, context)
+            assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
+            assert "git restore" in result["reason"]
+
+    @pytest.mark.asyncio
     async def test_blocks_abort_operations(self) -> None:
         """git merge/rebase/cherry-pick --abort should be blocked."""
         abort_commands = [
@@ -348,6 +365,7 @@ class TestDestructiveGitPatternsConstant:
             "git checkout -f",
             "git checkout --force",
             "git clean -f",
+            "git restore",
             "git merge --abort",
             "git rebase --abort",
             "git cherry-pick --abort",
@@ -366,6 +384,7 @@ class TestSafeGitAlternatives:
         assert "git stash" in SAFE_GIT_ALTERNATIVES
         assert "git reset --hard" in SAFE_GIT_ALTERNATIVES
         assert "git rebase" in SAFE_GIT_ALTERNATIVES
+        assert "git restore" in SAFE_GIT_ALTERNATIVES
 
     def test_alternatives_are_non_empty_strings(self) -> None:
         """All alternatives should be non-empty strings."""

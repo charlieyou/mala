@@ -52,6 +52,8 @@ DESTRUCTIVE_GIT_PATTERNS = [
     "git checkout -- .",
     "git checkout -f",
     "git checkout --force",
+    # Restore - discards uncommitted changes without confirmation
+    "git restore",
     # Rebase - can rewrite history and requires conflict resolution
     "git rebase",
     # Force delete branches
@@ -72,6 +74,7 @@ SAFE_GIT_ALTERNATIVES: dict[str, str] = {
     "git rebase": "use git merge instead, or coordinate with other agents",
     "git checkout -f": "commit or stash changes first (in non-agent context)",
     "git checkout --force": "commit or stash changes first (in non-agent context)",
+    "git restore": "commit changes first, or use git diff to review before discarding",
     "git clean -f": "manually remove specific untracked files with rm",
     "git merge --abort": "resolve merge conflicts instead of aborting",
     "git rebase --abort": "resolve rebase conflicts instead of aborting",
