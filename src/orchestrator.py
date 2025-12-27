@@ -28,6 +28,13 @@ from .hooks import (
     block_morph_replaced_tools,
     make_lock_enforcement_hook,
 )
+from .lifecycle import (
+    Effect,
+    ImplementerLifecycle,
+    LifecycleConfig,
+    LifecycleContext,
+    LifecycleState,
+)
 from .logging.console import Colors, log, log_tool, log_agent_text, truncate_text
 from .logging.run_metadata import (
     RunMetadata,
@@ -47,7 +54,6 @@ from .tools.locking import (
 from .validation.runner import ValidationRunner, ValidationConfig
 from .validation.spec import (
     IssueResolution,
-    ResolutionOutcome,
     ValidationContext,
     ValidationScope,
     build_validation_spec,
@@ -61,15 +67,6 @@ if TYPE_CHECKING:
 from importlib.metadata import version as pkg_version
 
 __version__ = pkg_version("mala")
-
-# Resolution outcomes that skip codex review (no new code to review)
-_SKIP_REVIEW_OUTCOMES = frozenset(
-    {
-        ResolutionOutcome.NO_CHANGE,
-        ResolutionOutcome.OBSOLETE,
-        ResolutionOutcome.ALREADY_COMPLETE,
-    }
-)
 
 # Load implementer prompt from file
 PROMPT_FILE = Path(__file__).parent / "prompts" / "implementer_prompt.md"
@@ -624,7 +621,11 @@ class MalaOrchestrator:
             self._cleanup_agent_locks(agent_id)
 
     async def run_implementer(self, issue_id: str) -> IssueResult:
-        """Run implementer agent for a single issue with gate retry support."""
+        """Run implementer agent for a single issue with gate retry support.
+
+        Uses ImplementerLifecycle to drive policy decisions. The orchestrator
+        handles I/O (SDK calls, logs, hooks) based on Effect returns.
+        """
         agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
         self.agent_ids[issue_id] = agent_id
 
@@ -634,10 +635,25 @@ class MalaOrchestrator:
         # Capture baseline commit hash before agent starts (for cumulative diff review)
         baseline_commit = await get_git_commit_async(self.repo_path)
 
-        # Initialize retry state with baseline timestamp to reject stale commits
-        # Baseline is captured once per run to avoid false positives in retries
+        # Initialize lifecycle with config derived from orchestrator settings
+        codex_review_enabled = "codex-review" not in (self.disable_validations or set())
+        lifecycle_config = LifecycleConfig(
+            max_gate_retries=self.max_gate_retries,
+            max_review_retries=self.max_review_retries,
+            codex_review_enabled=codex_review_enabled,
+        )
+        lifecycle = ImplementerLifecycle(lifecycle_config)
+        lifecycle_ctx = LifecycleContext()
+
+        # Set baseline timestamp in lifecycle context
+        lifecycle_ctx.retry_state.baseline_timestamp = int(time.time())
+
+        # Track baseline_commit_hash separately (not in lifecycle's RetryState)
+        baseline_commit_hash = baseline_commit
+
+        # Initialize orchestrator's RetryState for compatibility with existing code
         retry_state = RetryState(
-            baseline_timestamp=int(time.time()),
+            baseline_timestamp=lifecycle_ctx.retry_state.baseline_timestamp,
             baseline_commit_hash=baseline_commit,
         )
 
@@ -719,12 +735,15 @@ class MalaOrchestrator:
                 try:
                     async with asyncio.timeout(self.timeout_seconds):
                         async with ClaudeSDKClient(options=options) as client:
+                            # Start lifecycle
+                            lifecycle.start()
+
                             # Initial query
                             await client.query(prompt)
 
-                            # Gate retry loop
-                            while True:
-                                # Process messages from this attempt
+                            # Main loop - driven by lifecycle transitions
+                            while not lifecycle.is_terminal:
+                                # Process messages from SDK
                                 async for message in client.receive_response():
                                     # Log to Braintrust
                                     tracer.log_message(message)
@@ -743,12 +762,26 @@ class MalaOrchestrator:
 
                                     elif isinstance(message, ResultMessage):
                                         claude_session_id = message.session_id
-                                        final_result = message.result or ""
+                                        lifecycle_ctx.session_id = claude_session_id
+                                        lifecycle_ctx.final_result = (
+                                            message.result or ""
+                                        )
 
-                                # Agent completed this attempt - run quality gate
-                                if claude_session_id:
+                                # Messages complete - transition lifecycle
+                                result = lifecycle.on_messages_complete(
+                                    lifecycle_ctx,
+                                    has_session_id=bool(claude_session_id),
+                                )
+
+                                if result.effect == Effect.COMPLETE_FAILURE:
+                                    final_result = lifecycle_ctx.final_result
+                                    break
+
+                                # Handle WAIT_FOR_LOG effect
+                                if result.effect == Effect.WAIT_FOR_LOG:
                                     log_path = get_claude_log_path(
-                                        self.repo_path, claude_session_id
+                                        self.repo_path,
+                                        claude_session_id,  # type: ignore[arg-type]
                                     )
                                     self.session_log_paths[issue_id] = log_path
 
@@ -756,9 +789,8 @@ class MalaOrchestrator:
                                     wait_elapsed = 0.0
                                     while not log_path.exists():
                                         if wait_elapsed >= LOG_FILE_WAIT_TIMEOUT:
-                                            final_result = (
-                                                f"Session log missing after "
-                                                f"{LOG_FILE_WAIT_TIMEOUT}s: {log_path}"
+                                            result = lifecycle.on_log_timeout(
+                                                lifecycle_ctx, str(log_path)
                                             )
                                             log(
                                                 "⚠",
@@ -770,184 +802,165 @@ class MalaOrchestrator:
                                         await asyncio.sleep(LOG_FILE_POLL_INTERVAL)
                                         wait_elapsed += LOG_FILE_POLL_INTERVAL
 
-                                    # Exit retry loop if log file never appeared
-                                    if not log_path.exists():
+                                    if lifecycle.state == LifecycleState.FAILED:
+                                        final_result = lifecycle_ctx.final_result
                                         break
 
-                                    if log_path.exists():
-                                        (
-                                            gate_result,
-                                            new_offset,
-                                        ) = await self._run_quality_gate_async(
-                                            issue_id, log_path, retry_state
+                                    # Log ready - transition to running gate
+                                    result = lifecycle.on_log_ready(lifecycle_ctx)
+
+                                # Handle RUN_GATE effect
+                                if result.effect == Effect.RUN_GATE:
+                                    # Sync retry_state for gate check
+                                    retry_state.attempt = (
+                                        lifecycle_ctx.retry_state.gate_attempt
+                                    )
+                                    retry_state.log_offset = (
+                                        lifecycle_ctx.retry_state.log_offset
+                                    )
+                                    retry_state.previous_commit_hash = (
+                                        lifecycle_ctx.retry_state.previous_commit_hash
+                                    )
+
+                                    log_path = self.session_log_paths[issue_id]
+                                    (
+                                        gate_result,
+                                        new_offset,
+                                    ) = await self._run_quality_gate_async(
+                                        issue_id, log_path, retry_state
+                                    )
+
+                                    # Transition based on gate result
+                                    result = lifecycle.on_gate_result(
+                                        lifecycle_ctx, gate_result, new_offset
+                                    )
+
+                                    if result.effect == Effect.COMPLETE_SUCCESS:
+                                        success = True
+                                        final_result = lifecycle_ctx.final_result
+                                        break
+
+                                    if result.effect == Effect.COMPLETE_FAILURE:
+                                        final_result = lifecycle_ctx.final_result
+                                        break
+
+                                    if result.effect == Effect.SEND_GATE_RETRY:
+                                        # Log retry attempt
+                                        log(
+                                            "↻",
+                                            f"Gate retry {lifecycle_ctx.retry_state.gate_attempt}/{self.max_gate_retries}",
+                                            Colors.YELLOW,
+                                            agent_id=issue_id,
                                         )
 
-                                        if gate_result.passed:
-                                            # Gate passed - run Codex review if enabled
-                                            codex_review_enabled = (
-                                                "codex-review"
-                                                not in (
-                                                    self.disable_validations or set()
-                                                )
+                                        # Build follow-up prompt with failure context
+                                        failure_text = "\n".join(
+                                            f"- {r}"
+                                            for r in gate_result.failure_reasons
+                                        )
+                                        followup = GATE_FOLLOWUP_PROMPT.format(
+                                            attempt=lifecycle_ctx.retry_state.gate_attempt,
+                                            max_attempts=self.max_gate_retries,
+                                            failure_reasons=failure_text,
+                                            issue_id=issue_id,
+                                        )
+
+                                        # Resume session with follow-up prompt
+                                        assert claude_session_id is not None
+                                        await client.query(
+                                            followup,
+                                            session_id=claude_session_id,
+                                        )
+                                        continue
+
+                                # Handle RUN_REVIEW effect
+                                if result.effect == Effect.RUN_REVIEW:
+                                    log(
+                                        "◐",
+                                        f"Running Codex review (attempt {lifecycle_ctx.retry_state.review_attempt}/{self.max_review_retries})",
+                                        Colors.CYAN,
+                                        agent_id=issue_id,
+                                    )
+
+                                    review_result = await run_codex_review(
+                                        self.repo_path,
+                                        lifecycle_ctx.last_gate_result.commit_hash,  # type: ignore[union-attr]
+                                        max_retries=2,  # JSON parse retries
+                                        issue_description=issue_description,
+                                        baseline_commit=baseline_commit_hash,
+                                    )
+
+                                    log_path = self.session_log_paths[issue_id]
+                                    _, new_offset = (
+                                        self.quality_gate.parse_validation_evidence_from_offset(
+                                            log_path,
+                                            offset=lifecycle_ctx.retry_state.log_offset,
+                                        )
+                                    )
+
+                                    # Transition based on review result
+                                    result = lifecycle.on_review_result(
+                                        lifecycle_ctx, review_result, new_offset
+                                    )
+
+                                    if result.effect == Effect.COMPLETE_SUCCESS:
+                                        log(
+                                            "✓",
+                                            "Codex review passed",
+                                            Colors.GREEN,
+                                            agent_id=issue_id,
+                                        )
+                                        success = True
+                                        final_result = lifecycle_ctx.final_result
+                                        break
+
+                                    if result.effect == Effect.COMPLETE_FAILURE:
+                                        final_result = lifecycle_ctx.final_result
+                                        break
+
+                                    if result.effect == Effect.SEND_REVIEW_RETRY:
+                                        # Log review failure
+                                        if review_result.parse_error:
+                                            log(
+                                                "⚠",
+                                                f"Codex review parse error: {review_result.parse_error}",
+                                                Colors.YELLOW,
+                                                agent_id=issue_id,
                                             )
-                                            # Skip review for resolutions with no new code
-                                            resolution_skips_review = (
-                                                gate_result.resolution is not None
-                                                and gate_result.resolution.outcome
-                                                in _SKIP_REVIEW_OUTCOMES
+                                        else:
+                                            error_count = sum(
+                                                1
+                                                for i in review_result.issues
+                                                if i.severity == "error"
                                             )
-                                            if (
-                                                codex_review_enabled
-                                                and gate_result.commit_hash
-                                                and not resolution_skips_review
-                                            ):
-                                                retry_state.review_attempt += 1
-                                                log(
-                                                    "◐",
-                                                    f"Running Codex review (attempt {retry_state.review_attempt}/{self.max_review_retries})",
-                                                    Colors.CYAN,
-                                                    agent_id=issue_id,
-                                                )
-
-                                                review_result = await run_codex_review(
-                                                    self.repo_path,
-                                                    gate_result.commit_hash,
-                                                    max_retries=2,  # JSON parse retries
-                                                    issue_description=issue_description,
-                                                    baseline_commit=retry_state.baseline_commit_hash,
-                                                )
-
-                                                if review_result.passed:
-                                                    # Review passed - we're done
-                                                    log(
-                                                        "✓",
-                                                        "Codex review passed",
-                                                        Colors.GREEN,
-                                                        agent_id=issue_id,
-                                                    )
-                                                    success = True
-                                                    break
-
-                                                # Review failed - check if we can retry
-                                                if (
-                                                    retry_state.review_attempt
-                                                    < self.max_review_retries
-                                                ):
-                                                    # Update log offset for next gate check
-                                                    retry_state.log_offset = new_offset
-                                                    retry_state.previous_commit_hash = (
-                                                        gate_result.commit_hash
-                                                    )
-
-                                                    # Log review failure
-                                                    if review_result.parse_error:
-                                                        log(
-                                                            "⚠",
-                                                            f"Codex review parse error: {review_result.parse_error}",
-                                                            Colors.YELLOW,
-                                                            agent_id=issue_id,
-                                                        )
-                                                    else:
-                                                        error_count = sum(
-                                                            1
-                                                            for i in review_result.issues
-                                                            if i.severity == "error"
-                                                        )
-                                                        log(
-                                                            "↻",
-                                                            f"Review retry {retry_state.review_attempt}/{self.max_review_retries} ({error_count} errors)",
-                                                            Colors.YELLOW,
-                                                            agent_id=issue_id,
-                                                        )
-
-                                                    # Build follow-up prompt with review issues
-                                                    review_issues_text = (
-                                                        format_review_issues(
-                                                            review_result.issues
-                                                        )
-                                                        if review_result.issues
-                                                        else review_result.parse_error
-                                                        or "Unknown review failure"
-                                                    )
-                                                    followup = CODEX_REVIEW_FOLLOWUP_PROMPT.format(
-                                                        attempt=retry_state.review_attempt,
-                                                        max_attempts=self.max_review_retries,
-                                                        review_issues=review_issues_text,
-                                                        issue_id=issue_id,
-                                                    )
-
-                                                    # Resume session with follow-up prompt
-                                                    await client.query(
-                                                        followup,
-                                                        session_id=claude_session_id,
-                                                    )
-                                                    # Continue the retry loop (will re-run gate + review)
-                                                    continue
-
-                                                # No review retries left - fail
-                                                if review_result.parse_error:
-                                                    final_result = f"Codex review failed: {review_result.parse_error}"
-                                                else:
-                                                    error_msgs = [
-                                                        f"{i.file}:{i.line or 0}: {i.message}"
-                                                        for i in review_result.issues
-                                                        if i.severity == "error"
-                                                    ]
-                                                    final_result = f"Codex review failed: {'; '.join(error_msgs[:3])}"
-                                                break
-
-                                            # No Codex review or no commit - we're done
-                                            success = True
-                                            break
-
-                                        # Gate failed - check if we can retry
-                                        if (
-                                            retry_state.attempt < self.max_gate_retries
-                                            and not gate_result.no_progress
-                                        ):
-                                            # Prepare for retry
-                                            retry_state.attempt += 1
-                                            retry_state.log_offset = new_offset
-                                            retry_state.previous_commit_hash = (
-                                                gate_result.commit_hash
-                                            )
-
-                                            # Log retry attempt
                                             log(
                                                 "↻",
-                                                f"Gate retry {retry_state.attempt}/{self.max_gate_retries}",
+                                                f"Review retry {lifecycle_ctx.retry_state.review_attempt}/{self.max_review_retries} ({error_count} errors)",
                                                 Colors.YELLOW,
                                                 agent_id=issue_id,
                                             )
 
-                                            # Build follow-up prompt with failure context
-                                            failure_text = "\n".join(
-                                                f"- {r}"
-                                                for r in gate_result.failure_reasons
-                                            )
-                                            followup = GATE_FOLLOWUP_PROMPT.format(
-                                                attempt=retry_state.attempt,
-                                                max_attempts=self.max_gate_retries,
-                                                failure_reasons=failure_text,
-                                                issue_id=issue_id,
-                                            )
-
-                                            # Resume session with follow-up prompt
-                                            await client.query(
-                                                followup, session_id=claude_session_id
-                                            )
-                                            # Continue the retry loop
-                                            continue
-
-                                        # No retries left or no progress - fail
-                                        final_result = (
-                                            f"Quality gate failed: "
-                                            f"{'; '.join(gate_result.failure_reasons)}"
+                                        # Build follow-up prompt with review issues
+                                        review_issues_text = (
+                                            format_review_issues(review_result.issues)
+                                            if review_result.issues
+                                            else review_result.parse_error
+                                            or "Unknown review failure"
                                         )
-                                        break
-                                else:
-                                    # No session ID - can't run gate
-                                    break
+                                        followup = CODEX_REVIEW_FOLLOWUP_PROMPT.format(
+                                            attempt=lifecycle_ctx.retry_state.review_attempt,
+                                            max_attempts=self.max_review_retries,
+                                            review_issues=review_issues_text,
+                                            issue_id=issue_id,
+                                        )
+
+                                        # Resume session with follow-up prompt
+                                        assert claude_session_id is not None
+                                        await client.query(
+                                            followup,
+                                            session_id=claude_session_id,
+                                        )
+                                        continue
 
                     tracer.set_success(success)
 
@@ -955,12 +968,14 @@ class MalaOrchestrator:
                     timeout_mins = (
                         self.timeout_seconds // 60 if self.timeout_seconds else 0
                     )
-                    final_result = f"Timeout after {timeout_mins} minutes"
+                    lifecycle.on_timeout(lifecycle_ctx, timeout_mins)
+                    final_result = lifecycle_ctx.final_result
                     tracer.set_error(final_result)
                     self._cleanup_agent_locks(agent_id)
 
                 except Exception as e:
-                    final_result = str(e)
+                    lifecycle.on_error(lifecycle_ctx, e)
+                    final_result = lifecycle_ctx.final_result
                     tracer.set_error(final_result)
                     self._cleanup_agent_locks(agent_id)
 
@@ -974,13 +989,13 @@ class MalaOrchestrator:
         return IssueResult(
             issue_id=issue_id,
             agent_id=agent_id,
-            success=success,
+            success=lifecycle_ctx.success,
             summary=final_result,
             duration_seconds=duration,
             session_id=claude_session_id,
-            gate_attempts=retry_state.attempt,
-            review_attempts=retry_state.review_attempt,
-            resolution=gate_result.resolution if gate_result else None,
+            gate_attempts=lifecycle_ctx.retry_state.gate_attempt,
+            review_attempts=lifecycle_ctx.retry_state.review_attempt,
+            resolution=lifecycle_ctx.resolution,
         )
 
     async def spawn_agent(self, issue_id: str) -> bool:

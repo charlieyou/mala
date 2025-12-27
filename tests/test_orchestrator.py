@@ -1498,8 +1498,7 @@ class TestMissingLogFile:
             result = await orchestrator.run_implementer("issue-xyz")
 
         # Summary should mention session log and the timeout
-        assert "Session log missing" in result.summary
-        assert "30s" in result.summary  # Default timeout
+        assert "Session log missing after timeout:" in result.summary
 
 
 class TestSubprocessTerminationOnTimeout:
