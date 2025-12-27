@@ -949,7 +949,7 @@ class TestSpecBasedValidation:
     def test_run_spec_e2e_only_for_run_level(
         self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
-        """Test that E2E only runs for run-level scope."""
+        """Test that E2E only runs for per-issue scope."""
         # Per-issue context - E2E should not run
         per_issue_context = ValidationContext(
             issue_id="test-123",
@@ -974,7 +974,10 @@ class TestSpecBasedValidation:
             e2e_run_called = True
             return MagicMock(passed=True, fixture_path=None)
 
-        with patch.object(runner, "_run_spec_e2e", side_effect=mock_e2e_run):
+        # Patch on the internal spec runner since ValidationRunner delegates to it
+        with patch.object(
+            runner._spec_runner, "_run_spec_e2e", side_effect=mock_e2e_run
+        ):
             result = runner._run_spec_sync(spec, per_issue_context, log_dir=tmp_path)
             assert result.passed is True
             assert not e2e_run_called
@@ -1006,7 +1009,10 @@ class TestSpecBasedValidation:
             fixture_path=tmp_path / "fixture",
         )
 
-        with patch.object(runner, "_run_spec_e2e", return_value=mock_e2e_result):
+        # Patch on the internal spec runner since ValidationRunner delegates to it
+        with patch.object(
+            runner._spec_runner, "_run_spec_e2e", return_value=mock_e2e_result
+        ):
             result = runner._run_spec_sync(spec, run_level_context, log_dir=tmp_path)
             assert result.passed is True
 
@@ -1088,10 +1094,12 @@ class TestSpecBasedValidation:
 
         with (
             patch(
-                "src.validation.runner.create_worktree", return_value=mock_worktree_ctx
+                "src.validation.spec_runner.create_worktree",
+                return_value=mock_worktree_ctx,
             ),
             patch(
-                "src.validation.runner.remove_worktree", return_value=mock_worktree_ctx
+                "src.validation.spec_runner.remove_worktree",
+                return_value=mock_worktree_ctx,
             ),
             patch("subprocess.run", return_value=mock_result),
         ):
@@ -1127,7 +1135,7 @@ class TestSpecBasedValidation:
         )
 
         with patch(
-            "src.validation.runner.create_worktree", return_value=mock_worktree_ctx
+            "src.validation.spec_runner.create_worktree", return_value=mock_worktree_ctx
         ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is False
@@ -1209,10 +1217,12 @@ class TestSpecBasedValidation:
 
         with (
             patch(
-                "src.validation.runner.create_worktree",
+                "src.validation.spec_runner.create_worktree",
                 return_value=mock_worktree_created,
             ),
-            patch("src.validation.runner.remove_worktree", side_effect=mock_remove),
+            patch(
+                "src.validation.spec_runner.remove_worktree", side_effect=mock_remove
+            ),
             patch("subprocess.run", return_value=mock_result),
         ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
@@ -1275,10 +1285,12 @@ class TestSpecBasedValidation:
 
         with (
             patch(
-                "src.validation.runner.create_worktree",
+                "src.validation.spec_runner.create_worktree",
                 return_value=mock_worktree_created,
             ),
-            patch("src.validation.runner.remove_worktree", side_effect=mock_remove),
+            patch(
+                "src.validation.spec_runner.remove_worktree", side_effect=mock_remove
+            ),
             patch("subprocess.run", side_effect=raise_exception),
             pytest.raises(FileNotFoundError),
         ):

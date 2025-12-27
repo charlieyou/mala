@@ -1,7 +1,13 @@
 """Validation package for mala post-commit validation.
 
-This package provides a clean-room validation runner that operates in
-temporary git worktrees, ensuring commits are tested in isolation.
+This package provides validation runners for clean-room validation
+in temporary git worktrees:
+
+- ValidationRunner: Facade that delegates to specialized runners
+- SpecValidationRunner: Modern API using ValidationSpec + ValidationContext
+- LegacyValidationRunner: Legacy API using ValidationConfig
+
+For new code, prefer SpecValidationRunner with ValidationSpec.
 """
 
 from .coverage import (
@@ -20,11 +26,19 @@ from .e2e import (
     E2EStatus,
     check_e2e_prereqs,
 )
+from .helpers import (
+    annotate_issue,
+    decode_timeout_output,
+    format_step_output,
+    get_ready_issue_id,
+    init_fixture_repo,
+    tail,
+    write_fixture_repo,
+)
+from .legacy_runner import LegacyValidationRunner, ValidationConfig
+from .result import ValidationResult, ValidationStepResult
 from .runner import (
-    ValidationConfig,
-    ValidationResult,
     ValidationRunner,
-    ValidationStepResult,
     _check_e2e_prereqs,
     _format_step_output,
     _tail,
@@ -44,6 +58,7 @@ from .spec import (
     build_validation_spec,
     classify_change,
 )
+from .spec_runner import SpecValidationRunner
 from .worktree import (
     WorktreeConfig,
     WorktreeContext,
@@ -55,12 +70,16 @@ from .worktree import (
 )
 
 __all__ = [
+    # Spec types
     "CommandKind",
     "CoverageConfig",
+    # Coverage
     "CoverageResult",
     "CoverageStatus",
+    # Deps
     "DepsConfig",
     "DepsSyncState",
+    # E2E
     "E2EConfig",
     "E2EPrereqResult",
     "E2EResult",
@@ -68,30 +87,44 @@ __all__ = [
     "E2ERunnerConfig",
     "E2EStatus",
     "IssueResolution",
+    # Runners
+    "LegacyValidationRunner",
     "ResolutionOutcome",
+    "SpecValidationRunner",
     "ValidationArtifacts",
     "ValidationCommand",
     "ValidationConfig",
     "ValidationContext",
+    # Result types
     "ValidationResult",
     "ValidationRunner",
     "ValidationScope",
     "ValidationSpec",
     "ValidationStepResult",
+    # Worktree
     "WorktreeConfig",
     "WorktreeContext",
     "WorktreeResult",
     "WorktreeState",
+    # Backwards compatibility (private)
     "_check_e2e_prereqs",
     "_format_step_output",
     "_tail",
+    # Helpers (public)
+    "annotate_issue",
     "build_validation_spec",
     "check_coverage_threshold",
     "check_e2e_prereqs",
     "classify_change",
     "cleanup_stale_worktrees",
     "create_worktree",
+    "decode_timeout_output",
+    "format_step_output",
+    "get_ready_issue_id",
+    "init_fixture_repo",
     "parse_and_check_coverage",
     "parse_coverage_xml",
     "remove_worktree",
+    "tail",
+    "write_fixture_repo",
 ]
