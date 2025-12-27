@@ -2501,3 +2501,147 @@ class TestValidationExitCodeParsing:
         assert "ty" in failure_text or "typecheck" in failure_text
         # Should mention it failed or had non-zero exit
         assert "failed" in failure_text or "exit" in failure_text
+
+    def test_gate_passes_when_command_fails_then_succeeds(self, tmp_path: Path) -> None:
+        """Gate should pass when a command fails initially but succeeds on retry.
+
+        This tests that the gate tracks the *latest* status per command, not
+        accumulating failures. If pytest fails once but then passes, the gate
+        should pass.
+        """
+        log_path = tmp_path / "session.jsonl"
+
+        lines = []
+        # First pytest run - FAILS
+        lines.append(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_pytest_1",
+                                "name": "Bash",
+                                "input": {"command": "uv run pytest"},
+                            }
+                        ]
+                    },
+                }
+            )
+        )
+        lines.append(
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_pytest_1",
+                                "content": "Exit code 1\n1 failed",
+                                "is_error": True,
+                            }
+                        ]
+                    },
+                }
+            )
+        )
+        # Second pytest run - SUCCEEDS (after fixing the code)
+        lines.append(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_pytest_2",
+                                "name": "Bash",
+                                "input": {"command": "uv run pytest"},
+                            }
+                        ]
+                    },
+                }
+            )
+        )
+        lines.append(
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_pytest_2",
+                                "content": "5 passed",
+                                "is_error": False,
+                            }
+                        ]
+                    },
+                }
+            )
+        )
+        # Other commands all succeed
+        other_commands = [
+            ("toolu_sync_1", "uv sync", False, "Synced"),
+            ("toolu_ruff_check_1", "uvx ruff check .", False, "All checks passed"),
+            ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
+            ("toolu_ty_check_1", "uvx ty check", False, "No errors"),
+        ]
+        for tool_id, cmd, is_error, output in other_commands:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "id": tool_id,
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_id,
+                                    "content": output,
+                                    "is_error": is_error,
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        with patch("src.quality_gate.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="abc1234 1703502000 bd-test-123: Fix\n",
+                stderr="",
+            )
+            result = gate.check_with_resolution(
+                issue_id="test-123",
+                log_path=log_path,
+                baseline_timestamp=1703501000,
+            )
+
+        # Should pass because pytest succeeded on the second run
+        assert result.passed is True, (
+            f"Gate should pass when command fails then succeeds. Failures: {result.failure_reasons}"
+        )

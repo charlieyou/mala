@@ -322,7 +322,8 @@ class QualityGate:
         the byte offset where the previous attempt ended.
 
         Also checks tool_result entries for failures (is_error=true), tracking
-        which validation commands exited non-zero.
+        which validation commands exited non-zero. If a command is retried and
+        succeeds, the failure is cleared (tracks latest status per command).
 
         Args:
             log_path: Path to the JSONL log file from agent session.
@@ -339,6 +340,8 @@ class QualityGate:
 
         # Map tool_use_id to validation command name for tracking failures
         tool_id_to_command: dict[str, str] = {}
+        # Track latest status per command (True = failed, False = succeeded)
+        command_failed: dict[str, bool] = {}
 
         try:
             # Read file in binary mode for accurate byte offset tracking
@@ -411,13 +414,17 @@ class QualityGate:
                             tool_use_id = block.get("tool_use_id", "")
                             is_error = block.get("is_error", False)
 
-                            # If this is a failed result for a validation command, track it
-                            if is_error and tool_use_id in tool_id_to_command:
+                            # Track latest status for validation commands
+                            if tool_use_id in tool_id_to_command:
                                 cmd_name = tool_id_to_command[tool_use_id]
-                                if cmd_name not in evidence.failed_commands:
-                                    evidence.failed_commands.append(cmd_name)
+                                command_failed[cmd_name] = is_error
 
                     current_offset += line_len
+
+                # Compute failed_commands from final status of each command
+                evidence.failed_commands = [
+                    cmd for cmd, failed in command_failed.items() if failed
+                ]
 
                 # Return final position
                 return evidence, f.tell()
@@ -479,6 +486,8 @@ class QualityGate:
 
         # Map tool_use_id to command name for tracking failures
         tool_id_to_command: dict[str, str] = {}
+        # Track latest status per command (True = failed, False = succeeded)
+        command_failed: dict[str, bool] = {}
 
         try:
             with open(log_path, "rb") as f:
@@ -549,14 +558,18 @@ class QualityGate:
                             tool_use_id = block.get("tool_use_id", "")
                             is_error = block.get("is_error", False)
 
-                            # If this is a failed result for a validation command, track it
-                            if is_error and tool_use_id in tool_id_to_command:
+                            # Track latest status for validation commands
+                            if tool_use_id in tool_id_to_command:
                                 cmd_name = tool_id_to_command[tool_use_id]
-                                if cmd_name not in evidence.failed_commands:
-                                    evidence.failed_commands.append(cmd_name)
+                                command_failed[cmd_name] = is_error
 
         except OSError:
             pass  # File read error - return empty evidence
+
+        # Compute failed_commands from final status of each command
+        evidence.failed_commands = [
+            cmd for cmd, failed in command_failed.items() if failed
+        ]
 
         return evidence
 
