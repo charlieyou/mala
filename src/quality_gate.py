@@ -770,17 +770,21 @@ class QualityGate:
                 )
 
         # Check validation evidence from the given offset (scopes to current attempt)
-        evidence, _ = self.parse_validation_evidence_from_offset(log_path, log_offset)
-
-        # Use spec-aware checking if spec provided, otherwise use default
+        # Use spec-driven parsing when spec is provided
         if spec is not None:
+            evidence = self.parse_validation_evidence_with_spec(
+                log_path, spec, log_offset
+            )
             passed, missing = check_evidence_against_spec(evidence, spec)
             if not passed:
                 failure_reasons.append(
                     f"Missing validation commands: {', '.join(missing)}"
                 )
         else:
-            # Fallback to hardcoded default (backward compat)
+            # Fallback to hardcoded patterns (backward compat)
+            evidence, _ = self.parse_validation_evidence_from_offset(
+                log_path, log_offset
+            )
             if not evidence.has_minimum_validation():
                 missing = evidence.missing_commands()
                 failure_reasons.append(

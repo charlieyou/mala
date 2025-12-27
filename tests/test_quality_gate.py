@@ -1978,9 +1978,7 @@ class TestSpecDrivenEvidencePatterns:
                 f"Command '{cmd.name}' pattern does not match its own command: {command_str}"
             )
 
-    def test_quality_gate_uses_spec_patterns_for_evidence(
-        self, tmp_path: Path
-    ) -> None:
+    def test_quality_gate_uses_spec_patterns_for_evidence(self, tmp_path: Path) -> None:
         """QualityGate should use patterns from the spec, not hardcoded patterns.
 
         This ensures evidence parsing is driven from spec command definitions.
@@ -2065,3 +2063,110 @@ class TestSpecDrivenEvidencePatterns:
 
         # Should detect pytest via fallback pattern
         assert evidence.pytest_ran is True
+
+    def test_check_with_resolution_uses_spec_patterns(self, tmp_path: Path) -> None:
+        """check_with_resolution should use spec-defined patterns, not hardcoded.
+
+        This test uses a custom detection pattern that differs from the hardcoded
+        pattern to verify that the gate actually uses spec patterns.
+        """
+        import re
+
+        from src.validation.spec import (
+            CommandKind,
+            ValidationCommand,
+            ValidationScope,
+            ValidationSpec,
+        )
+
+        # Create a spec with a custom pattern that matches "custom_test" but NOT "pytest"
+        custom_test_cmd = ValidationCommand(
+            name="custom_test",
+            command=["custom_test", "run"],
+            kind=CommandKind.TEST,
+            detection_pattern=re.compile(
+                r"\bcustom_test\b"
+            ),  # Different from hardcoded pytest pattern
+        )
+        # Include other required commands with their patterns
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="uv sync",
+                    command=["uv", "sync"],
+                    kind=CommandKind.DEPS,
+                    detection_pattern=re.compile(r"\buv\s+sync\b"),
+                ),
+                custom_test_cmd,
+                ValidationCommand(
+                    name="ruff check",
+                    command=["uvx", "ruff", "check"],
+                    kind=CommandKind.LINT,
+                    detection_pattern=re.compile(r"\bruff\s+check\b"),
+                ),
+                ValidationCommand(
+                    name="ruff format",
+                    command=["uvx", "ruff", "format"],
+                    kind=CommandKind.FORMAT,
+                    detection_pattern=re.compile(r"\bruff\s+format\b"),
+                ),
+                ValidationCommand(
+                    name="ty check",
+                    command=["uvx", "ty", "check"],
+                    kind=CommandKind.TYPECHECK,
+                    detection_pattern=re.compile(r"\bty\s+check\b"),
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        # Create log with custom_test (NOT pytest) - should pass with spec pattern
+        log_path = tmp_path / "session.jsonl"
+        commands = [
+            "uv sync",
+            "custom_test run",  # This matches spec pattern but NOT hardcoded pytest pattern
+            "ruff check .",
+            "ruff format .",
+            "ty check",
+        ]
+        lines = []
+        for cmd in commands:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        with patch("src.quality_gate.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="abc1234 1703502000 bd-test-123: Fix\n",
+                stderr="",
+            )
+            result = gate.check_with_resolution(
+                issue_id="test-123",
+                log_path=log_path,
+                baseline_timestamp=1703501000,
+                spec=spec,
+            )
+
+        # Should pass because spec pattern matches "custom_test"
+        # If it used hardcoded patterns, it would fail (pytest not found)
+        assert result.passed is True, (
+            f"Gate should use spec patterns, not hardcoded. Failures: {result.failure_reasons}"
+        )
