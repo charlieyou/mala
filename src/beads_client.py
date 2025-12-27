@@ -252,16 +252,17 @@ class BeadsClient:
             ]
 
             # Sort by priority, and optionally by status (in_progress first)
+            # Default to 0 (P0) for issues without priority to match bd CLI behavior
             if prioritize_wip:
                 # in_progress issues get status_order=0, others get 1
                 filtered.sort(
                     key=lambda i: (
                         0 if i.get("status") == "in_progress" else 1,
-                        i.get("priority", 999),
+                        i.get("priority") or 0,
                     )
                 )
             else:
-                filtered.sort(key=lambda i: i.get("priority", 999))
+                filtered.sort(key=lambda i: i.get("priority") or 0)
 
             return [i["id"] for i in filtered]
         except json.JSONDecodeError:
