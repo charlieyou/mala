@@ -367,26 +367,27 @@ class ValidationRunner:
             # No commit specified, validate in place
             validation_cwd = context.repo_path
 
-        try:
-            return self._execute_spec_commands(
-                spec=spec,
-                context=context,
-                cwd=validation_cwd,
-                artifacts=artifacts,
-                log_dir=log_dir,
-                run_id=run_id,
+        # Execute commands and capture result
+        result = self._execute_spec_commands(
+            spec=spec,
+            context=context,
+            cwd=validation_cwd,
+            artifacts=artifacts,
+            log_dir=log_dir,
+            run_id=run_id,
+        )
+
+        # Clean up worktree with correct pass/fail status
+        if worktree_ctx is not None:
+            worktree_ctx = remove_worktree(
+                worktree_ctx, validation_passed=result.passed
             )
-        finally:
-            # Clean up worktree
-            if worktree_ctx is not None:
-                # Determine pass/fail for cleanup decision
-                # Note: We're in finally block, can't access result directly
-                # Keep worktree for debugging (keep_on_failure=True was set)
-                worktree_ctx = remove_worktree(worktree_ctx, validation_passed=False)
-                if worktree_ctx.state == WorktreeState.KEPT:
-                    artifacts.worktree_state = "kept"
-                elif worktree_ctx.state == WorktreeState.REMOVED:
-                    artifacts.worktree_state = "removed"
+            if worktree_ctx.state == WorktreeState.KEPT:
+                artifacts.worktree_state = "kept"
+            elif worktree_ctx.state == WorktreeState.REMOVED:
+                artifacts.worktree_state = "removed"
+
+        return result
 
     def _execute_spec_commands(
         self,
@@ -578,7 +579,13 @@ class ValidationRunner:
             CoverageResult with pass/fail status.
         """
         # Look for coverage.xml in cwd
-        report_path = config.report_path or (cwd / "coverage.xml")
+        # Resolve relative paths against cwd to ensure correct file lookup
+        if config.report_path is not None:
+            report_path = config.report_path
+            if not report_path.is_absolute():
+                report_path = cwd / report_path
+        else:
+            report_path = cwd / "coverage.xml"
 
         if not report_path.exists():
             # Coverage report not found - this is only an error if coverage was expected

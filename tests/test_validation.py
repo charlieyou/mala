@@ -1147,3 +1147,69 @@ class TestSpecBasedValidation:
         )
         env = runner._build_spec_env(context, "run-456")
         assert "run-456" in env["AGENT_ID"]
+
+    def test_run_spec_worktree_removed_on_success(self, tmp_path: Path) -> None:
+        """Test that successful run_spec removes worktree and sets state to 'removed'."""
+        from src.validation.worktree import WorktreeContext, WorktreeState
+
+        # Create mock for worktree creation
+        mock_worktree_created = MagicMock(spec=WorktreeContext)
+        mock_worktree_created.state = WorktreeState.CREATED
+        mock_worktree_created.path = tmp_path / "worktree"
+        mock_worktree_created.path.mkdir()
+
+        # Create mock for worktree removal (successful)
+        mock_worktree_removed = MagicMock(spec=WorktreeContext)
+        mock_worktree_removed.state = WorktreeState.REMOVED
+
+        config = ValidationConfig(use_test_mutex=False)
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        runner = ValidationRunner(repo_path, config)
+
+        context = ValidationContext(
+            issue_id="test-123",
+            repo_path=repo_path,
+            commit_hash="abc123",
+            changed_files=[],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command=["echo", "test"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=False),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="ok", stderr=""
+        )
+
+        remove_worktree_called_with: list[tuple[object, bool]] = []
+
+        def mock_remove(ctx: object, validation_passed: bool) -> MagicMock:
+            remove_worktree_called_with.append((ctx, validation_passed))
+            return mock_worktree_removed
+
+        with (
+            patch(
+                "src.validation.runner.create_worktree",
+                return_value=mock_worktree_created,
+            ),
+            patch("src.validation.runner.remove_worktree", side_effect=mock_remove),
+            patch("subprocess.run", return_value=mock_result),
+        ):
+            result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
+            assert result.passed is True
+            assert result.artifacts is not None
+            assert result.artifacts.worktree_state == "removed"
+            # Verify remove_worktree was called with validation_passed=True
+            assert len(remove_worktree_called_with) == 1
+            assert remove_worktree_called_with[0][1] is True
