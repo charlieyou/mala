@@ -43,6 +43,14 @@ from .orchestrator import MalaOrchestrator
 
 
 # Valid values for --disable-validations flag
+# Each value controls a specific validation phase:
+#   post-validate: Skip all validation commands (pytest, ruff, ty) after agent commits
+#   run-level-validate: Skip run-level validation at end of batch (reserved for future use)
+#   slow-tests: Exclude @pytest.mark.slow tests from test runs
+#   coverage: Disable code coverage enforcement (threshold check)
+#   e2e: Disable end-to-end fixture repo tests (run-level only)
+#   codex-review: Disable automated LLM code review after quality gate passes
+#   followup-on-run-validate-fail: Disable auto-retry on run validation failures (reserved)
 VALID_DISABLE_VALUES = frozenset(
     {
         "post-validate",
@@ -127,9 +135,12 @@ def run(
         typer.Option(
             "--disable-validations",
             help=(
-                "Comma-separated list of validations to disable. "
-                "Valid values: post-validate, run-level-validate, slow-tests, "
-                "coverage, e2e, codex-review, followup-on-run-validate-fail"
+                "Comma-separated validations to skip. Options: "
+                "post-validate (skip pytest/ruff/ty after commits), "
+                "slow-tests (exclude @pytest.mark.slow tests), "
+                "coverage (disable coverage threshold check), "
+                "e2e (skip end-to-end fixture tests), "
+                "codex-review (skip LLM code review)"
             ),
         ),
     ] = None,
