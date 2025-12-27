@@ -246,7 +246,10 @@ class BeadsClient:
                         # Filter to unblocked WIP issues not already in ready list
                         ready_ids = {i["id"] for i in issues}
                         for wip in wip_issues:
-                            if wip["id"] not in ready_ids and wip.get("blocked_by") is None:
+                            if (
+                                wip["id"] not in ready_ids
+                                and wip.get("blocked_by") is None
+                            ):
                                 issues.append(wip)
                     except json.JSONDecodeError:
                         pass
