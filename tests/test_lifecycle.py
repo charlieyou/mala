@@ -246,6 +246,36 @@ class TestGateResult:
 
         assert ctx.resolution == resolution
 
+    @pytest.mark.parametrize(
+        "outcome",
+        [
+            pytest.param("NO_CHANGE", id="no_change"),
+            pytest.param("OBSOLETE", id="obsolete"),
+            pytest.param("ALREADY_COMPLETE", id="already_complete"),
+        ],
+    )
+    def test_gate_passed_skips_review_for_no_work_resolutions(
+        self, outcome: str
+    ) -> None:
+        """Gate passed with no-work resolutions skips review even if enabled."""
+        from src.validation.spec import IssueResolution, ResolutionOutcome
+
+        lifecycle, ctx = self._setup_for_gate()
+        resolution = IssueResolution(
+            outcome=ResolutionOutcome[outcome], rationale="Work was already done"
+        )
+        # Gate passes with commit_hash but resolution indicates no new work
+        gate_result = GateResult(
+            passed=True, commit_hash="abc123", resolution=resolution
+        )
+
+        result = lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
+
+        # Should skip review and go straight to success
+        assert lifecycle.state == LifecycleState.SUCCESS
+        assert result.effect == Effect.COMPLETE_SUCCESS
+        assert ctx.success
+
 
 class TestReviewResult:
     """Tests for on_review_result transition."""

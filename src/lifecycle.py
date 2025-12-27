@@ -34,6 +34,17 @@ if TYPE_CHECKING:
     from src.quality_gate import GateResult
     from src.validation.spec import IssueResolution
 
+from src.validation.spec import ResolutionOutcome
+
+# Resolution outcomes that skip codex review (no new code to review)
+_SKIP_REVIEW_OUTCOMES = frozenset(
+    {
+        ResolutionOutcome.NO_CHANGE,
+        ResolutionOutcome.OBSOLETE,
+        ResolutionOutcome.ALREADY_COMPLETE,
+    }
+)
+
 
 class LifecycleState(Enum):
     """States in the implementer lifecycle."""
@@ -251,7 +262,16 @@ class ImplementerLifecycle:
 
         if gate_result.passed:
             # Gate passed - should we run review?
-            if self.config.codex_review_enabled and gate_result.commit_hash:
+            # Skip review for resolutions with no new code (no_change, obsolete, already_complete)
+            resolution_skips_review = (
+                gate_result.resolution is not None
+                and gate_result.resolution.outcome in _SKIP_REVIEW_OUTCOMES
+            )
+            if (
+                self.config.codex_review_enabled
+                and gate_result.commit_hash
+                and not resolution_skips_review
+            ):
                 # Only initialize review_attempt if not already started
                 # (preserves count across gate re-runs after review retry)
                 if ctx.retry_state.review_attempt == 0:
