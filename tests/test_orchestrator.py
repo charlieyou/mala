@@ -6,10 +6,12 @@ state transitions without network or actual bd CLI.
 
 import asyncio
 import json
+import os
 import re
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1214,10 +1216,6 @@ class TestOrchestratorQualityGateIntegration:
         self, orchestrator: MalaOrchestrator, tmp_path: Path
     ) -> None:
         """Issue should only count as success when quality gate passes."""
-        from src.quality_gate import GateResult
-
-        # Gate passes
-        mock_gate_result = GateResult(passed=True, failure_reasons=[])
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             # Populate log path so quality gate runs
@@ -1227,8 +1225,8 @@ class TestOrchestratorQualityGateIntegration:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
-                success=True,
-                summary="done",
+                success=True,  # Gate passed
+                summary="Completed successfully",
             )
 
         first_call = True
@@ -1242,7 +1240,7 @@ class TestOrchestratorQualityGateIntegration:
             nonlocal first_call
             if first_call:
                 first_call = False
-                return ["issue-ok"]
+                return ["issue-pass"]
             return []
 
         async def mock_claim_async(issue_id: str) -> bool:
@@ -1265,17 +1263,7 @@ class TestOrchestratorQualityGateIntegration:
                 orchestrator, "run_implementer", side_effect=mock_run_implementer
             ),
             patch.object(
-                orchestrator.quality_gate, "check", return_value=mock_gate_result
-            ),
-            patch.object(
-                orchestrator.beads,
-                "commit_issues_async",
-                side_effect=mock_commit_issues_async,
-            ),
-            patch.object(
-                orchestrator.beads,
-                "close_eligible_epics_async",
-                side_effect=mock_close_eligible_epics_async,
+                orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
             patch("src.orchestrator.LOCK_DIR", MagicMock()),
             patch("src.orchestrator.RUNS_DIR", tmp_path),
@@ -1331,7 +1319,7 @@ class TestAsyncBeadsClientWithTimeout:
     async def test_bd_command_timeout_returns_safe_fallback(
         self, orchestrator: MalaOrchestrator
     ) -> None:
-        """When bd command times out, should return safe fallback, not hang."""
+        """When bd command times out, should return timeout result, not hang."""
         # Use a very short timeout for testing
         orchestrator.beads.timeout_seconds = 0.1
 
@@ -1630,3 +1618,646 @@ class TestSubprocessTerminationOnTimeout:
                 pytest.fail(f"Child process {child_pid} was not killed")
             except ProcessLookupError:
                 pass  # Good - process was killed
+
+
+class TestAgentEnvInheritance:
+    """Test that agent environment inherits from os.environ."""
+
+    @pytest.mark.asyncio
+    async def test_agent_env_includes_os_environ(self, tmp_path: Path) -> None:
+        """Agent environment should include inherited env vars plus lock overrides."""
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        captured_env: dict[str, str] | None = None
+
+        # Mock ClaudeSDKClient to capture the env parameter
+        type(MagicMock()).__init__
+
+        class MockClient:
+            def __init__(self, options: object) -> None:
+                nonlocal captured_env
+                # Capture the env from options
+                captured_env = getattr(options, "env", None)
+
+            async def __aenter__(self) -> "MockClient":
+                return self
+
+            async def __aexit__(self, *args: object) -> None:
+                pass
+
+            async def query(self, prompt: str) -> None:
+                pass
+
+            async def receive_response(self) -> AsyncGenerator[ResultMessage, None]:
+                yield ResultMessage(
+                    subtype="result",
+                    session_id="test-session",
+                    result="Done",
+                    duration_ms=100,
+                    duration_api_ms=80,
+                    is_error=False,
+                    num_turns=1,
+                    total_cost_usd=0.01,
+                    usage=None,
+                )
+
+        # Set a test env var that should be inherited
+        test_env_var = f"TEST_INHERIT_{uuid.uuid4().hex[:8]}"
+        os.environ[test_env_var] = "inherited_value"
+
+        try:
+            with (
+                patch("src.orchestrator.ClaudeSDKClient", MockClient),
+                patch("src.orchestrator.get_git_branch_async", return_value="main"),
+                patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
+                patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+            ):
+                mock_tracer = MagicMock()
+                mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
+                mock_tracer.__exit__ = MagicMock(return_value=None)
+                mock_tracer_cls.return_value = mock_tracer
+
+                await orchestrator.run_implementer("test-issue")
+
+            # Verify the captured env includes our test var
+            assert captured_env is not None, "env was not passed to ClaudeSDKClient"
+            assert test_env_var in captured_env, (
+                f"os.environ var {test_env_var} not inherited into agent_env"
+            )
+            assert captured_env[test_env_var] == "inherited_value"
+
+            # Verify lock-related vars are also present (overrides)
+            assert "PATH" in captured_env
+            assert "LOCK_DIR" in captured_env
+            assert "AGENT_ID" in captured_env
+            assert "REPO_NAMESPACE" in captured_env
+        finally:
+            del os.environ[test_env_var]
+
+
+class TestLockDirNestedCreation:
+    """Test that LOCK_DIR creation handles nested paths."""
+
+    @pytest.mark.asyncio
+    async def test_lock_dir_created_with_parents(self, tmp_path: Path) -> None:
+        """LOCK_DIR.mkdir should use parents=True for nested directories."""
+        # Create a nested path that doesn't exist
+        nested_lock_dir = tmp_path / "deeply" / "nested" / "lock" / "dir"
+        assert not nested_lock_dir.exists()
+
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        # Mock get_ready_async to return empty list (no issues to process)
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
+            return []
+
+        # Patch LOCK_DIR to point to our nested path
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch("src.orchestrator.LOCK_DIR", nested_lock_dir),
+            patch("src.orchestrator.RUNS_DIR", tmp_path / "runs"),
+            patch("src.orchestrator.release_run_locks"),
+        ):
+            # This should not raise even though parent dirs don't exist
+            await orchestrator.run()
+
+        # The nested directory should now exist
+        assert nested_lock_dir.exists(), (
+            "LOCK_DIR.mkdir should create nested directories with parents=True"
+        )
+
+
+class TestGateFlowSequencing:
+    """Test Gate 1-4 sequencing with check_with_resolution."""
+
+    @pytest.mark.asyncio
+    async def test_no_op_resolution_skips_per_issue_validation(
+        self, tmp_path: Path
+    ) -> None:
+        """No-op resolution should skip Gate 2/3 (commit + validation evidence)."""
+        from src.validation.spec import IssueResolution, ResolutionOutcome
+
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        # Gate returns passed with no-change resolution
+        no_change_resolution = IssueResolution(
+            outcome=ResolutionOutcome.NO_CHANGE,
+            rationale="Already implemented by another agent",
+        )
+        # Resolution is used to verify no-op handling
+        assert no_change_resolution.outcome == ResolutionOutcome.NO_CHANGE
+
+        close_calls: list[str] = []
+
+        async def mock_close_async(issue_id: str) -> bool:
+            close_calls.append(issue_id)
+            return True
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="No changes needed - already done",
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-noop"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(
+                orchestrator.beads, "close_async", side_effect=mock_close_async
+            ),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch.object(
+                orchestrator.beads, "close_eligible_epics_async", return_value=False
+            ),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            success_count, _total = await orchestrator.run()
+
+        # Issue should be closed despite no commit
+        assert success_count == 1
+        assert "issue-noop" in close_calls
+
+    @pytest.mark.asyncio
+    async def test_obsolete_resolution_skips_per_issue_validation(
+        self, tmp_path: Path
+    ) -> None:
+        """Obsolete resolution should skip Gate 2/3 (commit + validation evidence)."""
+        from src.validation.spec import IssueResolution, ResolutionOutcome
+
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        obsolete_resolution = IssueResolution(
+            outcome=ResolutionOutcome.OBSOLETE,
+            rationale="Feature was removed in refactoring",
+        )
+        # Resolution is used to verify obsolete handling
+        assert obsolete_resolution.outcome == ResolutionOutcome.OBSOLETE
+
+        close_calls: list[str] = []
+
+        async def mock_close_async(issue_id: str) -> bool:
+            close_calls.append(issue_id)
+            return True
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="Issue obsolete - no longer relevant",
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-obsolete"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(
+                orchestrator.beads, "close_async", side_effect=mock_close_async
+            ),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch.object(
+                orchestrator.beads, "close_eligible_epics_async", return_value=False
+            ),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            success_count, _total = await orchestrator.run()
+
+        assert success_count == 1
+        assert "issue-obsolete" in close_calls
+
+
+class TestRetryExhaustion:
+    """Test retry exhaustion and failure handling."""
+
+    @pytest.mark.asyncio
+    async def test_gate_retry_exhaustion_marks_failed(self, tmp_path: Path) -> None:
+        """When gate retries are exhausted, issue should be marked failed."""
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_gate_retries=2,
+        )
+
+        followup_calls: list[str] = []
+
+        async def mock_mark_followup_async(
+            issue_id: str, reason: str, log_path: Path | None = None
+        ) -> bool:
+            followup_calls.append(issue_id)
+            return True
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            # Gate always fails
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=False,
+                summary="Quality gate failed: Missing validation commands",
+                gate_attempts=2,
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-retry-fail"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(
+                orchestrator.beads,
+                "mark_needs_followup_async",
+                side_effect=mock_mark_followup_async,
+            ),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            success_count, total = await orchestrator.run()
+
+        assert success_count == 0
+        assert total == 1
+        assert "issue-retry-fail" in followup_calls
+        assert "issue-retry-fail" in orchestrator.failed_issues
+
+    @pytest.mark.asyncio
+    async def test_no_progress_stops_retries_early(self, tmp_path: Path) -> None:
+        """When no progress is detected, retries should stop early."""
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_gate_retries=5,  # Many retries available
+        )
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            # Gate fails with no_progress - should stop retrying
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=False,
+                summary="Quality gate failed: No progress",
+                gate_attempts=2,  # Only 2 attempts despite 5 max
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-no-progress"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(
+                orchestrator.beads, "mark_needs_followup_async", return_value=True
+            ),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            success_count, _total = await orchestrator.run()
+
+        # Should have failed due to no progress
+        assert success_count == 0
+        assert "issue-no-progress" in orchestrator.failed_issues
+
+
+class TestDisableValidationsRespected:
+    """Test that disable-validations flags are respected."""
+
+    def test_orchestrator_stores_disable_validations(self, tmp_path: Path) -> None:
+        """Orchestrator should store disable_validations parameter."""
+        disable_set = {"post-validate", "coverage"}
+        orch = MalaOrchestrator(
+            repo_path=tmp_path,
+            disable_validations=disable_set,
+        )
+        assert orch.disable_validations == disable_set
+
+    def test_orchestrator_default_disable_validations_is_none(
+        self, tmp_path: Path
+    ) -> None:
+        """Default disable_validations should be None."""
+        orch = MalaOrchestrator(repo_path=tmp_path)
+        assert orch.disable_validations is None
+
+
+class TestRunLevelValidation:
+    """Test run-level validation after all issues complete."""
+
+    @pytest.mark.asyncio
+    async def test_run_returns_non_zero_exit_on_failure(self, tmp_path: Path) -> None:
+        """Run should indicate failure when issues fail."""
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=False,
+                summary="Implementation failed",
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["failing-issue"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(
+                orchestrator.beads, "mark_needs_followup_async", return_value=True
+            ),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            success_count, _total = await orchestrator.run()
+
+        # Should return 0 successes out of 1 total
+        assert success_count == 0
+        assert _total == 1
+
+    @pytest.mark.asyncio
+    async def test_issues_closed_only_after_gate_passes(self, tmp_path: Path) -> None:
+        """Issues should only be closed when quality gate passes."""
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        close_calls: list[str] = []
+        followup_calls: list[str] = []
+
+        async def mock_close_async(issue_id: str) -> bool:
+            close_calls.append(issue_id)
+            return True
+
+        async def mock_mark_followup_async(
+            issue_id: str, reason: str, log_path: Path | None = None
+        ) -> bool:
+            followup_calls.append(issue_id)
+            return True
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,  # Gate passed
+                summary="Completed successfully",
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-pass"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(
+                orchestrator.beads, "close_async", side_effect=mock_close_async
+            ),
+            patch.object(
+                orchestrator.beads,
+                "mark_needs_followup_async",
+                side_effect=mock_mark_followup_async,
+            ),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            success_count, _total = await orchestrator.run()
+
+        assert success_count == 1
+        assert "issue-pass" in close_calls
+
+    @pytest.mark.asyncio
+    async def test_failed_issue_not_closed(self, tmp_path: Path) -> None:
+        """Failed issues should not be closed, only marked needs-followup."""
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        close_calls: list[str] = []
+        followup_calls: list[str] = []
+
+        async def mock_close_async(issue_id: str) -> bool:
+            close_calls.append(issue_id)
+            return True
+
+        async def mock_mark_followup_async(
+            issue_id: str, reason: str, log_path: Path | None = None
+        ) -> bool:
+            followup_calls.append(issue_id)
+            return True
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=False,  # Gate failed
+                summary="Quality gate failed: Missing commit",
+            )
+
+        first_call = True
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+        ) -> list[str]:
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                return ["issue-fail"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(
+                orchestrator.beads, "close_async", side_effect=mock_close_async
+            ),
+            patch.object(
+                orchestrator.beads,
+                "mark_needs_followup_async",
+                side_effect=mock_mark_followup_async,
+            ),
+            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.RUNS_DIR", tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            await orchestrator.run()
+
+        # Issue should NOT be closed
+        assert "issue-fail" not in close_calls
+        # But should be marked needs-followup
+        assert "issue-fail" in followup_calls

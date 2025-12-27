@@ -37,6 +37,10 @@ from .tools.locking import (
     cleanup_agent_locks,
     make_stop_hook,
 )
+from .validation.spec import (
+    ValidationScope,
+    build_validation_spec,
+)
 
 
 # Version (from package metadata)
@@ -218,6 +222,11 @@ class MalaOrchestrator:
     ) -> tuple[GateResult, int]:
         """Run quality gate check with attempt-scoped evidence.
 
+        Uses check_with_resolution to properly handle:
+        - Normal commits with validation evidence
+        - No-op resolutions (ISSUE_NO_CHANGE marker)
+        - Obsolete resolutions (ISSUE_OBSOLETE marker)
+
         Args:
             issue_id: The issue being checked.
             log_path: Path to the session log file.
@@ -226,52 +235,53 @@ class MalaOrchestrator:
         Returns:
             Tuple of (GateResult, new_log_offset).
         """
-        # Check for matching commit (using baseline to reject stale commits)
-        commit_result = self.quality_gate.check_commit_exists(
-            issue_id, baseline_timestamp=retry_state.baseline_timestamp
+        # Build a per-issue validation spec to derive expected evidence
+        spec = build_validation_spec(
+            scope=ValidationScope.PER_ISSUE,
+            disable_validations=self.disable_validations,
+            coverage_threshold=self.coverage_threshold,
+            lint_only_for_docs=self.lint_only_for_docs,
         )
 
-        # Parse validation evidence from the current attempt's log offset
-        evidence, new_offset = self.quality_gate.parse_validation_evidence_from_offset(
+        # Use check_with_resolution which handles no-op/obsolete cases
+        gate_result = self.quality_gate.check_with_resolution(
+            issue_id=issue_id,
+            log_path=log_path,
+            baseline_timestamp=retry_state.baseline_timestamp,
+            log_offset=retry_state.log_offset,
+            spec=spec,
+        )
+
+        # Calculate new offset for next attempt
+        _, new_offset = self.quality_gate.parse_validation_evidence_from_offset(
             log_path, offset=retry_state.log_offset
         )
 
-        failure_reasons: list[str] = []
-
-        if not commit_result.exists:
-            failure_reasons.append(
-                f"No commit with bd-{issue_id} found after run baseline "
-                f"(stale commits from previous runs are rejected)"
-            )
-
-        if not evidence.has_minimum_validation():
-            missing = evidence.missing_commands()
-            failure_reasons.append(f"Missing validation commands: {', '.join(missing)}")
-
         # Check for no-progress condition (same commit, no new evidence)
-        no_progress = False
-        if retry_state.attempt > 1:
+        # Only check if this is a retry and the gate didn't already pass
+        if retry_state.attempt > 1 and not gate_result.passed:
             no_progress = self.quality_gate.check_no_progress(
                 log_path,
                 retry_state.log_offset,
                 retry_state.previous_commit_hash,
-                commit_result.commit_hash,
+                gate_result.commit_hash,
             )
             if no_progress:
-                failure_reasons.append(
+                # Add no-progress to failure reasons and set flag
+                updated_reasons = list(gate_result.failure_reasons)
+                updated_reasons.append(
                     "No progress: commit unchanged and no new validation evidence"
                 )
+                gate_result = GateResult(
+                    passed=False,
+                    failure_reasons=updated_reasons,
+                    commit_hash=gate_result.commit_hash,
+                    validation_evidence=gate_result.validation_evidence,
+                    no_progress=True,
+                    resolution=gate_result.resolution,
+                )
 
-        return (
-            GateResult(
-                passed=len(failure_reasons) == 0,
-                failure_reasons=failure_reasons,
-                commit_hash=commit_result.commit_hash,
-                validation_evidence=evidence,
-                no_progress=no_progress,
-            ),
-            new_offset,
-        )
+        return (gate_result, new_offset)
 
     async def run_implementer(self, issue_id: str) -> IssueResult:
         """Run implementer agent for a single issue with gate retry support."""
