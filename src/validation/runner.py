@@ -688,8 +688,9 @@ def _check_e2e_prereqs(env: dict[str, str]) -> str | None:
         return "E2E prereq missing: mala CLI not found in PATH"
     if not shutil.which("bd"):
         return "E2E prereq missing: bd CLI not found in PATH"
-    if not env.get("MORPH_API_KEY"):
-        return "E2E prereq missing: MORPH_API_KEY not set"
+    # Note: MORPH_API_KEY is intentionally NOT checked here.
+    # E2E validation should not fail just because the key is missing.
+    # Morph-specific tests will skip when the key is absent.
     return None
 
 
