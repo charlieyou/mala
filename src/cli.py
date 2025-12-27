@@ -42,6 +42,20 @@ from .tools.locking import LOCK_DIR
 from .orchestrator import MalaOrchestrator
 
 
+# Valid values for --disable-validations flag
+VALID_DISABLE_VALUES = frozenset(
+    {
+        "post-validate",
+        "run-level-validate",
+        "slow-tests",
+        "coverage",
+        "e2e",
+        "codex-review",
+        "followup-on-run-validate-fail",
+    }
+)
+
+
 app = typer.Typer(
     name="mala",
     help="Parallel issue processing with Claude Agent SDK",
@@ -121,6 +135,38 @@ def run(
             help="Enable/disable codex review step (default: enabled)",
         ),
     ] = True,
+    disable_validations: Annotated[
+        str | None,
+        typer.Option(
+            "--disable-validations",
+            help=(
+                "Comma-separated list of validations to disable. "
+                "Valid values: post-validate, run-level-validate, slow-tests, "
+                "coverage, e2e, codex-review, followup-on-run-validate-fail"
+            ),
+        ),
+    ] = None,
+    coverage_threshold: Annotated[
+        float,
+        typer.Option(
+            "--coverage-threshold",
+            help="Minimum coverage percentage (default: 85.0)",
+        ),
+    ] = 85.0,
+    lint_only_for_docs: Annotated[
+        bool,
+        typer.Option(
+            "--lint-only-for-docs/--no-lint-only-for-docs",
+            help="Skip tests for docs-only changes, run only lint/format (default: disabled)",
+        ),
+    ] = False,
+    skip_e2e_if_no_keys: Annotated[
+        bool,
+        typer.Option(
+            "--skip-e2e-if-no-keys/--no-skip-e2e-if-no-keys",
+            help="Skip E2E tests if MORPH_API_KEY is not set (default: disabled)",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -147,6 +193,30 @@ def run(
             log("✗", "Invalid --only value: no valid issue IDs found", Colors.RED)
             raise typer.Exit(1)
 
+    # Parse --disable-validations flag into a set
+    disable_set: set[str] | None = None
+    if disable_validations:
+        disable_set = {
+            val.strip() for val in disable_validations.split(",") if val.strip()
+        }
+        if not disable_set:
+            log(
+                "✗",
+                "Invalid --disable-validations value: no valid values found",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+        # Validate against known values
+        unknown = disable_set - VALID_DISABLE_VALUES
+        if unknown:
+            log(
+                "✗",
+                f"Unknown --disable-validations value(s): {', '.join(sorted(unknown))}. "
+                f"Valid values: {', '.join(sorted(VALID_DISABLE_VALUES))}",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+
     # Ensure user config directory exists
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -168,6 +238,10 @@ def run(
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         codex_review=codex_review,
+        disable_validations=disable_set,
+        coverage_threshold=coverage_threshold,
+        lint_only_for_docs=lint_only_for_docs,
+        skip_e2e_if_no_keys=skip_e2e_if_no_keys,
     )
 
     success_count, total = asyncio.run(orchestrator.run())

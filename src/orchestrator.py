@@ -150,6 +150,10 @@ class MalaOrchestrator:
         max_gate_retries: int = 3,
         max_review_retries: int = 2,
         codex_review: bool = False,
+        disable_validations: set[str] | None = None,
+        coverage_threshold: float = 85.0,
+        lint_only_for_docs: bool = False,
+        skip_e2e_if_no_keys: bool = False,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
@@ -161,6 +165,10 @@ class MalaOrchestrator:
         self.max_gate_retries = max_gate_retries
         self.max_review_retries = max_review_retries
         self.codex_review = codex_review
+        self.disable_validations = disable_validations
+        self.coverage_threshold = coverage_threshold
+        self.lint_only_for_docs = lint_only_for_docs
+        self.skip_e2e_if_no_keys = skip_e2e_if_no_keys
 
         self.active_tasks: dict[str, asyncio.Task] = {}
         self.agent_ids: dict[str, str] = {}
@@ -278,8 +286,9 @@ class MalaOrchestrator:
         success = False
         gate_result: GateResult | None = None
 
-        # Set up environment with lock scripts in PATH
+        # Set up environment: inherit os.environ, then override with lock scripts/vars
         agent_env = {
+            **os.environ,
             "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
             "LOCK_DIR": str(LOCK_DIR),
             "AGENT_ID": agent_id,
@@ -666,7 +675,7 @@ class MalaOrchestrator:
         print()
 
         # Setup directories
-        LOCK_DIR.mkdir(exist_ok=True)
+        LOCK_DIR.mkdir(parents=True, exist_ok=True)
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
         # Create run metadata tracker

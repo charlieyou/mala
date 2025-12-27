@@ -166,3 +166,141 @@ def test_status_outputs_summary(
     assert "mala status" in output
     assert "active locks" in output
     assert "run metadata files" in output
+
+
+def test_run_disable_validations_valid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that valid --disable-validations values are accepted and passed to orchestrator."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            disable_validations="coverage,slow-tests,e2e",
+            verbose=False,
+        )
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_kwargs is not None
+    assert DummyOrchestrator.last_kwargs["disable_validations"] == {
+        "coverage",
+        "slow-tests",
+        "e2e",
+    }
+
+
+def test_run_disable_validations_invalid_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that unknown --disable-validations values produce a clear CLI error."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    logs: list[tuple[object, ...]] = []
+
+    def _log(*args: object, **_kwargs: object) -> None:
+        logs.append(args)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "log", _log)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            disable_validations="coverage,invalid-value,bad-option",
+            verbose=False,
+        )
+
+    assert excinfo.value.exit_code == 1
+    assert logs
+    # Check error message mentions the unknown values
+    error_msg = str(logs[-1])
+    assert "Unknown --disable-validations" in error_msg
+    assert "bad-option" in error_msg
+    assert "invalid-value" in error_msg
+
+
+def test_run_disable_validations_empty_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that empty --disable-validations value produces error."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    logs: list[tuple[object, ...]] = []
+
+    def _log(*args: object, **_kwargs: object) -> None:
+        logs.append(args)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "log", _log)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            disable_validations=" , , ",
+            verbose=False,
+        )
+
+    assert excinfo.value.exit_code == 1
+
+
+def test_run_validation_flags_passed_to_orchestrator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that all validation flags are correctly passed to orchestrator."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            disable_validations="post-validate",
+            coverage_threshold=72.5,
+            lint_only_for_docs=True,
+            skip_e2e_if_no_keys=True,
+            verbose=False,
+        )
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_kwargs is not None
+    assert DummyOrchestrator.last_kwargs["disable_validations"] == {"post-validate"}
+    assert DummyOrchestrator.last_kwargs["coverage_threshold"] == 72.5
+    assert DummyOrchestrator.last_kwargs["lint_only_for_docs"] is True
+    assert DummyOrchestrator.last_kwargs["skip_e2e_if_no_keys"] is True
+
+
+def test_run_validation_flags_defaults(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that validation flags have correct defaults."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit):
+        cli.run(repo_path=tmp_path, verbose=False)
+
+    assert DummyOrchestrator.last_kwargs is not None
+    assert DummyOrchestrator.last_kwargs["disable_validations"] is None
+    assert DummyOrchestrator.last_kwargs["coverage_threshold"] == 85.0
+    assert DummyOrchestrator.last_kwargs["lint_only_for_docs"] is False
+    assert DummyOrchestrator.last_kwargs["skip_e2e_if_no_keys"] is False
