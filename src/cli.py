@@ -122,13 +122,6 @@ def run(
             help="Maximum codex review retry attempts per issue (default: 5)",
         ),
     ] = 5,
-    codex_review: Annotated[
-        bool,
-        typer.Option(
-            "--codex-review/--no-codex-review",
-            help="Enable/disable codex review step (default: enabled)",
-        ),
-    ] = True,
     disable_validations: Annotated[
         str | None,
         typer.Option(
@@ -147,20 +140,6 @@ def run(
             help="Minimum coverage percentage, 0-100 (default: 85.0)",
         ),
     ] = 85.0,
-    lint_only_for_docs: Annotated[
-        bool,
-        typer.Option(
-            "--lint-only-for-docs/--no-lint-only-for-docs",
-            help="Skip tests for docs-only changes, run only lint/format (default: disabled)",
-        ),
-    ] = False,
-    skip_e2e_if_no_keys: Annotated[
-        bool,
-        typer.Option(
-            "--skip-e2e-if-no-keys/--no-skip-e2e-if-no-keys",
-            help="Skip E2E fixture tests when required API keys are unavailable (default: disabled)",
-        ),
-    ] = False,
     wip: Annotated[
         bool,
         typer.Option(
@@ -254,11 +233,8 @@ def run(
         braintrust_enabled=_braintrust_early_setup_done,
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
-        codex_review=codex_review,
         disable_validations=disable_set,
         coverage_threshold=coverage_threshold,
-        lint_only_for_docs=lint_only_for_docs,
-        skip_e2e_if_no_keys=skip_e2e_if_no_keys,
         morph_enabled=morph_enabled,
         prioritize_wip=wip,
     )

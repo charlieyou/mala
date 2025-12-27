@@ -144,7 +144,6 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
             only="id-1,id-2",
             max_gate_retries=4,
             max_review_retries=5,
-            codex_review=False,
             verbose=True,
         )
 
@@ -328,7 +327,7 @@ def test_run_disable_validations_empty_value(
 def test_run_validation_flags_passed_to_orchestrator(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that all validation flags are correctly passed to orchestrator."""
+    """Test that validation flags are correctly passed to orchestrator."""
     cli = _reload_cli(monkeypatch)
     monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
@@ -342,8 +341,6 @@ def test_run_validation_flags_passed_to_orchestrator(
             repo_path=tmp_path,
             disable_validations="post-validate",
             coverage_threshold=72.5,
-            lint_only_for_docs=True,
-            skip_e2e_if_no_keys=True,
             verbose=False,
         )
 
@@ -351,8 +348,6 @@ def test_run_validation_flags_passed_to_orchestrator(
     assert DummyOrchestrator.last_kwargs is not None
     assert DummyOrchestrator.last_kwargs["disable_validations"] == {"post-validate"}
     assert DummyOrchestrator.last_kwargs["coverage_threshold"] == 72.5
-    assert DummyOrchestrator.last_kwargs["lint_only_for_docs"] is True
-    assert DummyOrchestrator.last_kwargs["skip_e2e_if_no_keys"] is True
 
 
 def test_run_validation_flags_defaults(
@@ -373,8 +368,6 @@ def test_run_validation_flags_defaults(
     assert DummyOrchestrator.last_kwargs is not None
     assert DummyOrchestrator.last_kwargs["disable_validations"] is None
     assert DummyOrchestrator.last_kwargs["coverage_threshold"] == 85.0
-    assert DummyOrchestrator.last_kwargs["lint_only_for_docs"] is False
-    assert DummyOrchestrator.last_kwargs["skip_e2e_if_no_keys"] is False
     assert DummyOrchestrator.last_kwargs["prioritize_wip"] is False
 
 
@@ -396,6 +389,30 @@ def test_run_wip_flag_passed_to_orchestrator(
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_kwargs is not None
     assert DummyOrchestrator.last_kwargs["prioritize_wip"] is True
+
+
+def test_run_codex_review_disabled_via_disable_validations(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that codex-review can be disabled via --disable-validations."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            disable_validations="codex-review",
+            verbose=False,
+        )
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_kwargs is not None
+    assert DummyOrchestrator.last_kwargs["disable_validations"] == {"codex-review"}
 
 
 def test_run_coverage_threshold_invalid_negative(

@@ -163,11 +163,8 @@ class MalaOrchestrator:
         braintrust_enabled: bool = False,
         max_gate_retries: int = 3,
         max_review_retries: int = 2,
-        codex_review: bool = False,
         disable_validations: set[str] | None = None,
         coverage_threshold: float = 85.0,
-        lint_only_for_docs: bool = False,
-        skip_e2e_if_no_keys: bool = False,
         morph_enabled: bool = True,
         prioritize_wip: bool = False,
     ):
@@ -180,11 +177,8 @@ class MalaOrchestrator:
         self.braintrust_enabled = braintrust_enabled
         self.max_gate_retries = max_gate_retries
         self.max_review_retries = max_review_retries
-        self.codex_review = codex_review
         self.disable_validations = disable_validations
         self.coverage_threshold = coverage_threshold
-        self.lint_only_for_docs = lint_only_for_docs
-        self.skip_e2e_if_no_keys = skip_e2e_if_no_keys
         self.morph_enabled = morph_enabled
         self.prioritize_wip = prioritize_wip
 
@@ -242,7 +236,6 @@ class MalaOrchestrator:
             scope=ValidationScope.PER_ISSUE,
             disable_validations=self.disable_validations,
             coverage_threshold=self.coverage_threshold,
-            lint_only_for_docs=self.lint_only_for_docs,
         )
 
         # Use check_with_resolution which handles no-op/obsolete cases
@@ -436,8 +429,14 @@ class MalaOrchestrator:
 
                                         if gate_result.passed:
                                             # Gate passed - run Codex review if enabled
+                                            codex_review_enabled = (
+                                                "codex-review"
+                                                not in (
+                                                    self.disable_validations or set()
+                                                )
+                                            )
                                             if (
-                                                self.codex_review
+                                                codex_review_enabled
                                                 and gate_result.commit_hash
                                             ):
                                                 retry_state.review_attempt += 1
@@ -655,7 +654,8 @@ class MalaOrchestrator:
             Colors.GRAY,
             dim=True,
         )
-        if self.codex_review:
+        codex_review_enabled = "codex-review" not in (self.disable_validations or set())
+        if codex_review_enabled:
             log(
                 "◐",
                 f"codex-review: enabled (max-retries: {self.max_review_retries})",
@@ -740,7 +740,7 @@ class MalaOrchestrator:
             braintrust_enabled=self.braintrust_enabled,
             max_gate_retries=self.max_gate_retries,
             max_review_retries=self.max_review_retries,
-            codex_review=self.codex_review,
+            codex_review="codex-review" not in (self.disable_validations or set()),
         )
         run_metadata = RunMetadata(self.repo_path, run_config, __version__)
 
