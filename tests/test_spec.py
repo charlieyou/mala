@@ -94,7 +94,7 @@ class TestCoverageConfig:
     def test_default_values(self) -> None:
         config = CoverageConfig()
         assert config.enabled is True
-        assert config.min_percent == 85.0
+        assert config.min_percent is None  # Default is None (no-decrease mode)
         assert config.branch is True
         assert config.report_path is None
 
@@ -108,6 +108,11 @@ class TestCoverageConfig:
         assert config.min_percent == 90.0
         assert config.branch is False
         assert config.report_path == Path("/tmp/coverage.xml")
+
+    def test_none_min_percent_is_no_decrease_mode(self) -> None:
+        """When min_percent is None, coverage uses no-decrease baseline mode."""
+        config = CoverageConfig(enabled=True, min_percent=None)
+        assert config.min_percent is None
 
 
 class TestE2EConfig:
@@ -332,7 +337,7 @@ class TestBuildValidationSpec:
     def test_default_spec_coverage_enabled(self) -> None:
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         assert spec.coverage.enabled is True
-        assert spec.coverage.min_percent == 85.0
+        assert spec.coverage.min_percent is None  # Default is None (no-decrease mode)
 
     def test_default_spec_e2e_enabled_for_run_level(self) -> None:
         spec = build_validation_spec(scope=ValidationScope.RUN_LEVEL)
@@ -435,7 +440,8 @@ class TestBuildValidationSpec:
         assert "--cov=src" in cmd_str
         assert "--cov-report=xml" in cmd_str
         assert "--cov-branch" in cmd_str
-        assert f"--cov-fail-under={spec.coverage.min_percent}" in cmd_str
+        # Default threshold is None, so --cov-fail-under=0 is used
+        assert "--cov-fail-under=0" in cmd_str
 
     def test_pytest_excludes_coverage_flags_when_coverage_disabled(self) -> None:
         """When coverage is disabled, pytest command should not include --cov flags."""
@@ -465,6 +471,38 @@ class TestBuildValidationSpec:
 
         cmd_str = " ".join(pytest_cmd.command)
         assert "--cov-fail-under=92.5" in cmd_str
+
+    def test_none_threshold_uses_cov_fail_under_zero(self) -> None:
+        """When threshold is None (no-decrease mode), pytest uses --cov-fail-under=0."""
+        spec = build_validation_spec(
+            scope=ValidationScope.PER_ISSUE,
+            coverage_threshold=None,
+        )
+
+        pytest_cmd = next((cmd for cmd in spec.commands if cmd.name == "pytest"), None)
+        assert pytest_cmd is not None
+        assert spec.coverage.min_percent is None
+
+        cmd_str = " ".join(pytest_cmd.command)
+        # --cov-fail-under=0 is used to override pyproject.toml threshold
+        assert "--cov-fail-under=0" in cmd_str
+        # Should NOT have any other threshold value
+        assert "--cov-fail-under=85" not in cmd_str
+
+    def test_explicit_threshold_uses_that_value(self) -> None:
+        """When threshold is explicitly provided, pytest uses that value."""
+        spec = build_validation_spec(
+            scope=ValidationScope.PER_ISSUE,
+            coverage_threshold=80.0,
+        )
+
+        pytest_cmd = next((cmd for cmd in spec.commands if cmd.name == "pytest"), None)
+        assert pytest_cmd is not None
+        assert spec.coverage.min_percent == 80.0
+
+        cmd_str = " ".join(pytest_cmd.command)
+        assert "--cov-fail-under=80.0" in cmd_str
+        assert "--cov-fail-under=0" not in cmd_str
 
 
 class TestClassifyChangesMultiple:

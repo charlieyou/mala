@@ -85,13 +85,15 @@ class CoverageConfig:
 
     Attributes:
         enabled: Whether coverage is enabled.
-        min_percent: Minimum coverage percentage (default 85.0).
+        min_percent: Minimum coverage percentage. If None, uses "no decrease"
+            mode where coverage must not drop below the baseline stored in
+            .coverage-baseline.json.
         branch: Whether to include branch coverage.
         report_path: Path to coverage report file.
     """
 
     enabled: bool = True
-    min_percent: float = 85.0
+    min_percent: float | None = None
     branch: bool = True
     report_path: Path | None = None
 
@@ -287,7 +289,7 @@ def classify_change(file_path: str) -> Literal["code", "docs"]:
 def build_validation_spec(
     scope: ValidationScope,
     disable_validations: set[str] | None = None,
-    coverage_threshold: float = 85.0,
+    coverage_threshold: float | None = None,
     repo_path: Path | None = None,
 ) -> ValidationSpec:
     """Build a ValidationSpec from CLI inputs.
@@ -311,7 +313,9 @@ def build_validation_spec(
     Args:
         scope: Whether this is per-issue or run-level validation.
         disable_validations: Set of validation types to disable.
-        coverage_threshold: Minimum coverage percentage.
+        coverage_threshold: Minimum coverage percentage. If None, uses "no
+            decrease" mode (baseline comparison) and passes --cov-fail-under=0
+            to override any pyproject.toml threshold.
         repo_path: Path to the target repository. If provided, enables
             repo-type detection to conditionally include Python commands.
 
@@ -387,9 +391,15 @@ def build_validation_spec(
                     "--cov=src",
                     "--cov-report=xml",
                     "--cov-branch",
-                    f"--cov-fail-under={coverage_threshold}",
                 ]
             )
+            # When threshold is None (no-decrease mode), use --cov-fail-under=0
+            # to override pyproject.toml's threshold. Baseline comparison is
+            # handled by spec_runner.py.
+            if coverage_threshold is None:
+                pytest_cmd.append("--cov-fail-under=0")
+            else:
+                pytest_cmd.append(f"--cov-fail-under={coverage_threshold}")
 
         # Add slow tests unless disabled
         if "slow-tests" not in disable:

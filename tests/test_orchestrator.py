@@ -21,6 +21,7 @@ from claude_agent_sdk.types import ResultMessage
 
 from src.beads_client import BeadsClient, SubprocessResult
 from src.orchestrator import IMPLEMENTER_PROMPT_TEMPLATE, IssueResult, MalaOrchestrator
+from src.validation.command_runner import CommandResult
 
 
 @pytest.fixture
@@ -54,6 +55,18 @@ def make_subprocess_result(
     """Create a mock subprocess result."""
     return subprocess.CompletedProcess(
         args=[],
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+
+def make_command_result(
+    returncode: int = 0, stdout: str = "", stderr: str = ""
+) -> CommandResult:
+    """Create a mock CommandResult for run_command mocking."""
+    return CommandResult(
+        command=[],
         returncode=returncode,
         stdout=stdout,
         stderr=stderr,
@@ -925,8 +938,8 @@ class TestQualityGateCommitCheck:
 
         gate = QualityGate(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = make_subprocess_result(
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = make_command_result(
                 stdout="abc1234 bd-issue-123: Fix the bug\n"
             )
             result = gate.check_commit_exists("issue-123")
@@ -940,8 +953,8 @@ class TestQualityGateCommitCheck:
 
         gate = QualityGate(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = make_subprocess_result(stdout="")
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = make_command_result(stdout="")
             result = gate.check_commit_exists("issue-123")
 
         assert result.exists is False
@@ -953,8 +966,8 @@ class TestQualityGateCommitCheck:
 
         gate = QualityGate(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = make_subprocess_result(
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = make_command_result(
                 returncode=1, stderr="fatal: not a git repository"
             )
             result = gate.check_commit_exists("issue-123")
@@ -967,8 +980,8 @@ class TestQualityGateCommitCheck:
 
         gate = QualityGate(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = make_subprocess_result(
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = make_command_result(
                 stdout="abc1234 bd-issue-123: Long-running work\n"
             )
             result = gate.check_commit_exists("issue-123")
@@ -1018,8 +1031,8 @@ class TestQualityGateFullCheck:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = make_subprocess_result(
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = make_command_result(
                 stdout="abc1234 bd-issue-123: Implement feature\n"
             )
             result = gate.check("issue-123", log_path)
@@ -1053,8 +1066,8 @@ class TestQualityGateFullCheck:
             + "\n"
         )
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = make_subprocess_result(stdout="")
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = make_command_result(stdout="")
             result = gate.check("issue-123", log_path)
 
         assert result.passed is False
@@ -1086,8 +1099,8 @@ class TestQualityGateFullCheck:
             + "\n"
         )
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = make_subprocess_result(stdout="")
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = make_command_result(stdout="")
             result = gate.check("issue-123", log_path)
 
         assert result.passed is False
@@ -1103,8 +1116,8 @@ class TestQualityGateFullCheck:
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = make_subprocess_result(
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = make_command_result(
                 stdout="abc1234 bd-issue-123: Implement feature\n"
             )
             result = gate.check("issue-123", log_path)
@@ -2398,8 +2411,8 @@ class TestValidationResultMetadata:
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch(
-                "subprocess.run",
-                return_value=make_subprocess_result(
+                "src.quality_gate.run_command",
+                return_value=make_command_result(
                     stdout="abc1234 bd-issue-with-validation: Implement feature\n"
                 ),
             ),
@@ -2497,8 +2510,8 @@ class TestValidationResultMetadata:
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch(
-                "subprocess.run",
-                return_value=make_subprocess_result(
+                "src.quality_gate.run_command",
+                return_value=make_command_result(
                     stdout="abc1234 bd-issue-run-spec: Implement feature\n"
                 ),
             ),
