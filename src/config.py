@@ -162,8 +162,10 @@ class MalaConfig:
 
         Checks:
             - Feature flags have required API keys
-            - Path directories can be created (or already exist)
             - Paths are absolute
+
+        Note: Parent directories are not checked since ensure_directories()
+        creates them with parents=True. This allows first-run on fresh machines.
 
         Returns:
             List of error messages. Empty list if configuration is valid.
@@ -192,15 +194,6 @@ class MalaConfig:
             errors.append(
                 f"claude_config_dir should be an absolute path, got: {self.claude_config_dir}"
             )
-
-        # Check parent directories exist (paths will be created at runtime)
-        for name, path in [
-            ("runs_dir", self.runs_dir),
-            ("lock_dir", self.lock_dir),
-        ]:
-            parent = path.parent
-            if not parent.exists():
-                errors.append(f"{name} parent directory does not exist: {parent}")
 
         return errors
 

@@ -233,23 +233,10 @@ class TestMalaConfigValidate:
         )
         errors = config.validate()
         # Relative paths produce "should be absolute" errors
-        # Additionally, parent directory checks may fail for relative paths
-        assert len(errors) >= 3
+        assert len(errors) == 3
         assert any("runs_dir" in e and "absolute" in e for e in errors)
         assert any("lock_dir" in e and "absolute" in e for e in errors)
         assert any("claude_config_dir" in e and "absolute" in e for e in errors)
-
-    def test_validate_nonexistent_parent_produces_error(self, tmp_path: Path) -> None:
-        """Nonexistent parent directory produces validation error."""
-        config = MalaConfig(
-            runs_dir=tmp_path / "nonexistent" / "subdir" / "runs",
-            lock_dir=tmp_path / "locks",  # Valid
-        )
-        errors = config.validate()
-        # runs_dir parent doesn't exist
-        assert len(errors) == 1
-        assert "runs_dir" in errors[0]
-        assert "parent directory" in errors[0]
 
 
 class TestMalaConfigEnsureDirectories:

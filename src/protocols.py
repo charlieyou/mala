@@ -29,6 +29,11 @@ if TYPE_CHECKING:
     from .validation.spec import ValidationSpec
 
 
+# Type alias for review result (references existing CodexReviewResult)
+# This allows protocols to use a cleaner name while maintaining compatibility
+ReviewResult = "CodexReviewResult"
+
+
 @runtime_checkable
 class IssueProvider(Protocol):
     """Protocol for issue tracking operations.
@@ -41,13 +46,13 @@ class IssueProvider(Protocol):
     Test implementations can use in-memory state for isolation.
 
     Methods:
-        get_ready_async: Fetch list of ready issue IDs, sorted by priority.
-        claim_async: Claim an issue by setting status to in_progress.
-        close_async: Close an issue by setting status to closed.
-        mark_needs_followup_async: Mark an issue as needing follow-up.
+        get_ready: Fetch list of ready issue IDs, sorted by priority.
+        claim: Claim an issue by setting status to in_progress.
+        close: Close an issue by setting status to closed.
+        mark_needs_followup: Mark an issue as needing follow-up.
     """
 
-    async def get_ready_async(
+    async def get_ready(
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
@@ -71,7 +76,7 @@ class IssueProvider(Protocol):
         """
         ...
 
-    async def claim_async(self, issue_id: str) -> bool:
+    async def claim(self, issue_id: str) -> bool:
         """Claim an issue by setting status to in_progress.
 
         Args:
@@ -82,7 +87,7 @@ class IssueProvider(Protocol):
         """
         ...
 
-    async def close_async(self, issue_id: str) -> bool:
+    async def close(self, issue_id: str) -> bool:
         """Close an issue by setting status to closed.
 
         Args:
@@ -93,7 +98,7 @@ class IssueProvider(Protocol):
         """
         ...
 
-    async def mark_needs_followup_async(
+    async def mark_needs_followup(
         self, issue_id: str, reason: str, log_path: Path | None = None
     ) -> bool:
         """Mark an issue as needing follow-up.
@@ -119,15 +124,14 @@ class CodeReviewer(Protocol):
     Provides a method for reviewing commits and returning structured results.
     The orchestrator uses this to run post-commit code reviews.
 
-    The canonical implementation is run_codex_review(), which uses Codex CLI.
+    The canonical implementation wraps run_codex_review(), which uses Codex CLI.
     Test implementations can return predetermined results for isolation.
 
-    Note:
-        This protocol wraps a function, not a class. Implementations can be
-        either a callable object with this signature or a function.
+    Methods:
+        review: Run code review on a commit and return structured results.
     """
 
-    async def __call__(
+    async def review(
         self,
         repo_path: Path,
         commit_sha: str,
@@ -149,8 +153,8 @@ class CodeReviewer(Protocol):
             thinking_mode: Optional reasoning effort level for reviewer.
 
         Returns:
-            CodexReviewResult with review outcome. On parse failure after
-            all retries, returns passed=False (fail-closed).
+            ReviewResult (CodexReviewResult) with review outcome. On parse
+            failure after all retries, returns passed=False (fail-closed).
         """
         ...
 
@@ -163,16 +167,19 @@ class GateChecker(Protocol):
     The orchestrator uses this after each agent attempt to determine if
     the issue was successfully resolved.
 
-    The canonical implementation is QualityGate.check_with_resolution().
+    The canonical implementation is QualityGate.
     Test implementations can verify specific conditions for isolation.
 
     The gate checks:
     - Commit exists with correct issue ID
     - Validation commands ran (parsed from JSONL logs)
     - No-change/obsolete resolutions have rationale and clean tree
+
+    Methods:
+        check: Run quality gate check and return results.
     """
 
-    def check_with_resolution(
+    def check(
         self,
         issue_id: str,
         log_path: Path,
