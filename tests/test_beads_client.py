@@ -32,29 +32,33 @@ class TestGetParentEpicAsync:
     async def test_returns_parent_epic_id(self, tmp_path: Path) -> None:
         """Should return the parent epic ID when task has a parent epic."""
         beads = BeadsClient(tmp_path)
-        tree_json = json.dumps(
+        task_tree = json.dumps(
             [
-                {
-                    "id": "task-1",
-                    "issue_type": "task",
-                    "depth": 0,
-                },
-                {
-                    "id": "epic-1",
-                    "issue_type": "epic",
-                    "depth": 1,
-                },
+                {"id": "task-1", "issue_type": "task", "depth": 0},
+                {"id": "epic-1", "issue_type": "epic", "depth": 1},
             ]
         )
+        epic_children = json.dumps(
+            [
+                {"id": "epic-1", "issue_type": "epic", "depth": 0},
+                {"id": "task-1", "issue_type": "task", "depth": 1},
+            ]
+        )
+
+        async def mock_run(cmd: list[str]) -> SubprocessResult:
+            if cmd[4] == "--direction=down":
+                return make_subprocess_result(stdout=task_tree)
+            else:  # --direction=up (get_epic_children)
+                return make_subprocess_result(stdout=epic_children)
+
         with pytest.MonkeyPatch.context() as mp:
-            mock_run = AsyncMock(return_value=make_subprocess_result(stdout=tree_json))
-            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            mock_run_async = AsyncMock(side_effect=mock_run)
+            mp.setattr(beads, "_run_subprocess_async", mock_run_async)
             result = await beads.get_parent_epic_async("task-1")
 
         assert result == "epic-1"
-        mock_run.assert_called_once_with(
-            ["bd", "dep", "tree", "task-1", "--direction=down", "--json"]
-        )
+        # Now expects 2 calls: task tree + epic children
+        assert mock_run_async.call_count == 2
 
     @pytest.mark.asyncio
     async def test_returns_none_for_orphan_task(self, tmp_path: Path) -> None:
@@ -180,25 +184,38 @@ class TestParentEpicCaching:
     async def test_caches_parent_epic_result(self, tmp_path: Path) -> None:
         """Should cache parent epic result and not call subprocess again."""
         beads = BeadsClient(tmp_path)
-        tree_json = json.dumps(
+        task_tree = json.dumps(
             [
                 {"id": "task-1", "issue_type": "task", "depth": 0},
                 {"id": "epic-1", "issue_type": "epic", "depth": 1},
             ]
         )
-        with pytest.MonkeyPatch.context() as mp:
-            mock_run = AsyncMock(return_value=make_subprocess_result(stdout=tree_json))
-            mp.setattr(beads, "_run_subprocess_async", mock_run)
+        epic_children = json.dumps(
+            [
+                {"id": "epic-1", "issue_type": "epic", "depth": 0},
+                {"id": "task-1", "issue_type": "task", "depth": 1},
+            ]
+        )
 
-            # First call should invoke subprocess
+        async def mock_run(cmd: list[str]) -> SubprocessResult:
+            if cmd[4] == "--direction=down":
+                return make_subprocess_result(stdout=task_tree)
+            else:
+                return make_subprocess_result(stdout=epic_children)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mock_run_async = AsyncMock(side_effect=mock_run)
+            mp.setattr(beads, "_run_subprocess_async", mock_run_async)
+
+            # First call should invoke subprocess (2 calls: task tree + epic children)
             result1 = await beads.get_parent_epic_async("task-1")
             assert result1 == "epic-1"
-            assert mock_run.call_count == 1
+            assert mock_run_async.call_count == 2
 
             # Second call should return from cache
             result2 = await beads.get_parent_epic_async("task-1")
             assert result2 == "epic-1"
-            assert mock_run.call_count == 1  # Still 1, not 2
+            assert mock_run_async.call_count == 2  # Still 2, not 4
 
     @pytest.mark.asyncio
     async def test_caches_orphan_result(self, tmp_path: Path) -> None:
@@ -223,30 +240,43 @@ class TestParentEpicCaching:
     async def test_batch_uses_cache_for_repeated_issues(self, tmp_path: Path) -> None:
         """Batch method should benefit from caching for repeated issue IDs."""
         beads = BeadsClient(tmp_path)
-        tree_json = json.dumps(
+        task_tree = json.dumps(
             [
                 {"id": "task-1", "issue_type": "task", "depth": 0},
                 {"id": "epic-1", "issue_type": "epic", "depth": 1},
             ]
         )
-        with pytest.MonkeyPatch.context() as mp:
-            mock_run = AsyncMock(return_value=make_subprocess_result(stdout=tree_json))
-            mp.setattr(beads, "_run_subprocess_async", mock_run)
+        epic_children = json.dumps(
+            [
+                {"id": "epic-1", "issue_type": "epic", "depth": 0},
+                {"id": "task-1", "issue_type": "task", "depth": 1},
+            ]
+        )
 
-            # Pre-populate cache
+        async def mock_run(cmd: list[str]) -> SubprocessResult:
+            if cmd[4] == "--direction=down":
+                return make_subprocess_result(stdout=task_tree)
+            else:
+                return make_subprocess_result(stdout=epic_children)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mock_run_async = AsyncMock(side_effect=mock_run)
+            mp.setattr(beads, "_run_subprocess_async", mock_run_async)
+
+            # Pre-populate cache (2 calls: task tree + epic children)
             await beads.get_parent_epic_async("task-1")
-            assert mock_run.call_count == 1
+            assert mock_run_async.call_count == 2
 
             # Batch call with same issue should use cache
             result = await beads.get_parent_epics_async(["task-1", "task-1", "task-1"])
             assert result == {"task-1": "epic-1"}
-            assert mock_run.call_count == 1  # No additional calls
+            assert mock_run_async.call_count == 2  # No additional calls
 
     @pytest.mark.asyncio
     async def test_batch_makes_one_call_per_unique_uncached_issue(
         self, tmp_path: Path
     ) -> None:
-        """Batch method should make one subprocess call per unique uncached issue."""
+        """Batch method should make calls proportional to unique epics, not tasks."""
         beads = BeadsClient(tmp_path)
 
         def make_tree_response(issue_id: str) -> str:
@@ -258,13 +288,33 @@ class TestParentEpicCaching:
                 ]
             )
 
+        def make_children_response(epic_id: str) -> str:
+            if epic_id == "epic-a":
+                return json.dumps(
+                    [
+                        {"id": "epic-a", "issue_type": "epic", "depth": 0},
+                        {"id": "task-1", "issue_type": "task", "depth": 1},
+                        {"id": "task-2", "issue_type": "task", "depth": 1},
+                    ]
+                )
+            else:
+                return json.dumps(
+                    [
+                        {"id": "epic-b", "issue_type": "epic", "depth": 0},
+                        {"id": "task-3", "issue_type": "task", "depth": 1},
+                    ]
+                )
+
         call_args: list[list[str]] = []
 
         async def mock_run(cmd: list[str]) -> SubprocessResult:
             call_args.append(cmd)
-            # Extract issue_id from command: bd dep tree <issue_id> --direction=down --json
             issue_id = cmd[3]
-            return make_subprocess_result(stdout=make_tree_response(issue_id))
+            direction = cmd[4]
+            if direction == "--direction=down":
+                return make_subprocess_result(stdout=make_tree_response(issue_id))
+            else:  # --direction=up
+                return make_subprocess_result(stdout=make_children_response(issue_id))
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(beads, "_run_subprocess_async", mock_run)
@@ -276,31 +326,108 @@ class TestParentEpicCaching:
             "task-2": "epic-a",
             "task-3": "epic-b",
         }
-        # Should have made 3 calls (one per unique issue)
-        assert len(call_args) == 3
+        # With epic-level caching:
+        # - task-1: 2 calls (tree + epic-a children) -> caches task-1, task-2
+        # - task-2: 0 calls (already cached from task-1's epic children)
+        # - task-3: 2 calls (tree + epic-b children) -> caches task-3
+        # Total: 4 calls (2 per unique epic)
+        assert len(call_args) == 4
 
     @pytest.mark.asyncio
     async def test_batch_dedupes_issue_ids(self, tmp_path: Path) -> None:
         """Batch method should dedupe issue_ids, making one call per unique issue."""
         beads = BeadsClient(tmp_path)
-        tree_json = json.dumps(
+        task_tree = json.dumps(
             [
                 {"id": "task-1", "issue_type": "task", "depth": 0},
                 {"id": "epic-1", "issue_type": "epic", "depth": 1},
             ]
         )
-        call_count = 0
+        epic_children = json.dumps(
+            [
+                {"id": "epic-1", "issue_type": "epic", "depth": 0},
+                {"id": "task-1", "issue_type": "task", "depth": 1},
+            ]
+        )
 
         async def mock_run(cmd: list[str]) -> SubprocessResult:
+            if cmd[4] == "--direction=down":
+                return make_subprocess_result(stdout=task_tree)
+            else:
+                return make_subprocess_result(stdout=epic_children)
+
+        call_count = 0
+
+        async def counting_mock_run(cmd: list[str]) -> SubprocessResult:
             nonlocal call_count
             call_count += 1
-            return make_subprocess_result(stdout=tree_json)
+            return await mock_run(cmd)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", counting_mock_run)
+
+            # Same issue repeated 3 times - should only make 2 subprocess calls
+            # (1 for task tree + 1 for epic children)
+            result = await beads.get_parent_epics_async(["task-1", "task-1", "task-1"])
+
+        assert result == {"task-1": "epic-1"}
+        assert call_count == 2  # task tree + epic children
+
+    @pytest.mark.asyncio
+    async def test_epic_level_caching_caches_all_siblings(self, tmp_path: Path) -> None:
+        """When discovering a parent epic, all sibling tasks should be cached.
+
+        This tests the key optimization: O(unique epics) calls, not O(unique tasks).
+        """
+        beads = BeadsClient(tmp_path)
+
+        # Mock responses for bd dep tree commands
+        task1_tree = json.dumps(
+            [
+                {"id": "task-1", "issue_type": "task", "depth": 0},
+                {"id": "epic-a", "issue_type": "epic", "depth": 1},
+            ]
+        )
+        epic_children = json.dumps(
+            [
+                {"id": "epic-a", "issue_type": "epic", "depth": 0},
+                {"id": "task-1", "issue_type": "task", "depth": 1},
+                {"id": "task-2", "issue_type": "task", "depth": 1},
+                {"id": "task-3", "issue_type": "task", "depth": 1},
+            ]
+        )
+
+        call_log: list[str] = []
+
+        async def mock_run(cmd: list[str]) -> SubprocessResult:
+            # Log which issue/epic we're querying
+            issue_id = cmd[3]
+            direction = cmd[4]  # --direction=down or --direction=up
+            call_log.append(f"{issue_id}:{direction}")
+
+            if issue_id == "task-1" and direction == "--direction=down":
+                return make_subprocess_result(stdout=task1_tree)
+            elif issue_id == "epic-a" and direction == "--direction=up":
+                return make_subprocess_result(stdout=epic_children)
+            return make_subprocess_result(returncode=1, stderr="not found")
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(beads, "_run_subprocess_async", mock_run)
 
-            # Same issue repeated 3 times - should only make 1 subprocess call
-            result = await beads.get_parent_epics_async(["task-1", "task-1", "task-1"])
+            # Look up 3 tasks that are all under epic-a
+            result = await beads.get_parent_epics_async(["task-1", "task-2", "task-3"])
 
-        assert result == {"task-1": "epic-1"}
-        assert call_count == 1  # Only one call despite 3 input entries
+        # All should map to epic-a
+        assert result == {
+            "task-1": "epic-a",
+            "task-2": "epic-a",
+            "task-3": "epic-a",
+        }
+
+        # Key assertion: we should only make 2 calls total:
+        # 1. bd dep tree task-1 --direction=down (to find epic-a)
+        # 2. bd dep tree epic-a --direction=up (to find all children)
+        # task-2 and task-3 should be cached from step 2
+        assert len(call_log) == 2
+        assert "task-1:--direction=down" in call_log
+        assert "epic-a:--direction=up" in call_log

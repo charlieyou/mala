@@ -450,7 +450,8 @@ class BeadsClient:
         Uses `bd dep tree <id> --direction=down` to get the ancestor chain.
         The parent epic is the first ancestor with issue_type == "epic".
         Results are cached to avoid repeated subprocess calls.
-        Uses locks to prevent duplicate concurrent calls for the same issue.
+        When a parent epic is found, all children of that epic are cached
+        to minimize subprocess calls for sibling tasks.
 
         Args:
             issue_id: The issue ID to find the parent epic for.
@@ -487,7 +488,18 @@ class BeadsClient:
                     if item.get("depth", 0) > 0 and item.get("issue_type") == "epic":
                         parent_epic = item["id"]
                         break
+
+                # Cache for this issue
                 self._parent_epic_cache[issue_id] = parent_epic
+
+                # If we found a parent epic, cache it for all children of that epic
+                # This minimizes subprocess calls for sibling tasks
+                if parent_epic is not None:
+                    children = await self.get_epic_children_async(parent_epic)
+                    for child_id in children:
+                        if child_id not in self._parent_epic_cache:
+                            self._parent_epic_cache[child_id] = parent_epic
+
                 return parent_epic
             except json.JSONDecodeError:
                 self._parent_epic_cache[issue_id] = None
@@ -498,10 +510,13 @@ class BeadsClient:
     ) -> dict[str, str | None]:
         """Get parent epic IDs for multiple issues efficiently.
 
-        Processes unique issues concurrently. Results are cached so that:
-        - Previously looked-up issues return immediately from cache
+        Processes unique issues concurrently with epic-level caching:
+        - When a task's parent epic is discovered, all children of that epic
+          are cached, so sibling tasks don't require additional subprocess calls
         - Duplicate issue IDs in the input are deduped before processing
-        - Concurrent calls for the same issue share a single subprocess call
+        - Previously looked-up issues return immediately from cache
+
+        This results in O(unique epics) subprocess calls, not O(unique tasks).
 
         Args:
             issue_ids: List of issue IDs to find parent epics for.
