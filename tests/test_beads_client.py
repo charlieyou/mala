@@ -431,3 +431,276 @@ class TestParentEpicCaching:
         assert len(call_log) == 2
         assert "task-1:--direction=down" in call_log
         assert "epic-a:--direction=up" in call_log
+
+
+class TestGetReadyAsyncBlockedEpicFiltering:
+    """Test that get_ready_async excludes tasks with blocked parent epics."""
+
+    @pytest.mark.asyncio
+    async def test_excludes_tasks_with_blocked_parent_epic(
+        self, tmp_path: Path
+    ) -> None:
+        """Tasks whose parent epic is blocked should be excluded from ready list."""
+        beads = BeadsClient(tmp_path)
+
+        # Mock bd ready returning two tasks
+        ready_response = json.dumps(
+            [
+                {"id": "task-1", "issue_type": "task", "priority": 1},
+                {"id": "task-2", "issue_type": "task", "priority": 1},
+            ]
+        )
+
+        # Mock parent epic lookup - both under epic-a
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {issue_id: "epic-a" for issue_id in issue_ids}
+
+        # Mock epic-a as blocked
+        async def mock_is_epic_blocked(epic_id: str) -> bool:
+            return epic_id == "epic-a"
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+            )
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+            mp.setattr(beads, "_is_epic_blocked_async", mock_is_epic_blocked)
+
+            result = await beads.get_ready_async()
+
+        # Both tasks should be excluded since epic-a is blocked
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_orphan_tasks_appear_when_no_parent_epic(
+        self, tmp_path: Path
+    ) -> None:
+        """Orphan tasks (no parent epic) should still appear in ready list."""
+        beads = BeadsClient(tmp_path)
+
+        ready_response = json.dumps(
+            [
+                {"id": "orphan-task", "issue_type": "task", "priority": 1},
+            ]
+        )
+
+        # Mock parent epic lookup - orphan has no parent
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {issue_id: None for issue_id in issue_ids}
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+            )
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+
+            result = await beads.get_ready_async()
+
+        # Orphan task should still appear
+        assert result == ["orphan-task"]
+
+    @pytest.mark.asyncio
+    async def test_task_appears_when_parent_epic_unblocked(
+        self, tmp_path: Path
+    ) -> None:
+        """Tasks should appear when their parent epic is not blocked."""
+        beads = BeadsClient(tmp_path)
+
+        ready_response = json.dumps(
+            [
+                {"id": "task-1", "issue_type": "task", "priority": 1},
+            ]
+        )
+
+        # Mock parent epic lookup
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {issue_id: "epic-a" for issue_id in issue_ids}
+
+        # Mock epic-a as NOT blocked
+        async def mock_is_epic_blocked(epic_id: str) -> bool:
+            return False
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+            )
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+            mp.setattr(beads, "_is_epic_blocked_async", mock_is_epic_blocked)
+
+            result = await beads.get_ready_async()
+
+        # Task should appear since epic-a is not blocked
+        assert result == ["task-1"]
+
+    @pytest.mark.asyncio
+    async def test_mixed_blocked_and_unblocked_epics(self, tmp_path: Path) -> None:
+        """Tasks under blocked epics excluded, tasks under unblocked epics included."""
+        beads = BeadsClient(tmp_path)
+
+        ready_response = json.dumps(
+            [
+                {"id": "blocked-task", "issue_type": "task", "priority": 1},
+                {"id": "ready-task", "issue_type": "task", "priority": 1},
+                {"id": "orphan-task", "issue_type": "task", "priority": 1},
+            ]
+        )
+
+        # Mock parent epic lookup
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            mapping = {
+                "blocked-task": "blocked-epic",
+                "ready-task": "ready-epic",
+                "orphan-task": None,
+            }
+            return {issue_id: mapping.get(issue_id) for issue_id in issue_ids}
+
+        # Mock epic blocked status
+        async def mock_is_epic_blocked(epic_id: str) -> bool:
+            return epic_id == "blocked-epic"
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+            )
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+            mp.setattr(beads, "_is_epic_blocked_async", mock_is_epic_blocked)
+
+            result = await beads.get_ready_async()
+
+        # blocked-task excluded, ready-task and orphan-task included
+        assert "blocked-task" not in result
+        assert "ready-task" in result
+        assert "orphan-task" in result
+
+
+class TestIsEpicBlockedAsync:
+    """Test _is_epic_blocked_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_true_for_blocked_status(self, tmp_path: Path) -> None:
+        """Should return True when epic has status=blocked."""
+        beads = BeadsClient(tmp_path)
+        epic_json = json.dumps({"id": "epic-1", "status": "blocked"})
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_subprocess_result(stdout=epic_json)),
+            )
+            result = await beads._is_epic_blocked_async("epic-1")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_true_for_blocked_by_dependency(self, tmp_path: Path) -> None:
+        """Should return True when epic has blocked_by field."""
+        beads = BeadsClient(tmp_path)
+        epic_json = json.dumps(
+            {
+                "id": "epic-1",
+                "status": "open",
+                "blocked_by": "other-epic",
+            }
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_subprocess_result(stdout=epic_json)),
+            )
+            result = await beads._is_epic_blocked_async("epic-1")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_for_unblocked_epic(self, tmp_path: Path) -> None:
+        """Should return False when epic is not blocked."""
+        beads = BeadsClient(tmp_path)
+        epic_json = json.dumps(
+            {
+                "id": "epic-1",
+                "status": "open",
+                "blocked_by": None,
+            }
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_subprocess_result(stdout=epic_json)),
+            )
+            result = await beads._is_epic_blocked_async("epic-1")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_bd_failure(self, tmp_path: Path) -> None:
+        """Should return False when bd show fails (avoid hiding tasks)."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(
+                    return_value=make_subprocess_result(returncode=1, stderr="error")
+                ),
+            )
+            result = await beads._is_epic_blocked_async("epic-1")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_caches_blocked_status(self, tmp_path: Path) -> None:
+        """Should cache blocked status and not call subprocess again."""
+        beads = BeadsClient(tmp_path)
+        epic_json = json.dumps({"id": "epic-1", "status": "blocked"})
+
+        with pytest.MonkeyPatch.context() as mp:
+            mock_run = AsyncMock(return_value=make_subprocess_result(stdout=epic_json))
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+
+            # First call
+            result1 = await beads._is_epic_blocked_async("epic-1")
+            assert result1 is True
+            assert mock_run.call_count == 1
+
+            # Second call should use cache
+            result2 = await beads._is_epic_blocked_async("epic-1")
+            assert result2 is True
+            assert mock_run.call_count == 1  # Still 1
+
+    @pytest.mark.asyncio
+    async def test_handles_list_response(self, tmp_path: Path) -> None:
+        """Should handle bd show returning a list (single item)."""
+        beads = BeadsClient(tmp_path)
+        epic_json = json.dumps([{"id": "epic-1", "status": "blocked"}])
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_subprocess_result(stdout=epic_json)),
+            )
+            result = await beads._is_epic_blocked_async("epic-1")
+
+        assert result is True

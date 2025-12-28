@@ -65,6 +65,10 @@ class BeadsClient:
         self._parent_epic_cache: dict[str, str | None] = {}
         # Locks for in-flight lookups to prevent duplicate concurrent calls
         self._parent_epic_locks: dict[str, asyncio.Lock] = {}
+        # Cache for epic blocked status lookups
+        self._blocked_epic_cache: dict[str, bool] = {}
+        # Locks for in-flight blocked epic lookups
+        self._blocked_epic_locks: dict[str, asyncio.Lock] = {}
 
     async def _run_subprocess_async(
         self,
@@ -374,6 +378,28 @@ class BeadsClient:
                 and (only_ids is None or i["id"] in only_ids)
             ]
 
+            # Exclude tasks whose parent epic is blocked
+            if filtered:
+                # Get parent epics for all filtered tasks
+                issue_ids = [str(i["id"]) for i in filtered]
+                parent_epics = await self.get_parent_epics_async(issue_ids)
+
+                # Find unique non-None parent epics
+                unique_epics = {
+                    epic for epic in parent_epics.values() if epic is not None
+                }
+
+                # Get which epics are blocked
+                blocked_epics = await self._get_blocked_epics_async(unique_epics)
+
+                # Filter out tasks with blocked parent epics
+                if blocked_epics:
+                    filtered = [
+                        i
+                        for i in filtered
+                        if parent_epics.get(str(i["id"])) not in blocked_epics
+                    ]
+
             # Apply epic-grouped sorting when focus=True
             if focus and filtered:
                 filtered = await self._sort_by_epic_groups(filtered)
@@ -637,3 +663,76 @@ class BeadsClient:
 
         # Return mapping for all input issue_ids (including duplicates)
         return {issue_id: unique_results[issue_id] for issue_id in issue_ids}
+
+    async def _is_epic_blocked_async(self, epic_id: str) -> bool:
+        """Check if an epic is blocked (has blocked_by or status=blocked).
+
+        An epic is considered blocked if:
+        - It has status "blocked", OR
+        - It has a non-empty blocked_by field (unmet dependencies)
+
+        Results are cached to avoid repeated subprocess calls.
+
+        Args:
+            epic_id: The epic ID to check.
+
+        Returns:
+            True if the epic is blocked, False otherwise.
+        """
+        # Check cache first
+        if epic_id in self._blocked_epic_cache:
+            return self._blocked_epic_cache[epic_id]
+
+        # Get or create lock for this epic
+        if epic_id not in self._blocked_epic_locks:
+            self._blocked_epic_locks[epic_id] = asyncio.Lock()
+        lock = self._blocked_epic_locks[epic_id]
+
+        async with lock:
+            # Check cache again after acquiring lock
+            if epic_id in self._blocked_epic_cache:
+                return self._blocked_epic_cache[epic_id]
+
+            result = await self._run_subprocess_async(["bd", "show", epic_id, "--json"])
+            if result.returncode != 0:
+                # If we can't get epic info, assume not blocked to avoid hiding tasks
+                self._blocked_epic_cache[epic_id] = False
+                return False
+
+            try:
+                issue_data = json.loads(result.stdout)
+                if isinstance(issue_data, list) and issue_data:
+                    issue_data = issue_data[0]
+                if isinstance(issue_data, dict):
+                    status = issue_data.get("status")
+                    blocked_by = issue_data.get("blocked_by")
+                    is_blocked = status == "blocked" or bool(blocked_by)
+                    self._blocked_epic_cache[epic_id] = is_blocked
+                    return is_blocked
+            except json.JSONDecodeError:
+                pass
+
+            self._blocked_epic_cache[epic_id] = False
+            return False
+
+    async def _get_blocked_epics_async(self, epic_ids: set[str]) -> set[str]:
+        """Get the set of epics that are blocked.
+
+        Args:
+            epic_ids: Set of epic IDs to check.
+
+        Returns:
+            Set of epic IDs that are blocked.
+        """
+        if not epic_ids:
+            return set()
+
+        # Convert to list once to ensure consistent iteration order
+        epic_ids_list = list(epic_ids)
+        tasks = [self._is_epic_blocked_async(epic_id) for epic_id in epic_ids_list]
+        results = await asyncio.gather(*tasks)
+        return {
+            epic_id
+            for epic_id, is_blocked in zip(epic_ids_list, results, strict=True)
+            if is_blocked
+        }
