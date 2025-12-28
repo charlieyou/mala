@@ -329,10 +329,40 @@ class TestBuildValidationSpec:
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         command_names = [cmd.name for cmd in spec.commands]
+        assert "uv sync" in command_names
         assert "ruff format" in command_names
         assert "ruff check" in command_names
         assert "ty check" in command_names
         assert "pytest" in command_names
+
+    def test_uv_sync_is_first_command(self) -> None:
+        """uv sync must be the first command to set up dependencies."""
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
+        assert len(spec.commands) >= 1
+        first_cmd = spec.commands[0]
+        assert first_cmd.name == "uv sync"
+        assert first_cmd.command == ["uv", "sync", "--all-extras"]
+        assert first_cmd.kind == CommandKind.SETUP
+
+    def test_uv_sync_has_setup_kind(self) -> None:
+        """uv sync command has SETUP kind for proper classification."""
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
+        setup_cmds = spec.commands_by_kind(CommandKind.SETUP)
+        assert len(setup_cmds) == 1
+        assert setup_cmds[0].name == "uv sync"
+
+    def test_command_order_is_setup_then_lint_then_test(self) -> None:
+        """Commands should run in order: setup -> format -> lint -> typecheck -> test."""
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
+        command_names = [cmd.name for cmd in spec.commands]
+        # Verify order
+        assert command_names.index("uv sync") < command_names.index("ruff format")
+        assert command_names.index("ruff format") < command_names.index("ruff check")
+        assert command_names.index("ruff check") < command_names.index("ty check")
+        assert command_names.index("ty check") < command_names.index("pytest")
 
     def test_default_spec_coverage_enabled(self) -> None:
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
@@ -384,13 +414,14 @@ class TestBuildValidationSpec:
         assert spec.e2e.enabled is False
 
     def test_disable_post_validate(self) -> None:
-        """--disable-validations=post-validate removes pytest/ruff/ty commands."""
+        """--disable-validations=post-validate removes all commands including uv sync."""
         spec = build_validation_spec(
             scope=ValidationScope.PER_ISSUE,
             disable_validations={"post-validate"},
         )
         # Should have no validation commands when post-validate is disabled
         command_names = [cmd.name for cmd in spec.commands]
+        assert "uv sync" not in command_names
         assert "pytest" not in command_names
         assert "ruff format" not in command_names
         assert "ruff check" not in command_names
@@ -418,7 +449,9 @@ class TestBuildValidationSpec:
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         for cmd in spec.commands:
-            if "format" in cmd.name:
+            if cmd.name == "uv sync":
+                assert cmd.kind == CommandKind.SETUP
+            elif "format" in cmd.name:
                 assert cmd.kind == CommandKind.FORMAT
             elif "ruff check" in cmd.name:
                 assert cmd.kind == CommandKind.LINT
