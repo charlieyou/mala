@@ -21,7 +21,7 @@ from claude_agent_sdk.types import HookMatcher
 
 from .beads_client import BeadsClient
 from .braintrust_integration import TracedAgentExecution
-from .codex_review import run_codex_review, format_review_issues
+from .codex_review import run_codex_review, format_review_issues, CodexReviewResult
 from .git_utils import (
     get_git_commit_async,
     get_git_branch_async,
@@ -59,6 +59,7 @@ from .logging.run_metadata import (
     remove_run_marker,
     write_run_marker,
 )
+from .protocols import CodeReviewer, GateChecker, IssueProvider
 from .quality_gate import QualityGate, GateResult
 from .tools.env import (
     USER_CONFIG_DIR,
@@ -125,6 +126,35 @@ def _get_fixer_prompt() -> str:
 # Bounded wait for log file (seconds)
 LOG_FILE_WAIT_TIMEOUT = 30
 LOG_FILE_POLL_INTERVAL = 0.5
+
+
+class DefaultCodeReviewer:
+    """Default CodeReviewer implementation that wraps run_codex_review.
+
+    This class conforms to the CodeReviewer protocol and provides the default
+    behavior for the orchestrator. Tests can inject alternative implementations.
+    """
+
+    async def __call__(
+        self,
+        repo_path: Path,
+        commit_sha: str,
+        max_retries: int = 2,
+        issue_description: str | None = None,
+        baseline_commit: str | None = None,
+        capture_session_log: bool = False,
+        thinking_mode: str | None = None,
+    ) -> CodexReviewResult:
+        """Delegate to run_codex_review function."""
+        return await run_codex_review(
+            repo_path,
+            commit_sha,
+            max_retries=max_retries,
+            issue_description=issue_description,
+            baseline_commit=baseline_commit,
+            capture_session_log=capture_session_log,
+            thinking_mode=thinking_mode,
+        )
 
 
 def get_mcp_servers(repo_path: Path, morph_enabled: bool = True) -> dict:
@@ -197,6 +227,10 @@ class MalaOrchestrator:
         focus: bool = True,
         cli_args: dict[str, object] | None = None,
         codex_thinking_mode: str | None = None,
+        # Protocol-based dependency injection for testability
+        issue_provider: IssueProvider | None = None,
+        code_reviewer: CodeReviewer | None = None,
+        gate_checker: GateChecker | None = None,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
@@ -226,14 +260,20 @@ class MalaOrchestrator:
         # Track codex review session log paths (issue_id -> log_path)
         self.codex_review_log_paths: dict[str, str] = {}
 
-        # Quality gate for post-run validation
-        self.quality_gate = QualityGate(self.repo_path)
+        # Initialize pipeline stage implementations (use defaults if not provided)
+        # GateChecker: QualityGate for post-run validation
+        self.quality_gate: GateChecker = gate_checker or QualityGate(self.repo_path)
 
-        # Initialize BeadsClient with warning logger
+        # IssueProvider: BeadsClient for issue tracking
         def log_warning(msg: str) -> None:
             log("⚠", msg, Colors.YELLOW)
 
-        self.beads = BeadsClient(self.repo_path, log_warning=log_warning)
+        self.beads: IssueProvider = issue_provider or BeadsClient(
+            self.repo_path, log_warning=log_warning
+        )
+
+        # CodeReviewer: DefaultCodeReviewer wrapping run_codex_review
+        self.code_reviewer: CodeReviewer = code_reviewer or DefaultCodeReviewer()
 
         # Cached per-issue validation spec (built once at run start)
         self.per_issue_spec: ValidationSpec | None = None
@@ -880,7 +920,7 @@ class MalaOrchestrator:
                                     current_head = await get_git_commit_async(
                                         self.repo_path
                                     )
-                                    review_result = await run_codex_review(
+                                    review_result = await self.code_reviewer(
                                         self.repo_path,
                                         current_head,
                                         max_retries=2,  # JSON parse retries
