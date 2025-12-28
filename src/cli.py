@@ -40,6 +40,96 @@ import typer
 from .logging.console import Colors, log, set_verbose
 from .tools.locking import get_lock_dir
 from .orchestrator import MalaOrchestrator
+from .beads_client import BeadsClient
+
+
+def display_dry_run_tasks(
+    issues: list[dict[str, object]],
+    focus: bool,
+) -> None:
+    """Display task order for dry-run preview.
+
+    Shows tasks in order with epic grouping when focus mode is enabled.
+
+    Args:
+        issues: List of issue dicts with id, title, priority, status, parent_epic.
+        focus: If True, display with epic headers for grouped output.
+    """
+    if not issues:
+        log("○", "No ready tasks found", Colors.GRAY)
+        return
+
+    print()
+    log("◐", f"Dry run: {len(issues)} task(s) would be processed", Colors.CYAN)
+    print()
+
+    if focus:
+        # Group by epic for display
+        current_epic: str | None = None
+        epic_count = 0
+        task_in_epic = 0
+        for issue in issues:
+            epic = issue.get("parent_epic")
+            # Ensure epic is a string or None
+            epic_str: str | None = str(epic) if epic is not None else None
+            if epic_str != current_epic:
+                if current_epic is not None or (
+                    current_epic is None and task_in_epic > 0
+                ):
+                    print()  # Add spacing between epics
+                current_epic = epic_str
+                epic_count += 1
+                task_in_epic = 0
+                if epic_str:
+                    print(f"  {Colors.MAGENTA}▸ Epic: {epic_str}{Colors.RESET}")
+                else:
+                    print(f"  {Colors.GRAY}▸ (Orphan tasks){Colors.RESET}")
+
+            task_in_epic += 1
+            _print_task_line(issue, indent="    ")
+    else:
+        # Simple flat list
+        for issue in issues:
+            _print_task_line(issue, indent="  ")
+
+    print()
+    # Summary: count tasks per epic
+    if focus:
+        epic_counts: dict[str | None, int] = {}
+        for issue in issues:
+            epic = issue.get("parent_epic")
+            epic_key: str | None = str(epic) if epic is not None else None
+            epic_counts[epic_key] = epic_counts.get(epic_key, 0) + 1
+
+        epic_summary = ", ".join(
+            f"{epic or '(orphan)'}: {count}"
+            for epic, count in sorted(
+                epic_counts.items(), key=lambda x: (x[0] is None, x[0] or "")
+            )
+        )
+        log("◐", f"By epic: {epic_summary}", Colors.GRAY, dim=True)
+
+
+def _print_task_line(issue: dict[str, object], indent: str = "  ") -> None:
+    """Print a single task line with ID, priority, and title."""
+    issue_id = issue.get("id", "?")
+    title = issue.get("title", "")
+    priority = issue.get("priority")
+    status = issue.get("status", "")
+
+    # Format priority badge
+    prio_str = f"P{priority}" if priority is not None else "P?"
+
+    # Status indicator
+    status_indicator = ""
+    if status == "in_progress":
+        status_indicator = f" {Colors.YELLOW}(WIP){Colors.RESET}"
+
+    print(
+        f"{indent}{Colors.CYAN}{issue_id}{Colors.RESET} "
+        f"[{Colors.DIM}{prio_str}{Colors.RESET}] "
+        f"{title}{status_indicator}"
+    )
 
 
 # Valid values for --disable-validations flag
@@ -165,6 +255,13 @@ def run(
             help="Group tasks by epic for focused work (default: on); --no-focus uses priority-only ordering",
         ),
     ] = True,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Preview task order without processing; shows what would be run",
+        ),
+    ] = False,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -239,6 +336,22 @@ def run(
     if not repo_path.exists():
         log("✗", f"Repository not found: {repo_path}", Colors.RED)
         raise typer.Exit(1)
+
+    # Handle dry-run mode: display task order and exit
+    if dry_run:
+
+        async def _dry_run() -> None:
+            beads = BeadsClient(repo_path)
+            issues = await beads.get_ready_issues_async(
+                epic_id=epic,
+                only_ids=only_ids,
+                prioritize_wip=wip,
+                focus=focus,
+            )
+            display_dry_run_tasks(issues, focus=focus)
+
+        asyncio.run(_dry_run())
+        raise typer.Exit(0)
 
     orchestrator = MalaOrchestrator(
         repo_path=repo_path,
