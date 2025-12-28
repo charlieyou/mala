@@ -29,6 +29,8 @@ from src.validation.spec import (
     CommandKind,
     IssueResolution,
     ResolutionOutcome,
+    ValidationScope,
+    build_validation_spec,
 )
 
 if TYPE_CHECKING:
@@ -622,6 +624,7 @@ class QualityGate:
         log_offset: int,
         previous_commit_hash: str | None,
         current_commit_hash: str | None,
+        spec: ValidationSpec | None = None,
     ) -> bool:
         """Check if no progress was made since the last attempt.
 
@@ -634,6 +637,8 @@ class QualityGate:
             log_offset: Byte offset marking the end of the previous attempt.
             previous_commit_hash: Commit hash from the previous attempt (None if no commit).
             current_commit_hash: Commit hash from this attempt (None if no commit).
+            spec: Optional ValidationSpec for spec-driven evidence detection.
+                If not provided, builds a default per-issue spec.
 
         Returns:
             True if no progress was made, False if progress was detected.
@@ -649,10 +654,17 @@ class QualityGate:
         if commit_changed:
             return False
 
-        # Check for new validation evidence after the offset
-        evidence, _ = self.parse_validation_evidence_from_offset(
-            log_path, offset=log_offset
-        )
+        # Build default spec if not provided
+        # Note: We don't pass repo_path here to ensure Python validation commands
+        # are always included for progress detection. The spec-driven parsing
+        # ensures consistency with the production evidence parsing patterns.
+        if spec is None:
+            spec = build_validation_spec(
+                scope=ValidationScope.PER_ISSUE,
+            )
+
+        # Check for new validation evidence after the offset using spec-driven parsing
+        evidence = self.parse_validation_evidence_with_spec(log_path, spec, log_offset)
 
         # Any new validation evidence counts as progress
         has_new_evidence = (
@@ -756,11 +768,10 @@ class QualityGate:
         """Run full quality gate check.
 
         DEPRECATED: Use check_with_resolution(..., spec=spec) instead. This method
-        uses hardcoded validation patterns and does not support:
-        - No-change/obsolete/already-complete resolutions
-        - Scope-aware evidence requirements (per-issue vs run-level)
-        - Spec-driven detection patterns
-        - Validation exit code checking
+        does not support no-change/obsolete/already-complete resolutions.
+
+        Internally delegates to check_with_resolution with a default per-issue spec
+        to ensure spec-driven evidence parsing.
 
         Verifies:
         1. A commit exists with bd-<issue_id> in the message
@@ -775,32 +786,18 @@ class QualityGate:
         Returns:
             GateResult with pass/fail and failure reasons.
         """
-        failure_reasons: list[str] = []
-
-        # Check for matching commit
-        commit_result = self.check_commit_exists(issue_id, baseline_timestamp)
-        if not commit_result.exists:
-            if baseline_timestamp is not None:
-                failure_reasons.append(
-                    f"No commit with bd-{issue_id} found after run baseline "
-                    f"(stale commits from previous runs are rejected)"
-                )
-            else:
-                failure_reasons.append(
-                    f"No commit with bd-{issue_id} found in last 30 days"
-                )
-
-        # Check validation evidence
-        evidence = self.parse_validation_evidence(log_path)
-        if not evidence.has_minimum_validation():
-            missing = evidence.missing_commands()
-            failure_reasons.append(f"Missing validation commands: {', '.join(missing)}")
-
-        return GateResult(
-            passed=len(failure_reasons) == 0,
-            failure_reasons=failure_reasons,
-            commit_hash=commit_result.commit_hash,
-            validation_evidence=evidence,
+        # Build a default per-issue spec to use spec-driven evidence parsing
+        # Note: We don't pass repo_path here to ensure Python validation commands
+        # are always expected. Production callers should use check_with_resolution
+        # with an explicit spec for repo-type-aware validation.
+        spec = build_validation_spec(
+            scope=ValidationScope.PER_ISSUE,
+        )
+        return self.check_with_resolution(
+            issue_id=issue_id,
+            log_path=log_path,
+            baseline_timestamp=baseline_timestamp,
+            spec=spec,
         )
 
     def check_with_resolution(
