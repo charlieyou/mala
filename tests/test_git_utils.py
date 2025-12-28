@@ -79,7 +79,8 @@ class TestGetBaselineForIssue:
         # Verify git log was called with correct grep pattern
         log_call = [c for c in calls if "log" in c[0]]
         assert len(log_call) == 1
-        assert "--grep=^bd-mala-123:" in log_call[0][0]
+        # re.escape() escapes hyphens too, so pattern is mala\-123
+        assert r"--grep=^bd-mala\-123:" in log_call[0][0]
 
     @pytest.mark.asyncio
     async def test_resumed_issue_with_prior_commits(
@@ -164,3 +165,94 @@ class TestGetBaselineForIssue:
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-abc")
 
         assert result == "beforeaaa"
+
+    @pytest.mark.asyncio
+    async def test_issue_id_with_regex_metacharacters(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Issue IDs with regex metacharacters should be escaped properly.
+
+        Without escaping, an issue like "mala-g3h.1" would match "mala-g3hX1"
+        because "." is a regex wildcard.
+        """
+        calls: list[tuple[list[str], Path]] = []
+
+        def mock_run(cmd: list[str], **kwargs: object) -> DummyResult:
+            calls.append((cmd, kwargs.get("cwd")))  # type: ignore[arg-type]
+            if "log" in cmd:
+                return DummyResult("abc1234 bd-mala-g3h.1: Fix the bug")
+            elif "rev-parse" in cmd:
+                return DummyResult("parent123\n")
+            return DummyResult("")
+
+        monkeypatch.setattr(git_utils.subprocess, "run", mock_run)
+
+        result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-g3h.1")
+
+        assert result == "parent123"
+        # Verify the grep pattern has escaped metacharacters
+        log_call = [c for c in calls if "log" in c[0]]
+        assert len(log_call) == 1
+        # re.escape() escapes both dot and hyphen: mala\-g3h\.1
+        assert r"--grep=^bd-mala\-g3h\.1:" in log_call[0][0]
+
+    @pytest.mark.asyncio
+    async def test_merge_commit_still_finds_first_issue_commit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Merge commits in history should not affect finding the first issue commit.
+
+        Even if the issue has merge commits, we should find the first commit
+        with the bd-{issue_id}: prefix and return its parent.
+        """
+
+        def mock_run(cmd: list[str], **kwargs: object) -> DummyResult:
+            if "log" in cmd:
+                # Multiple commits including what could be merge commits
+                # The first one (chronologically) is what we want
+                return DummyResult(
+                    "first11 bd-mala-merge: Initial\n"
+                    "merge22 bd-mala-merge: Merge branch 'feature'\n"
+                    "third33 bd-mala-merge: More work"
+                )
+            elif "rev-parse" in cmd:
+                # Return parent of first commit
+                return DummyResult("beforefirst\n")
+            return DummyResult("")
+
+        monkeypatch.setattr(git_utils.subprocess, "run", mock_run)
+
+        result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-merge")
+
+        # Should get parent of first commit, not any merge commit
+        assert result == "beforefirst"
+
+    @pytest.mark.asyncio
+    async def test_rebased_history_uses_new_first_commit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """After a rebase, the first commit hash changes.
+
+        The function should find the new first commit after rebase
+        and return its parent, which is the correct baseline.
+        """
+
+        def mock_run(cmd: list[str], **kwargs: object) -> DummyResult:
+            if "log" in cmd:
+                # After rebase, commit hashes are different
+                # but the prefix pattern still matches
+                return DummyResult(
+                    "newrebase1 bd-mala-rebase: Original work (rebased)\n"
+                    "newrebase2 bd-mala-rebase: Follow-up (rebased)"
+                )
+            elif "rev-parse" in cmd:
+                # Parent after rebase is different from original
+                return DummyResult("rebasebase\n")
+            return DummyResult("")
+
+        monkeypatch.setattr(git_utils.subprocess, "run", mock_run)
+
+        result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-rebase")
+
+        # Should get parent of the new (rebased) first commit
+        assert result == "rebasebase"

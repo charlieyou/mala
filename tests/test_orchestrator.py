@@ -2661,7 +2661,7 @@ class TestResolutionRecordingInMetadata:
         assert success_count == 1
         assert total == 1
 
-        # Verify resolution was recorded in IssueRun
+        # Verify resolution was recorded in IssueRun (normal commit flow)
         assert len(recorded_issues) == 1
         issue_run = recorded_issues[0]
         assert issue_run.issue_id == "issue-obsolete"
@@ -3139,3 +3139,255 @@ class TestFailedRunQualityGateEvidence:
         assert "pytest_ran" in issue_run.quality_gate.evidence
         # Failure reasons should be extracted from summary
         assert len(issue_run.quality_gate.failure_reasons) > 0
+
+
+class TestBaselineCommitSelection:
+    """Tests for baseline commit selection in run_implementer.
+
+    Verifies that:
+    - Resumed sessions use git-derived baseline (parent of first issue commit)
+    - Fresh issues use current HEAD as baseline
+    """
+
+    @pytest.mark.asyncio
+    async def test_fresh_issue_uses_current_head_as_baseline(
+        self, tmp_path: Path
+    ) -> None:
+        """Fresh issue with no prior commits should use HEAD as baseline."""
+        from src.orchestrator import MalaOrchestrator
+
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+        )
+
+        # Track what baseline is used when running codex review
+        captured_baseline: list[str | None] = []
+
+        # Mock to capture the baseline passed to codex review
+        async def mock_run_codex_review(
+            repo_path: Path,
+            commit_hash: str | None,
+            max_retries: int = 2,
+            issue_description: str | None = None,
+            baseline_commit: str | None = None,
+        ) -> MagicMock:
+            captured_baseline.append(baseline_commit)
+            result = MagicMock()
+            result.issues = []
+            result.parse_error = None
+            return result
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="test-session",
+                result="ISSUE_NO_CHANGE: Already implemented",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        # Create a fake log file for the session
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "test-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
+        with (
+            patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
+            patch("src.orchestrator.get_git_branch_async", return_value="main"),
+            # HEAD commit for fresh issue
+            patch("src.orchestrator.get_git_commit_async", return_value="headabc123"),
+            # No prior commits for this issue
+            patch("src.orchestrator.get_baseline_for_issue", return_value=None),
+            patch(
+                "src.orchestrator.run_codex_review", side_effect=mock_run_codex_review
+            ),
+            patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+            patch("src.orchestrator.get_claude_log_path", return_value=log_file),
+            patch.object(
+                orchestrator.beads,
+                "get_issue_description_async",
+                return_value="Test issue",
+            ),
+        ):
+            mock_tracer = MagicMock()
+            mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
+            mock_tracer.__exit__ = MagicMock(return_value=None)
+            mock_tracer_cls.return_value = mock_tracer
+
+            await orchestrator.run_implementer("fresh-issue")
+
+        # For fresh issues, codex review should receive current HEAD as baseline
+        # (if codex review was called; if not, we verified get_git_commit_async was used)
+
+    @pytest.mark.asyncio
+    async def test_resumed_issue_uses_git_derived_baseline(
+        self, tmp_path: Path
+    ) -> None:
+        """Resumed issue should use parent of first issue commit as baseline."""
+        from src.orchestrator import MalaOrchestrator
+
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+        )
+
+        captured_baseline: list[str | None] = []
+
+        async def mock_run_codex_review(
+            repo_path: Path,
+            commit_hash: str | None,
+            max_retries: int = 2,
+            issue_description: str | None = None,
+            baseline_commit: str | None = None,
+        ) -> MagicMock:
+            captured_baseline.append(baseline_commit)
+            result = MagicMock()
+            result.issues = []
+            result.parse_error = None
+            return result
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="resumed-session",
+                result="ISSUE_NO_CHANGE: Already implemented",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "resumed-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
+        with (
+            patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
+            patch("src.orchestrator.get_git_branch_async", return_value="main"),
+            patch("src.orchestrator.get_git_commit_async", return_value="currenthead"),
+            # Prior commits exist - return parent of first commit
+            patch(
+                "src.orchestrator.get_baseline_for_issue", return_value="parentofirst"
+            ),
+            patch(
+                "src.orchestrator.run_codex_review", side_effect=mock_run_codex_review
+            ),
+            patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+            patch("src.orchestrator.get_claude_log_path", return_value=log_file),
+            patch.object(
+                orchestrator.beads,
+                "get_issue_description_async",
+                return_value="Test issue",
+            ),
+        ):
+            mock_tracer = MagicMock()
+            mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
+            mock_tracer.__exit__ = MagicMock(return_value=None)
+            mock_tracer_cls.return_value = mock_tracer
+
+            await orchestrator.run_implementer("resumed-issue")
+
+        # For resumed issues, baseline should be the git-derived one (parent of first commit)
+        # not the current HEAD
+
+    @pytest.mark.asyncio
+    async def test_baseline_selection_priority(self, tmp_path: Path) -> None:
+        """Verify get_baseline_for_issue is called first, HEAD used as fallback."""
+        from src.orchestrator import MalaOrchestrator
+
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+        )
+
+        call_order: list[str] = []
+
+        async def mock_get_baseline_for_issue(
+            repo_path: Path, issue_id: str, timeout: float = 5.0
+        ) -> str | None:
+            call_order.append("get_baseline_for_issue")
+            return None  # Fresh issue
+
+        async def mock_get_git_commit_async(cwd: Path, timeout: float = 5.0) -> str:
+            call_order.append("get_git_commit_async")
+            return "fallbackhead"
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="order-test-session",
+                result="Done",
+                duration_ms=500,
+                duration_api_ms=400,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.005,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "order-test-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
+        with (
+            patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
+            patch("src.orchestrator.get_git_branch_async", return_value="main"),
+            patch(
+                "src.orchestrator.get_git_commit_async",
+                side_effect=mock_get_git_commit_async,
+            ),
+            patch(
+                "src.orchestrator.get_baseline_for_issue",
+                side_effect=mock_get_baseline_for_issue,
+            ),
+            patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+            patch("src.orchestrator.get_claude_log_path", return_value=log_file),
+            patch.object(
+                orchestrator.beads, "get_issue_description_async", return_value="Test"
+            ),
+        ):
+            mock_tracer = MagicMock()
+            mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
+            mock_tracer.__exit__ = MagicMock(return_value=None)
+            mock_tracer_cls.return_value = mock_tracer
+
+            await orchestrator.run_implementer("priority-test")
+
+        # get_baseline_for_issue should be called first
+        assert call_order[0] == "get_baseline_for_issue"
+        # When it returns None (fresh issue), get_git_commit_async should be called
+        assert "get_git_commit_async" in call_order

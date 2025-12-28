@@ -4,6 +4,7 @@ Provides helpers for getting git repository information.
 """
 
 import asyncio
+import re
 import subprocess
 from pathlib import Path
 
@@ -87,13 +88,16 @@ async def get_baseline_for_issue(
         try:
             # Find first commit with "bd-{issue_id}:" prefix
             # Using --reverse to get chronological order (oldest first)
+            # Escape regex metacharacters in issue_id to avoid matching wrong issues
+            # (e.g., "mala-g3h.1" should not match "mala-g3hX1")
+            escaped_issue_id = re.escape(issue_id)
             log_result = subprocess.run(
                 [
                     "git",
                     "log",
                     "--oneline",
                     "--reverse",
-                    f"--grep=^bd-{issue_id}:",
+                    f"--grep=^bd-{escaped_issue_id}:",
                 ],
                 capture_output=True,
                 text=True,
