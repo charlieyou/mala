@@ -84,31 +84,43 @@ lock-wait.sh utils.py 900 1000  # Wait up to 900s, poll every 1000ms
 4. **Once all locks acquired**, complete remaining implementation
 5. Handle edge cases, add tests if appropriate
 
-### 4. Quality Checks (Full Validation Required)
+### 4. Quality Checks (Scoped to Your Changes)
 
-**Before committing, run the full validation suite.** Use isolated cache directories to allow parallel validation:
+**Before committing, validate the files YOU touched.** This prevents detecting changes from other parallel agents. The full test suite runs later in an isolated worktree.
 
+**Track your changed files:**
 ```bash
-uv run pytest --cache-dir=/tmp/pytest-$AGENT_ID         # Isolated pytest cache
-uvx ruff check . --cache-dir=/tmp/ruff-$AGENT_ID        # Isolated ruff cache
-uvx ruff format .                                       # Format (no cache concerns)
-uvx ty check                                            # Type check
+# Get list of files you modified (staged + unstaged)
+CHANGED_FILES=$(git diff --name-only HEAD; git diff --cached --name-only)
 ```
 
-**Note:** No test mutex needed. Isolated caches prevent conflicts between parallel agents.
+**Run scoped validations:**
+```bash
+# Lint only your changed Python files
+uvx ruff check $CHANGED_FILES --cache-dir=/tmp/ruff-$AGENT_ID
 
-**All checks must pass.** If any fail:
-- Fix the issues in your code
-- Re-run the full suite
-- Do not commit until all checks pass
+# Format only your changed files
+uvx ruff format $CHANGED_FILES
+
+# Type check only your changed files
+uvx ty check $CHANGED_FILES
+
+# Run tests (use isolated cache)
+uv run pytest --cache-dir=/tmp/pytest-$AGENT_ID
+```
+
+**Note:** The orchestrator runs the FULL validation suite in an isolated worktree after your commit. You only need to validate your own changes here.
+
+**All checks on your files must pass.** If any fail:
+- Fix the issues in YOUR code
+- Re-run the scoped checks
+- Do not commit until your changes pass
 
 **CRITICAL - No Gaming Validation:**
-- Run `uvx ty check` with NO path arguments (checks entire codebase)
 - Do NOT pipe to `head`, `tail`, or truncate output in any way
-- Do NOT assume errors are "pre-existing" - verify with `git blame` first
-- If you modified a test file, type errors in that file are YOUR responsibility
-- All checks must pass with ZERO errors before committing
-- If you see errors, FIX THEM - do not claim they are someone else's problem
+- Do NOT skip validation - always run the scoped checks
+- All checks on your changed files must pass with ZERO errors before committing
+- If you see errors in files you touched, FIX THEM
 
 ### 5. Self-Review
 Verify before committing:
