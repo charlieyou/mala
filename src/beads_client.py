@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import signal
-import sys
 from typing import TYPE_CHECKING
+
+from src.validation.command_runner import CommandRunner
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -61,6 +60,7 @@ class BeadsClient:
         self.repo_path = repo_path
         self._log_warning = log_warning or (lambda msg: None)
         self.timeout_seconds = timeout_seconds
+        self._runner = CommandRunner(cwd=repo_path, timeout_seconds=timeout_seconds)
         # Cache for parent epic lookups to avoid repeated subprocess calls
         self._parent_epic_cache: dict[str, str | None] = {}
         # Locks for in-flight lookups to prevent duplicate concurrent calls
@@ -77,10 +77,9 @@ class BeadsClient:
     ) -> SubprocessResult:
         """Run subprocess asynchronously with timeout and proper termination.
 
-        Uses asyncio subprocess to enable proper process termination on timeout.
-        When a timeout occurs, the entire process group is terminated (SIGTERM)
-        and then killed (SIGKILL) if it doesn't exit promptly. This ensures that
-        any child processes spawned by the command are also terminated.
+        Uses CommandRunner for consistent subprocess handling with process-group
+        termination. When a timeout occurs, the entire process group is terminated
+        (SIGTERM) and then killed (SIGKILL) if it doesn't exit promptly.
 
         Args:
             cmd: Command to run.
@@ -90,95 +89,23 @@ class BeadsClient:
             SubprocessResult, or a failed result on timeout/error.
         """
         effective_timeout = timeout if timeout is not None else self.timeout_seconds
+        result = await self._runner.run_async(cmd, timeout=effective_timeout)
 
-        # On Unix, use start_new_session to create a new process group
-        # This allows us to kill all child processes on timeout
-        use_process_group = sys.platform != "win32"
-
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.repo_path,
-                start_new_session=use_process_group,
+        if result.timed_out:
+            self._log_warning(
+                f"Command timed out after {effective_timeout}s: {' '.join(cmd)}"
             )
+            return SubprocessResult(args=cmd, returncode=1, stdout="", stderr="timeout")
 
-            try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=effective_timeout,
-                )
-                return SubprocessResult(
-                    args=cmd,
-                    returncode=proc.returncode or 0,
-                    stdout=stdout_bytes.decode() if stdout_bytes else "",
-                    stderr=stderr_bytes.decode() if stderr_bytes else "",
-                )
-            except TimeoutError:
-                # Terminate the subprocess and all its children on timeout
-                self._log_warning(
-                    f"Command timed out after {effective_timeout}s: {' '.join(cmd)}"
-                )
-                await self._terminate_process(proc, use_process_group)
-                return SubprocessResult(
-                    args=cmd, returncode=1, stdout="", stderr="timeout"
-                )
-        except Exception as e:
-            self._log_warning(f"Command failed: {' '.join(cmd)}: {e}")
-            return SubprocessResult(args=cmd, returncode=1, stdout="", stderr=str(e))
+        if not result.ok and result.stderr:
+            self._log_warning(f"Command failed: {' '.join(cmd)}: {result.stderr}")
 
-    async def _terminate_process(
-        self, proc: asyncio.subprocess.Process, use_process_group: bool
-    ) -> None:
-        """Terminate a process and all its children.
-
-        First sends SIGTERM to the process group (or just the process on Windows),
-        waits up to 2 seconds for graceful exit, then sends SIGKILL to the entire
-        process group to ensure all children are killed (even if the parent exited).
-
-        Args:
-            proc: The process to terminate.
-            use_process_group: Whether to kill the entire process group.
-        """
-        if proc.returncode is not None:
-            # Process already exited
-            return
-
-        pgid = proc.pid if use_process_group else None
-
-        try:
-            if pgid is not None:
-                # Kill the entire process group
-                try:
-                    os.killpg(pgid, signal.SIGTERM)
-                except (ProcessLookupError, PermissionError):
-                    pass
-            else:
-                proc.terminate()
-
-            # Give it a short time to terminate gracefully
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=2.0)
-            except TimeoutError:
-                pass  # Will force kill below
-
-            # Always SIGKILL the process group after grace period to ensure
-            # all children are killed, even if the parent exited quickly
-            if pgid is not None:
-                try:
-                    os.killpg(pgid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass  # Group already gone
-            elif proc.returncode is None:
-                proc.kill()
-
-            # Ensure we wait for the main process to fully exit
-            if proc.returncode is None:
-                await proc.wait()
-        except ProcessLookupError:
-            # Process already exited
-            pass
+        return SubprocessResult(
+            args=cmd,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
 
     # --- Async methods (non-blocking, use in async context) ---
 
