@@ -14,9 +14,6 @@ from src.lifecycle import (
     LifecycleConfig,
     LifecycleContext,
     LifecycleState,
-    RetryState,
-    from_orchestrator_retry_state,
-    to_orchestrator_retry_state_fields,
 )
 from src.quality_gate import GateResult
 
@@ -448,44 +445,6 @@ class TestTerminalStates:
 
         assert lifecycle.is_terminal
         assert lifecycle.state == LifecycleState.FAILED
-
-
-class TestBridgeFunctions:
-    """Tests for orchestrator compatibility bridge functions."""
-
-    def test_from_orchestrator_retry_state(self) -> None:
-        """from_orchestrator_retry_state creates lifecycle RetryState."""
-        result = from_orchestrator_retry_state(
-            attempt=2,
-            review_attempt=1,
-            log_offset=500,
-            previous_commit_hash="abc123",
-            baseline_timestamp=1234567890,
-        )
-
-        assert result.gate_attempt == 2
-        assert result.review_attempt == 1
-        assert result.log_offset == 500
-        assert result.previous_commit_hash == "abc123"
-        assert result.baseline_timestamp == 1234567890
-
-    def test_to_orchestrator_retry_state_fields(self) -> None:
-        """to_orchestrator_retry_state_fields extracts compatible fields."""
-        retry_state = RetryState(
-            gate_attempt=3,
-            review_attempt=2,
-            log_offset=1000,
-            previous_commit_hash="def456",
-            baseline_timestamp=9876543210,
-        )
-
-        result = to_orchestrator_retry_state_fields(retry_state)
-
-        assert result["attempt"] == 3  # Note: 'attempt' not 'gate_attempt'
-        assert result["review_attempt"] == 2
-        assert result["log_offset"] == 1000
-        assert result["previous_commit_hash"] == "def456"
-        assert result["baseline_timestamp"] == 9876543210
 
 
 class TestFullLifecycleScenarios:

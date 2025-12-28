@@ -8,19 +8,13 @@ effects (actions the orchestrator should take). This separation allows
 the orchestrator to remain responsible for I/O while the lifecycle
 handles all policy decisions.
 
-This module provides two usage patterns:
+This module provides the canonical RetryState and lifecycle state machine:
 
 1. **Testing policy in isolation**: Use ImplementerLifecycle directly to verify
    retry/gate/review transitions without mocking SDK or subprocesses.
 
-2. **Integration with orchestrator**: The orchestrator can use the lifecycle
-   to drive decisions, or continue using its inline implementation. The
-   lifecycle serves as the canonical, tested specification of the policy.
-
-Compatibility note:
-    The orchestrator's RetryState class uses `attempt` for gate attempts,
-    while this module's RetryState uses `gate_attempt`. Use the bridge
-    functions to convert between them when integrating.
+2. **Integration with orchestrator**: The orchestrator imports RetryState from
+   this module and uses lifecycle_ctx.retry_state directly for gate checks.
 """
 
 from __future__ import annotations
@@ -426,64 +420,3 @@ class ImplementerLifecycle:
             effect=Effect.COMPLETE_FAILURE,
             message=f"Error: {error}",
         )
-
-
-# Bridge functions for orchestrator compatibility
-
-
-def from_orchestrator_retry_state(
-    attempt: int,
-    review_attempt: int,
-    log_offset: int,
-    previous_commit_hash: str | None,
-    baseline_timestamp: int,
-) -> RetryState:
-    """Create a lifecycle RetryState from orchestrator RetryState fields.
-
-    The orchestrator's RetryState uses `attempt` for gate attempts,
-    while this module uses `gate_attempt`. This function bridges the two.
-
-    Args:
-        attempt: Gate attempt number (from orchestrator.RetryState.attempt)
-        review_attempt: Review attempt number
-        log_offset: Byte offset for log parsing
-        previous_commit_hash: Hash of previous commit for no-progress detection
-        baseline_timestamp: Unix timestamp when run started
-
-    Returns:
-        A lifecycle RetryState with equivalent values.
-    """
-    return RetryState(
-        gate_attempt=attempt,
-        review_attempt=review_attempt,
-        log_offset=log_offset,
-        previous_commit_hash=previous_commit_hash,
-        baseline_timestamp=baseline_timestamp,
-    )
-
-
-def to_orchestrator_retry_state_fields(
-    retry_state: RetryState,
-) -> dict[str, int | str | None]:
-    """Extract fields for updating an orchestrator RetryState.
-
-    Returns a dict with keys matching orchestrator.RetryState fields:
-    - attempt (not gate_attempt)
-    - review_attempt
-    - log_offset
-    - previous_commit_hash
-    - baseline_timestamp
-
-    Args:
-        retry_state: The lifecycle RetryState to extract from.
-
-    Returns:
-        Dict of field values compatible with orchestrator.RetryState.
-    """
-    return {
-        "attempt": retry_state.gate_attempt,
-        "review_attempt": retry_state.review_attempt,
-        "log_offset": retry_state.log_offset,
-        "previous_commit_hash": retry_state.previous_commit_hash,
-        "baseline_timestamp": retry_state.baseline_timestamp,
-    }

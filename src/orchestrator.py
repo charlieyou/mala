@@ -38,6 +38,7 @@ from .lifecycle import (
     LifecycleConfig,
     LifecycleContext,
     LifecycleState,
+    RetryState,
 )
 from .logging.console import (
     Colors,
@@ -199,22 +200,6 @@ class IssueResult:
     resolution: IssueResolution | None = None  # Resolution outcome if using markers
 
 
-@dataclass
-class RetryState:
-    """Per-issue state for tracking gate and review retry attempts."""
-
-    attempt: int = 1  # Gate attempt number
-    review_attempt: int = 0  # Review attempt number (0 = not started)
-    log_offset: int = 0  # Byte offset for scoped evidence parsing
-    previous_commit_hash: str | None = None
-    baseline_timestamp: int = (
-        0  # Unix timestamp when run started (reject older commits)
-    )
-    baseline_commit_hash: str | None = (
-        None  # Commit hash before agent started (for cumulative diff review)
-    )
-
-
 class MalaOrchestrator:
     """Orchestrates parallel issue processing using Claude Agent SDK."""
 
@@ -318,7 +303,7 @@ class MalaOrchestrator:
 
         # Check for no-progress condition (same commit, no new evidence)
         # Only check if this is a retry and the gate didn't already pass
-        if retry_state.attempt > 1 and not gate_result.passed:
+        if retry_state.gate_attempt > 1 and not gate_result.passed:
             no_progress = self.quality_gate.check_no_progress(
                 log_path,
                 retry_state.log_offset,
@@ -689,13 +674,8 @@ class MalaOrchestrator:
         lifecycle_ctx.retry_state.baseline_timestamp = int(time.time())
 
         # Track baseline_commit_hash separately (not in lifecycle's RetryState)
+        # This is used for cumulative diff review in Codex
         baseline_commit_hash = baseline_commit
-
-        # Initialize orchestrator's RetryState for compatibility with existing code
-        retry_state = RetryState(
-            baseline_timestamp=lifecycle_ctx.retry_state.baseline_timestamp,
-            baseline_commit_hash=baseline_commit,
-        )
 
         # Claude session ID will be captured from ResultMessage
         claude_session_id: str | None = None
@@ -851,23 +831,12 @@ class MalaOrchestrator:
 
                                 # Handle RUN_GATE effect
                                 if result.effect == Effect.RUN_GATE:
-                                    # Sync retry_state for gate check
-                                    retry_state.attempt = (
-                                        lifecycle_ctx.retry_state.gate_attempt
-                                    )
-                                    retry_state.log_offset = (
-                                        lifecycle_ctx.retry_state.log_offset
-                                    )
-                                    retry_state.previous_commit_hash = (
-                                        lifecycle_ctx.retry_state.previous_commit_hash
-                                    )
-
                                     log_path = self.session_log_paths[issue_id]
                                     (
                                         gate_result,
                                         new_offset,
                                     ) = await self._run_quality_gate_async(
-                                        issue_id, log_path, retry_state
+                                        issue_id, log_path, lifecycle_ctx.retry_state
                                     )
 
                                     # Transition based on gate result

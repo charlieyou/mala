@@ -3036,8 +3036,8 @@ class TestQualityGateAsync:
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("{}\n")
 
-        # Create a mock RetryState
-        from src.orchestrator import RetryState
+        # Create a mock RetryState (now imported from lifecycle)
+        from src.lifecycle import RetryState
 
         retry_state = RetryState(baseline_timestamp=int(time.time()))
 
