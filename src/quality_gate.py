@@ -10,11 +10,6 @@ Evidence Detection:
     check_with_resolution(..., spec=spec) to derive detection patterns from
     the ValidationSpec. This ensures spec command changes automatically update
     evidence expectations.
-
-    VALIDATION_PATTERNS, parse_validation_evidence(), and
-    parse_validation_evidence_from_offset() exist for backward compatibility
-    and are deprecated for new code. The legacy check() method is also
-    deprecated in favor of check_with_resolution().
 """
 
 from __future__ import annotations
@@ -173,17 +168,6 @@ class GateResult:
 class QualityGate:
     """Quality gate for verifying agent work meets requirements."""
 
-    # DEPRECATED: Use detection_pattern from ValidationSpec commands instead.
-    # These hardcoded patterns exist for backward compatibility when parsing
-    # evidence without a spec. New code should use parse_validation_evidence_with_spec()
-    # or check_with_resolution(..., spec=spec) to derive patterns from the spec.
-    VALIDATION_PATTERNS: ClassVar[dict[str, re.Pattern[str]]] = {
-        "pytest": re.compile(r"\b(uv\s+run\s+)?pytest\b"),
-        "ruff_check": re.compile(r"\b(uvx\s+)?ruff\s+check\b"),
-        "ruff_format": re.compile(r"\b(uvx\s+)?ruff\s+format\b"),
-        "ty_check": re.compile(r"\b(uvx\s+)?ty\s+check\b"),
-    }
-
     # Patterns for detecting issue resolution markers in log text
     RESOLUTION_PATTERNS: ClassVar[dict[str, re.Pattern[str]]] = {
         "no_change": re.compile(r"ISSUE_NO_CHANGE:\s*(.*)$", re.MULTILINE),
@@ -290,36 +274,6 @@ class QualityGate:
                 results.append((tool_use_id, is_error))
         return results
 
-    def _match_validation_pattern(
-        self, command: str, evidence: ValidationEvidence
-    ) -> str | None:
-        """Check command against validation patterns and update evidence.
-
-        Checks ALL patterns independently (a command may match multiple).
-        Returns the last matched command name for failure tracking.
-
-        Args:
-            command: The bash command string.
-            evidence: ValidationEvidence to update.
-
-        Returns:
-            Last matched command name (for failure tracking), None if no match.
-        """
-        last_match: str | None = None
-        if self.VALIDATION_PATTERNS["pytest"].search(command):
-            evidence.pytest_ran = True
-            last_match = "pytest"
-        if self.VALIDATION_PATTERNS["ruff_check"].search(command):
-            evidence.ruff_check_ran = True
-            last_match = "ruff check"
-        if self.VALIDATION_PATTERNS["ruff_format"].search(command):
-            evidence.ruff_format_ran = True
-            last_match = "ruff format"
-        if self.VALIDATION_PATTERNS["ty_check"].search(command):
-            evidence.ty_check_ran = True
-            last_match = "ty check"
-        return last_match
-
     def _match_spec_pattern(
         self,
         command: str,
@@ -382,10 +336,6 @@ class QualityGate:
                 kind_patterns[cmd.kind] = []
             if cmd.detection_pattern is not None:
                 kind_patterns[cmd.kind].append(cmd.detection_pattern)
-            else:
-                fallback = self._get_fallback_pattern(cmd.kind)
-                if fallback is not None:
-                    kind_patterns[cmd.kind].append(fallback)
         return kind_patterns
 
     def _iter_jsonl_entries(
@@ -499,52 +449,6 @@ class QualityGate:
         output = result.stdout.strip()
         return len(output) == 0, output
 
-    def parse_validation_evidence(self, log_path: Path) -> ValidationEvidence:
-        """Parse JSONL log file for validation command evidence.
-
-        DEPRECATED: Use parse_validation_evidence_with_spec() instead to derive
-        detection patterns from the ValidationSpec. This method uses hardcoded
-        VALIDATION_PATTERNS which may drift from spec command definitions.
-
-        Args:
-            log_path: Path to the JSONL log file from agent session.
-
-        Returns:
-            ValidationEvidence with flags for each detected command.
-        """
-        evidence, _ = self.parse_validation_evidence_from_offset(log_path, offset=0)
-        return evidence
-
-    def parse_validation_evidence_from_offset(
-        self, log_path: Path, offset: int = 0
-    ) -> tuple[ValidationEvidence, int]:
-        """Parse JSONL log for validation evidence starting at offset.
-
-        DEPRECATED: Use parse_validation_evidence_with_spec() instead.
-        """
-        evidence = ValidationEvidence()
-        if not log_path.exists():
-            return evidence, 0
-
-        tool_id_to_command: dict[str, str] = {}
-        command_failed: dict[str, bool] = {}
-
-        try:
-            for entry in self._iter_jsonl_entries(log_path, offset):
-                for tool_id, command in self._extract_bash_commands(entry.data):
-                    cmd_name = self._match_validation_pattern(command, evidence)
-                    if cmd_name:
-                        tool_id_to_command[tool_id] = cmd_name
-                for tool_use_id, is_error in self._extract_tool_results(entry.data):
-                    if tool_use_id in tool_id_to_command:
-                        command_failed[tool_id_to_command[tool_use_id]] = is_error
-
-            evidence.failed_commands = [c for c, f in command_failed.items() if f]
-            # Return EOF position (matches original f.tell())
-            return evidence, self.get_log_end_offset(log_path, offset)
-        except OSError:
-            return evidence, 0
-
     def parse_validation_evidence_with_spec(
         self, log_path: Path, spec: ValidationSpec, offset: int = 0
     ) -> ValidationEvidence:
@@ -595,22 +499,6 @@ class QualityGate:
                 return f.tell()
         except OSError:
             return start_offset
-
-    def _get_fallback_pattern(self, kind: CommandKind) -> re.Pattern[str] | None:
-        """Get fallback pattern for a CommandKind when spec pattern is missing.
-
-        This is a backward compatibility fallback. All ValidationSpec commands
-        built by build_validation_spec() include detection_pattern, so this
-        fallback should rarely be needed. If you're adding new command kinds,
-        ensure build_validation_spec() sets detection_pattern for them.
-        """
-        fallback_map = {
-            CommandKind.TEST: self.VALIDATION_PATTERNS["pytest"],
-            CommandKind.LINT: self.VALIDATION_PATTERNS["ruff_check"],
-            CommandKind.FORMAT: self.VALIDATION_PATTERNS["ruff_format"],
-            CommandKind.TYPECHECK: self.VALIDATION_PATTERNS["ty_check"],
-        }
-        return fallback_map.get(kind)
 
     def check_no_progress(
         self,
@@ -754,44 +642,6 @@ class QualityGate:
                 message=message,
             )
 
-    def check(
-        self, issue_id: str, log_path: Path, baseline_timestamp: int | None = None
-    ) -> GateResult:
-        """Run full quality gate check.
-
-        DEPRECATED: Use check_with_resolution(..., spec=spec) instead. This method
-        does not support no-change/obsolete/already-complete resolutions.
-
-        Internally delegates to check_with_resolution with a default per-issue spec
-        to ensure spec-driven evidence parsing.
-
-        Verifies:
-        1. A commit exists with bd-<issue_id> in the message
-        2. Validation commands (pytest, ruff) were executed
-
-        Args:
-            issue_id: The issue ID to verify.
-            log_path: Path to the JSONL log file from agent session.
-            baseline_timestamp: Unix timestamp. If provided, only accepts commits
-                created after this time (to reject stale commits from previous runs).
-
-        Returns:
-            GateResult with pass/fail and failure reasons.
-        """
-        # Build a default per-issue spec to use spec-driven evidence parsing
-        # Note: We don't pass repo_path here to ensure Python validation commands
-        # are always expected. Production callers should use check_with_resolution
-        # with an explicit spec for repo-type-aware validation.
-        spec = build_validation_spec(
-            scope=ValidationScope.PER_ISSUE,
-        )
-        return self.check_with_resolution(
-            issue_id=issue_id,
-            log_path=log_path,
-            baseline_timestamp=baseline_timestamp,
-            spec=spec,
-        )
-
     def check_with_resolution(
         self,
         issue_id: str,
@@ -827,11 +677,17 @@ class QualityGate:
             log_path: Path to the JSONL log file from agent session.
             baseline_timestamp: Unix timestamp for commit freshness check.
             log_offset: Byte offset to start parsing from.
-            spec: Optional ValidationSpec for scope-aware evidence checking.
+            spec: ValidationSpec for scope-aware evidence checking. Required.
 
         Returns:
             GateResult with pass/fail, failure reasons, and resolution if applicable.
+
+        Raises:
+            ValueError: If spec is not provided.
         """
+        if spec is None:
+            raise ValueError("spec is required for check_with_resolution")
+
         failure_reasons: list[str] = []
 
         # First, check for resolution markers
@@ -924,26 +780,10 @@ class QualityGate:
                 )
 
         # Check validation evidence from the given offset (scopes to current attempt)
-        # Use spec-driven parsing when spec is provided
-        if spec is not None:
-            evidence = self.parse_validation_evidence_with_spec(
-                log_path, spec, log_offset
-            )
-            passed, missing = check_evidence_against_spec(evidence, spec)
-            if not passed:
-                failure_reasons.append(
-                    f"Missing validation commands: {', '.join(missing)}"
-                )
-        else:
-            # Fallback to hardcoded patterns (backward compat)
-            evidence, _ = self.parse_validation_evidence_from_offset(
-                log_path, log_offset
-            )
-            if not evidence.has_minimum_validation():
-                missing = evidence.missing_commands()
-                failure_reasons.append(
-                    f"Missing validation commands: {', '.join(missing)}"
-                )
+        evidence = self.parse_validation_evidence_with_spec(log_path, spec, log_offset)
+        passed, missing = check_evidence_against_spec(evidence, spec)
+        if not passed:
+            failure_reasons.append(f"Missing validation commands: {', '.join(missing)}")
 
         # Check for validation commands that failed (exited non-zero)
         if evidence.failed_commands:

@@ -1,13 +1,14 @@
-"""Unit tests for quality gate with offset-based parsing.
+"""Unit tests for quality gate with spec-driven parsing.
 
 Tests for:
-- Byte offset-based evidence parsing (parse_validation_evidence_from_offset)
+- Spec-driven evidence parsing (parse_validation_evidence_with_spec)
 - No-progress detection (check_no_progress)
 """
 
 import json
 from pathlib import Path
 from src.validation.command_runner import CommandResult
+from src.validation.spec import ValidationScope, build_validation_spec
 from unittest.mock import patch
 
 from src.quality_gate import (
@@ -17,11 +18,11 @@ from src.quality_gate import (
 )
 
 
-class TestOffsetBasedParsing:
-    """Test parse_validation_evidence_from_offset for scoping evidence by attempt."""
+class TestSpecDrivenParsing:
+    """Test parse_validation_evidence_with_spec for spec-driven evidence detection."""
 
-    def test_returns_evidence_and_new_offset(self, tmp_path: Path) -> None:
-        """Should return tuple of (evidence, new_offset)."""
+    def test_returns_evidence(self, tmp_path: Path) -> None:
+        """Should return ValidationEvidence from log."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
             {
@@ -40,11 +41,11 @@ class TestOffsetBasedParsing:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        evidence, new_offset = gate.parse_validation_evidence_from_offset(log_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert isinstance(evidence, ValidationEvidence)
-        assert isinstance(new_offset, int)
-        assert new_offset > 0
+        assert evidence.pytest_ran is True
 
     def test_starts_from_given_offset(self, tmp_path: Path) -> None:
         """Should only parse log entries after the given byte offset."""
@@ -83,11 +84,12 @@ class TestOffsetBasedParsing:
         log_path.write_text(first_entry + "\n" + second_entry + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         # Offset set to after the first line
         offset = len(first_entry) + 1  # +1 for newline
-        evidence, _new_offset = gate.parse_validation_evidence_from_offset(
-            log_path, offset=offset
+        evidence = gate.parse_validation_evidence_with_spec(
+            log_path, spec, offset=offset
         )
 
         # Should NOT detect pytest (before offset)
@@ -115,7 +117,8 @@ class TestOffsetBasedParsing:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        evidence, _ = gate.parse_validation_evidence_from_offset(log_path, offset=0)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         assert evidence.pytest_ran is True
 
@@ -139,19 +142,19 @@ class TestOffsetBasedParsing:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         # Set offset to end of file
         file_size = log_path.stat().st_size
-        evidence, new_offset = gate.parse_validation_evidence_from_offset(
-            log_path, offset=file_size
+        evidence = gate.parse_validation_evidence_with_spec(
+            log_path, spec, offset=file_size
         )
 
         assert evidence.pytest_ran is False
         assert evidence.ruff_check_ran is False
         assert evidence.ruff_format_ran is False
-        assert new_offset == file_size
 
     def test_new_offset_points_to_end_of_file(self, tmp_path: Path) -> None:
-        """Returned offset should point to the current end of the file."""
+        """Log end offset should match file size."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
             {
@@ -170,22 +173,22 @@ class TestOffsetBasedParsing:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        _, new_offset = gate.parse_validation_evidence_from_offset(log_path)
+        new_offset = gate.get_log_end_offset(log_path)
 
         assert new_offset == log_path.stat().st_size
 
     def test_handles_missing_file(self, tmp_path: Path) -> None:
         """Should handle missing log file gracefully."""
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         nonexistent = tmp_path / "nonexistent.jsonl"
 
-        evidence, new_offset = gate.parse_validation_evidence_from_offset(nonexistent)
+        evidence = gate.parse_validation_evidence_with_spec(nonexistent, spec)
 
         assert evidence.pytest_ran is False
-        assert new_offset == 0
 
-    def test_detects_all_validation_commands_after_offset(self, tmp_path: Path) -> None:
-        """Should detect all validation commands after the given offset."""
+    def test_detects_all_validation_commands(self, tmp_path: Path) -> None:
+        """Should detect all validation commands."""
         log_path = tmp_path / "session.jsonl"
 
         # Write entries for all validation commands
@@ -216,7 +219,8 @@ class TestOffsetBasedParsing:
         log_path.write_text("\n".join(entries) + "\n")
 
         gate = QualityGate(tmp_path)
-        evidence, _ = gate.parse_validation_evidence_from_offset(log_path, offset=0)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         assert evidence.pytest_ran is True
         assert evidence.ruff_check_ran is True
@@ -583,6 +587,8 @@ class TestCommitBaselineCheck:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
         with patch("src.quality_gate.run_command") as mock_run:
             # Return a commit that is older than the baseline
             mock_run.return_value = CommandResult(
@@ -592,7 +598,9 @@ class TestCommitBaselineCheck:
                 stderr="",
             )
             # Baseline makes the commit stale
-            result = gate.check("issue-123", log_path, baseline_timestamp=1703501000)
+            result = gate.check_with_resolution(
+                "issue-123", log_path, baseline_timestamp=1703501000, spec=spec
+            )
 
         assert result.passed is False
         assert any(
@@ -634,6 +642,8 @@ class TestCommitBaselineCheck:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
         with patch("src.quality_gate.run_command") as mock_run:
             # Return a commit that is newer than the baseline
             mock_run.return_value = CommandResult(
@@ -643,7 +653,9 @@ class TestCommitBaselineCheck:
                 stderr="",
             )
             # Baseline allows the newer commit
-            result = gate.check("issue-123", log_path, baseline_timestamp=1703501000)
+            result = gate.check_with_resolution(
+                "issue-123", log_path, baseline_timestamp=1703501000, spec=spec
+            )
 
         assert result.passed is True
 
@@ -847,6 +859,7 @@ class TestScopeAwareEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         # Mock git status to return clean working tree
         with patch("src.quality_gate.run_command") as mock_run:
@@ -859,6 +872,7 @@ class TestScopeAwareEvidence:
             result = gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
+                spec=spec,
             )
 
         assert result.passed is True
@@ -888,6 +902,7 @@ class TestScopeAwareEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -899,6 +914,7 @@ class TestScopeAwareEvidence:
             result = gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
+                spec=spec,
             )
 
         assert result.passed is True
@@ -926,6 +942,7 @@ class TestScopeAwareEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -937,6 +954,7 @@ class TestScopeAwareEvidence:
             result = gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
+                spec=spec,
             )
 
         assert result.passed is False
@@ -947,17 +965,12 @@ class TestScopeAwareEvidence:
     ) -> None:
         """EvidenceGate should fail no-change resolution without rationale."""
         log_path = tmp_path / "session.jsonl"
-        # Marker without proper rationale
+        # Marker without substantive rationale
         log_content = json.dumps(
             {
                 "type": "assistant",
                 "message": {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "ISSUE_NO_CHANGE:",  # No rationale
-                        }
-                    ]
+                    "content": [{"type": "text", "text": "ISSUE_NO_CHANGE:   "}]
                 },
             }
         )
@@ -993,6 +1006,7 @@ class TestEvidenceGateSkipsValidation:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             # First call: git status (clean tree)
@@ -1003,6 +1017,7 @@ class TestEvidenceGateSkipsValidation:
             result = gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
+                spec=spec,
             )
 
         assert result.passed is True
@@ -1028,6 +1043,7 @@ class TestEvidenceGateSkipsValidation:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -1036,6 +1052,7 @@ class TestEvidenceGateSkipsValidation:
             result = gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
+                spec=spec,
             )
 
         # Should pass without validation evidence
@@ -1064,6 +1081,7 @@ class TestEvidenceGateSkipsValidation:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -1072,6 +1090,7 @@ class TestEvidenceGateSkipsValidation:
             result = gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
+                spec=spec,
             )
 
         assert result.passed is True
@@ -1113,11 +1132,15 @@ class TestClearFailureMessages:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[], returncode=0, stdout="", stderr=""
             )
-            result = gate.check("missing-commit-123", log_path)
+            result = gate.check_with_resolution(
+                "missing-commit-123", log_path, spec=spec
+            )
 
         assert result.passed is False
         assert any(
@@ -1146,11 +1169,13 @@ class TestClearFailureMessages:
         )
         log_path.write_text(log_content + "\n")
 
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[], returncode=0, stdout="abc1234 bd-test-123: Fix\n", stderr=""
             )
-            result = gate.check("test-123", log_path)
+            result = gate.check_with_resolution("test-123", log_path, spec=spec)
 
         assert result.passed is False
         # Should mention missing commands
@@ -1174,12 +1199,13 @@ class TestClearFailureMessages:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[], returncode=0, stdout="", stderr=""
             )
-            result = gate.check_with_resolution("test-123", log_path)
+            result = gate.check_with_resolution("test-123", log_path, spec=spec)
 
         # Should fail due to missing rationale
         assert result.passed is False
@@ -1206,23 +1232,6 @@ class TestGetRequiredEvidenceKinds:
         assert CommandKind.TYPECHECK in kinds
         # E2E should NOT be in per-issue scope
         assert CommandKind.E2E not in kinds
-
-    def test_run_level_can_include_e2e(self) -> None:
-        """Run-level spec can include E2E command kind."""
-        from src.quality_gate import get_required_evidence_kinds
-        from src.validation.spec import (
-            CommandKind,
-            ValidationScope,
-            build_validation_spec,
-        )
-
-        spec = build_validation_spec(scope=ValidationScope.RUN_LEVEL)
-        kinds = get_required_evidence_kinds(spec)
-
-        # Run-level may have E2E if not disabled
-        # Note: E2E is enabled for run-level by default but not added to commands
-        # E2E is handled separately via e2e config, not commands list
-        assert CommandKind.TEST in kinds
 
 
 class TestCheckEvidenceAgainstSpec:
@@ -1370,54 +1379,20 @@ class TestCheckWithResolutionSpec:
         # Should pass since pytest is not required when post-validate is disabled
         assert result.passed is True
 
-    def test_falls_back_to_default_without_spec(self, tmp_path: Path) -> None:
-        """Should use default evidence checking when spec is not provided."""
+    def test_raises_without_spec(self, tmp_path: Path) -> None:
+        """Should raise ValueError when spec is not provided."""
+        import pytest as pytest_module
+
         log_path = tmp_path / "session.jsonl"
-        # Log without pytest (will fail default check)
-        commands = [
-            "uvx ruff check .",
-            "uvx ruff format .",
-            "uvx ty check",
-        ]
-        lines = []
-        for cmd in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-        log_path.write_text("\n".join(lines) + "\n")
+        log_path.write_text("{}\n")
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.run_command") as mock_run:
-            mock_run.return_value = CommandResult(
-                command=[],
-                returncode=0,
-                stdout="abc1234 1703502000 bd-test-123: Fix\n",
-                stderr="",
-            )
-            # No spec provided - uses default checking
-            result = gate.check_with_resolution(
+        with pytest_module.raises(ValueError, match="spec is required"):
+            gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
-                baseline_timestamp=1703501000,
             )
-
-        # Should fail because pytest is required by default
-        assert result.passed is False
-        assert any("pytest" in r.lower() for r in result.failure_reasons)
 
 
 class TestUserPromptInjectionPrevention:
@@ -1540,6 +1515,7 @@ class TestGitFailureHandling:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -1548,7 +1524,7 @@ class TestGitFailureHandling:
                 stdout="",
                 stderr="error",
             )
-            result = gate.check_with_resolution("test-123", log_path)
+            result = gate.check_with_resolution("test-123", log_path, spec=spec)
 
         # Should fail because git status failed
         assert result.passed is False
@@ -1613,6 +1589,7 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
         log_path.write_text(first_content + "\n".join(second_lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         offset = len(first_content.encode("utf-8"))
 
         with patch("src.quality_gate.run_command") as mock_run:
@@ -1627,6 +1604,7 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
                 log_path=log_path,
                 baseline_timestamp=1703501000,
                 log_offset=offset,
+                spec=spec,
             )
 
         # Should fail because second attempt is missing pytest, format, ty check
@@ -1635,206 +1613,11 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
 
 
 class TestByteOffsetConsistency:
-    """Regression tests: byte offsets must be consistent between resolution and evidence parsing.
+    """Regression tests: byte offsets are consistent across parsers.
 
-    Both parse_issue_resolution_from_offset and parse_validation_evidence_from_offset
-    use byte-based offsets. If one parser used text mode and the other binary mode,
-    the offsets would be inconsistent, causing retry-scoped parsing to fail.
+    This ensures that the byte offsets returned by the resolution parser
+    match those expected by the evidence parser.
     """
-
-    def test_offsets_consistent_across_multiple_attempts(self, tmp_path: Path) -> None:
-        """Offsets from resolution parsing should be valid for evidence parsing.
-
-        This is the core regression test: when the orchestrator parses resolution
-        markers and then uses the returned offset to scope evidence parsing to the
-        current retry attempt, both offsets must use the same byte-based contract.
-        """
-        log_path = tmp_path / "session.jsonl"
-
-        # First attempt: has evidence but no resolution marker
-        attempt1_entries = [
-            json.dumps(
-                {
-                    "type": "assistant",
-                    "message": {
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "name": "Bash",
-                                "input": {"command": "uv run pytest"},
-                            }
-                        ]
-                    },
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "assistant",
-                    "message": {
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "name": "Bash",
-                                "input": {"command": "uvx ruff check ."},
-                            }
-                        ]
-                    },
-                }
-            ),
-        ]
-
-        # Second attempt: has different evidence and no resolution marker
-        attempt2_entries = [
-            json.dumps(
-                {
-                    "type": "assistant",
-                    "message": {
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "name": "Bash",
-                                "input": {"command": "uvx ruff format ."},
-                            }
-                        ]
-                    },
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "assistant",
-                    "message": {
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "name": "Bash",
-                                "input": {"command": "uvx ty check"},
-                            }
-                        ]
-                    },
-                }
-            ),
-        ]
-
-        # Write all entries
-        content = (
-            "\n".join(attempt1_entries) + "\n" + "\n".join(attempt2_entries) + "\n"
-        )
-        log_path.write_text(content)
-
-        gate = QualityGate(tmp_path)
-
-        # Get offset at end of first attempt using byte-based calculation
-        first_attempt_bytes = ("\n".join(attempt1_entries) + "\n").encode("utf-8")
-        expected_offset = len(first_attempt_bytes)
-
-        # Parse evidence starting from that offset
-        evidence_after_offset, _ = gate.parse_validation_evidence_from_offset(
-            log_path, offset=expected_offset
-        )
-
-        # Should only see attempt2 evidence (ruff_format, ty_check), NOT attempt1 (pytest, ruff_check)
-        assert evidence_after_offset.pytest_ran is False, (
-            "pytest from attempt1 should not be seen"
-        )
-        assert evidence_after_offset.ruff_check_ran is False, (
-            "ruff check from attempt1 should not be seen"
-        )
-        assert evidence_after_offset.ruff_format_ran is True, (
-            "ruff format from attempt2 should be seen"
-        )
-        assert evidence_after_offset.ty_check_ran is True, (
-            "ty check from attempt2 should be seen"
-        )
-
-    def test_evidence_parser_returns_correct_byte_offset(self, tmp_path: Path) -> None:
-        """Evidence parser should return byte-based offset matching file.tell() in binary mode."""
-        log_path = tmp_path / "session.jsonl"
-
-        entry = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uv run pytest"},
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(entry + "\n")
-
-        gate = QualityGate(tmp_path)
-        _, returned_offset = gate.parse_validation_evidence_from_offset(
-            log_path, offset=0
-        )
-
-        # The returned offset should match the byte size of the content
-        expected_byte_size = len((entry + "\n").encode("utf-8"))
-        assert returned_offset == expected_byte_size, (
-            f"Expected byte offset {expected_byte_size}, got {returned_offset}"
-        )
-
-    def test_resolution_and_evidence_offsets_compatible(self, tmp_path: Path) -> None:
-        """Offset returned by resolution parser should work correctly with evidence parser.
-
-        This tests the exact usage pattern in the orchestrator where:
-        1. Resolution parser runs and returns an offset
-        2. Evidence parser uses that offset to scope to current attempt
-        """
-        log_path = tmp_path / "session.jsonl"
-
-        # First entry: text content (like resolution parsing would encounter)
-        first_entry = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [{"type": "text", "text": "Let me check the code."}]
-                },
-            }
-        )
-        # Second entry: validation command
-        second_entry = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uv run pytest"},
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(first_entry + "\n" + second_entry + "\n")
-
-        gate = QualityGate(tmp_path)
-
-        # Resolution parser processes entire file and returns final offset
-        _, resolution_offset = gate.parse_issue_resolution_from_offset(
-            log_path, offset=0
-        )
-
-        # Now use that same offset with evidence parser for a "retry"
-        # Starting at EOF offset means we shouldn't find the pytest evidence from earlier
-        evidence_at_eof, _ = gate.parse_validation_evidence_from_offset(
-            log_path, offset=resolution_offset
-        )
-
-        # At EOF, no evidence should be found
-        assert evidence_at_eof.pytest_ran is False, (
-            "Evidence parser should find nothing when started at EOF offset"
-        )
-
-        # Verify the offset is actually at EOF
-        expected_eof = len((first_entry + "\n" + second_entry + "\n").encode("utf-8"))
-        assert resolution_offset == expected_eof, (
-            f"Resolution parser should return EOF offset {expected_eof}, got {resolution_offset}"
-        )
 
     def test_unicode_content_uses_byte_offsets(self, tmp_path: Path) -> None:
         """Multi-byte unicode should not break offset calculations.
@@ -1858,6 +1641,7 @@ class TestByteOffsetConsistency:
                 },
             }
         )
+
         validation_entry = json.dumps(
             {
                 "type": "assistant",
@@ -1877,13 +1661,14 @@ class TestByteOffsetConsistency:
         log_path.write_text(content)
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         # Calculate byte offset after first entry (including newline)
         byte_offset = len((entry_with_emoji + "\n").encode("utf-8"))
 
         # Parse evidence starting at the byte offset
-        evidence, _ = gate.parse_validation_evidence_from_offset(
-            log_path, offset=byte_offset
+        evidence = gate.parse_validation_evidence_with_spec(
+            log_path, spec, offset=byte_offset
         )
 
         # Should find the pytest command
@@ -1935,7 +1720,7 @@ class TestByteOffsetConsistency:
                             "type": "tool_use",
                             "name": "Bash",
                             "id": "t1",
-                            "input": {"command": "pytest"},
+                            "input": {"command": "uv run pytest"},
                         }
                     ]
                 },
@@ -1949,12 +1734,11 @@ class TestByteOffsetConsistency:
             f.write((valid_entry + "\n").encode("utf-8"))
 
         gate = QualityGate(tmp_path)
-        evidence, new_offset = gate.parse_validation_evidence_from_offset(log_path, 0)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         # Should still parse valid entries
         assert evidence.pytest_ran is True
-        # Offset should advance past all content
-        assert new_offset > 0
 
     def test_truncated_json_skipped_without_crash(self, tmp_path: Path) -> None:
         """Truncated JSON lines should be skipped without crashing."""
@@ -1964,7 +1748,12 @@ class TestByteOffsetConsistency:
             {
                 "type": "assistant",
                 "message": {
-                    "content": [{"type": "text", "text": "ISSUE_NO_CHANGE: test"}]
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_NO_CHANGE: Already done.",
+                        }
+                    ]
                 },
             }
         )
@@ -1977,11 +1766,11 @@ class TestByteOffsetConsistency:
         resolution, new_offset = gate.parse_issue_resolution_from_offset(log_path, 0)
 
         assert resolution is not None
-        assert resolution.rationale == "test"
+        assert resolution.rationale == "Already done."
         assert new_offset > 0
 
-    def test_offset_beyond_eof_returns_start_offset(self, tmp_path: Path) -> None:
-        """Offset beyond EOF should return the actual file size (EOF position)."""
+    def test_offset_beyond_eof_returns_empty_evidence(self, tmp_path: Path) -> None:
+        """Offset beyond EOF should return empty evidence."""
         log_path = tmp_path / "session.jsonl"
 
         entry = json.dumps(
@@ -1991,17 +1780,15 @@ class TestByteOffsetConsistency:
             }
         )
         log_path.write_text(entry + "\n")
-        file_size = log_path.stat().st_size
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         # Offset way beyond file size
-        evidence, new_offset = gate.parse_validation_evidence_from_offset(
-            log_path, 10000
+        evidence = gate.parse_validation_evidence_with_spec(
+            log_path, spec, offset=10000
         )
 
         assert not evidence.pytest_ran
-        # Should return actual EOF position (matches original f.tell() behavior)
-        assert new_offset == file_size
 
 
 class TestSpecDrivenEvidencePatterns:
@@ -2087,10 +1874,8 @@ class TestSpecDrivenEvidencePatterns:
         passed, missing = check_evidence_against_spec(evidence, spec)
         assert passed is True, f"Missing evidence for spec commands: {missing}"
 
-    def test_fallback_to_hardcoded_patterns_when_no_spec_pattern(
-        self, tmp_path: Path
-    ) -> None:
-        """Should fall back to hardcoded patterns when command has no detection_pattern."""
+    def test_command_without_pattern_skipped(self, tmp_path: Path) -> None:
+        """Commands without detection_pattern should be skipped (no fallback)."""
         from src.validation.spec import (
             CommandKind,
             ValidationCommand,
@@ -2131,8 +1916,8 @@ class TestSpecDrivenEvidencePatterns:
         gate = QualityGate(tmp_path)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
-        # Should detect pytest via fallback pattern
-        assert evidence.pytest_ran is True
+        # Without detection_pattern and without fallback, pytest should NOT be detected
+        assert evidence.pytest_ran is False
 
     def test_check_with_resolution_uses_spec_patterns(self, tmp_path: Path) -> None:
         """check_with_resolution should use spec-defined patterns, not hardcoded.
@@ -2323,6 +2108,7 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2335,6 +2121,7 @@ class TestValidationExitCodeParsing:
                 issue_id="test-123",
                 log_path=log_path,
                 baseline_timestamp=1703501000,
+                spec=spec,
             )
 
         # Should fail because pytest exited non-zero
@@ -2399,6 +2186,7 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2407,11 +2195,11 @@ class TestValidationExitCodeParsing:
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
             )
-            # No spec provided - uses default checking
             result = gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
                 baseline_timestamp=1703501000,
+                spec=spec,
             )
 
         assert result.passed is False
@@ -2470,6 +2258,7 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2482,6 +2271,7 @@ class TestValidationExitCodeParsing:
                 issue_id="test-123",
                 log_path=log_path,
                 baseline_timestamp=1703501000,
+                spec=spec,
             )
 
         assert result.passed is True
@@ -2541,6 +2331,7 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2553,6 +2344,7 @@ class TestValidationExitCodeParsing:
                 issue_id="test-123",
                 log_path=log_path,
                 baseline_timestamp=1703501000,
+                spec=spec,
             )
 
         assert result.passed is False
@@ -2686,6 +2478,7 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2698,6 +2491,7 @@ class TestValidationExitCodeParsing:
                 issue_id="test-123",
                 log_path=log_path,
                 baseline_timestamp=1703501000,
+                spec=spec,
             )
 
         # Should pass because pytest succeeded on the second run
@@ -2730,6 +2524,7 @@ class TestAlreadyCompleteResolution:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             # Return a commit that exists (even if before baseline)
@@ -2743,6 +2538,7 @@ class TestAlreadyCompleteResolution:
                 issue_id="test-123",
                 log_path=log_path,
                 baseline_timestamp=1703500000,  # Commit is BEFORE baseline
+                spec=spec,
             )
 
         assert result.passed is True
@@ -2769,6 +2565,7 @@ class TestAlreadyCompleteResolution:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             # No matching commit found
@@ -2781,6 +2578,7 @@ class TestAlreadyCompleteResolution:
             result = gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
+                spec=spec,
             )
 
         assert result.passed is False
@@ -2805,10 +2603,12 @@ class TestAlreadyCompleteResolution:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         result = gate.check_with_resolution(
             issue_id="test-123",
             log_path=log_path,
+            spec=spec,
         )
 
         assert result.passed is False
@@ -2836,6 +2636,7 @@ class TestAlreadyCompleteResolution:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2847,6 +2648,7 @@ class TestAlreadyCompleteResolution:
             result = gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
+                spec=spec,
             )
 
         # Should pass without any validation evidence
@@ -2986,3 +2788,7 @@ class TestSpecCommandChangesPropagation:
         assert evidence2.pytest_ran is True, (
             "'uv run pytest' should match the strict pattern"
         )
+        # Other commands should still match
+        assert evidence2.ruff_check_ran is True
+        assert evidence2.ruff_format_ran is True
+        assert evidence2.ty_check_ran is True
