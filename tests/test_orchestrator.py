@@ -3427,3 +3427,138 @@ class TestBaselineCommitSelection:
         assert call_order[0] == "get_baseline_for_issue"
         # When it returns None (fresh issue), get_git_commit_async should be called
         assert "get_git_commit_async" in call_order
+
+
+class TestCodexReviewUsesCurrentHead:
+    """Tests that Codex review uses current HEAD instead of specific commit.
+
+    When multiple agents are working in parallel, one agent may fix issues
+    introduced by another agent. The Codex review should see the cumulative
+    diff from baseline to current HEAD, not just up to the agent's specific
+    commit.
+
+    See issue mala-l10: If Agent A makes commit abc123 with issues, and Agent B
+    makes commit def456 that fixes those issues, Codex review for Agent A
+    should review baseline..HEAD (seeing the fix) not baseline..abc123.
+    """
+
+    @pytest.mark.asyncio
+    async def test_codex_review_receives_current_head_not_agent_commit(
+        self, tmp_path: Path
+    ) -> None:
+        """Codex review should use current HEAD, not the agent's specific commit.
+
+        This ensures that if another agent fixed issues after this agent's commit,
+        the Codex review will see the clean cumulative diff.
+        """
+        from src.codex_review import CodexReviewResult
+        from src.orchestrator import MalaOrchestrator
+        from src.quality_gate import GateResult
+
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+        )
+
+        # Track the commit hash passed to codex review
+        captured_review_commits: list[str] = []
+
+        async def mock_run_codex_review(
+            repo_path: Path,
+            commit_hash: str,
+            max_retries: int = 2,
+            issue_description: str | None = None,
+            baseline_commit: str | None = None,
+        ) -> CodexReviewResult:
+            captured_review_commits.append(commit_hash)
+            return CodexReviewResult(
+                passed=True,
+                issues=[],
+                parse_error=None,
+                attempt=1,
+            )
+
+        # Simulate: agent made commit "agent_commit_abc", but HEAD is now "current_head_xyz"
+        # (because another agent made a subsequent commit)
+        agent_commit = "agent_commit_abc123"
+        current_head = "current_head_xyz456"
+
+        # Mock the quality gate to return a result with the agent's specific commit
+        mock_gate_result = GateResult(
+            passed=False,  # Trigger review
+            failure_reasons=["type_errors"],  # Need some failure to trigger review
+            commit_hash=agent_commit,  # This is the agent's commit
+        )
+
+        async def mock_get_git_commit_async(cwd: Path, timeout: float = 5.0) -> str:
+            return current_head  # Always return current HEAD
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="test-session",
+                result="Commit: agent_commit_abc123\nDone implementing",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        # Create a fake log file
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "test-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
+        # Mock the quality gate to return our specific gate result
+        mock_quality_gate = MagicMock()
+        mock_quality_gate.run_gate = AsyncMock(return_value=mock_gate_result)
+        mock_quality_gate.parse_validation_evidence_from_offset = MagicMock(
+            return_value=(None, 0)
+        )
+
+        with (
+            patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
+            patch("src.orchestrator.get_git_branch_async", return_value="main"),
+            patch(
+                "src.orchestrator.get_git_commit_async",
+                side_effect=mock_get_git_commit_async,
+            ),
+            patch("src.orchestrator.get_baseline_for_issue", return_value=None),
+            patch(
+                "src.orchestrator.run_codex_review",
+                side_effect=mock_run_codex_review,
+            ),
+            patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+            patch("src.orchestrator.get_claude_log_path", return_value=log_file),
+            patch.object(orchestrator, "quality_gate", mock_quality_gate),
+            patch.object(
+                orchestrator.beads,
+                "get_issue_description_async",
+                return_value="Test issue",
+            ),
+        ):
+            mock_tracer = MagicMock()
+            mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
+            mock_tracer.__exit__ = MagicMock(return_value=None)
+            mock_tracer_cls.return_value = mock_tracer
+
+            await orchestrator.run_implementer("test-issue")
+
+        # The key assertion: codex review should receive current HEAD,
+        # NOT the agent's specific commit
+        assert len(captured_review_commits) >= 1, "Codex review should have been called"
+        assert captured_review_commits[0] == current_head, (
+            f"Codex review should use current HEAD ({current_head}), "
+            f"not agent's commit ({agent_commit}). Got: {captured_review_commits[0]}"
+        )

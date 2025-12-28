@@ -4,6 +4,17 @@ Implements Track A4 from 2025-12-26-coordination-plan.md:
 - Verify commit message contains bd-<issue_id>
 - Verify validation commands ran (parse JSONL logs)
 - On failure: mark needs-followup with failure context
+
+Evidence Detection:
+    Production code should use parse_validation_evidence_with_spec() or
+    check_with_resolution(..., spec=spec) to derive detection patterns from
+    the ValidationSpec. This ensures spec command changes automatically update
+    evidence expectations.
+
+    VALIDATION_PATTERNS, parse_validation_evidence(), and
+    parse_validation_evidence_from_offset() exist for backward compatibility
+    and are deprecated for new code. The legacy check() method is also
+    deprecated in favor of check_with_resolution().
 """
 
 from __future__ import annotations
@@ -145,7 +156,10 @@ class GateResult:
 class QualityGate:
     """Quality gate for verifying agent work meets requirements."""
 
-    # Patterns for detecting validation commands in Bash tool calls
+    # DEPRECATED: Use detection_pattern from ValidationSpec commands instead.
+    # These hardcoded patterns exist for backward compatibility when parsing
+    # evidence without a spec. New code should use parse_validation_evidence_with_spec()
+    # or check_with_resolution(..., spec=spec) to derive patterns from the spec.
     VALIDATION_PATTERNS: ClassVar[dict[str, re.Pattern[str]]] = {
         "pytest": re.compile(r"\b(uv\s+run\s+)?pytest\b"),
         "ruff_check": re.compile(r"\b(uvx\s+)?ruff\s+check\b"),
@@ -314,6 +328,10 @@ class QualityGate:
     def parse_validation_evidence(self, log_path: Path) -> ValidationEvidence:
         """Parse JSONL log file for validation command evidence.
 
+        DEPRECATED: Use parse_validation_evidence_with_spec() instead to derive
+        detection patterns from the ValidationSpec. This method uses hardcoded
+        VALIDATION_PATTERNS which may drift from spec command definitions.
+
         Args:
             log_path: Path to the JSONL log file from agent session.
 
@@ -327,6 +345,11 @@ class QualityGate:
         self, log_path: Path, offset: int = 0
     ) -> tuple[ValidationEvidence, int]:
         """Parse JSONL log file for validation command evidence starting at offset.
+
+        DEPRECATED: Use parse_validation_evidence_with_spec() instead for evidence
+        checking. This method is retained for offset tracking (getting the new file
+        position) but uses hardcoded VALIDATION_PATTERNS which may drift from spec
+        command definitions.
 
         This allows scoping evidence to a specific attempt by starting from
         the byte offset where the previous attempt ended.
@@ -578,7 +601,13 @@ class QualityGate:
         return evidence
 
     def _get_fallback_pattern(self, kind: CommandKind) -> re.Pattern[str] | None:
-        """Get fallback pattern for a CommandKind when spec pattern is missing."""
+        """Get fallback pattern for a CommandKind when spec pattern is missing.
+
+        This is a backward compatibility fallback. All ValidationSpec commands
+        built by build_validation_spec() include detection_pattern, so this
+        fallback should rarely be needed. If you're adding new command kinds,
+        ensure build_validation_spec() sets detection_pattern for them.
+        """
         fallback_map = {
             CommandKind.TEST: self.VALIDATION_PATTERNS["pytest"],
             CommandKind.LINT: self.VALIDATION_PATTERNS["ruff_check"],
@@ -725,6 +754,13 @@ class QualityGate:
         self, issue_id: str, log_path: Path, baseline_timestamp: int | None = None
     ) -> GateResult:
         """Run full quality gate check.
+
+        DEPRECATED: Use check_with_resolution(..., spec=spec) instead. This method
+        uses hardcoded validation patterns and does not support:
+        - No-change/obsolete/already-complete resolutions
+        - Scope-aware evidence requirements (per-issue vs run-level)
+        - Spec-driven detection patterns
+        - Validation exit code checking
 
         Verifies:
         1. A commit exists with bd-<issue_id> in the message

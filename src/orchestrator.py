@@ -890,9 +890,14 @@ class MalaOrchestrator:
                                         agent_id=issue_id,
                                     )
 
+                                    # Use current HEAD for review (includes any subsequent fixes by other agents)
+                                    # rather than the agent's specific commit
+                                    current_head = await get_git_commit_async(
+                                        self.repo_path
+                                    )
                                     review_result = await run_codex_review(
                                         self.repo_path,
-                                        lifecycle_ctx.last_gate_result.commit_hash,  # type: ignore[union-attr]
+                                        current_head,
                                         max_retries=2,  # JSON parse retries
                                         issue_description=issue_description,
                                         baseline_commit=baseline_commit_hash,

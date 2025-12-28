@@ -2747,3 +2747,136 @@ class TestAlreadyCompleteResolution:
         assert result.passed is True
         assert result.resolution is not None
         assert result.resolution.outcome == ResolutionOutcome.ALREADY_COMPLETE
+
+
+class TestSpecCommandChangesPropagation:
+    """Test that spec command changes propagate to evidence detection.
+
+    This is the core acceptance test for the architecture fix (mala-yg9.7):
+    ValidationSpec command patterns should drive evidence detection, so that
+    updating spec commands automatically updates gate expectations.
+    """
+
+    def test_strict_pattern_change_updates_evidence(self, tmp_path: Path) -> None:
+        """Changing a spec command's detection_pattern should update evidence detection.
+
+        This prevents the desync issue where hardcoded patterns drift from actual
+        spec commands.
+        """
+        import re
+
+        from src.validation.spec import (
+            CommandKind,
+            ValidationCommand,
+            ValidationScope,
+            ValidationSpec,
+        )
+
+        # Create a spec with a MODIFIED pytest pattern that requires "uv run pytest"
+        # (stricter than the original pattern which accepts bare "pytest")
+        strict_pytest_cmd = ValidationCommand(
+            name="pytest",
+            command=["uv", "run", "pytest"],
+            kind=CommandKind.TEST,
+            detection_pattern=re.compile(
+                r"\buv\s+run\s+pytest\b"
+            ),  # MUST have "uv run"
+        )
+        spec = ValidationSpec(
+            commands=[
+                strict_pytest_cmd,
+                ValidationCommand(
+                    name="ruff check",
+                    command=["uvx", "ruff", "check"],
+                    kind=CommandKind.LINT,
+                    detection_pattern=re.compile(r"\bruff\s+check\b"),
+                ),
+                ValidationCommand(
+                    name="ruff format",
+                    command=["uvx", "ruff", "format"],
+                    kind=CommandKind.FORMAT,
+                    detection_pattern=re.compile(r"\bruff\s+format\b"),
+                ),
+                ValidationCommand(
+                    name="ty check",
+                    command=["uvx", "ty", "check"],
+                    kind=CommandKind.TYPECHECK,
+                    detection_pattern=re.compile(r"\bty\s+check\b"),
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        # Create log with bare "pytest" (no "uv run" prefix)
+        log_path = tmp_path / "session.jsonl"
+        commands = [
+            "pytest tests/",  # This should NOT match the strict pattern
+            "ruff check .",
+            "ruff format .",
+            "ty check",
+        ]
+        lines = []
+        for cmd in commands:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        gate = QualityGate(tmp_path)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        # pytest_ran should be False because bare "pytest" doesn't match strict pattern
+        assert evidence.pytest_ran is False, (
+            "Spec pattern change should propagate: bare 'pytest' should NOT match "
+            "'uv run pytest' pattern"
+        )
+        # Other commands should still match
+        assert evidence.ruff_check_ran is True
+        assert evidence.ruff_format_ran is True
+        assert evidence.ty_check_ran is True
+
+        # Now test with "uv run pytest" which SHOULD match
+        log_path2 = tmp_path / "session2.jsonl"
+        commands2 = [
+            "uv run pytest tests/",  # This SHOULD match the strict pattern
+            "ruff check .",
+            "ruff format .",
+            "ty check",
+        ]
+        lines2 = []
+        for cmd in commands2:
+            lines2.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path2.write_text("\n".join(lines2) + "\n")
+
+        evidence2 = gate.parse_validation_evidence_with_spec(log_path2, spec)
+        assert evidence2.pytest_ran is True, (
+            "'uv run pytest' should match the strict pattern"
+        )
