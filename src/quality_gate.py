@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from src.validation.command_runner import run_command
 from src.validation.spec import (
@@ -34,9 +34,24 @@ from src.validation.spec import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from src.validation.spec import ValidationSpec
+
+
+@dataclass
+class JsonlEntry:
+    """A parsed JSONL log entry with byte offset tracking."""
+
+    data: dict[str, Any]
+    """The parsed JSON object from this line."""
+
+    line_len: int
+    """Length of the raw line in bytes (for offset tracking)."""
+
+    offset: int
+    """Byte offset where this line started in the file."""
 
 
 @dataclass
@@ -178,6 +193,13 @@ class QualityGate:
         ),
     }
 
+    # Map pattern names to resolution outcomes
+    PATTERN_TO_OUTCOME: ClassVar[dict[str, ResolutionOutcome]] = {
+        "no_change": ResolutionOutcome.NO_CHANGE,
+        "obsolete": ResolutionOutcome.OBSOLETE,
+        "already_complete": ResolutionOutcome.ALREADY_COMPLETE,
+    }
+
     def __init__(self, repo_path: Path):
         """Initialize quality gate.
 
@@ -185,6 +207,236 @@ class QualityGate:
             repo_path: Path to the repository for git operations.
         """
         self.repo_path = repo_path
+
+    def _extract_assistant_text_blocks(self, data: dict[str, Any]) -> list[str]:
+        """Extract text content from assistant message blocks.
+
+        Args:
+            data: Parsed JSONL entry data.
+
+        Returns:
+            List of text strings from text blocks in assistant messages.
+        """
+        entry_type = data.get("type", "")
+        entry_role = data.get("message", {}).get("role", "")
+        if entry_type != "assistant" and entry_role != "assistant":
+            return []
+
+        texts = []
+        message = data.get("message", {})
+        for block in message.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "text":
+                texts.append(block.get("text", ""))
+        return texts
+
+    def _match_resolution_pattern(self, text: str) -> IssueResolution | None:
+        """Check text against all resolution patterns.
+
+        Args:
+            text: Text content to search for patterns.
+
+        Returns:
+            IssueResolution if a pattern matches, None otherwise.
+        """
+        for name, pattern in self.RESOLUTION_PATTERNS.items():
+            match = pattern.search(text)
+            if match:
+                return IssueResolution(
+                    outcome=self.PATTERN_TO_OUTCOME[name],
+                    rationale=match.group(1).strip(),
+                )
+        return None
+
+    def _extract_bash_commands(self, data: dict[str, Any]) -> list[tuple[str, str]]:
+        """Extract Bash tool_use commands from assistant messages.
+
+        Args:
+            data: Parsed JSONL entry data.
+
+        Returns:
+            List of (tool_id, command) tuples for Bash tool_use blocks.
+        """
+        if data.get("type") != "assistant":
+            return []
+
+        commands = []
+        message = data.get("message", {})
+        for block in message.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                if block.get("name") == "Bash":
+                    tool_id = block.get("id", "")
+                    command = block.get("input", {}).get("command", "")
+                    commands.append((tool_id, command))
+        return commands
+
+    def _extract_tool_results(self, data: dict[str, Any]) -> list[tuple[str, bool]]:
+        """Extract tool_result entries from user messages.
+
+        Args:
+            data: Parsed JSONL entry data.
+
+        Returns:
+            List of (tool_use_id, is_error) tuples for tool_result blocks.
+        """
+        if data.get("type") != "user":
+            return []
+
+        results = []
+        message = data.get("message", {})
+        for block in message.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                tool_use_id = block.get("tool_use_id", "")
+                is_error = block.get("is_error", False)
+                results.append((tool_use_id, is_error))
+        return results
+
+    def _match_validation_pattern(
+        self, command: str, evidence: ValidationEvidence
+    ) -> str | None:
+        """Check command against validation patterns and update evidence.
+
+        Checks ALL patterns independently (a command may match multiple).
+        Returns the last matched command name for failure tracking.
+
+        Args:
+            command: The bash command string.
+            evidence: ValidationEvidence to update.
+
+        Returns:
+            Last matched command name (for failure tracking), None if no match.
+        """
+        last_match: str | None = None
+        if self.VALIDATION_PATTERNS["pytest"].search(command):
+            evidence.pytest_ran = True
+            last_match = "pytest"
+        if self.VALIDATION_PATTERNS["ruff_check"].search(command):
+            evidence.ruff_check_ran = True
+            last_match = "ruff check"
+        if self.VALIDATION_PATTERNS["ruff_format"].search(command):
+            evidence.ruff_format_ran = True
+            last_match = "ruff format"
+        if self.VALIDATION_PATTERNS["ty_check"].search(command):
+            evidence.ty_check_ran = True
+            last_match = "ty check"
+        return last_match
+
+    def _match_spec_pattern(
+        self,
+        command: str,
+        evidence: ValidationEvidence,
+        kind_patterns: dict[CommandKind, list[re.Pattern[str]]],
+        kind_to_name: dict[CommandKind, str],
+    ) -> str | None:
+        """Check command against spec-defined patterns and update evidence.
+
+        Checks ALL patterns independently (a command may match multiple).
+        Returns the last matched command name for failure tracking.
+
+        Args:
+            command: The bash command string.
+            evidence: ValidationEvidence to update.
+            kind_patterns: Mapping of CommandKind to detection patterns.
+            kind_to_name: Mapping of CommandKind to human-readable names.
+
+        Returns:
+            Last matched command name (for failure tracking), None if no match.
+        """
+        last_match: str | None = None
+        for kind, patterns in kind_patterns.items():
+            for pattern in patterns:
+                if pattern.search(command):
+                    if kind == CommandKind.TEST:
+                        evidence.pytest_ran = True
+                    elif kind == CommandKind.LINT:
+                        evidence.ruff_check_ran = True
+                    elif kind == CommandKind.FORMAT:
+                        evidence.ruff_format_ran = True
+                    elif kind == CommandKind.TYPECHECK:
+                        evidence.ty_check_ran = True
+                    last_match = kind_to_name.get(kind)
+                    break  # Found match for this kind, try next kind
+        return last_match
+
+    # Map CommandKind to human-readable names for failure reporting
+    KIND_TO_NAME: ClassVar[dict[CommandKind, str]] = {
+        CommandKind.TEST: "pytest",
+        CommandKind.LINT: "ruff check",
+        CommandKind.FORMAT: "ruff format",
+        CommandKind.TYPECHECK: "ty check",
+    }
+
+    def _build_spec_patterns(
+        self, spec: ValidationSpec
+    ) -> dict[CommandKind, list[re.Pattern[str]]]:
+        """Build pattern mapping from a ValidationSpec.
+
+        Args:
+            spec: The ValidationSpec defining commands and their detection patterns.
+
+        Returns:
+            Mapping of CommandKind to list of detection patterns.
+        """
+        kind_patterns: dict[CommandKind, list[re.Pattern[str]]] = {}
+        for cmd in spec.commands:
+            if cmd.kind not in kind_patterns:
+                kind_patterns[cmd.kind] = []
+            if cmd.detection_pattern is not None:
+                kind_patterns[cmd.kind].append(cmd.detection_pattern)
+            else:
+                fallback = self._get_fallback_pattern(cmd.kind)
+                if fallback is not None:
+                    kind_patterns[cmd.kind].append(fallback)
+        return kind_patterns
+
+    def _iter_jsonl_entries(
+        self, log_path: Path, offset: int = 0
+    ) -> Iterator[JsonlEntry]:
+        """Iterate over parsed JSONL entries from a log file.
+
+        Reads the file in binary mode for accurate byte offset tracking,
+        decodes each line as UTF-8, parses JSON, and yields structured entries.
+
+        Args:
+            log_path: Path to the JSONL log file.
+            offset: Byte offset to start reading from (default 0).
+
+        Yields:
+            JsonlEntry objects for each successfully parsed JSON line.
+
+        Raises:
+            OSError: If file cannot be read. Callers should handle this.
+
+        Note:
+            - Lines that fail UTF-8 decoding are silently skipped
+            - Empty lines are silently skipped
+            - Lines that fail JSON parsing are silently skipped
+        """
+        if not log_path.exists():
+            return
+
+        with open(log_path, "rb") as f:
+            f.seek(offset)
+            current_offset = offset
+
+            for line_bytes in f:
+                line_len = len(line_bytes)
+                line_offset = current_offset
+                current_offset += line_len
+
+                try:
+                    line = line_bytes.decode("utf-8").strip()
+                except UnicodeDecodeError:
+                    continue
+
+                if not line:
+                    continue
+
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                yield JsonlEntry(data=entry, line_len=line_len, offset=line_offset)
 
     def parse_issue_resolution(self, log_path: Path) -> IssueResolution | None:
         """Parse JSONL log file for issue resolution markers.
@@ -219,91 +471,13 @@ class QualityGate:
             return None, 0
 
         try:
-            # Read file in binary mode for accurate byte offset tracking
-            with open(log_path, "rb") as f:
-                f.seek(offset)
-                current_offset = offset
-
-                for line_bytes in f:
-                    line_len = len(line_bytes)
-                    try:
-                        line = line_bytes.decode("utf-8").strip()
-                    except UnicodeDecodeError:
-                        current_offset += line_len
-                        continue
-
-                    if not line:
-                        current_offset += line_len
-                        continue
-
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        current_offset += line_len
-                        continue
-
-                    # Only parse assistant messages to prevent user prompt injection
-                    entry_type = entry.get("type", "")
-                    entry_role = entry.get("message", {}).get("role", "")
-                    if entry_type != "assistant" and entry_role != "assistant":
-                        current_offset += line_len
-                        continue
-
-                    # Look for text blocks in assistant messages
-                    message = entry.get("message", {})
-                    message_content = message.get("content", [])
-
-                    for block in message_content:
-                        if not isinstance(block, dict):
-                            continue
-                        if block.get("type") != "text":
-                            continue
-
-                        text = block.get("text", "")
-
-                        # Check for no_change marker
-                        match = self.RESOLUTION_PATTERNS["no_change"].search(text)
-                        if match:
-                            rationale = match.group(1).strip()
-                            return (
-                                IssueResolution(
-                                    outcome=ResolutionOutcome.NO_CHANGE,
-                                    rationale=rationale,
-                                ),
-                                current_offset + line_len,
-                            )
-
-                        # Check for obsolete marker
-                        match = self.RESOLUTION_PATTERNS["obsolete"].search(text)
-                        if match:
-                            rationale = match.group(1).strip()
-                            return (
-                                IssueResolution(
-                                    outcome=ResolutionOutcome.OBSOLETE,
-                                    rationale=rationale,
-                                ),
-                                current_offset + line_len,
-                            )
-
-                        # Check for already_complete marker
-                        match = self.RESOLUTION_PATTERNS["already_complete"].search(
-                            text
-                        )
-                        if match:
-                            rationale = match.group(1).strip()
-                            return (
-                                IssueResolution(
-                                    outcome=ResolutionOutcome.ALREADY_COMPLETE,
-                                    rationale=rationale,
-                                ),
-                                current_offset + line_len,
-                            )
-
-                    current_offset += line_len
-
-                # Return final position
-                return None, f.tell()
-
+            for entry in self._iter_jsonl_entries(log_path, offset):
+                for text in self._extract_assistant_text_blocks(entry.data):
+                    resolution = self._match_resolution_pattern(text)
+                    if resolution:
+                        return resolution, entry.offset + entry.line_len
+            # No match found - return EOF position (matches original f.tell())
+            return None, self.get_log_end_offset(log_path, offset)
         except OSError:
             return None, 0
 
@@ -344,260 +518,57 @@ class QualityGate:
     def parse_validation_evidence_from_offset(
         self, log_path: Path, offset: int = 0
     ) -> tuple[ValidationEvidence, int]:
-        """Parse JSONL log file for validation command evidence starting at offset.
+        """Parse JSONL log for validation evidence starting at offset.
 
-        DEPRECATED: Use parse_validation_evidence_with_spec() instead for evidence
-        checking. This method is retained for offset tracking (getting the new file
-        position) but uses hardcoded VALIDATION_PATTERNS which may drift from spec
-        command definitions.
-
-        This allows scoping evidence to a specific attempt by starting from
-        the byte offset where the previous attempt ended.
-
-        Also checks tool_result entries for failures (is_error=true), tracking
-        which validation commands exited non-zero. If a command is retried and
-        succeeds, the failure is cleared (tracks latest status per command).
-
-        Args:
-            log_path: Path to the JSONL log file from agent session.
-            offset: Byte offset to start reading from (default 0 = beginning).
-
-        Returns:
-            Tuple of (ValidationEvidence, new_offset) where new_offset is the
-            file position after parsing (for use in subsequent calls).
+        DEPRECATED: Use parse_validation_evidence_with_spec() instead.
         """
         evidence = ValidationEvidence()
-
         if not log_path.exists():
             return evidence, 0
 
-        # Map tool_use_id to validation command name for tracking failures
         tool_id_to_command: dict[str, str] = {}
-        # Track latest status per command (True = failed, False = succeeded)
         command_failed: dict[str, bool] = {}
 
         try:
-            # Read file in binary mode for accurate byte offset tracking
-            # (must match parse_issue_resolution_from_offset's binary mode)
-            with open(log_path, "rb") as f:
-                f.seek(offset)
-                current_offset = offset
+            for entry in self._iter_jsonl_entries(log_path, offset):
+                for tool_id, command in self._extract_bash_commands(entry.data):
+                    cmd_name = self._match_validation_pattern(command, evidence)
+                    if cmd_name:
+                        tool_id_to_command[tool_id] = cmd_name
+                for tool_use_id, is_error in self._extract_tool_results(entry.data):
+                    if tool_use_id in tool_id_to_command:
+                        command_failed[tool_id_to_command[tool_use_id]] = is_error
 
-                for line_bytes in f:
-                    line_len = len(line_bytes)
-                    try:
-                        line = line_bytes.decode("utf-8").strip()
-                    except UnicodeDecodeError:
-                        current_offset += line_len
-                        continue
-
-                    if not line:
-                        current_offset += line_len
-                        continue
-
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        current_offset += line_len
-                        continue
-
-                    entry_type = entry.get("type", "")
-                    message = entry.get("message", {})
-                    content = message.get("content", [])
-
-                    # Process assistant messages for tool_use entries
-                    if entry_type == "assistant":
-                        for block in content:
-                            if not isinstance(block, dict):
-                                continue
-                            if block.get("type") != "tool_use":
-                                continue
-                            if block.get("name") != "Bash":
-                                continue
-
-                            tool_id = block.get("id", "")
-                            input_data = block.get("input", {})
-                            command = input_data.get("command", "")
-
-                            # Check against validation patterns and record tool_id mapping
-                            if self.VALIDATION_PATTERNS["pytest"].search(command):
-                                evidence.pytest_ran = True
-                                tool_id_to_command[tool_id] = "pytest"
-                            if self.VALIDATION_PATTERNS["ruff_check"].search(command):
-                                evidence.ruff_check_ran = True
-                                tool_id_to_command[tool_id] = "ruff check"
-                            if self.VALIDATION_PATTERNS["ruff_format"].search(command):
-                                evidence.ruff_format_ran = True
-                                tool_id_to_command[tool_id] = "ruff format"
-                            if self.VALIDATION_PATTERNS["ty_check"].search(command):
-                                evidence.ty_check_ran = True
-                                tool_id_to_command[tool_id] = "ty check"
-
-                    # Process user messages for tool_result entries (check for failures)
-                    elif entry_type == "user":
-                        for block in content:
-                            if not isinstance(block, dict):
-                                continue
-                            if block.get("type") != "tool_result":
-                                continue
-
-                            tool_use_id = block.get("tool_use_id", "")
-                            is_error = block.get("is_error", False)
-
-                            # Track latest status for validation commands
-                            if tool_use_id in tool_id_to_command:
-                                cmd_name = tool_id_to_command[tool_use_id]
-                                command_failed[cmd_name] = is_error
-
-                    current_offset += line_len
-
-                # Compute failed_commands from final status of each command
-                evidence.failed_commands = [
-                    cmd for cmd, failed in command_failed.items() if failed
-                ]
-
-                # Return final position
-                return evidence, f.tell()
-
+            evidence.failed_commands = [c for c, f in command_failed.items() if f]
+            # Return EOF position (matches original f.tell())
+            return evidence, self.get_log_end_offset(log_path, offset)
         except OSError:
-            # File read error - return empty evidence
             return evidence, 0
 
     def parse_validation_evidence_with_spec(
         self, log_path: Path, spec: ValidationSpec, offset: int = 0
     ) -> ValidationEvidence:
-        """Parse JSONL log for validation evidence using spec-defined patterns.
-
-        This method derives detection patterns from the ValidationSpec, ensuring
-        that evidence parsing is driven from spec command definitions. When spec
-        commands change, evidence detection updates automatically.
-
-        For commands without a detection_pattern, falls back to hardcoded
-        VALIDATION_PATTERNS for backward compatibility.
-
-        Also checks tool_result entries for failures (is_error=true), tracking
-        which validation commands exited non-zero.
-
-        Args:
-            log_path: Path to the JSONL log file from agent session.
-            spec: The ValidationSpec defining commands and their detection patterns.
-            offset: Byte offset to start reading from (default 0 = beginning).
-
-        Returns:
-            ValidationEvidence with flags for each detected command.
-        """
+        """Parse JSONL log for validation evidence using spec-defined patterns."""
         evidence = ValidationEvidence()
-
         if not log_path.exists():
             return evidence
 
-        # Build mapping from CommandKind to detection patterns
-        # Use spec patterns when available, fall back to hardcoded patterns
-        kind_patterns: dict[CommandKind, list[re.Pattern[str]]] = {}
-        for cmd in spec.commands:
-            if cmd.kind not in kind_patterns:
-                kind_patterns[cmd.kind] = []
-            if cmd.detection_pattern is not None:
-                kind_patterns[cmd.kind].append(cmd.detection_pattern)
-            else:
-                # Fall back to hardcoded patterns
-                fallback = self._get_fallback_pattern(cmd.kind)
-                if fallback is not None:
-                    kind_patterns[cmd.kind].append(fallback)
-
-        # Map CommandKind to human-readable names for failure reporting
-        kind_to_name: dict[CommandKind, str] = {
-            CommandKind.TEST: "pytest",
-            CommandKind.LINT: "ruff check",
-            CommandKind.FORMAT: "ruff format",
-            CommandKind.TYPECHECK: "ty check",
-        }
-
-        # Map tool_use_id to command name for tracking failures
+        kind_patterns = self._build_spec_patterns(spec)
         tool_id_to_command: dict[str, str] = {}
-        # Track latest status per command (True = failed, False = succeeded)
         command_failed: dict[str, bool] = {}
 
-        try:
-            with open(log_path, "rb") as f:
-                f.seek(offset)
+        for entry in self._iter_jsonl_entries(log_path, offset):
+            for tool_id, command in self._extract_bash_commands(entry.data):
+                cmd_name = self._match_spec_pattern(
+                    command, evidence, kind_patterns, self.KIND_TO_NAME
+                )
+                if cmd_name:
+                    tool_id_to_command[tool_id] = cmd_name
+            for tool_use_id, is_error in self._extract_tool_results(entry.data):
+                if tool_use_id in tool_id_to_command:
+                    command_failed[tool_id_to_command[tool_use_id]] = is_error
 
-                for line_bytes in f:
-                    try:
-                        line = line_bytes.decode("utf-8").strip()
-                    except UnicodeDecodeError:
-                        continue
-
-                    if not line:
-                        continue
-
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-
-                    entry_type = entry.get("type", "")
-                    message = entry.get("message", {})
-                    content = message.get("content", [])
-
-                    # Process assistant messages for tool_use entries
-                    if entry_type == "assistant":
-                        for block in content:
-                            if not isinstance(block, dict):
-                                continue
-                            if block.get("type") != "tool_use":
-                                continue
-                            if block.get("name") != "Bash":
-                                continue
-
-                            tool_id = block.get("id", "")
-                            input_data = block.get("input", {})
-                            command = input_data.get("command", "")
-
-                            # Check against spec-defined patterns
-                            for kind, patterns in kind_patterns.items():
-                                for pattern in patterns:
-                                    if pattern.search(command):
-                                        # Map CommandKind to evidence flags
-                                        if kind == CommandKind.TEST:
-                                            evidence.pytest_ran = True
-                                        elif kind == CommandKind.LINT:
-                                            evidence.ruff_check_ran = True
-                                        elif kind == CommandKind.FORMAT:
-                                            evidence.ruff_format_ran = True
-                                        elif kind == CommandKind.TYPECHECK:
-                                            evidence.ty_check_ran = True
-                                        # Record tool_id mapping for failure tracking
-                                        if kind in kind_to_name:
-                                            tool_id_to_command[tool_id] = kind_to_name[
-                                                kind
-                                            ]
-                                        break  # Found match for this kind
-
-                    # Process user messages for tool_result entries (check for failures)
-                    elif entry_type == "user":
-                        for block in content:
-                            if not isinstance(block, dict):
-                                continue
-                            if block.get("type") != "tool_result":
-                                continue
-
-                            tool_use_id = block.get("tool_use_id", "")
-                            is_error = block.get("is_error", False)
-
-                            # Track latest status for validation commands
-                            if tool_use_id in tool_id_to_command:
-                                cmd_name = tool_id_to_command[tool_use_id]
-                                command_failed[cmd_name] = is_error
-
-        except OSError:
-            pass  # File read error - return empty evidence
-
-        # Compute failed_commands from final status of each command
-        evidence.failed_commands = [
-            cmd for cmd, failed in command_failed.items() if failed
-        ]
-
+        evidence.failed_commands = [c for c, f in command_failed.items() if f]
         return evidence
 
     def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:

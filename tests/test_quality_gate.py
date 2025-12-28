@@ -1791,12 +1791,7 @@ class TestByteOffsetConsistency:
             {
                 "type": "assistant",
                 "message": {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Analyzing the issue...",
-                        }
-                    ]
+                    "content": [{"type": "text", "text": "Let me check the code."}]
                 },
             }
         )
@@ -1895,6 +1890,118 @@ class TestByteOffsetConsistency:
         assert evidence.pytest_ran is True, (
             "Evidence parser should correctly find pytest after byte-offset with unicode"
         )
+
+    def test_empty_lines_preserved_in_offset_tracking(self, tmp_path: Path) -> None:
+        """Empty lines should be counted in byte offsets but skipped in parsing."""
+        log_path = tmp_path / "session.jsonl"
+
+        entry1 = json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "First"}]},
+            }
+        )
+        entry2 = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "ISSUE_NO_CHANGE: done"}]
+                },
+            }
+        )
+
+        # Content with empty lines between entries
+        content = entry1 + "\n\n\n" + entry2 + "\n"
+        log_path.write_text(content)
+
+        gate = QualityGate(tmp_path)
+        resolution, new_offset = gate.parse_issue_resolution_from_offset(log_path, 0)
+
+        assert resolution is not None
+        assert resolution.rationale == "done"
+        # Offset should be at end of entry2 line (the matched entry)
+        assert new_offset == len(content)
+
+    def test_binary_data_skipped_without_crash(self, tmp_path: Path) -> None:
+        """Binary data (invalid UTF-8) should be skipped without crashing."""
+        log_path = tmp_path / "session.jsonl"
+
+        valid_entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "id": "t1",
+                            "input": {"command": "pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+
+        # Write valid entry, then binary garbage, then valid entry
+        with open(log_path, "wb") as f:
+            f.write((valid_entry + "\n").encode("utf-8"))
+            f.write(b"\x80\x81\x82\xff\xfe\n")  # Invalid UTF-8
+            f.write((valid_entry + "\n").encode("utf-8"))
+
+        gate = QualityGate(tmp_path)
+        evidence, new_offset = gate.parse_validation_evidence_from_offset(log_path, 0)
+
+        # Should still parse valid entries
+        assert evidence.pytest_ran is True
+        # Offset should advance past all content
+        assert new_offset > 0
+
+    def test_truncated_json_skipped_without_crash(self, tmp_path: Path) -> None:
+        """Truncated JSON lines should be skipped without crashing."""
+        log_path = tmp_path / "session.jsonl"
+
+        valid_entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "ISSUE_NO_CHANGE: test"}]
+                },
+            }
+        )
+
+        # Write truncated JSON followed by valid entry
+        content = '{"type": "ass\n' + valid_entry + "\n"
+        log_path.write_text(content)
+
+        gate = QualityGate(tmp_path)
+        resolution, new_offset = gate.parse_issue_resolution_from_offset(log_path, 0)
+
+        assert resolution is not None
+        assert resolution.rationale == "test"
+        assert new_offset > 0
+
+    def test_offset_beyond_eof_returns_start_offset(self, tmp_path: Path) -> None:
+        """Offset beyond EOF should return the actual file size (EOF position)."""
+        log_path = tmp_path / "session.jsonl"
+
+        entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "test"}]},
+            }
+        )
+        log_path.write_text(entry + "\n")
+        file_size = log_path.stat().st_size
+
+        gate = QualityGate(tmp_path)
+        # Offset way beyond file size
+        evidence, new_offset = gate.parse_validation_evidence_from_offset(
+            log_path, 10000
+        )
+
+        assert not evidence.pytest_ran
+        # Should return actual EOF position (matches original f.tell() behavior)
+        assert new_offset == file_size
 
 
 class TestSpecDrivenEvidencePatterns:
@@ -2300,6 +2407,7 @@ class TestValidationExitCodeParsing:
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
             )
+            # No spec provided - uses default checking
             result = gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
@@ -2448,7 +2556,7 @@ class TestValidationExitCodeParsing:
             )
 
         assert result.passed is False
-        # Failure reason should mention the failed command
+        # Failure reason should include the failed command
         failure_text = " ".join(result.failure_reasons).lower()
         assert "ty" in failure_text or "typecheck" in failure_text
         # Should mention it failed or had non-zero exit
@@ -2613,7 +2721,7 @@ class TestAlreadyCompleteResolution:
                     "content": [
                         {
                             "type": "text",
-                            "text": "ISSUE_ALREADY_COMPLETE: Work committed in 238e17f (bd-test-123: Add feature)",
+                            "text": "ISSUE_ALREADY_COMPLETE: Work committed in 238e17f (bd-test-123: Old fix)",
                         }
                     ]
                 },
@@ -2628,7 +2736,7 @@ class TestAlreadyCompleteResolution:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
-                stdout="238e17f 1703400000 bd-test-123: Add feature\n",
+                stdout="238e17f 1703400000 bd-test-123: Old fix\n",
                 stderr="",
             )
             result = gate.check_with_resolution(
@@ -2733,7 +2841,7 @@ class TestAlreadyCompleteResolution:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
-                stdout="238e17f 1703400000 bd-test-123: Add feature\n",
+                stdout="238e17f 1703400000 bd-test-123: Old fix\n",
                 stderr="",
             )
             result = gate.check_with_resolution(
