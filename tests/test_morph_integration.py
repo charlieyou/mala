@@ -14,8 +14,10 @@ import pytest
 
 from claude_agent_sdk.types import PreToolUseHookInput, HookContext
 
-# Import src.cli early so load_user_env() runs before any tests patch os.environ
-import src.cli  # noqa: F401
+# Call bootstrap() to ensure env is loaded before tests that may need it
+from src.cli import bootstrap
+
+bootstrap()
 
 # Type alias for the hook input factory
 HookInputFactory = Callable[[str, str], PreToolUseHookInput]

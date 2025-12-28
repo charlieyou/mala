@@ -9,26 +9,56 @@ Usage:
     mala status
 """
 
-# Setup Braintrust tracing BEFORE importing claude_agent_sdk anywhere
-# This patches the SDK before any imports can use the unpatched version
 import os
 from pathlib import Path
 
 from .tools.env import USER_CONFIG_DIR, get_runs_dir, load_user_env
 
-# Load environment variables early (needed for BRAINTRUST_API_KEY)
-load_user_env()
+# Bootstrap state: tracks whether bootstrap() has been called
+_bootstrapped = False
+_braintrust_enabled = False
 
-_braintrust_early_setup_done = False
-_braintrust_api_key = os.environ.get("BRAINTRUST_API_KEY")
-if _braintrust_api_key:
-    try:
-        from braintrust.wrappers.claude_agent_sdk import setup_claude_agent_sdk
 
-        setup_claude_agent_sdk(project="mala")
-        _braintrust_early_setup_done = True
-    except ImportError:
-        pass  # braintrust not installed
+def bootstrap() -> None:
+    """Initialize environment and Braintrust tracing.
+
+    Must be called before using any CLI commands or importing claude_agent_sdk.
+    This function is idempotent - calling it multiple times has no additional effect.
+
+    Side effects:
+        - Loads environment variables from ~/.config/mala/.env
+        - Sets up Braintrust SDK patching if BRAINTRUST_API_KEY is set
+    """
+    global _bootstrapped, _braintrust_enabled
+
+    if _bootstrapped:
+        return
+
+    # Load environment variables early (needed for BRAINTRUST_API_KEY)
+    load_user_env()
+
+    # Setup Braintrust tracing BEFORE importing claude_agent_sdk anywhere
+    # This patches the SDK before any imports can use the unpatched version
+    braintrust_api_key = os.environ.get("BRAINTRUST_API_KEY")
+    if braintrust_api_key:
+        try:
+            from braintrust.wrappers.claude_agent_sdk import setup_claude_agent_sdk
+
+            setup_claude_agent_sdk(project="mala")
+            _braintrust_enabled = True
+        except ImportError:
+            pass  # braintrust not installed
+
+    _bootstrapped = True
+
+
+def is_braintrust_enabled() -> bool:
+    """Return whether Braintrust tracing was successfully enabled.
+
+    Must be called after bootstrap().
+    """
+    return _braintrust_enabled
+
 
 # Now safe to import claude_agent_sdk (it's been patched if Braintrust is available)
 import asyncio
@@ -368,7 +398,7 @@ def run(
         max_issues=max_issues,
         epic_id=epic,
         only_ids=only_ids,
-        braintrust_enabled=_braintrust_early_setup_done,
+        braintrust_enabled=_braintrust_enabled,
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         disable_validations=disable_set,

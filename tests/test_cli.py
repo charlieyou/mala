@@ -3,6 +3,7 @@ import sys
 import types
 from pathlib import Path
 from typing import Any, ClassVar
+from unittest.mock import patch
 
 import pytest
 import typer
@@ -10,9 +11,135 @@ import typer
 
 def _reload_cli(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     monkeypatch.setenv("BRAINTRUST_API_KEY", "")
+    # Reset bootstrap state before reloading
     if "src.cli" in sys.modules:
-        return importlib.reload(sys.modules["src.cli"])
+        cli_mod = sys.modules["src.cli"]
+        # Reset internal state so bootstrap can run again
+        cli_mod._bootstrapped = False  # type: ignore[attr-defined]
+        cli_mod._braintrust_enabled = False  # type: ignore[attr-defined]
+        return importlib.reload(cli_mod)
     return importlib.import_module("src.cli")
+
+
+class TestImportSafety:
+    """Test that importing src.cli has no side effects."""
+
+    def test_import_does_not_load_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Importing src.cli should not call load_user_env()."""
+        # Clear modules to force fresh import
+        for mod_name in list(sys.modules.keys()):
+            if mod_name.startswith("src.cli") or mod_name.startswith("src.tools.env"):
+                del sys.modules[mod_name]
+
+        # Track if load_user_env gets called
+        load_called = {"called": False}
+
+        def mock_load_user_env() -> None:
+            load_called["called"] = True
+
+        # Patch before import
+        with patch("src.tools.env.load_user_env", mock_load_user_env):
+            # Force reimport of cli module
+            if "src.cli" in sys.modules:
+                del sys.modules["src.cli"]
+
+            import src.cli
+
+            # Import should NOT have triggered load_user_env
+            assert not load_called["called"], (
+                "load_user_env() was called at import time - should only be called via bootstrap()"
+            )
+
+            # Verify the module was imported (avoids F401 unused import warning)
+            assert hasattr(src.cli, "bootstrap")
+
+    def test_import_does_not_setup_braintrust(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Importing src.cli should not set up Braintrust."""
+        # Clear modules to force fresh import
+        for mod_name in list(sys.modules.keys()):
+            if mod_name.startswith("src.cli"):
+                del sys.modules[mod_name]
+
+        # Set a Braintrust API key that would trigger setup if called
+        monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
+
+        setup_called = {"called": False}
+
+        def mock_setup(*args: object, **kwargs: object) -> None:
+            setup_called["called"] = True
+
+        # Patch the Braintrust setup function
+        with patch.dict(sys.modules, {"braintrust": None, "braintrust.wrappers": None}):
+            if "src.cli" in sys.modules:
+                del sys.modules["src.cli"]
+
+            import src.cli
+
+            # Import should NOT have triggered Braintrust setup
+            assert not src.cli._braintrust_enabled, (
+                "Braintrust was enabled at import time - should only happen via bootstrap()"
+            )
+
+    def test_bootstrap_loads_env_and_braintrust(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """bootstrap() should load env and set up Braintrust when API key is present."""
+        # Clear modules
+        for mod_name in list(sys.modules.keys()):
+            if mod_name.startswith("src.cli") or mod_name.startswith("src.tools.env"):
+                del sys.modules[mod_name]
+
+        monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
+
+        import src.cli
+
+        # Reset state
+        src.cli._bootstrapped = False
+        src.cli._braintrust_enabled = False
+
+        # Track calls
+        load_called = {"called": False}
+        original_load = src.cli.load_user_env
+
+        def tracking_load() -> None:
+            load_called["called"] = True
+            original_load()
+
+        monkeypatch.setattr(src.cli, "load_user_env", tracking_load)
+
+        # Call bootstrap
+        src.cli.bootstrap()
+
+        assert load_called["called"], "bootstrap() should call load_user_env()"
+        assert src.cli._bootstrapped, "bootstrap() should set _bootstrapped = True"
+
+    def test_bootstrap_is_idempotent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Calling bootstrap() multiple times should only execute once."""
+        cli = _reload_cli(monkeypatch)
+
+        call_count = {"count": 0}
+        original_load = cli.load_user_env
+
+        def counting_load() -> None:
+            call_count["count"] += 1
+            original_load()
+
+        monkeypatch.setattr(cli, "load_user_env", counting_load)
+
+        # Reset state
+        cli._bootstrapped = False  # type: ignore[attr-defined]
+        cli._braintrust_enabled = False  # type: ignore[attr-defined]
+
+        # Call bootstrap multiple times
+        cli.bootstrap()
+        cli.bootstrap()
+        cli.bootstrap()
+
+        assert call_count["count"] == 1, (
+            "bootstrap() should only call load_user_env() once"
+        )
 
 
 class DummyOrchestrator:

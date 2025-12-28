@@ -11,7 +11,8 @@ Usage:
     mala status
 """
 
-from .cli import app
+from .cli import app, bootstrap
 
 if __name__ == "__main__":
+    bootstrap()
     app()
