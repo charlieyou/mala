@@ -3,10 +3,10 @@
 Provides helpers for getting git repository information.
 """
 
-import asyncio
 import re
-import subprocess
 from pathlib import Path
+
+from src.validation.command_runner import CommandRunner, run_command_async
 
 # Default timeout for git commands (seconds)
 DEFAULT_GIT_TIMEOUT = 5.0
@@ -14,54 +14,26 @@ DEFAULT_GIT_TIMEOUT = 5.0
 
 async def get_git_commit_async(cwd: Path, timeout: float = DEFAULT_GIT_TIMEOUT) -> str:
     """Get the current git commit hash (short) - async version."""
-
-    def run_blocking() -> str:
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "--short", "HEAD"],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                return result.stdout.strip()
-        except Exception:
-            pass
-        return ""
-
-    try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(run_blocking),
-            timeout=timeout,
-        )
-    except TimeoutError:
-        return ""
+    result = await run_command_async(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=cwd,
+        timeout_seconds=timeout,
+    )
+    if result.ok:
+        return result.stdout.strip()
+    return ""
 
 
 async def get_git_branch_async(cwd: Path, timeout: float = DEFAULT_GIT_TIMEOUT) -> str:
     """Get the current git branch name - async version."""
-
-    def run_blocking() -> str:
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                return result.stdout.strip()
-        except Exception:
-            pass
-        return ""
-
-    try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(run_blocking),
-            timeout=timeout,
-        )
-    except TimeoutError:
-        return ""
+    result = await run_command_async(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=cwd,
+        timeout_seconds=timeout,
+    )
+    if result.ok:
+        return result.stdout.strip()
+    return ""
 
 
 async def get_baseline_for_issue(
@@ -83,51 +55,36 @@ async def get_baseline_for_issue(
         - The first commit is the root commit (no parent)
         - Git commands fail or timeout
     """
+    runner = CommandRunner(cwd=repo_path, timeout_seconds=timeout)
 
-    def run_blocking() -> str | None:
-        try:
-            # Find first commit with "bd-{issue_id}:" prefix
-            # Using --reverse to get chronological order (oldest first)
-            # Escape regex metacharacters in issue_id to avoid matching wrong issues
-            # (e.g., "mala-g3h.1" should not match "mala-g3hX1")
-            escaped_issue_id = re.escape(issue_id)
-            log_result = subprocess.run(
-                [
-                    "git",
-                    "log",
-                    "--oneline",
-                    "--reverse",
-                    f"--grep=^bd-{escaped_issue_id}:",
-                ],
-                capture_output=True,
-                text=True,
-                cwd=repo_path,
-            )
-            if log_result.returncode != 0 or not log_result.stdout.strip():
-                return None  # No commits for this issue
+    # Find first commit with "bd-{issue_id}:" prefix
+    # Using --reverse to get chronological order (oldest first)
+    # Escape regex metacharacters in issue_id to avoid matching wrong issues
+    # (e.g., "mala-g3h.1" should not match "mala-g3hX1")
+    escaped_issue_id = re.escape(issue_id)
+    log_result = await runner.run_async(
+        [
+            "git",
+            "log",
+            "--oneline",
+            "--reverse",
+            f"--grep=^bd-{escaped_issue_id}:",
+        ],
+    )
 
-            # Get first commit hash (first line, first word)
-            first_line = log_result.stdout.strip().split("\n")[0]
-            first_commit = first_line.split()[0]
+    if not log_result.ok or not log_result.stdout.strip():
+        return None  # No commits for this issue
 
-            # Get parent of first commit
-            parent_result = subprocess.run(
-                ["git", "rev-parse", f"{first_commit}^"],
-                capture_output=True,
-                text=True,
-                cwd=repo_path,
-            )
-            if parent_result.returncode != 0:
-                return None  # Root commit (no parent)
+    # Get first commit hash (first line, first word)
+    first_line = log_result.stdout.strip().split("\n")[0]
+    first_commit = first_line.split()[0]
 
-            return parent_result.stdout.strip()
-        except Exception:
-            return None
+    # Get parent of first commit
+    parent_result = await runner.run_async(
+        ["git", "rev-parse", f"{first_commit}^"],
+    )
 
-    try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(run_blocking),
-            timeout=timeout,
-        )
-    except TimeoutError:
-        return None
+    if not parent_result.ok:
+        return None  # Root commit (no parent)
+
+    return parent_result.stdout.strip()

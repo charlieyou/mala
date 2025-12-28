@@ -1,21 +1,19 @@
-import asyncio
 from pathlib import Path
 
 import pytest
 
 from src import git_utils
-
-
-class DummyResult:
-    def __init__(self, stdout: str, returncode: int = 0) -> None:
-        self.stdout = stdout
-        self.returncode = returncode
+from src.validation.command_runner import CommandResult
 
 
 @pytest.mark.asyncio
 async def test_get_git_commit_async_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    dummy = DummyResult("deadbeef\n")
-    monkeypatch.setattr(git_utils.subprocess, "run", lambda *args, **kwargs: dummy)
+    async def mock_run_command_async(
+        cmd: list[str], cwd: Path, timeout_seconds: float | None = None
+    ) -> CommandResult:
+        return CommandResult(command=cmd, returncode=0, stdout="deadbeef\n")
+
+    monkeypatch.setattr(git_utils, "run_command_async", mock_run_command_async)
 
     result = await git_utils.get_git_commit_async(Path("."))
 
@@ -24,8 +22,12 @@ async def test_get_git_commit_async_success(monkeypatch: pytest.MonkeyPatch) -> 
 
 @pytest.mark.asyncio
 async def test_get_git_branch_async_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    dummy = DummyResult("main\n")
-    monkeypatch.setattr(git_utils.subprocess, "run", lambda *args, **kwargs: dummy)
+    async def mock_run_command_async(
+        cmd: list[str], cwd: Path, timeout_seconds: float | None = None
+    ) -> CommandResult:
+        return CommandResult(command=cmd, returncode=0, stdout="main\n")
+
+    monkeypatch.setattr(git_utils, "run_command_async", mock_run_command_async)
 
     result = await git_utils.get_git_branch_async(Path("."))
 
@@ -34,11 +36,15 @@ async def test_get_git_branch_async_success(monkeypatch: pytest.MonkeyPatch) -> 
 
 @pytest.mark.asyncio
 async def test_get_git_commit_async_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def slow() -> str:
-        await asyncio.sleep(0.05)
-        return "ignored"
+    async def mock_run_command_async(
+        cmd: list[str], cwd: Path, timeout_seconds: float | None = None
+    ) -> CommandResult:
+        # Simulate timeout - command runner returns timed_out=True and exit code 124
+        return CommandResult(
+            command=cmd, returncode=124, stdout="", stderr="", timed_out=True
+        )
 
-    monkeypatch.setattr(git_utils.asyncio, "to_thread", lambda *args, **kwargs: slow())
+    monkeypatch.setattr(git_utils, "run_command_async", mock_run_command_async)
 
     result = await git_utils.get_git_commit_async(Path("."), timeout=0.01)
 
@@ -46,6 +52,21 @@ async def test_get_git_commit_async_timeout(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 # --- Tests for get_baseline_for_issue ---
+
+
+class MockCommandRunner:
+    """Mock CommandRunner for testing."""
+
+    def __init__(self, responses: list[CommandResult]) -> None:
+        self.responses = responses
+        self.call_index = 0
+        self.calls: list[list[str]] = []
+
+    async def run_async(self, cmd: list[str]) -> CommandResult:
+        self.calls.append(cmd)
+        result = self.responses[self.call_index]
+        self.call_index += 1
+        return result
 
 
 class TestGetBaselineForIssue:
@@ -62,68 +83,77 @@ class TestGetBaselineForIssue:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Fresh issue with no commits should return None."""
-        # git log --oneline --reverse --grep returns empty
-        calls: list[tuple[list[str], Path]] = []
+        mock_runner = MockCommandRunner(
+            responses=[
+                # git log returns empty (no matching commits)
+                CommandResult(command=["git", "log"], returncode=0, stdout=""),
+            ]
+        )
 
-        def mock_run(cmd: list[str], **kwargs: object) -> DummyResult:
-            calls.append((cmd, kwargs.get("cwd")))  # type: ignore[arg-type]
-            if "log" in cmd:
-                return DummyResult("", returncode=0)  # No matching commits
-            return DummyResult("")
-
-        monkeypatch.setattr(git_utils.subprocess, "run", mock_run)
+        monkeypatch.setattr(
+            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-123")
 
         assert result is None
         # Verify git log was called with correct grep pattern
-        log_call = [c for c in calls if "log" in c[0]]
-        assert len(log_call) == 1
+        assert len(mock_runner.calls) == 1
         # re.escape() escapes hyphens too, so pattern is mala\-123
-        assert r"--grep=^bd-mala\-123:" in log_call[0][0]
+        assert r"--grep=^bd-mala\-123:" in mock_runner.calls[0]
 
     @pytest.mark.asyncio
     async def test_resumed_issue_with_prior_commits(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Resumed issue should return parent of first matching commit."""
-        calls: list[tuple[list[str], Path]] = []
+        mock_runner = MockCommandRunner(
+            responses=[
+                # git log returns two commits for this issue
+                CommandResult(
+                    command=["git", "log"],
+                    returncode=0,
+                    stdout="abc1234 bd-mala-123: First commit\ndef5678 bd-mala-123: Second commit",
+                ),
+                # git rev-parse returns parent of first commit
+                CommandResult(
+                    command=["git", "rev-parse"], returncode=0, stdout="parent99\n"
+                ),
+            ]
+        )
 
-        def mock_run(cmd: list[str], **kwargs: object) -> DummyResult:
-            calls.append((cmd, kwargs.get("cwd")))  # type: ignore[arg-type]
-            if "log" in cmd:
-                # Two commits for this issue
-                return DummyResult(
-                    "abc1234 bd-mala-123: First commit\ndef5678 bd-mala-123: Second commit"
-                )
-            elif "rev-parse" in cmd:
-                # Parent of first commit
-                return DummyResult("parent99\n")
-            return DummyResult("")
-
-        monkeypatch.setattr(git_utils.subprocess, "run", mock_run)
+        monkeypatch.setattr(
+            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-123")
 
         assert result == "parent99"
         # Verify rev-parse was called with correct commit^
-        revparse_call = [c for c in calls if "rev-parse" in c[0]]
-        assert len(revparse_call) == 1
-        assert "abc1234^" in revparse_call[0][0]
+        assert len(mock_runner.calls) == 2
+        assert "abc1234^" in mock_runner.calls[1]
 
     @pytest.mark.asyncio
     async def test_root_commit_no_parent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """If first commit is root (no parent), should return None."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                # git log returns a commit
+                CommandResult(
+                    command=["git", "log"],
+                    returncode=0,
+                    stdout="abc1234 bd-mala-123: Root commit",
+                ),
+                # git rev-parse fails (root commit has no parent)
+                CommandResult(
+                    command=["git", "rev-parse"], returncode=128, stdout="", stderr=""
+                ),
+            ]
+        )
 
-        def mock_run(cmd: list[str], **kwargs: object) -> DummyResult:
-            if "log" in cmd:
-                return DummyResult("abc1234 bd-mala-123: Root commit")
-            elif "rev-parse" in cmd:
-                # Root commit has no parent - rev-parse fails
-                return DummyResult("", returncode=128)
-            return DummyResult("")
-
-        monkeypatch.setattr(git_utils.subprocess, "run", mock_run)
+        monkeypatch.setattr(
+            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-123")
 
@@ -132,13 +162,21 @@ class TestGetBaselineForIssue:
     @pytest.mark.asyncio
     async def test_timeout_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Timeout should return None gracefully."""
-
-        async def slow() -> str | None:
-            await asyncio.sleep(0.1)
-            return "ignored"
+        mock_runner = MockCommandRunner(
+            responses=[
+                # Timeout on git log
+                CommandResult(
+                    command=["git", "log"],
+                    returncode=124,
+                    stdout="",
+                    stderr="",
+                    timed_out=True,
+                ),
+            ]
+        )
 
         monkeypatch.setattr(
-            git_utils.asyncio, "to_thread", lambda *args, **kwargs: slow()
+            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
         result = await git_utils.get_baseline_for_issue(
@@ -152,15 +190,24 @@ class TestGetBaselineForIssue:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Single commit for issue should return its parent."""
+        mock_runner = MockCommandRunner(
+            responses=[
+                # git log returns one commit
+                CommandResult(
+                    command=["git", "log"],
+                    returncode=0,
+                    stdout="aaa1111 bd-mala-abc: Single commit",
+                ),
+                # git rev-parse returns parent
+                CommandResult(
+                    command=["git", "rev-parse"], returncode=0, stdout="beforeaaa\n"
+                ),
+            ]
+        )
 
-        def mock_run(cmd: list[str], **kwargs: object) -> DummyResult:
-            if "log" in cmd:
-                return DummyResult("aaa1111 bd-mala-abc: Single commit")
-            elif "rev-parse" in cmd:
-                return DummyResult("beforeaaa\n")
-            return DummyResult("")
-
-        monkeypatch.setattr(git_utils.subprocess, "run", mock_run)
+        monkeypatch.setattr(
+            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-abc")
 
@@ -175,26 +222,30 @@ class TestGetBaselineForIssue:
         Without escaping, an issue like "mala-g3h.1" would match "mala-g3hX1"
         because "." is a regex wildcard.
         """
-        calls: list[tuple[list[str], Path]] = []
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "log"],
+                    returncode=0,
+                    stdout="abc1234 bd-mala-g3h.1: Fix the bug",
+                ),
+                CommandResult(
+                    command=["git", "rev-parse"], returncode=0, stdout="parent123\n"
+                ),
+            ]
+        )
 
-        def mock_run(cmd: list[str], **kwargs: object) -> DummyResult:
-            calls.append((cmd, kwargs.get("cwd")))  # type: ignore[arg-type]
-            if "log" in cmd:
-                return DummyResult("abc1234 bd-mala-g3h.1: Fix the bug")
-            elif "rev-parse" in cmd:
-                return DummyResult("parent123\n")
-            return DummyResult("")
-
-        monkeypatch.setattr(git_utils.subprocess, "run", mock_run)
+        monkeypatch.setattr(
+            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-g3h.1")
 
         assert result == "parent123"
         # Verify the grep pattern has escaped metacharacters
-        log_call = [c for c in calls if "log" in c[0]]
-        assert len(log_call) == 1
+        assert len(mock_runner.calls) >= 1
         # re.escape() escapes both dot and hyphen: mala\-g3h\.1
-        assert r"--grep=^bd-mala\-g3h\.1:" in log_call[0][0]
+        assert r"--grep=^bd-mala\-g3h\.1:" in mock_runner.calls[0]
 
     @pytest.mark.asyncio
     async def test_merge_commit_still_finds_first_issue_commit(
@@ -205,22 +256,24 @@ class TestGetBaselineForIssue:
         Even if the issue has merge commits, we should find the first commit
         with the bd-{issue_id}: prefix and return its parent.
         """
-
-        def mock_run(cmd: list[str], **kwargs: object) -> DummyResult:
-            if "log" in cmd:
-                # Multiple commits including what could be merge commits
-                # The first one (chronologically) is what we want
-                return DummyResult(
-                    "first11 bd-mala-merge: Initial\n"
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "log"],
+                    returncode=0,
+                    stdout="first11 bd-mala-merge: Initial\n"
                     "merge22 bd-mala-merge: Merge branch 'feature'\n"
-                    "third33 bd-mala-merge: More work"
-                )
-            elif "rev-parse" in cmd:
-                # Return parent of first commit
-                return DummyResult("beforefirst\n")
-            return DummyResult("")
+                    "third33 bd-mala-merge: More work",
+                ),
+                CommandResult(
+                    command=["git", "rev-parse"], returncode=0, stdout="beforefirst\n"
+                ),
+            ]
+        )
 
-        monkeypatch.setattr(git_utils.subprocess, "run", mock_run)
+        monkeypatch.setattr(
+            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-merge")
 
@@ -236,21 +289,23 @@ class TestGetBaselineForIssue:
         The function should find the new first commit after rebase
         and return its parent, which is the correct baseline.
         """
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "log"],
+                    returncode=0,
+                    stdout="newrebase1 bd-mala-rebase: Original work (rebased)\n"
+                    "newrebase2 bd-mala-rebase: Follow-up (rebased)",
+                ),
+                CommandResult(
+                    command=["git", "rev-parse"], returncode=0, stdout="rebasebase\n"
+                ),
+            ]
+        )
 
-        def mock_run(cmd: list[str], **kwargs: object) -> DummyResult:
-            if "log" in cmd:
-                # After rebase, commit hashes are different
-                # but the prefix pattern still matches
-                return DummyResult(
-                    "newrebase1 bd-mala-rebase: Original work (rebased)\n"
-                    "newrebase2 bd-mala-rebase: Follow-up (rebased)"
-                )
-            elif "rev-parse" in cmd:
-                # Parent after rebase is different from original
-                return DummyResult("rebasebase\n")
-            return DummyResult("")
-
-        monkeypatch.setattr(git_utils.subprocess, "run", mock_run)
+        monkeypatch.setattr(
+            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-rebase")
 
