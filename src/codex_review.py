@@ -82,12 +82,13 @@ Compare the diff against the issue's scope ("In:" items) and acceptance criteria
 - Ignore style/formatting unless it affects correctness
 
 ### 3. Test Coverage
-- Verify tests exist for new functionality
-- Flag missing test coverage as warning
+- Tests have already been executed and passed before this review
+- Only flag if new functionality clearly lacks corresponding test code in the diff
+- Do NOT request tests to be run - assume they passed
 
 ## Severity
 
-- error: MISSING SCOPE ITEM, bug, security issue, data loss, failing tests
+- error: MISSING SCOPE ITEM, bug, security issue, data loss
 - warning: partial implementation, risk, edge case, missing test coverage
 - info: minor improvement
 
