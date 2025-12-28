@@ -264,8 +264,7 @@ class MalaOrchestrator:
             log(
                 "🧹",
                 f"Cleaned {cleaned} locks for {agent_id[:8]}",
-                Colors.GRAY,
-                dim=True,
+                Colors.MUTED,
             )
 
     def _run_quality_gate_sync(
@@ -367,7 +366,7 @@ class MalaOrchestrator:
         """
         # Check if run-level validation is disabled
         if "run-level-validate" in (self.disable_validations or set()):
-            log("◐", "Run-level validation disabled", Colors.GRAY, dim=True)
+            log("◐", "Run-level validation disabled", Colors.MUTED)
             return True
 
         # Get current HEAD commit
@@ -406,7 +405,6 @@ class MalaOrchestrator:
                 "◐",
                 f"Gate 4 attempt {attempt}/{self.max_gate_retries}",
                 Colors.CYAN,
-                dim=True,
             )
 
             # Run validation
@@ -609,8 +607,7 @@ class MalaOrchestrator:
                             log(
                                 "◐",
                                 f"Fixer completed: {truncate_text(message.result or '', 50)}",
-                                Colors.GRAY,
-                                dim=True,
+                                Colors.MUTED,
                             )
 
             return True
@@ -1029,7 +1026,7 @@ class MalaOrchestrator:
         """Main orchestration loop. Returns (success_count, total_count)."""
         print()
         log("●", "mala orchestrator", Colors.MAGENTA)
-        log("◐", f"repo: {self.repo_path}", Colors.GRAY, dim=True)
+        log("◐", f"repo: {self.repo_path}", Colors.MUTED)
         limit_str = str(self.max_issues) if self.max_issues is not None else "unlimited"
         agents_str = (
             str(self.max_agents) if self.max_agents is not None else "unlimited"
@@ -1040,14 +1037,12 @@ class MalaOrchestrator:
         log(
             "◐",
             f"max-agents: {agents_str}, timeout: {timeout_str}, max-issues: {limit_str}",
-            Colors.GRAY,
-            dim=True,
+            Colors.MUTED,
         )
         log(
             "◐",
             f"gate-retries: {self.max_gate_retries}",
-            Colors.GRAY,
-            dim=True,
+            Colors.MUTED,
         )
         codex_review_enabled = "codex-review" not in (self.disable_validations or set())
         if codex_review_enabled:
@@ -1055,12 +1050,11 @@ class MalaOrchestrator:
                 "◐",
                 f"codex-review: enabled (max-retries: {self.max_review_retries})",
                 Colors.CYAN,
-                dim=True,
             )
 
         # Report epic filter
         if self.epic_id:
-            log("◐", f"epic filter: {self.epic_id}", Colors.CYAN, dim=True)
+            log("◐", f"epic filter: {self.epic_id}", Colors.CYAN)
 
         # Report only_ids filter
         if self.only_ids:
@@ -1068,7 +1062,6 @@ class MalaOrchestrator:
                 "◐",
                 f"only processing: {', '.join(sorted(self.only_ids))}",
                 Colors.CYAN,
-                dim=True,
             )
 
         # Report WIP prioritization
@@ -1077,7 +1070,6 @@ class MalaOrchestrator:
                 "◐",
                 "wip: prioritizing in_progress issues",
                 Colors.CYAN,
-                dim=True,
             )
 
         # Report Braintrust status
@@ -1086,14 +1078,12 @@ class MalaOrchestrator:
                 "◐",
                 "braintrust: enabled (LLM spans auto-traced)",
                 Colors.CYAN,
-                dim=True,
             )
         else:
             log(
                 "◐",
                 f"braintrust: disabled (add BRAINTRUST_API_KEY to {USER_CONFIG_DIR}/.env)",
-                Colors.GRAY,
-                dim=True,
+                Colors.MUTED,
             )
 
         # Report Morph MCP status
@@ -1102,20 +1092,17 @@ class MalaOrchestrator:
                 "◐",
                 "morph: enabled (edit_file, warpgrep_codebase_search)",
                 Colors.CYAN,
-                dim=True,
             )
             log(
                 "◐",
                 f"morph: blocked tools: {', '.join(MORPH_DISALLOWED_TOOLS)}",
-                Colors.GRAY,
-                dim=True,
+                Colors.MUTED,
             )
         else:
             log(
                 "◐",
                 "morph: disabled (MORPH_API_KEY not set)",
-                Colors.GRAY,
-                dim=True,
+                Colors.MUTED,
             )
         print()
 
@@ -1170,7 +1157,7 @@ class MalaOrchestrator:
                 )
 
                 if ready:
-                    log("◌", f"Ready issues: {', '.join(ready)}", Colors.GRAY, dim=True)
+                    log("◌", f"Ready issues: {', '.join(ready)}", Colors.MUTED)
 
                 while (
                     self.max_agents is None or len(self.active_tasks) < self.max_agents
@@ -1199,8 +1186,7 @@ class MalaOrchestrator:
                 log(
                     "◌",
                     f"Waiting for {len(self.active_tasks)} agent(s)...",
-                    Colors.GRAY,
-                    dim=True,
+                    Colors.MUTED,
                 )
 
                 done, _ = await asyncio.wait(
@@ -1293,7 +1279,6 @@ class MalaOrchestrator:
                                             Colors.CYAN
                                             if validation_result.passed
                                             else Colors.YELLOW,
-                                            dim=True,
                                             agent_id=issue_id,
                                         )
                                     except Exception as e:
@@ -1315,8 +1300,7 @@ class MalaOrchestrator:
                                     log(
                                         "◐",
                                         "Closed issue",
-                                        Colors.GRAY,
-                                        dim=True,
+                                        Colors.MUTED,
                                         agent_id=issue_id,
                                     )
                                     # Check if this closes any parent epics
@@ -1324,8 +1308,7 @@ class MalaOrchestrator:
                                         log(
                                             "◐",
                                             "Auto-closed completed epic(s)",
-                                            Colors.GRAY,
-                                            dim=True,
+                                            Colors.MUTED,
                                             agent_id=issue_id,
                                         )
 
@@ -1414,7 +1397,7 @@ class MalaOrchestrator:
             # Final cleanup - only release locks owned by this run's agents
             released = release_run_locks(list(self.agent_ids.values()))
             if released:
-                log("🧹", f"Released {released} remaining locks", Colors.GRAY, dim=True)
+                log("🧹", f"Released {released} remaining locks", Colors.MUTED)
 
         # Calculate success_count before Gate 4
         success_count = sum(1 for r in self.completed if r.success)
@@ -1448,12 +1431,12 @@ class MalaOrchestrator:
         # Commit .beads/issues.jsonl if there were successes
         if success_count > 0:
             if await self.beads.commit_issues_async():
-                log("◐", "Committed .beads/issues.jsonl", Colors.GRAY, dim=True)
+                log("◐", "Committed .beads/issues.jsonl", Colors.MUTED)
 
         # Save run metadata
         if total > 0:
             metadata_path = run_metadata.save()
-            log("◐", f"Run metadata: {metadata_path}", Colors.GRAY, dim=True)
+            log("◐", f"Run metadata: {metadata_path}", Colors.MUTED)
 
         print()
         # Return success count for CLI exit code logic

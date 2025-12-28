@@ -137,7 +137,7 @@ def display_dry_run_tasks(
                 epic_counts.items(), key=lambda x: (x[0] is None, x[0] or "")
             )
         )
-        log("◐", f"By epic: {epic_summary}", Colors.GRAY, dim=True)
+        log("◐", f"By epic: {epic_summary}", Colors.MUTED)
 
 
 def _print_task_line(
@@ -458,9 +458,9 @@ def status() -> None:
     # Show config directory
     config_env = USER_CONFIG_DIR / ".env"
     if config_env.exists():
-        log("◐", f"config: {config_env}", Colors.GRAY, dim=True)
+        log("◐", f"config: {config_env}", Colors.MUTED)
     else:
-        log("○", f"config: {config_env} (not found)", Colors.GRAY, dim=True)
+        log("○", f"config: {config_env} (not found)", Colors.MUTED)
     print()
 
     # Check locks
@@ -488,8 +488,7 @@ def status() -> None:
             log(
                 "◐",
                 f"{len(run_files)} run metadata files in {get_runs_dir()}",
-                Colors.GRAY,
-                dim=True,
+                Colors.MUTED,
             )
             recent = sorted(run_files, key=lambda p: p.stat().st_mtime, reverse=True)[
                 :3

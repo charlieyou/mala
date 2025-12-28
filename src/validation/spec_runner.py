@@ -8,14 +8,22 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import tempfile
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..tools.env import SCRIPTS_DIR, get_lock_dir
+from ..tools.locking import try_lock, wait_for_lock
 from .command_runner import CommandRunner
-from .coverage import CoverageResult, CoverageStatus, parse_and_check_coverage
+from .coverage import (
+    CoverageResult,
+    CoverageStatus,
+    get_baseline_coverage,
+    is_baseline_stale,
+    parse_and_check_coverage,
+)
 from .e2e import E2EConfig as E2ERunnerConfig
 from .e2e import E2ERunner, E2EStatus
 from .helpers import format_step_output
@@ -39,6 +47,9 @@ if TYPE_CHECKING:
     from .worktree import WorktreeContext
 
 from .result import ValidationResult, ValidationStepResult
+
+# Lock file path for baseline refresh coordination
+_BASELINE_LOCK_FILE = "coverage-baseline.lock"
 
 
 class SpecValidationRunner:
@@ -105,6 +116,22 @@ class SpecValidationRunner:
         # Initialize artifacts
         artifacts = ValidationArtifacts(log_dir=log_dir)
 
+        # Check/refresh baseline coverage BEFORE worktree creation
+        # This captures baseline from main repo state
+        baseline_percent: float | None = None
+        if spec.coverage.enabled and spec.coverage.min_percent is None:
+            # "No decrease" mode - need to get baseline
+            try:
+                baseline_percent = self._refresh_baseline(spec, context.repo_path)
+            except RuntimeError as e:
+                # Baseline refresh failed
+                return ValidationResult(
+                    passed=False,
+                    failure_reasons=[str(e)],
+                    retriable=False,
+                    artifacts=artifacts,
+                )
+
         # Set up worktree if we have a commit to validate
         worktree_ctx: WorktreeContext | None = None
         validation_cwd: Path
@@ -147,6 +174,7 @@ class SpecValidationRunner:
                 artifacts=artifacts,
                 log_dir=log_dir,
                 run_id=run_id,
+                baseline_percent=baseline_percent,
             )
             return result
         finally:
@@ -162,6 +190,198 @@ class SpecValidationRunner:
                 elif worktree_ctx.state == WorktreeState.REMOVED:
                     artifacts.worktree_state = "removed"
 
+    def _refresh_baseline(
+        self,
+        spec: ValidationSpec,
+        repo_path: Path,
+    ) -> float:
+        """Refresh the baseline coverage if stale or missing.
+
+        Uses file locking with double-check pattern to prevent concurrent
+        agents from clobbering each other's baseline refresh.
+
+        Args:
+            spec: Validation spec with pytest command and coverage config.
+            repo_path: Path to the main repository.
+
+        Returns:
+            The baseline coverage percentage.
+
+        Raises:
+            RuntimeError: If baseline refresh fails (lock timeout, worktree
+                creation failure, pytest failure, no coverage generated, etc.).
+        """
+        # Determine baseline report path
+        baseline_path = repo_path / "coverage.xml"
+
+        # Check if baseline is fresh (no refresh needed)
+        if not is_baseline_stale(baseline_path, repo_path):
+            try:
+                baseline = get_baseline_coverage(baseline_path)
+                if baseline is not None:
+                    return baseline
+            except ValueError:
+                # Malformed baseline - need to refresh
+                pass
+
+        # Baseline is stale or missing - try to acquire lock for refresh
+        run_id = f"baseline-{uuid.uuid4().hex[:8]}"
+        agent_id = f"baseline-refresh-{run_id}"
+        repo_namespace = str(repo_path)
+
+        # Try to acquire lock (non-blocking first)
+        if not try_lock(_BASELINE_LOCK_FILE, agent_id, repo_namespace):
+            # Another agent is refreshing - wait for them
+            if not wait_for_lock(
+                _BASELINE_LOCK_FILE,
+                agent_id,
+                repo_namespace,
+                timeout_seconds=300.0,  # 5 min max wait
+                poll_interval_ms=1000,
+            ):
+                raise RuntimeError("Timeout waiting for baseline refresh lock")
+
+        # Lock acquired - double-check if still stale (another agent may have refreshed)
+        try:
+            if not is_baseline_stale(baseline_path, repo_path):
+                try:
+                    baseline = get_baseline_coverage(baseline_path)
+                    if baseline is not None:
+                        return baseline
+                except ValueError:
+                    pass  # Still need to refresh
+
+            # Still stale - run refresh in temp worktree
+            return self._run_baseline_refresh(spec, repo_path, baseline_path)
+        finally:
+            # Release lock by removing lock file
+            from ..tools.locking import _lock_path
+
+            lock_file = _lock_path(_BASELINE_LOCK_FILE, repo_namespace)
+            lock_file.unlink(missing_ok=True)
+
+    def _run_baseline_refresh(
+        self,
+        spec: ValidationSpec,
+        repo_path: Path,
+        baseline_path: Path,
+    ) -> float:
+        """Run pytest in temp worktree to refresh baseline coverage.
+
+        Args:
+            spec: Validation spec with pytest command.
+            repo_path: Path to the main repository.
+            baseline_path: Where to write the baseline coverage.xml.
+
+        Returns:
+            The new baseline coverage percentage.
+
+        Raises:
+            RuntimeError: If worktree creation, uv sync, pytest fails, or no
+                coverage report is generated.
+        """
+        from .spec import CommandKind
+
+        # Find the pytest command from spec
+        pytest_commands = spec.commands_by_kind(CommandKind.TEST)
+        if not pytest_commands:
+            raise RuntimeError("No pytest command in spec for baseline refresh")
+
+        # Create temp worktree at HEAD
+        run_id = f"baseline-{uuid.uuid4().hex[:8]}"
+        temp_dir = Path(tempfile.mkdtemp(prefix="mala-baseline-"))
+        worktree_config = WorktreeConfig(
+            base_dir=temp_dir,
+            keep_on_failure=False,
+        )
+
+        worktree_ctx: WorktreeContext | None = None
+        try:
+            worktree_ctx = create_worktree(
+                repo_path=repo_path,
+                commit_sha="HEAD",
+                config=worktree_config,
+                run_id=run_id,
+                issue_id="baseline",
+                attempt=1,
+            )
+
+            if worktree_ctx.state == WorktreeState.FAILED:
+                raise RuntimeError(
+                    f"Baseline worktree creation failed: {worktree_ctx.error}"
+                )
+
+            worktree_path = worktree_ctx.path
+
+            # Build environment
+            env = {
+                **os.environ,
+                "LOCK_DIR": str(get_lock_dir()),
+                "AGENT_ID": f"baseline-{run_id}",
+            }
+
+            # Run uv sync first to install dependencies
+            runner = CommandRunner(cwd=worktree_path, timeout_seconds=300.0)
+            sync_result = runner.run(["uv", "sync", "--all-extras"], env=env)
+            if sync_result.returncode != 0:
+                raise RuntimeError(
+                    f"uv sync failed during baseline refresh: {sync_result.stderr}"
+                )
+
+            # Get pytest command and modify for baseline (override threshold to 0)
+            pytest_cmd = list(pytest_commands[0].command)
+
+            # Replace any existing --cov-fail-under with 0
+            # This ensures we capture baseline even if it's below pyproject.toml threshold
+            new_pytest_cmd = []
+            skip_next = False
+            for arg in pytest_cmd:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if arg.startswith("--cov-fail-under="):
+                    continue
+                if arg == "--cov-fail-under":
+                    skip_next = True
+                    continue
+                new_pytest_cmd.append(arg)
+            new_pytest_cmd.append("--cov-fail-under=0")
+
+            # Run pytest
+            result = runner.run(new_pytest_cmd, env=env)
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"pytest failed during baseline refresh (exit {result.returncode})"
+                )
+
+            # Check for coverage.xml in worktree
+            worktree_coverage = worktree_path / "coverage.xml"
+            if not worktree_coverage.exists():
+                raise RuntimeError("No coverage.xml generated during baseline refresh")
+
+            # Atomic rename to main repo
+            temp_coverage = baseline_path.with_suffix(".xml.tmp")
+            shutil.copy2(worktree_coverage, temp_coverage)
+            os.rename(temp_coverage, baseline_path)
+
+            # Parse and return the coverage percentage
+            try:
+                baseline = get_baseline_coverage(baseline_path)
+                if baseline is None:
+                    raise RuntimeError(
+                        "Baseline coverage.xml exists but has no coverage data"
+                    )
+                return baseline
+            except ValueError as e:
+                raise RuntimeError(f"Failed to parse baseline coverage: {e}") from e
+
+        finally:
+            # Clean up temp worktree
+            if worktree_ctx is not None:
+                remove_worktree(worktree_ctx, validation_passed=True)
+            # Clean up temp directory
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
     def _execute_spec_commands(
         self,
         spec: ValidationSpec,
@@ -170,6 +390,7 @@ class SpecValidationRunner:
         artifacts: ValidationArtifacts,
         log_dir: Path,
         run_id: str,
+        baseline_percent: float | None = None,
     ) -> ValidationResult:
         """Execute all commands in the spec.
 
@@ -180,6 +401,7 @@ class SpecValidationRunner:
             artifacts: Artifacts to update.
             log_dir: Directory for logs.
             run_id: Unique run identifier.
+            baseline_percent: Baseline coverage percentage for "no decrease" mode.
 
         Returns:
             ValidationResult with all step results.
@@ -212,7 +434,9 @@ class SpecValidationRunner:
 
         # Handle coverage if enabled
         if spec.coverage.enabled:
-            coverage_result = self._check_coverage(spec.coverage, cwd, log_dir)
+            coverage_result = self._check_coverage(
+                spec.coverage, cwd, log_dir, baseline_percent
+            )
             if coverage_result.report_path:
                 artifacts.coverage_report = coverage_result.report_path
 
@@ -326,6 +550,7 @@ class SpecValidationRunner:
         config: CoverageConfig,
         cwd: Path,
         log_dir: Path,
+        baseline_percent: float | None = None,
     ) -> CoverageResult:
         """Check coverage against threshold.
 
@@ -333,6 +558,8 @@ class SpecValidationRunner:
             config: Coverage configuration.
             cwd: Working directory where coverage.xml should be.
             log_dir: Directory for logs.
+            baseline_percent: Baseline coverage percentage for "no decrease" mode.
+                Used when config.min_percent is None.
 
         Returns:
             CoverageResult with pass/fail status.
@@ -356,7 +583,12 @@ class SpecValidationRunner:
                 failure_reason=f"Coverage report not found: {report_path}",
             )
 
-        return parse_and_check_coverage(report_path, config.min_percent)
+        # Determine threshold: use config.min_percent if set, else baseline_percent
+        threshold = (
+            config.min_percent if config.min_percent is not None else baseline_percent
+        )
+
+        return parse_and_check_coverage(report_path, threshold)
 
     def _run_spec_e2e(
         self,

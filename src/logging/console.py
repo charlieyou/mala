@@ -48,10 +48,10 @@ class Colors:
     MAGENTA = "\033[95m"
     CYAN = "\033[96m"
     RED = "\033[91m"
-    GRAY = "\033[90m"  # Bright black - more visible on dark terminals
+    GRAY = "\033[37;1m"  # Bold light gray - brighter for dark terminal visibility
     WHITE = "\033[97m"
-    # Subdued style for secondary info (uses gray instead of dim for visibility)
-    MUTED = "\033[90m"
+    # Subdued style for secondary info (brighter than ANSI 90 for visibility)
+    MUTED = "\033[37m"  # Standard gray - visible but subdued on dark terminals
 
 
 # Agent color palette for distinguishing concurrent agents
@@ -120,8 +120,14 @@ def log(
     dim: bool = False,
     agent_id: str | None = None,
 ) -> None:
-    """Claude Code style logging with optional agent color coding."""
-    style = Colors.MUTED if dim else ""
+    """Claude Code style logging with optional agent color coding.
+
+    Note: The dim parameter is accepted for API compatibility but no longer
+    applies the DIM ANSI attribute, as it reduces visibility on dark terminals.
+    Callers should use Colors.GRAY or Colors.MUTED directly for subdued output.
+    """
+    # Use caller's color directly - dim parameter kept for API compatibility
+    # but no longer reduces visibility (improves dark terminal readability)
     timestamp = datetime.now().strftime("%H:%M:%S")
 
     # Use agent color if provided, otherwise use specified color
@@ -132,7 +138,7 @@ def log(
         prefix = ""
 
     print(
-        f"{Colors.GRAY}{timestamp}{Colors.RESET} {prefix}{style}{color}{icon} {message}{Colors.RESET}"
+        f"{Colors.GRAY}{timestamp}{Colors.RESET} {prefix}{color}{icon} {message}{Colors.RESET}"
     )
 
 
