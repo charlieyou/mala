@@ -116,15 +116,24 @@ def get_mcp_servers(repo_path: Path, morph_enabled: bool = True) -> dict:
 
     Returns:
         Dictionary of MCP server configurations. Empty if morph_enabled=False.
+
+    Raises:
+        ValueError: If morph_enabled=True but MORPH_API_KEY is not set.
     """
     if not morph_enabled:
         return {}
+    api_key = os.environ.get("MORPH_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "MORPH_API_KEY environment variable is required when morph_enabled=True. "
+            "Set MORPH_API_KEY or pass morph_enabled=False."
+        )
     return {
         "morphllm": {
             "command": "npx",
             "args": ["-y", "@morphllm/morphmcp"],
             "env": {
-                "MORPH_API_KEY": os.environ["MORPH_API_KEY"],
+                "MORPH_API_KEY": api_key,
                 "ENABLED_TOOLS": "all",
                 "WORKSPACE_MODE": "true",
             },

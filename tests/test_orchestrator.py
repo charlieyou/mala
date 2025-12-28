@@ -3666,3 +3666,36 @@ class TestRunSync:
 
         assert success_count == 0
         assert total == 0
+
+
+class TestGetMcpServers:
+    """Test get_mcp_servers function."""
+
+    def test_returns_empty_when_morph_disabled(self, tmp_path: Path) -> None:
+        """get_mcp_servers returns empty dict when morph_enabled=False."""
+        from src.orchestrator import get_mcp_servers
+
+        result = get_mcp_servers(tmp_path, morph_enabled=False)
+        assert result == {}
+
+    def test_returns_config_when_api_key_set(self, tmp_path: Path) -> None:
+        """get_mcp_servers returns config when MORPH_API_KEY is set."""
+        from src.orchestrator import get_mcp_servers
+
+        with patch.dict(os.environ, {"MORPH_API_KEY": "test-key"}):
+            result = get_mcp_servers(tmp_path, morph_enabled=True)
+
+        assert "morphllm" in result
+        assert result["morphllm"]["env"]["MORPH_API_KEY"] == "test-key"
+
+    def test_raises_error_when_api_key_missing(self, tmp_path: Path) -> None:
+        """get_mcp_servers raises ValueError when MORPH_API_KEY missing but morph_enabled=True."""
+        from src.orchestrator import get_mcp_servers
+
+        env_without_key = {k: v for k, v in os.environ.items() if k != "MORPH_API_KEY"}
+        with patch.dict(os.environ, env_without_key, clear=True):
+            with pytest.raises(ValueError) as exc_info:
+                get_mcp_servers(tmp_path, morph_enabled=True)
+
+        assert "MORPH_API_KEY" in str(exc_info.value)
+        assert "morph_enabled=False" in str(exc_info.value)
