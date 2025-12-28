@@ -77,18 +77,33 @@ class GateOutcome(Protocol):
         ...
 
 
-@dataclass(frozen=True)
-class ReviewIssueOutcome:
-    """A single issue from a code review.
+class ReviewIssue(Protocol):
+    """Protocol for a single issue from a code review.
 
-    This is a local type that matches the fields lifecycle needs from
-    review issues for building failure messages.
+    Matches the fields lifecycle needs from review issues for building
+    failure messages. Uses Protocol to allow structural subtyping with
+    codex_review.ReviewIssue.
     """
 
-    file: str
-    line: int | None
-    severity: str  # "error", "warning", "info"
-    message: str
+    @property
+    def file(self) -> str:
+        """File path where the issue was found."""
+        ...
+
+    @property
+    def line(self) -> int | None:
+        """Line number, or None for file-level issues."""
+        ...
+
+    @property
+    def severity(self) -> str:
+        """Severity level: 'error', 'warning', or 'info'."""
+        ...
+
+    @property
+    def message(self) -> str:
+        """Description of the issue."""
+        ...
 
 
 @runtime_checkable
@@ -110,7 +125,7 @@ class ReviewOutcome(Protocol):
         ...
 
     @property
-    def issues(self) -> list[ReviewIssueOutcome]:
+    def issues(self) -> list[ReviewIssue]:
         """List of issues found during review."""
         ...
 
