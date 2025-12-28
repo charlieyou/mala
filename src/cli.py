@@ -303,11 +303,11 @@ def run(
     verbose: Annotated[
         bool,
         typer.Option(
-            "--verbose/--quiet",
-            "-v/-q",
-            help="Verbose output shows full tool arguments; quiet mode shows single line per tool call",
+            "--verbose",
+            "-v",
+            help="Enable verbose output; shows full tool arguments instead of single line per tool call",
         ),
-    ] = True,
+    ] = False,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting

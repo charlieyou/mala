@@ -287,10 +287,10 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert config_dir.exists()
 
 
-def test_run_quiet_mode_sets_verbose_false(
+def test_run_verbose_mode_sets_verbose_true(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that --quiet flag sets verbose to False."""
+    """Test that --verbose flag sets verbose to True."""
     cli = _reload_cli(monkeypatch)
     monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
@@ -305,16 +305,16 @@ def test_run_quiet_mode_sets_verbose_false(
     monkeypatch.setattr(cli, "set_verbose", _set_verbose)
 
     with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, verbose=False)
+        cli.run(repo_path=tmp_path, verbose=True)
 
     assert excinfo.value.exit_code == 0
-    assert verbose_calls["enabled"] is False
+    assert verbose_calls["enabled"] is True
 
 
-def test_run_default_verbose_mode(
+def test_run_default_quiet_mode(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that default is verbose (True)."""
+    """Test that default is quiet (verbose=False)."""
     cli = _reload_cli(monkeypatch)
     monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
@@ -331,7 +331,7 @@ def test_run_default_verbose_mode(
     with pytest.raises(typer.Exit):
         cli.run(repo_path=tmp_path)
 
-    assert verbose_calls["enabled"] is True
+    assert verbose_calls["enabled"] is False
 
 
 def test_run_repo_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
