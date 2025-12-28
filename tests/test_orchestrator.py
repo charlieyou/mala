@@ -3484,10 +3484,11 @@ class TestCodexReviewUsesCurrentHead:
         agent_commit = "agent_commit_abc123"
         current_head = "current_head_xyz456"
 
-        # Mock the quality gate to return a result with the agent's specific commit
+        # Mock the quality gate to return a passing result with the agent's specific commit.
+        # Gate must pass for review to be triggered (see lifecycle.py:270-284).
         mock_gate_result = GateResult(
-            passed=False,  # Trigger review
-            failure_reasons=["type_errors"],  # Need some failure to trigger review
+            passed=True,  # Gate passes, triggering Codex review
+            failure_reasons=[],
             commit_hash=agent_commit,  # This is the agent's commit
         )
 
