@@ -20,7 +20,7 @@ import pytest
 from claude_agent_sdk.types import ResultMessage
 
 from src.beads_client import BeadsClient, SubprocessResult
-from src.orchestrator import IMPLEMENTER_PROMPT_TEMPLATE, IssueResult, MalaOrchestrator
+from src.orchestrator import IssueResult, MalaOrchestrator, _get_implementer_prompt
 from src.validation.command_runner import CommandResult
 
 
@@ -100,7 +100,7 @@ class TestPromptTemplate:
     def test_prompt_template_placeholders_match_format_call(self) -> None:
         """Verify prompt template placeholders match what format() provides."""
         # Extract all {placeholder} from template
-        placeholders = set(re.findall(r"\{(\w+)\}", IMPLEMENTER_PROMPT_TEMPLATE))
+        placeholders = set(re.findall(r"\{(\w+)\}", _get_implementer_prompt()))
 
         # These are the keys passed to format() in run_implementer
         expected_keys = {"issue_id", "repo_path", "lock_dir", "scripts_dir", "agent_id"}
@@ -1329,7 +1329,7 @@ class TestOrchestratorQualityGateIntegration:
             success_count, _total = await orchestrator.run()
 
         assert success_count == 1
-        assert "issue-pass" in orchestrator.completed
+        assert any(r.issue_id == "issue-pass" for r in orchestrator.completed)
 
 
 class TestAsyncBeadsClientWithTimeout:
@@ -2331,7 +2331,17 @@ class TestRunLevelValidation:
                 orchestrator, "run_implementer", side_effect=mock_run_implementer
             ),
             patch.object(
-                orchestrator.beads, "mark_needs_followup_async", return_value=True
+                orchestrator.beads, "close_async", side_effect=mock_close_async
+            ),
+            patch.object(
+                orchestrator.beads,
+                "close_eligible_epics_async",
+                return_value=False,
+            ),
+            patch.object(
+                orchestrator.beads,
+                "mark_needs_followup_async",
+                side_effect=mock_mark_followup_async,
             ),
             patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
