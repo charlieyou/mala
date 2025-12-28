@@ -278,3 +278,29 @@ class TestParentEpicCaching:
         }
         # Should have made 3 calls (one per unique issue)
         assert len(call_args) == 3
+
+    @pytest.mark.asyncio
+    async def test_batch_dedupes_issue_ids(self, tmp_path: Path) -> None:
+        """Batch method should dedupe issue_ids, making one call per unique issue."""
+        beads = BeadsClient(tmp_path)
+        tree_json = json.dumps(
+            [
+                {"id": "task-1", "issue_type": "task", "depth": 0},
+                {"id": "epic-1", "issue_type": "epic", "depth": 1},
+            ]
+        )
+        call_count = 0
+
+        async def mock_run(cmd: list[str]) -> SubprocessResult:
+            nonlocal call_count
+            call_count += 1
+            return make_subprocess_result(stdout=tree_json)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+
+            # Same issue repeated 3 times - should only make 1 subprocess call
+            result = await beads.get_parent_epics_async(["task-1", "task-1", "task-1"])
+
+        assert result == {"task-1": "epic-1"}
+        assert call_count == 1  # Only one call despite 3 input entries

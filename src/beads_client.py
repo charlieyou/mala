@@ -63,6 +63,8 @@ class BeadsClient:
         self.timeout_seconds = timeout_seconds
         # Cache for parent epic lookups to avoid repeated subprocess calls
         self._parent_epic_cache: dict[str, str | None] = {}
+        # Locks for in-flight lookups to prevent duplicate concurrent calls
+        self._parent_epic_locks: dict[str, asyncio.Lock] = {}
 
     async def _run_subprocess_async(
         self,
@@ -448,6 +450,7 @@ class BeadsClient:
         Uses `bd dep tree <id> --direction=down` to get the ancestor chain.
         The parent epic is the first ancestor with issue_type == "epic".
         Results are cached to avoid repeated subprocess calls.
+        Uses locks to prevent duplicate concurrent calls for the same issue.
 
         Args:
             issue_id: The issue ID to find the parent epic for.
@@ -455,39 +458,50 @@ class BeadsClient:
         Returns:
             The parent epic ID, or None if no parent epic exists (orphan).
         """
-        # Check cache first
+        # Check cache first (no lock needed for read)
         if issue_id in self._parent_epic_cache:
             return self._parent_epic_cache[issue_id]
 
-        result = await self._run_subprocess_async(
-            ["bd", "dep", "tree", issue_id, "--direction=down", "--json"]
-        )
-        if result.returncode != 0:
-            self._log_warning(f"bd dep tree failed for {issue_id}: {result.stderr}")
-            self._parent_epic_cache[issue_id] = None
-            return None
-        try:
-            tree = json.loads(result.stdout)
-            # Find the first ancestor (depth > 0) with issue_type == "epic"
-            parent_epic: str | None = None
-            for item in tree:
-                if item.get("depth", 0) > 0 and item.get("issue_type") == "epic":
-                    parent_epic = item["id"]
-                    break
-            self._parent_epic_cache[issue_id] = parent_epic
-            return parent_epic
-        except json.JSONDecodeError:
-            self._parent_epic_cache[issue_id] = None
-            return None
+        # Get or create lock for this issue to prevent duplicate concurrent calls
+        if issue_id not in self._parent_epic_locks:
+            self._parent_epic_locks[issue_id] = asyncio.Lock()
+        lock = self._parent_epic_locks[issue_id]
+
+        async with lock:
+            # Check cache again after acquiring lock (another coroutine may have populated it)
+            if issue_id in self._parent_epic_cache:
+                return self._parent_epic_cache[issue_id]
+
+            result = await self._run_subprocess_async(
+                ["bd", "dep", "tree", issue_id, "--direction=down", "--json"]
+            )
+            if result.returncode != 0:
+                self._log_warning(f"bd dep tree failed for {issue_id}: {result.stderr}")
+                self._parent_epic_cache[issue_id] = None
+                return None
+            try:
+                tree = json.loads(result.stdout)
+                # Find the first ancestor (depth > 0) with issue_type == "epic"
+                parent_epic: str | None = None
+                for item in tree:
+                    if item.get("depth", 0) > 0 and item.get("issue_type") == "epic":
+                        parent_epic = item["id"]
+                        break
+                self._parent_epic_cache[issue_id] = parent_epic
+                return parent_epic
+            except json.JSONDecodeError:
+                self._parent_epic_cache[issue_id] = None
+                return None
 
     async def get_parent_epics_async(
         self, issue_ids: list[str]
     ) -> dict[str, str | None]:
         """Get parent epic IDs for multiple issues efficiently.
 
-        Processes all issues concurrently. Results are cached so that:
+        Processes unique issues concurrently. Results are cached so that:
         - Previously looked-up issues return immediately from cache
-        - Subsequent calls for the same issues don't require subprocess calls
+        - Duplicate issue IDs in the input are deduped before processing
+        - Concurrent calls for the same issue share a single subprocess call
 
         Args:
             issue_ids: List of issue IDs to find parent epics for.
@@ -495,10 +509,15 @@ class BeadsClient:
         Returns:
             Dict mapping each issue ID to its parent epic ID (or None for orphans).
         """
-        result: dict[str, str | None] = {}
-        # Process all issues concurrently (cached issues return immediately)
-        tasks = [self.get_parent_epic_async(issue_id) for issue_id in issue_ids]
+        # Dedupe issue_ids to minimize subprocess calls
+        unique_ids = list(dict.fromkeys(issue_ids))
+
+        # Process unique issues concurrently (locks prevent duplicate subprocess calls)
+        tasks = [self.get_parent_epic_async(issue_id) for issue_id in unique_ids]
         parent_epics = await asyncio.gather(*tasks)
-        for issue_id, parent_epic in zip(issue_ids, parent_epics, strict=True):
-            result[issue_id] = parent_epic
-        return result
+
+        # Build result mapping from unique lookups
+        unique_results = dict(zip(unique_ids, parent_epics, strict=True))
+
+        # Return mapping for all input issue_ids (including duplicates)
+        return {issue_id: unique_results[issue_id] for issue_id in issue_ids}
