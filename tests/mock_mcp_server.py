@@ -213,13 +213,16 @@ def main() -> None:
         params = msg.get("params", {})
 
         if method == "initialize":
+            assert isinstance(request_id, int)
             send_response(handle_initialize(request_id))
         elif method == "notifications/initialized":
             # No response needed for notifications
             pass
         elif method == "tools/list":
+            assert isinstance(request_id, int)
             send_response(handle_tools_list(request_id))
         elif method == "tools/call":
+            assert isinstance(request_id, int)
             tool_name = params.get("name", "")
             arguments = params.get("arguments", {})
             send_response(handle_tool_call(request_id, tool_name, arguments))
