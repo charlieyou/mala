@@ -833,7 +833,10 @@ class TestQualityGateValidationEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        evidence = gate.parse_validation_evidence(log_path)
+        from src.validation.spec import ValidationScope, build_validation_spec
+
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.pytest_ran is True
 
@@ -859,7 +862,10 @@ class TestQualityGateValidationEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        evidence = gate.parse_validation_evidence(log_path)
+        from src.validation.spec import ValidationScope, build_validation_spec
+
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.ruff_check_ran is True
 
@@ -885,7 +891,10 @@ class TestQualityGateValidationEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        evidence = gate.parse_validation_evidence(log_path)
+        from src.validation.spec import ValidationScope, build_validation_spec
+
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.ruff_format_ran is True
 
@@ -911,7 +920,10 @@ class TestQualityGateValidationEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        evidence = gate.parse_validation_evidence(log_path)
+        from src.validation.spec import ValidationScope, build_validation_spec
+
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.ty_check_ran is True
 
@@ -921,7 +933,10 @@ class TestQualityGateValidationEvidence:
 
         gate = QualityGate(tmp_path)
         nonexistent = tmp_path / "nonexistent.jsonl"
-        evidence = gate.parse_validation_evidence(nonexistent)
+        from src.validation.spec import ValidationScope, build_validation_spec
+
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        evidence = gate.parse_validation_evidence_with_spec(nonexistent, spec)
 
         assert evidence.pytest_ran is False
         assert evidence.ruff_check_ran is False
@@ -1031,11 +1046,15 @@ class TestQualityGateFullCheck:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
+        from src.validation.spec import ValidationScope, build_validation_spec
+
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = make_command_result(
                 stdout="abc1234 bd-issue-123: Implement feature\n"
             )
-            result = gate.check("issue-123", log_path)
+            result = gate.check_with_resolution("issue-123", log_path, spec=spec)
 
         assert result.passed is True
         assert result.failure_reasons == []
@@ -1066,9 +1085,13 @@ class TestQualityGateFullCheck:
             + "\n"
         )
 
+        from src.validation.spec import ValidationScope, build_validation_spec
+
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = make_command_result(stdout="")
-            result = gate.check("issue-123", log_path)
+            result = gate.check_with_resolution("issue-123", log_path, spec=spec)
 
         assert result.passed is False
         assert "commit" in result.failure_reasons[0].lower()
@@ -1099,9 +1122,13 @@ class TestQualityGateFullCheck:
             + "\n"
         )
 
+        from src.validation.spec import ValidationScope, build_validation_spec
+
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = make_command_result(stdout="")
-            result = gate.check("issue-123", log_path)
+            result = gate.check_with_resolution("issue-123", log_path, spec=spec)
 
         assert result.passed is False
         assert "30 days" in result.failure_reasons[0]
@@ -1116,11 +1143,15 @@ class TestQualityGateFullCheck:
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")
 
+        from src.validation.spec import ValidationScope, build_validation_spec
+
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = make_command_result(
                 stdout="abc1234 bd-issue-123: Implement feature\n"
             )
-            result = gate.check("issue-123", log_path)
+            result = gate.check_with_resolution("issue-123", log_path, spec=spec)
 
         assert result.passed is False
         assert any("validation" in r.lower() for r in result.failure_reasons)
@@ -1298,6 +1329,7 @@ class TestOrchestratorQualityGateIntegration:
             success_count, _total = await orchestrator.run()
 
         assert success_count == 1
+        assert "issue-pass" in orchestrator.completed
 
 
 class TestAsyncBeadsClientWithTimeout:
@@ -2779,12 +2811,7 @@ class TestResolutionRecordingInMetadata:
             patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
-            patch(
-                "subprocess.run",
-                return_value=make_subprocess_result(
-                    stdout="abc1234 bd-issue-normal: Implement feature\n"
-                ),
-            ),
+            patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             success_count, total = await orchestrator.run()
 
@@ -3432,7 +3459,9 @@ class TestBaselineCommitSelection:
             patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
             patch("src.orchestrator.get_claude_log_path", return_value=log_file),
             patch.object(
-                orchestrator.beads, "get_issue_description_async", return_value="Test"
+                orchestrator.beads,
+                "get_issue_description_async",
+                return_value="Test",
             ),
         ):
             mock_tracer = MagicMock()
