@@ -14,11 +14,11 @@ Evidence Detection:
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
+from src.session_log_parser import JsonlEntry, SessionLogParser
 from src.validation.command_runner import run_command
 from src.validation.spec import (
     CommandKind,
@@ -35,18 +35,14 @@ if TYPE_CHECKING:
     from src.validation.spec import ValidationSpec
 
 
-@dataclass
-class JsonlEntry:
-    """A parsed JSONL log entry with byte offset tracking."""
-
-    data: dict[str, Any]
-    """The parsed JSON object from this line."""
-
-    line_len: int
-    """Length of the raw line in bytes (for offset tracking)."""
-
-    offset: int
-    """Byte offset where this line started in the file."""
+# Re-export JsonlEntry for backward compatibility
+__all__ = [
+    "CommitResult",
+    "GateResult",
+    "JsonlEntry",
+    "QualityGate",
+    "ValidationEvidence",
+]
 
 
 @dataclass
@@ -166,7 +162,11 @@ class GateResult:
 
 
 class QualityGate:
-    """Quality gate for verifying agent work meets requirements."""
+    """Quality gate for verifying agent work meets requirements.
+
+    Uses SessionLogParser for JSONL log parsing, keeping this class
+    focused on policy checking and validation logic.
+    """
 
     # Patterns for detecting issue resolution markers in log text
     RESOLUTION_PATTERNS: ClassVar[dict[str, re.Pattern[str]]] = {
@@ -191,27 +191,7 @@ class QualityGate:
             repo_path: Path to the repository for git operations.
         """
         self.repo_path = repo_path
-
-    def _extract_assistant_text_blocks(self, data: dict[str, Any]) -> list[str]:
-        """Extract text content from assistant message blocks.
-
-        Args:
-            data: Parsed JSONL entry data.
-
-        Returns:
-            List of text strings from text blocks in assistant messages.
-        """
-        entry_type = data.get("type", "")
-        entry_role = data.get("message", {}).get("role", "")
-        if entry_type != "assistant" and entry_role != "assistant":
-            return []
-
-        texts = []
-        message = data.get("message", {})
-        for block in message.get("content", []):
-            if isinstance(block, dict) and block.get("type") == "text":
-                texts.append(block.get("text", ""))
-        return texts
+        self._parser = SessionLogParser()
 
     def _match_resolution_pattern(self, text: str) -> IssueResolution | None:
         """Check text against all resolution patterns.
@@ -230,49 +210,6 @@ class QualityGate:
                     rationale=match.group(1).strip(),
                 )
         return None
-
-    def _extract_bash_commands(self, data: dict[str, Any]) -> list[tuple[str, str]]:
-        """Extract Bash tool_use commands from assistant messages.
-
-        Args:
-            data: Parsed JSONL entry data.
-
-        Returns:
-            List of (tool_id, command) tuples for Bash tool_use blocks.
-        """
-        if data.get("type") != "assistant":
-            return []
-
-        commands = []
-        message = data.get("message", {})
-        for block in message.get("content", []):
-            if isinstance(block, dict) and block.get("type") == "tool_use":
-                if block.get("name") == "Bash":
-                    tool_id = block.get("id", "")
-                    command = block.get("input", {}).get("command", "")
-                    commands.append((tool_id, command))
-        return commands
-
-    def _extract_tool_results(self, data: dict[str, Any]) -> list[tuple[str, bool]]:
-        """Extract tool_result entries from user messages.
-
-        Args:
-            data: Parsed JSONL entry data.
-
-        Returns:
-            List of (tool_use_id, is_error) tuples for tool_result blocks.
-        """
-        if data.get("type") != "user":
-            return []
-
-        results = []
-        message = data.get("message", {})
-        for block in message.get("content", []):
-            if isinstance(block, dict) and block.get("type") == "tool_result":
-                tool_use_id = block.get("tool_use_id", "")
-                is_error = block.get("is_error", False)
-                results.append((tool_use_id, is_error))
-        return results
 
     def _match_spec_pattern(
         self,
@@ -343,8 +280,7 @@ class QualityGate:
     ) -> Iterator[JsonlEntry]:
         """Iterate over parsed JSONL entries from a log file.
 
-        Reads the file in binary mode for accurate byte offset tracking,
-        decodes each line as UTF-8, parses JSON, and yields structured entries.
+        Delegates to SessionLogParser.iter_jsonl_entries().
 
         Args:
             log_path: Path to the JSONL log file.
@@ -352,41 +288,8 @@ class QualityGate:
 
         Yields:
             JsonlEntry objects for each successfully parsed JSON line.
-
-        Raises:
-            OSError: If file cannot be read. Callers should handle this.
-
-        Note:
-            - Lines that fail UTF-8 decoding are silently skipped
-            - Empty lines are silently skipped
-            - Lines that fail JSON parsing are silently skipped
         """
-        if not log_path.exists():
-            return
-
-        with open(log_path, "rb") as f:
-            f.seek(offset)
-            current_offset = offset
-
-            for line_bytes in f:
-                line_len = len(line_bytes)
-                line_offset = current_offset
-                current_offset += line_len
-
-                try:
-                    line = line_bytes.decode("utf-8").strip()
-                except UnicodeDecodeError:
-                    continue
-
-                if not line:
-                    continue
-
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-
-                yield JsonlEntry(data=entry, line_len=line_len, offset=line_offset)
+        return self._parser.iter_jsonl_entries(log_path, offset)
 
     def parse_issue_resolution(self, log_path: Path) -> IssueResolution | None:
         """Parse JSONL log file for issue resolution markers.
@@ -422,7 +325,7 @@ class QualityGate:
 
         try:
             for entry in self._iter_jsonl_entries(log_path, offset):
-                for text in self._extract_assistant_text_blocks(entry.data):
+                for text in self._parser.extract_assistant_text_blocks(entry):
                     resolution = self._match_resolution_pattern(text)
                     if resolution:
                         return resolution, entry.offset + entry.line_len
@@ -462,13 +365,13 @@ class QualityGate:
         command_failed: dict[str, bool] = {}
 
         for entry in self._iter_jsonl_entries(log_path, offset):
-            for tool_id, command in self._extract_bash_commands(entry.data):
+            for tool_id, command in self._parser.extract_bash_commands(entry):
                 cmd_name = self._match_spec_pattern(
                     command, evidence, kind_patterns, self.KIND_TO_NAME
                 )
                 if cmd_name:
                     tool_id_to_command[tool_id] = cmd_name
-            for tool_use_id, is_error in self._extract_tool_results(entry.data):
+            for tool_use_id, is_error in self._parser.extract_tool_results(entry):
                 if tool_use_id in tool_id_to_command:
                     command_failed[tool_id_to_command[tool_use_id]] = is_error
 
@@ -478,9 +381,7 @@ class QualityGate:
     def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         """Get the byte offset at the end of a log file.
 
-        This is a lightweight method for getting the current file position
-        after reading from a given offset. Use this when you only need the
-        offset for retry scoping, not the evidence itself.
+        Delegates to SessionLogParser.get_log_end_offset().
 
         Args:
             log_path: Path to the JSONL log file.
@@ -490,15 +391,7 @@ class QualityGate:
             The byte offset at the end of the file, or start_offset if file
             doesn't exist or can't be read.
         """
-        if not log_path.exists():
-            return start_offset
-
-        try:
-            with open(log_path, "rb") as f:
-                f.seek(0, 2)  # Seek to end
-                return f.tell()
-        except OSError:
-            return start_offset
+        return self._parser.get_log_end_offset(log_path, start_offset)
 
     def check_no_progress(
         self,
