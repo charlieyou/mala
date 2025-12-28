@@ -3222,6 +3222,7 @@ class TestBaselineCommitSelection:
             issue_description: str | None = None,
             baseline_commit: str | None = None,
             capture_session_log: bool = False,
+            thinking_mode: str | None = None,
         ) -> MagicMock:
             captured_baseline.append(baseline_commit)
             result = MagicMock()
@@ -3306,6 +3307,7 @@ class TestBaselineCommitSelection:
             issue_description: str | None = None,
             baseline_commit: str | None = None,
             capture_session_log: bool = False,
+            thinking_mode: str | None = None,
         ) -> MagicMock:
             captured_baseline.append(baseline_commit)
             result = MagicMock()
@@ -3488,6 +3490,7 @@ class TestCodexReviewUsesCurrentHead:
             issue_description: str | None = None,
             baseline_commit: str | None = None,
             capture_session_log: bool = False,
+            thinking_mode: str | None = None,
         ) -> CodexReviewResult:
             captured_review_commits.append(commit_hash)
             return CodexReviewResult(

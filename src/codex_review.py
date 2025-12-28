@@ -259,6 +259,7 @@ async def run_codex_review(
     issue_description: str | None = None,
     baseline_commit: str | None = None,
     capture_session_log: bool = False,
+    thinking_mode: str | None = None,
 ) -> CodexReviewResult:
     """Run Codex code review on a commit with JSON output and retry logic.
 
@@ -276,6 +277,9 @@ async def run_codex_review(
             fix commits have been made.
         capture_session_log: If True, capture and return the codex session log path.
             Only enabled in verbose mode to avoid overhead.
+        thinking_mode: Optional reasoning effort level for Codex (e.g., "high",
+            "medium", "low", "xhigh"). If provided, passed to codex via
+            -c model_reasoning_effort=<mode>.
 
     Returns:
         CodexReviewResult with review outcome. If JSON parsing fails after
@@ -312,14 +316,24 @@ async def run_codex_review(
             )
 
             # Run codex exec with output schema
-            proc = await asyncio.create_subprocess_exec(
+            cmd = [
                 "codex",
                 "exec",
-                "--output-schema",
-                str(schema_path),
-                "-o",
-                str(output_path),
-                prompt,
+            ]
+            # Add thinking mode config if specified
+            if thinking_mode:
+                cmd.extend(["-c", f"model_reasoning_effort={thinking_mode}"])
+            cmd.extend(
+                [
+                    "--output-schema",
+                    str(schema_path),
+                    "-o",
+                    str(output_path),
+                    prompt,
+                ]
+            )
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
                 cwd=repo_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

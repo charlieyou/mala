@@ -235,6 +235,7 @@ class MalaOrchestrator:
         prioritize_wip: bool = False,
         focus: bool = True,
         cli_args: dict[str, object] | None = None,
+        codex_thinking_mode: str | None = None,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
@@ -251,6 +252,7 @@ class MalaOrchestrator:
         self.prioritize_wip = prioritize_wip
         self.focus = focus
         self.cli_args = cli_args
+        self.codex_thinking_mode = codex_thinking_mode
 
         self.active_tasks: dict[str, asyncio.Task] = {}
         self.agent_ids: dict[str, str] = {}
@@ -935,6 +937,7 @@ class MalaOrchestrator:
                                         issue_description=issue_description,
                                         baseline_commit=baseline_commit_hash,
                                         capture_session_log=is_verbose_enabled(),
+                                        thinking_mode=self.codex_thinking_mode,
                                     )
 
                                     # Store codex review log path if captured
@@ -1085,9 +1088,14 @@ class MalaOrchestrator:
         )
         codex_review_enabled = "codex-review" not in (self.disable_validations or set())
         if codex_review_enabled:
+            thinking_mode_str = (
+                f", thinking: {self.codex_thinking_mode}"
+                if self.codex_thinking_mode
+                else ""
+            )
             log(
                 "◐",
-                f"codex-review: enabled (max-retries: {self.max_review_retries})",
+                f"codex-review: enabled (max-retries: {self.max_review_retries}{thinking_mode_str})",
                 Colors.CYAN,
             )
 

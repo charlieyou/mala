@@ -308,6 +308,13 @@ def run(
             help="Enable verbose output; shows full tool arguments instead of single line per tool call",
         ),
     ] = False,
+    codex_thinking_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--codex-thinking-mode",
+            help="Reasoning effort level for Codex reviews (e.g., 'high', 'medium', 'low', 'xhigh')",
+        ),
+    ] = None,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -404,6 +411,7 @@ def run(
         "max_gate_retries": max_gate_retries,
         "max_review_retries": max_review_retries,
         "braintrust": _braintrust_enabled,
+        "codex_thinking_mode": codex_thinking_mode,
     }
 
     orchestrator = MalaOrchestrator(
@@ -422,6 +430,7 @@ def run(
         prioritize_wip=wip,
         focus=focus,
         cli_args=cli_args,
+        codex_thinking_mode=codex_thinking_mode,
     )
 
     success_count, total = asyncio.run(orchestrator.run())
