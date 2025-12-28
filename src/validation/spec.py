@@ -40,6 +40,7 @@ class ValidationScope(Enum):
 class CommandKind(Enum):
     """Kind of validation command."""
 
+    SETUP = "setup"  # Environment setup (uv sync, etc.)
     LINT = "lint"
     FORMAT = "format"
     TYPECHECK = "typecheck"
@@ -333,6 +334,18 @@ def build_validation_spec(
 
     # Build commands list
     commands: list[ValidationCommand] = []
+
+    # Include setup for Python repos (unless skip_tests)
+    # uv sync --all-extras is required to install dependencies in worktree
+    if is_python_repo and not skip_tests:
+        commands.append(
+            ValidationCommand(
+                name="uv sync",
+                command=["uv", "sync", "--all-extras"],
+                kind=CommandKind.SETUP,
+                detection_pattern=re.compile(r"\buv\s+sync\b"),
+            )
+        )
 
     # Include format/lint/typecheck for Python repos (unless skip_tests)
     if is_python_repo and not skip_tests:
