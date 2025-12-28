@@ -1,7 +1,6 @@
 """Shared helper functions for validation runners.
 
-These utilities are used by both LegacyValidationRunner and SpecValidationRunner
-to avoid code duplication.
+These utilities are used by SpecValidationRunner and related modules.
 """
 
 from __future__ import annotations

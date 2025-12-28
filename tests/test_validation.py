@@ -18,7 +18,6 @@ from src.validation import (
     E2EConfig,
     ValidationArtifacts,
     ValidationCommand,
-    ValidationConfig,
     ValidationContext,
     ValidationResult,
     ValidationScope,
@@ -53,38 +52,6 @@ def mock_popen_timeout() -> MagicMock:
     mock_proc.pid = 12345
     mock_proc.returncode = None
     return mock_proc
-
-
-class TestValidationConfig:
-    """Test ValidationConfig dataclass defaults."""
-
-    def test_default_values(self) -> None:
-        config = ValidationConfig()
-        assert config.run_slow_tests is True
-        assert config.run_e2e is True
-        assert config.coverage is True
-        assert config.coverage_min == 85
-        assert config.coverage_source == "."
-        assert config.use_test_mutex is False  # Disabled by default to avoid deadlocks
-        assert config.step_timeout_seconds is None
-
-    def test_custom_values(self) -> None:
-        config = ValidationConfig(
-            run_slow_tests=False,
-            run_e2e=False,
-            coverage=False,
-            coverage_min=90,
-            coverage_source="src",
-            use_test_mutex=False,
-            step_timeout_seconds=60.0,
-        )
-        assert config.run_slow_tests is False
-        assert config.run_e2e is False
-        assert config.coverage is False
-        assert config.coverage_min == 90
-        assert config.coverage_source == "src"
-        assert config.use_test_mutex is False
-        assert config.step_timeout_seconds == 60.0
 
 
 class TestValidationStepResult:

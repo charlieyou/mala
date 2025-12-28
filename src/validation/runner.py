@@ -1,6 +1,6 @@
 """Post-commit validation runner for mala.
 
-This module re-exports the validation runners:
+This module re-exports the validation runner:
 
 - SpecValidationRunner: Modern API using ValidationSpec (RECOMMENDED)
 
@@ -18,16 +18,12 @@ from __future__ import annotations
 # Re-export result types
 from .result import ValidationResult, ValidationStepResult
 
-# Re-export legacy config (kept for backwards compatibility)
-from .legacy_runner import ValidationConfig
-
 # Re-export spec runner
 from .spec_runner import SpecValidationRunner
 
 # Silence unused import warnings for re-exports
 __all__ = [
     "SpecValidationRunner",
-    "ValidationConfig",
     "ValidationResult",
     "ValidationStepResult",
 ]

@@ -75,8 +75,6 @@ class SpecValidationRunner:
     - Per-command mutex settings
     - Integrated worktree, coverage, and E2E handling
     - Artifact tracking
-
-    This is the modern API that replaces the legacy ValidationConfig approach.
     """
 
     def __init__(

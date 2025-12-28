@@ -38,7 +38,6 @@ from .helpers import (
     tail,
     write_fixture_repo,
 )
-from .legacy_runner import ValidationConfig
 from .result import ValidationResult, ValidationStepResult
 from .runner import (
     SpecValidationRunner,
@@ -91,7 +90,6 @@ __all__ = [
     "SpecValidationRunner",
     "ValidationArtifacts",
     "ValidationCommand",
-    "ValidationConfig",
     "ValidationContext",
     # Result types
     "ValidationResult",

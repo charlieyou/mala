@@ -1,6 +1,6 @@
 """Validation result types.
 
-These are shared between LegacyValidationRunner and SpecValidationRunner.
+These are used by SpecValidationRunner to return validation outcomes.
 """
 
 from __future__ import annotations
