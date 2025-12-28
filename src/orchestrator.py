@@ -890,8 +890,11 @@ class MalaOrchestrator:
                                         agent_id=issue_id,
                                     )
 
-                                    # Use current HEAD for review (includes any subsequent fixes by other agents)
-                                    # rather than the agent's specific commit
+                                    # Use current HEAD for review instead of the agent's specific commit.
+                                    # This ensures that if another agent made a subsequent commit that
+                                    # fixes issues from this agent's commit, Codex reviews the clean
+                                    # cumulative diff (baseline..HEAD) rather than the stale diff
+                                    # (baseline..agent_commit) which would still show the old issues.
                                     current_head = await get_git_commit_async(
                                         self.repo_path
                                     )
