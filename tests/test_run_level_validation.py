@@ -261,6 +261,171 @@ class TestRunLevelValidation:
 
         assert "crashed" in output.lower()
 
+    @pytest.mark.asyncio
+    async def test_e2e_passed_none_when_e2e_disabled(self, tmp_path: Path) -> None:
+        """e2e_passed should be None when E2E is disabled via disable_validations."""
+        from src.logging.run_metadata import RunConfig, RunMetadata
+        from src.validation.result import ValidationResult, ValidationStepResult
+
+        # Disable E2E via disable_validations
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path, max_agents=1, disable_validations={"e2e"}
+        )
+
+        run_config = RunConfig(
+            max_agents=1,
+            timeout_minutes=None,
+            max_issues=None,
+            epic_id=None,
+            only_ids=None,
+            braintrust_enabled=False,
+        )
+        run_metadata = RunMetadata(tmp_path, run_config, "test")
+
+        async def mock_get_commit(path: Path) -> str:
+            return "abc123"
+
+        mock_result = ValidationResult(
+            passed=True,
+            steps=[
+                ValidationStepResult(
+                    name="pytest",
+                    command=["pytest"],
+                    ok=True,
+                    returncode=0,
+                    stdout_tail="",
+                    duration_seconds=1.0,
+                )
+            ],
+        )
+
+        with (
+            patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
+            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
+        ):
+            mock_runner_instance = MagicMock()
+            mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
+            MockRunner.return_value = mock_runner_instance
+
+            result = await orchestrator._run_run_level_validation(run_metadata)
+
+        assert result is True
+        assert run_metadata.run_validation is not None
+        assert run_metadata.run_validation.passed is True
+        # E2E was disabled, so e2e_passed should be None
+        assert run_metadata.run_validation.e2e_passed is None
+
+    @pytest.mark.asyncio
+    async def test_e2e_passed_true_when_e2e_enabled_and_passes(
+        self, tmp_path: Path
+    ) -> None:
+        """e2e_passed should be True when E2E is enabled and validation passes."""
+        from src.logging.run_metadata import RunConfig, RunMetadata
+        from src.validation.result import ValidationResult, ValidationStepResult
+
+        # E2E enabled by default (not in disable_validations)
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+
+        run_config = RunConfig(
+            max_agents=1,
+            timeout_minutes=None,
+            max_issues=None,
+            epic_id=None,
+            only_ids=None,
+            braintrust_enabled=False,
+        )
+        run_metadata = RunMetadata(tmp_path, run_config, "test")
+
+        async def mock_get_commit(path: Path) -> str:
+            return "abc123"
+
+        mock_result = ValidationResult(
+            passed=True,
+            steps=[
+                ValidationStepResult(
+                    name="pytest",
+                    command=["pytest"],
+                    ok=True,
+                    returncode=0,
+                    stdout_tail="",
+                    duration_seconds=1.0,
+                )
+            ],
+        )
+
+        with (
+            patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
+            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
+        ):
+            mock_runner_instance = MagicMock()
+            mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
+            MockRunner.return_value = mock_runner_instance
+
+            result = await orchestrator._run_run_level_validation(run_metadata)
+
+        assert result is True
+        assert run_metadata.run_validation is not None
+        assert run_metadata.run_validation.passed is True
+        # E2E was enabled and passed, so e2e_passed should be True
+        assert run_metadata.run_validation.e2e_passed is True
+
+    @pytest.mark.asyncio
+    async def test_e2e_passed_false_when_e2e_enabled_and_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """e2e_passed should be False when E2E is enabled and validation fails."""
+        from src.logging.run_metadata import RunConfig, RunMetadata
+        from src.validation.result import ValidationResult, ValidationStepResult
+
+        # E2E enabled by default, max_gate_retries=1 to fail immediately
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path, max_agents=1, max_gate_retries=1
+        )
+
+        run_config = RunConfig(
+            max_agents=1,
+            timeout_minutes=None,
+            max_issues=None,
+            epic_id=None,
+            only_ids=None,
+            braintrust_enabled=False,
+        )
+        run_metadata = RunMetadata(tmp_path, run_config, "test")
+
+        async def mock_get_commit(path: Path) -> str:
+            return "abc123"
+
+        mock_result = ValidationResult(
+            passed=False,
+            failure_reasons=["E2E failed"],
+            steps=[
+                ValidationStepResult(
+                    name="pytest",
+                    command=["pytest"],
+                    ok=False,
+                    returncode=1,
+                    stdout_tail="FAILED",
+                    duration_seconds=1.0,
+                )
+            ],
+        )
+
+        with (
+            patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
+            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
+        ):
+            mock_runner_instance = MagicMock()
+            mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
+            MockRunner.return_value = mock_runner_instance
+
+            result = await orchestrator._run_run_level_validation(run_metadata)
+
+        assert result is False
+        assert run_metadata.run_validation is not None
+        assert run_metadata.run_validation.passed is False
+        # E2E was enabled and failed, so e2e_passed should be False
+        assert run_metadata.run_validation.e2e_passed is False
+
 
 class TestRunLevelValidationIntegration:
     """Integration tests for Gate 4 in the orchestrator run() method."""

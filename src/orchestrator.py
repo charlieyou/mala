@@ -437,7 +437,8 @@ class MalaOrchestrator:
                     coverage_percent=result.coverage_result.percent
                     if result.coverage_result
                     else None,
-                    e2e_passed=True,  # If we got here, E2E passed
+                    # Only set e2e_passed=True if E2E was actually enabled
+                    e2e_passed=True if spec.e2e.enabled else None,
                 )
                 run_metadata.record_run_validation(meta_result)
                 return True
@@ -455,7 +456,8 @@ class MalaOrchestrator:
                     coverage_percent=result.coverage_result.percent
                     if result.coverage_result
                     else None,
-                    e2e_passed=False,
+                    # Only set e2e_passed=False if E2E was actually enabled
+                    e2e_passed=False if spec.e2e.enabled else None,
                 )
                 run_metadata.record_run_validation(meta_result)
 
