@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..logging.console import Colors, log
 from ..tools.env import SCRIPTS_DIR, get_lock_dir
 from ..tools.locking import try_lock, wait_for_lock
 from .command_runner import CommandRunner
@@ -518,6 +519,13 @@ class SpecValidationRunner:
             start_marker = log_dir / f"{i:02d}_{cmd.name.replace(' ', '_')}.started"
             start_marker.write_text(f"command: {cmd.command}\ncwd: {cwd}\n")
 
+            # Log validation step start to terminal
+            log(
+                "▸",
+                f"Running {cmd.name}...",
+                Colors.CYAN,
+            )
+
             try:
                 step = self._run_spec_command(cmd, cwd, env, log_dir)
             except Exception as e:
@@ -530,6 +538,23 @@ class SpecValidationRunner:
 
             # Log output to files
             self._write_step_logs(step, log_dir)
+
+            # Log step result to terminal
+            if step.ok:
+                duration_str = (
+                    f" ({step.duration_seconds:.1f}s)" if step.duration_seconds else ""
+                )
+                log(
+                    "✓",
+                    f"{cmd.name} passed{duration_str}",
+                    Colors.GREEN,
+                )
+            else:
+                log(
+                    "✗",
+                    f"{cmd.name} failed (exit {step.returncode})",
+                    Colors.RED,
+                )
 
             if not step.ok and not cmd.allow_fail:
                 reason = f"{cmd.name} failed (exit {step.returncode})"

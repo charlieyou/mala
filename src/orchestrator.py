@@ -47,6 +47,7 @@ from .logging.console import (
     log,
     log_tool,
     log_agent_text,
+    log_verbose,
     truncate_text,
     is_verbose_enabled,
 )
@@ -784,6 +785,11 @@ class MalaOrchestrator:
                         async with ClaudeSDKClient(options=options) as client:
                             # Start lifecycle
                             lifecycle.start()
+                            log_verbose(
+                                "→",
+                                f"State: {lifecycle.state.name}",
+                                agent_id=issue_id,
+                            )
 
                             # Initial query
                             await client.query(prompt)
@@ -819,6 +825,11 @@ class MalaOrchestrator:
                                     lifecycle_ctx,
                                     has_session_id=bool(claude_session_id),
                                 )
+                                log_verbose(
+                                    "→",
+                                    f"State: {lifecycle.state.name}",
+                                    agent_id=issue_id,
+                                )
 
                                 if result.effect == Effect.COMPLETE_FAILURE:
                                     final_result = lifecycle_ctx.final_result
@@ -831,6 +842,13 @@ class MalaOrchestrator:
                                         claude_session_id,  # type: ignore[arg-type]
                                     )
                                     self.session_log_paths[issue_id] = log_path
+
+                                    log(
+                                        "◌",
+                                        "Waiting for session log...",
+                                        Colors.MUTED,
+                                        agent_id=issue_id,
+                                    )
 
                                     # Wait for log file with bounded timeout
                                     wait_elapsed = 0.0
@@ -854,10 +872,23 @@ class MalaOrchestrator:
                                         break
 
                                     # Log ready - transition to running gate
+                                    log(
+                                        "✓",
+                                        "Log file ready",
+                                        Colors.GREEN,
+                                        agent_id=issue_id,
+                                    )
                                     result = lifecycle.on_log_ready(lifecycle_ctx)
 
                                 # Handle RUN_GATE effect
                                 if result.effect == Effect.RUN_GATE:
+                                    log(
+                                        "◐",
+                                        "Running quality gate...",
+                                        Colors.CYAN,
+                                        agent_id=issue_id,
+                                    )
+
                                     log_path = self.session_log_paths[issue_id]
                                     (
                                         gate_result,
@@ -872,11 +903,24 @@ class MalaOrchestrator:
                                     )
 
                                     if result.effect == Effect.COMPLETE_SUCCESS:
+                                        log(
+                                            "✓",
+                                            "Quality gate passed",
+                                            Colors.GREEN,
+                                            agent_id=issue_id,
+                                        )
                                         success = True
                                         final_result = lifecycle_ctx.final_result
                                         break
 
                                     if result.effect == Effect.COMPLETE_FAILURE:
+                                        reasons = "; ".join(gate_result.failure_reasons)
+                                        log(
+                                            "✗",
+                                            f"Quality gate failed: {reasons}",
+                                            Colors.RED,
+                                            agent_id=issue_id,
+                                        )
                                         final_result = lifecycle_ctx.final_result
                                         break
 

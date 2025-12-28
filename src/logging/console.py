@@ -142,6 +142,27 @@ def log(
     )
 
 
+def log_verbose(
+    icon: str,
+    message: str,
+    color: str = Colors.MUTED,
+    agent_id: str | None = None,
+) -> None:
+    """Log a message only when verbose mode is enabled.
+
+    Use this for detailed state transitions and debug info that users
+    only need when troubleshooting with the -v flag.
+
+    Args:
+        icon: Icon to display (e.g. "→", "◦").
+        message: Message to log.
+        color: Color for the message (defaults to MUTED).
+        agent_id: Optional agent ID for color coding.
+    """
+    if _verbose_enabled:
+        log(icon, message, color, agent_id=agent_id)
+
+
 def _format_arguments(
     arguments: dict[str, Any] | None,
     verbose: bool,
