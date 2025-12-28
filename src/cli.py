@@ -88,9 +88,9 @@ def display_dry_run_tasks(
             task_in_epic += 1
             _print_task_line(issue, indent="    ")
     else:
-        # Simple flat list
+        # Simple flat list - show epic per task since there are no group headers
         for issue in issues:
-            _print_task_line(issue, indent="  ")
+            _print_task_line(issue, indent="  ", show_epic=True)
 
     print()
     # Summary: count tasks per epic
@@ -110,12 +110,15 @@ def display_dry_run_tasks(
         log("◐", f"By epic: {epic_summary}", Colors.GRAY, dim=True)
 
 
-def _print_task_line(issue: dict[str, object], indent: str = "  ") -> None:
-    """Print a single task line with ID, priority, and title."""
+def _print_task_line(
+    issue: dict[str, object], indent: str = "  ", show_epic: bool = False
+) -> None:
+    """Print a single task line with ID, priority, title, and optionally epic."""
     issue_id = issue.get("id", "?")
     title = issue.get("title", "")
     priority = issue.get("priority")
     status = issue.get("status", "")
+    parent_epic = issue.get("parent_epic")
 
     # Format priority badge
     prio_str = f"P{priority}" if priority is not None else "P?"
@@ -125,10 +128,15 @@ def _print_task_line(issue: dict[str, object], indent: str = "  ") -> None:
     if status == "in_progress":
         status_indicator = f" {Colors.YELLOW}(WIP){Colors.RESET}"
 
+    # Epic indicator (shown in non-focus mode)
+    epic_indicator = ""
+    if show_epic and parent_epic:
+        epic_indicator = f" {Colors.DIM}({parent_epic}){Colors.RESET}"
+
     print(
         f"{indent}{Colors.CYAN}{issue_id}{Colors.RESET} "
         f"[{Colors.DIM}{prio_str}{Colors.RESET}] "
-        f"{title}{status_indicator}"
+        f"{title}{epic_indicator}{status_indicator}"
     )
 
 

@@ -2,7 +2,7 @@ import importlib
 import sys
 import types
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 import typer
@@ -657,3 +657,189 @@ def test_env_defaults_when_no_override(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert runs_dir == USER_CONFIG_DIR / "runs"
     assert lock_dir == Path("/tmp/mala-locks")
+
+
+# Tests for --dry-run functionality
+
+
+class DummyBeadsClient:
+    """Mock BeadsClient for testing dry-run."""
+
+    last_kwargs: ClassVar[dict[str, object] | None] = None
+    issues_to_return: ClassVar[list[dict[str, object]]] = []
+
+    def __init__(self, repo_path: Path) -> None:
+        self.repo_path = repo_path
+
+    async def get_ready_issues_async(self, **kwargs: object) -> list[dict[str, object]]:
+        type(self).last_kwargs = kwargs
+        return type(self).issues_to_return
+
+
+def test_dry_run_exits_without_processing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --dry-run exits without creating orchestrator."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    # Reset DummyOrchestrator to detect if it gets called
+    DummyOrchestrator.last_kwargs = None
+    DummyBeadsClient.issues_to_return = []
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path, dry_run=True)
+
+    assert excinfo.value.exit_code == 0
+    # Orchestrator should NOT have been called
+    assert DummyOrchestrator.last_kwargs is None
+
+
+def test_dry_run_passes_flags_to_beads_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --dry-run passes correct flags to get_ready_issues_async."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    DummyBeadsClient.last_kwargs = None
+    DummyBeadsClient.issues_to_return = []
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit):
+        cli.run(
+            repo_path=tmp_path,
+            dry_run=True,
+            epic="test-epic",
+            only="id-1,id-2",
+            wip=True,
+            focus=False,
+        )
+
+    assert DummyBeadsClient.last_kwargs is not None
+    assert DummyBeadsClient.last_kwargs["epic_id"] == "test-epic"
+    assert DummyBeadsClient.last_kwargs["only_ids"] == {"id-1", "id-2"}
+    assert DummyBeadsClient.last_kwargs["prioritize_wip"] is True
+    assert DummyBeadsClient.last_kwargs["focus"] is False
+
+
+def test_dry_run_displays_empty_task_list(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test that --dry-run handles empty task list."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    DummyBeadsClient.issues_to_return = []
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path, dry_run=True)
+
+    assert excinfo.value.exit_code == 0
+    captured = capsys.readouterr()
+    assert "No ready tasks found" in captured.out
+
+
+def test_dry_run_displays_tasks_with_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test that --dry-run displays task ID, priority, title, and epic."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    DummyBeadsClient.issues_to_return = [
+        {
+            "id": "task-1",
+            "title": "Test task one",
+            "priority": 1,
+            "status": "open",
+            "parent_epic": "epic-1",
+        },
+        {
+            "id": "task-2",
+            "title": "Test task two",
+            "priority": 2,
+            "status": "in_progress",
+            "parent_epic": None,
+        },
+    ]
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path, dry_run=True, focus=False)
+
+    assert excinfo.value.exit_code == 0
+    captured = capsys.readouterr()
+
+    # Check task metadata is shown
+    assert "task-1" in captured.out
+    assert "Test task one" in captured.out
+    assert "P1" in captured.out
+    assert "epic-1" in captured.out  # Epic shown in non-focus mode
+
+    assert "task-2" in captured.out
+    assert "Test task two" in captured.out
+    assert "P2" in captured.out
+    assert "(WIP)" in captured.out  # WIP indicator shown
+
+
+def test_dry_run_focus_mode_groups_by_epic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test that --dry-run with focus mode shows epic headers."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    DummyBeadsClient.issues_to_return = [
+        {
+            "id": "task-1",
+            "title": "Test task one",
+            "priority": 1,
+            "status": "open",
+            "parent_epic": "epic-1",
+        },
+        {
+            "id": "task-2",
+            "title": "Test task two",
+            "priority": 2,
+            "status": "open",
+            "parent_epic": "epic-1",
+        },
+    ]
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path, dry_run=True, focus=True)
+
+    assert excinfo.value.exit_code == 0
+    captured = capsys.readouterr()
+
+    # Check epic header is shown in focus mode
+    assert "Epic: epic-1" in captured.out
+    assert "task-1" in captured.out
+    assert "task-2" in captured.out
+    # Summary should show epic counts
+    assert "By epic:" in captured.out
