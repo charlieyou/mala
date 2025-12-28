@@ -13,3 +13,6 @@ uv.lock
 
 # Build artifacts
 dist/
+
+coverage.xml
+.coverage
