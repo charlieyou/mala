@@ -343,16 +343,20 @@ class BeadsClient:
     async def _enrich_with_epics(
         self, issues: list[dict[str, object]]
     ) -> list[dict[str, object]]:
-        """Add parent_epic info and filter blocked epics (pipeline step 4)."""
+        """Add parent_epic info and filter blocked epics (pipeline step 4).
+
+        Returns a new list with enriched copies; does not mutate input.
+        """
         if not issues:
             return issues
         ids = [str(i["id"]) for i in issues]
         epics = await self.get_parent_epics_async(ids)
         blocked = await self._get_blocked_epics_async({e for e in epics.values() if e})
-        result = [i for i in issues if epics.get(str(i["id"])) not in blocked]
-        for i in result:
-            i["parent_epic"] = epics.get(str(i["id"]))
-        return result
+        return [
+            {**i, "parent_epic": epics.get(str(i["id"]))}
+            for i in issues
+            if epics.get(str(i["id"])) not in blocked
+        ]
 
     def _sort_issues(
         self, issues: list[dict[str, object]], focus: bool, prioritize_wip: bool

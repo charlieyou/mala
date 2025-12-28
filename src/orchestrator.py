@@ -871,13 +871,14 @@ class MalaOrchestrator:
                                         final_result = lifecycle_ctx.final_result
                                         break
 
-                                    # Log ready - transition to running gate
-                                    log(
-                                        "✓",
-                                        "Log file ready",
-                                        Colors.GREEN,
-                                        agent_id=issue_id,
-                                    )
+                                    # Log file found - transition to running gate
+                                    if log_path.exists():
+                                        log(
+                                            "✓",
+                                            "Log file ready",
+                                            Colors.GREEN,
+                                            agent_id=issue_id,
+                                        )
                                     result = lifecycle.on_log_ready(lifecycle_ctx)
 
                                 # Handle RUN_GATE effect
