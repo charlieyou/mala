@@ -41,7 +41,6 @@ class Colors:
 
     RESET = "\033[0m"
     BOLD = "\033[1m"
-    DIM = "\033[2m"
     # Bright colors for better terminal visibility
     GREEN = "\033[92m"
     YELLOW = "\033[93m"
@@ -49,8 +48,10 @@ class Colors:
     MAGENTA = "\033[95m"
     CYAN = "\033[96m"
     RED = "\033[91m"
-    GRAY = "\033[37m"  # Brighter than 90
+    GRAY = "\033[90m"  # Bright black - more visible on dark terminals
     WHITE = "\033[97m"
+    # Subdued style for secondary info (uses gray instead of dim for visibility)
+    MUTED = "\033[90m"
 
 
 # Agent color palette for distinguishing concurrent agents
@@ -120,7 +121,7 @@ def log(
     agent_id: str | None = None,
 ) -> None:
     """Claude Code style logging with optional agent color coding."""
-    style = Colors.DIM if dim else ""
+    style = Colors.MUTED if dim else ""
     timestamp = datetime.now().strftime("%H:%M:%S")
 
     # Use agent color if provided, otherwise use specified color
@@ -169,14 +170,14 @@ def _format_arguments(
                     code_lines = value.split("\n")
                     lines.append(f"{key_color}{key}:{Colors.RESET}")
                     for code_line in code_lines:
-                        lines.append(f"  {Colors.DIM}{code_line}{Colors.RESET}")
+                        lines.append(f"  {Colors.MUTED}{code_line}{Colors.RESET}")
                 else:
                     # Truncated code preview
                     preview = value[:60].replace("\n", "↵")
                     if len(value) > 60:
                         preview += "..."
                     lines.append(
-                        f"{key_color}{key}:{Colors.RESET} {Colors.DIM}{preview}{Colors.RESET}"
+                        f"{key_color}{key}:{Colors.RESET} {Colors.MUTED}{preview}{Colors.RESET}"
                     )
             else:
                 # Regular string field
@@ -202,20 +203,20 @@ def _format_arguments(
                 formatted = json.dumps(value, indent=2, ensure_ascii=False)
                 lines.append(f"{key_color}{key}:{Colors.RESET}")
                 for dict_line in formatted.split("\n"):
-                    lines.append(f"  {Colors.DIM}{dict_line}{Colors.RESET}")
+                    lines.append(f"  {Colors.MUTED}{dict_line}{Colors.RESET}")
             else:
                 lines.append(
-                    f"{key_color}{key}:{Colors.RESET} {Colors.DIM}{{...}}{Colors.RESET}"
+                    f"{key_color}{key}:{Colors.RESET} {Colors.MUTED}{{...}}{Colors.RESET}"
                 )
         elif isinstance(value, list):
             if verbose:
                 formatted = json.dumps(value, indent=2, ensure_ascii=False)
                 lines.append(f"{key_color}{key}:{Colors.RESET}")
                 for list_line in formatted.split("\n"):
-                    lines.append(f"  {Colors.DIM}{list_line}{Colors.RESET}")
+                    lines.append(f"  {Colors.MUTED}{list_line}{Colors.RESET}")
             else:
                 lines.append(
-                    f"{key_color}{key}:{Colors.RESET} {Colors.DIM}[...]{Colors.RESET}"
+                    f"{key_color}{key}:{Colors.RESET} {Colors.MUTED}[...]{Colors.RESET}"
                 )
         else:
             # Fallback for other types
@@ -261,7 +262,7 @@ def log_tool(
         if summary:
             print(
                 f"  {prefix}{Colors.CYAN}{icon} {tool_name}{Colors.RESET} "
-                f"{Colors.DIM}{summary}{Colors.RESET}"
+                f"{Colors.MUTED}{summary}{Colors.RESET}"
             )
         else:
             print(f"  {prefix}{Colors.CYAN}{icon} {tool_name}{Colors.RESET}")
@@ -269,7 +270,7 @@ def log_tool(
 
     # Verbose mode: full output with arguments
     desc_text = truncate_text(description, 50) if description else ""
-    desc = f" {Colors.DIM}{desc_text}{Colors.RESET}" if desc_text else ""
+    desc = f" {Colors.MUTED}{desc_text}{Colors.RESET}" if desc_text else ""
 
     # Format arguments if provided
     args_output = ""
@@ -333,5 +334,5 @@ def log_agent_text(text: str, agent_id: str) -> None:
     truncated = truncate_text(text, 100)
     agent_color = get_agent_color(agent_id)
     print(
-        f"  {agent_color}[{agent_id}]{Colors.RESET} {Colors.DIM}{truncated}{Colors.RESET}"
+        f"  {agent_color}[{agent_id}]{Colors.RESET} {Colors.MUTED}{truncated}{Colors.RESET}"
     )

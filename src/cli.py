@@ -161,11 +161,11 @@ def _print_task_line(
     # Epic indicator (shown in non-focus mode)
     epic_indicator = ""
     if show_epic and parent_epic:
-        epic_indicator = f" {Colors.DIM}({parent_epic}){Colors.RESET}"
+        epic_indicator = f" {Colors.MUTED}({parent_epic}){Colors.RESET}"
 
     print(
         f"{indent}{Colors.CYAN}{issue_id}{Colors.RESET} "
-        f"[{Colors.DIM}{prio_str}{Colors.RESET}] "
+        f"[{Colors.MUTED}{prio_str}{Colors.RESET}] "
         f"{title}{epic_indicator}{status_indicator}"
     )
 
@@ -473,9 +473,9 @@ def status() -> None:
                     holder = lock.read_text().strip() if lock.is_file() else "unknown"
                 except OSError:
                     holder = "unknown"
-                print(f"    {Colors.DIM}{lock.stem} → {holder}{Colors.RESET}")
+                print(f"    {Colors.MUTED}{lock.stem} → {holder}{Colors.RESET}")
             if len(locks) > 5:
-                print(f"    {Colors.DIM}... and {len(locks) - 5} more{Colors.RESET}")
+                print(f"    {Colors.MUTED}... and {len(locks) - 5} more{Colors.RESET}")
         else:
             log("○", "No active locks", Colors.GRAY)
     else:
@@ -498,5 +498,5 @@ def status() -> None:
                 mtime = datetime.fromtimestamp(run_file.stat().st_mtime).strftime(
                     "%H:%M:%S"
                 )
-                print(f"    {Colors.DIM}{mtime} {run_file.name}{Colors.RESET}")
+                print(f"    {Colors.MUTED}{mtime} {run_file.name}{Colors.RESET}")
     print()
