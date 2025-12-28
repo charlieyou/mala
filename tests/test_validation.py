@@ -1443,6 +1443,101 @@ class TestSpecRunnerNoDecreaseMode:
             assert result.coverage_result.passed is True
             assert result.coverage_result.percent == 80.0
 
+    def test_baseline_captured_before_validation_not_during(
+        self, runner: ValidationRunner, tmp_path: Path
+    ) -> None:
+        """Verify baseline is captured BEFORE validation, not from current run.
+
+        This test ensures the runner uses the pre-existing baseline coverage (90%)
+        for comparison, not the coverage produced by the current test run (70%).
+        The test run produces lower coverage, but validation should compare against
+        the baseline that existed before validation started.
+        """
+        import os
+
+        # Create fresh baseline at 90% in the main repo
+        baseline_xml = tmp_path / "coverage.xml"
+        baseline_xml.write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.90" branch-rate="0.85" />'
+        )
+        future_time = 4102444800
+        os.utime(baseline_xml, (future_time, future_time))
+
+        # Create a separate worktree directory where tests will run
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+
+        # The test run will produce 70% coverage in the worktree
+        # This simulates pytest generating a new coverage.xml during the test run
+        (worktree_path / "coverage.xml").write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.70" branch-rate="0.65" />'
+        )
+
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["echo", "test"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        context = ValidationContext(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_hash="",
+            changed_files=[],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+
+        def mock_git_run(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            if "status" in args and "--porcelain" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        with (
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                return_value=mock_proc,
+            ),
+            patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
+        ):
+            # Execute validation with the pre-captured baseline (90%)
+            # The worktree has 70% coverage, which is below baseline
+            result = runner._spec_runner._execute_spec_commands(
+                spec=spec,
+                context=context,
+                cwd=worktree_path,  # Tests run in worktree with 70% coverage
+                artifacts=ValidationArtifacts(log_dir=tmp_path),
+                log_dir=tmp_path,
+                run_id="test",
+                baseline_percent=90.0,  # Baseline captured BEFORE validation
+            )
+
+            # Validation should FAIL because:
+            # - Pre-validation baseline was 90%
+            # - Current run's coverage is 70%
+            # - 70% < 90% = coverage decreased
+            assert result.passed is False
+            assert result.coverage_result is not None
+            assert result.coverage_result.passed is False
+            assert result.coverage_result.percent == 70.0
+            # Failure reason should mention both percentages
+            assert "70.0%" in (result.coverage_result.failure_reason or "")
+            assert "90.0%" in (result.coverage_result.failure_reason or "")
+
     def test_no_decrease_mode_fails_when_coverage_decreases(
         self, runner: ValidationRunner, tmp_path: Path
     ) -> None:

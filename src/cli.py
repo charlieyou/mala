@@ -395,6 +395,17 @@ def run(
         asyncio.run(_dry_run())
         raise typer.Exit(0)
 
+    # Build cli_args for logging and metadata
+    cli_args: dict[str, object] = {
+        "disable_validations": disable_validations,
+        "coverage_threshold": coverage_threshold,
+        "wip": wip,
+        "max_issues": max_issues,
+        "max_gate_retries": max_gate_retries,
+        "max_review_retries": max_review_retries,
+        "braintrust": _braintrust_enabled,
+    }
+
     orchestrator = MalaOrchestrator(
         repo_path=repo_path,
         max_agents=max_agents,
@@ -410,6 +421,7 @@ def run(
         morph_enabled=morph_enabled,
         prioritize_wip=wip,
         focus=focus,
+        cli_args=cli_args,
     )
 
     success_count, total = asyncio.run(orchestrator.run())

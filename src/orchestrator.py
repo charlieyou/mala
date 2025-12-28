@@ -224,6 +224,7 @@ class MalaOrchestrator:
         morph_enabled: bool = True,
         prioritize_wip: bool = False,
         focus: bool = True,
+        cli_args: dict[str, object] | None = None,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
@@ -239,6 +240,7 @@ class MalaOrchestrator:
         self.morph_enabled = morph_enabled
         self.prioritize_wip = prioritize_wip
         self.focus = focus
+        self.cli_args = cli_args
 
         self.active_tasks: dict[str, asyncio.Task] = {}
         self.agent_ids: dict[str, str] = {}
@@ -1104,6 +1106,35 @@ class MalaOrchestrator:
                 "morph: disabled (MORPH_API_KEY not set)",
                 Colors.MUTED,
             )
+
+        # Log CLI args that affect run behavior
+        if self.cli_args:
+            cli_parts = []
+            if self.cli_args.get("disable_validations"):
+                cli_parts.append(
+                    f"--disable-validations={self.cli_args['disable_validations']}"
+                )
+            if self.cli_args.get("coverage_threshold") is not None:
+                cli_parts.append(
+                    f"--coverage-threshold={self.cli_args['coverage_threshold']}"
+                )
+            if self.cli_args.get("wip"):
+                cli_parts.append("--wip")
+            if self.cli_args.get("max_issues") is not None:
+                cli_parts.append(f"--max-issues={self.cli_args['max_issues']}")
+            if self.cli_args.get("max_gate_retries") is not None:
+                cli_parts.append(
+                    f"--max-gate-retries={self.cli_args['max_gate_retries']}"
+                )
+            if self.cli_args.get("max_review_retries") is not None:
+                cli_parts.append(
+                    f"--max-review-retries={self.cli_args['max_review_retries']}"
+                )
+            if self.cli_args.get("braintrust"):
+                cli_parts.append("--braintrust")
+            if cli_parts:
+                log("◐", f"cli: {' '.join(cli_parts)}", Colors.MUTED)
+
         print()
 
         # Setup directories
@@ -1123,6 +1154,7 @@ class MalaOrchestrator:
             max_gate_retries=self.max_gate_retries,
             max_review_retries=self.max_review_retries,
             codex_review="codex-review" not in (self.disable_validations or set()),
+            cli_args=self.cli_args,
         )
         run_metadata = RunMetadata(self.repo_path, run_config, __version__)
 

@@ -83,6 +83,8 @@ class RunConfig:
     max_gate_retries: int | None = None
     max_review_retries: int | None = None
     codex_review: bool | None = None
+    # CLI args for debugging/auditing (optional for backward compatibility)
+    cli_args: dict[str, object] | None = None
 
 
 class RunMetadata:
@@ -275,6 +277,7 @@ class RunMetadata:
             max_gate_retries=config_data.get("max_gate_retries"),
             max_review_retries=config_data.get("max_review_retries"),
             codex_review=config_data.get("codex_review"),
+            cli_args=config_data.get("cli_args"),
         )
 
         # Create instance
