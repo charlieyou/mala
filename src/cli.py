@@ -465,14 +465,62 @@ def clean() -> None:
 
 
 @app.command()
-def status() -> None:
-    """Show current orchestrator status."""
-    # Import get_lock_dir at runtime to avoid SDK import at module level
+def status(
+    all_instances: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Show all running instances across all directories",
+        ),
+    ] = False,
+) -> None:
+    """Show status of mala instance(s).
+
+    By default, shows status only for mala running in the current directory.
+    Use --all to show all running instances across all directories.
+    """
+    # Import at runtime to avoid SDK import at module level
+    from .logging.run_metadata import (
+        get_running_instances,
+        get_running_instances_for_dir,
+    )
     from .tools.locking import get_lock_dir
 
     print()
-    log("●", "mala status", Colors.MAGENTA)
-    print()
+    cwd = Path.cwd().resolve()
+
+    # Get running instances (filtered by cwd unless --all)
+    if all_instances:
+        instances = get_running_instances()
+    else:
+        instances = get_running_instances_for_dir(cwd)
+
+    if not instances:
+        if all_instances:
+            log("○", "No mala instances running", Colors.GRAY)
+        else:
+            log("○", "No mala instance running in this directory", Colors.GRAY)
+            log("◐", f"cwd: {cwd}", Colors.MUTED)
+            log("◐", "Use --all to show instances in other directories", Colors.MUTED)
+        print()
+        return
+
+    # Display running instances
+    if all_instances:
+        log("●", f"{len(instances)} running instance(s)", Colors.MAGENTA)
+        print()
+
+        # Group by repo path for display
+        for instance in instances:
+            _display_instance(instance)
+            print()
+    else:
+        # Single instance for this directory
+        log("●", "mala running", Colors.MAGENTA)
+        print()
+        for instance in instances:
+            _display_instance(instance)
+        print()
 
     # Show config directory
     config_env = USER_CONFIG_DIR / ".env"
@@ -482,7 +530,7 @@ def status() -> None:
         log("○", f"config: {config_env} (not found)", Colors.MUTED)
     print()
 
-    # Check locks
+    # Check locks (show all locks, not filtered by directory)
     if get_lock_dir().exists():
         locks = list(get_lock_dir().glob("*.lock"))
         if locks:
@@ -500,7 +548,7 @@ def status() -> None:
     else:
         log("○", "No active locks", Colors.GRAY)
 
-    # Check run metadata
+    # Check run metadata (completed runs)
     if get_runs_dir().exists():
         # Use rglob to find run files in both legacy flat structure
         # and new repo-segmented subdirectories
@@ -522,3 +570,44 @@ def status() -> None:
                 rel_path = run_file.relative_to(get_runs_dir())
                 print(f"    {Colors.MUTED}{mtime} {rel_path}{Colors.RESET}")
     print()
+
+
+def _display_instance(instance: object) -> None:
+    """Display a single running instance.
+
+    Args:
+        instance: RunningInstance object (typed as object to avoid import issues)
+    """
+    # Access attributes directly (duck typing)
+    repo_path = getattr(instance, "repo_path", None)
+    started_at = getattr(instance, "started_at", None)
+    max_agents = getattr(instance, "max_agents", None)
+    pid = getattr(instance, "pid", None)
+
+    log("◐", f"repo: {repo_path}", Colors.CYAN)
+
+    if started_at:
+        # Calculate duration
+        from datetime import datetime, UTC
+
+        now = datetime.now(UTC)
+        duration = now - started_at
+        minutes = int(duration.total_seconds() // 60)
+        if minutes >= 60:
+            hours = minutes // 60
+            mins = minutes % 60
+            duration_str = f"{hours}h {mins}m"
+        elif minutes > 0:
+            duration_str = f"{minutes} minute(s)"
+        else:
+            seconds = int(duration.total_seconds())
+            duration_str = f"{seconds} second(s)"
+        log("◐", f"started: {duration_str} ago", Colors.MUTED)
+
+    if max_agents is not None:
+        log("◐", f"max-agents: {max_agents}", Colors.MUTED)
+    else:
+        log("◐", "max-agents: unlimited", Colors.MUTED)
+
+    if pid:
+        log("◐", f"pid: {pid}", Colors.MUTED)

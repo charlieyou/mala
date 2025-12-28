@@ -53,6 +53,8 @@ from .logging.run_metadata import (
     IssueRun,
     QualityGateResult,
     ValidationResult as MetaValidationResult,
+    remove_run_marker,
+    write_run_marker,
 )
 from .quality_gate import QualityGate, GateResult
 from .tools.env import (
@@ -1193,6 +1195,14 @@ class MalaOrchestrator:
         )
         run_metadata = RunMetadata(self.repo_path, run_config, __version__)
 
+        # Write run marker to indicate this instance is running
+        # This is used by `mala status` to detect running instances
+        write_run_marker(
+            run_id=run_metadata.run_id,
+            repo_path=self.repo_path,
+            max_agents=self.max_agents,
+        )
+
         issues_spawned = 0
 
         try:
@@ -1469,6 +1479,9 @@ class MalaOrchestrator:
             released = release_run_locks(list(self.agent_ids.values()))
             if released:
                 log("🧹", f"Released {released} remaining locks", Colors.MUTED)
+
+            # Remove run marker to indicate this instance is no longer running
+            remove_run_marker(run_metadata.run_id)
 
         # Calculate success_count before Gate 4
         success_count = sum(1 for r in self.completed if r.success)

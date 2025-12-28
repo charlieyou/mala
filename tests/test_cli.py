@@ -388,10 +388,42 @@ def test_clean_removes_locks_and_logs(
     assert logs
 
 
-def test_status_outputs_summary(
+def test_status_no_running_instance(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Test status when no mala instance is running in cwd."""
     cli = _reload_cli(monkeypatch)
+    import src.logging.run_metadata
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / ".env").write_text("MORPH_API_KEY=test")
+
+    lock_dir = tmp_path / "locks"
+    lock_dir.mkdir()
+
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
+    # Mock to return no running instances
+    monkeypatch.setattr(
+        src.logging.run_metadata, "get_running_instances_for_dir", lambda _: []
+    )
+
+    cli.status()
+
+    output = capsys.readouterr().out
+    assert "No mala instance running in this directory" in output
+    assert "Use --all to show instances in other directories" in output
+
+
+def test_status_with_running_instance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test status when a mala instance is running in cwd."""
+    cli = _reload_cli(monkeypatch)
+    import src.logging.run_metadata
+    from datetime import datetime, UTC
+
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     (config_dir / ".env").write_text("MORPH_API_KEY=test")
@@ -406,16 +438,84 @@ def test_status_outputs_summary(
     (run_dir / "one.json").write_text("{}")
     (run_dir / "two.json").write_text("{}")
 
+    # Create a mock RunningInstance
+    mock_instance = src.logging.run_metadata.RunningInstance(
+        run_id="test-run-id",
+        repo_path=tmp_path,
+        started_at=datetime.now(UTC),
+        pid=12345,
+        max_agents=3,
+    )
+
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
+    monkeypatch.setattr(
+        src.logging.run_metadata,
+        "get_running_instances_for_dir",
+        lambda _: [mock_instance],
+    )
 
     cli.status()
 
     output = capsys.readouterr().out
-    assert "mala status" in output
+    assert "mala running" in output
+    assert str(tmp_path) in output
+    assert "max-agents: 3" in output
+    assert "pid: 12345" in output
     assert "active locks" in output
     assert "run metadata files" in output
+
+
+def test_status_all_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Test status --all flag shows all instances."""
+    cli = _reload_cli(monkeypatch)
+    import src.logging.run_metadata
+    from datetime import datetime, UTC
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / ".env").write_text("MORPH_API_KEY=test")
+
+    lock_dir = tmp_path / "locks"
+    lock_dir.mkdir()
+
+    # Create mock instances for two different directories
+    mock_instance_1 = src.logging.run_metadata.RunningInstance(
+        run_id="run-1",
+        repo_path=tmp_path / "repo1",
+        started_at=datetime.now(UTC),
+        pid=111,
+        max_agents=2,
+    )
+    mock_instance_2 = src.logging.run_metadata.RunningInstance(
+        run_id="run-2",
+        repo_path=tmp_path / "repo2",
+        started_at=datetime.now(UTC),
+        pid=222,
+        max_agents=None,
+    )
+
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(
+        src.logging.run_metadata,
+        "get_running_instances",
+        lambda: [mock_instance_1, mock_instance_2],
+    )
+
+    cli.status(all_instances=True)
+
+    output = capsys.readouterr().out
+    assert "2 running instance(s)" in output
+    assert "repo1" in output
+    assert "repo2" in output
+    assert "pid: 111" in output
+    assert "pid: 222" in output
+    assert "max-agents: 2" in output
+    assert "max-agents: unlimited" in output
 
 
 def test_run_disable_validations_valid(

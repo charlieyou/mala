@@ -5,13 +5,14 @@ Replaces the duplicate JSONL logging with structured run metadata.
 """
 
 import json
+import os
 import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any, Literal
 
-from ..tools.env import get_repo_runs_dir
+from ..tools.env import get_lock_dir, get_repo_runs_dir
 from ..validation.spec import (
     IssueResolution,
     ResolutionOutcome,
@@ -359,3 +360,171 @@ class RunMetadata:
         with open(path, "w") as f:
             json.dump(self._to_dict(), f, indent=2)
         return path
+
+
+# --- Running Instance Tracking ---
+
+
+@dataclass
+class RunningInstance:
+    """Information about a currently running mala instance."""
+
+    run_id: str
+    repo_path: Path
+    started_at: datetime
+    pid: int
+    max_agents: int | None = None
+    issues_in_progress: int = 0
+
+
+def _get_marker_path(run_id: str) -> Path:
+    """Get the path to a run marker file.
+
+    Args:
+        run_id: The run ID.
+
+    Returns:
+        Path to the marker file.
+    """
+    return get_lock_dir() / f"run-{run_id}.marker"
+
+
+def write_run_marker(
+    run_id: str,
+    repo_path: Path,
+    max_agents: int | None = None,
+) -> Path:
+    """Write a run marker file to indicate a running instance.
+
+    Creates a marker file in the lock directory that records the run's
+    repo path, start time, and PID. Used by status command to detect
+    running instances.
+
+    Args:
+        run_id: The unique run ID.
+        repo_path: Path to the repository being processed.
+        max_agents: Maximum number of concurrent agents (optional).
+
+    Returns:
+        Path to the created marker file.
+    """
+    lock_dir = get_lock_dir()
+    lock_dir.mkdir(parents=True, exist_ok=True)
+
+    marker_path = _get_marker_path(run_id)
+    data = {
+        "run_id": run_id,
+        "repo_path": str(repo_path.resolve()),
+        "started_at": datetime.now(UTC).isoformat(),
+        "pid": os.getpid(),
+        "max_agents": max_agents,
+    }
+
+    with open(marker_path, "w") as f:
+        json.dump(data, f)
+
+    return marker_path
+
+
+def remove_run_marker(run_id: str) -> bool:
+    """Remove a run marker file.
+
+    Called when a run completes (successfully or not).
+
+    Args:
+        run_id: The run ID whose marker should be removed.
+
+    Returns:
+        True if the marker was removed, False if it didn't exist.
+    """
+    marker_path = _get_marker_path(run_id)
+    if marker_path.exists():
+        marker_path.unlink()
+        return True
+    return False
+
+
+def get_running_instances() -> list[RunningInstance]:
+    """Get all currently running mala instances.
+
+    Reads all run marker files from the lock directory and returns
+    information about each running instance. Stale markers (where the
+    PID is no longer running) are automatically cleaned up.
+
+    Returns:
+        List of RunningInstance objects for all active runs.
+    """
+    lock_dir = get_lock_dir()
+    if not lock_dir.exists():
+        return []
+
+    instances: list[RunningInstance] = []
+    stale_markers: list[Path] = []
+
+    for marker_path in lock_dir.glob("run-*.marker"):
+        try:
+            with open(marker_path) as f:
+                data = json.load(f)
+
+            pid = data.get("pid")
+            # Check if the process is still running
+            if pid and not _is_process_running(pid):
+                stale_markers.append(marker_path)
+                continue
+
+            instance = RunningInstance(
+                run_id=data["run_id"],
+                repo_path=Path(data["repo_path"]),
+                started_at=datetime.fromisoformat(data["started_at"]),
+                pid=pid or 0,
+                max_agents=data.get("max_agents"),
+            )
+            instances.append(instance)
+        except (json.JSONDecodeError, KeyError, OSError):
+            # Corrupted or unreadable marker - treat as stale
+            stale_markers.append(marker_path)
+
+    # Clean up stale markers
+    for marker in stale_markers:
+        try:
+            marker.unlink()
+        except OSError:
+            pass
+
+    return instances
+
+
+def get_running_instances_for_dir(directory: Path) -> list[RunningInstance]:
+    """Get running mala instances for a specific directory.
+
+    Filters running instances to only those whose repo_path matches
+    the given directory (resolved to absolute path).
+
+    Args:
+        directory: The directory to filter by.
+
+    Returns:
+        List of RunningInstance objects running in the specified directory.
+    """
+    resolved_dir = directory.resolve()
+    return [
+        instance
+        for instance in get_running_instances()
+        if instance.repo_path.resolve() == resolved_dir
+    ]
+
+
+def _is_process_running(pid: int) -> bool:
+    """Check if a process with the given PID is still running.
+
+    Args:
+        pid: The process ID to check.
+
+    Returns:
+        True if the process is running, False otherwise.
+    """
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
