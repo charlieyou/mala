@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import MalaConfig
+from src.config import ConfigurationError, MalaConfig
 
 
 class TestMalaConfigDefaults:
@@ -64,13 +64,19 @@ class TestMalaConfigFeatureFlags:
 
     def test_feature_flag_explicit_override_preserved(self) -> None:
         """Explicit feature flag setting is preserved."""
-        # Even with API key, if flag is explicitly set to True, it stays True
+        # With explicit flag=True but no API key, validation will fail
+        # So we test that the flag is set, not that it's valid
         config = MalaConfig(
             braintrust_enabled=True,
             morph_enabled=True,
         )
         assert config.braintrust_enabled is True
         assert config.morph_enabled is True
+        # But validation should fail due to missing API keys
+        errors = config.validate()
+        assert len(errors) == 2
+        assert any("BRAINTRUST_API_KEY" in e for e in errors)
+        assert any("MORPH_API_KEY" in e for e in errors)
 
 
 class TestMalaConfigFromEnv:
@@ -98,7 +104,8 @@ class TestMalaConfigFromEnv:
     ) -> None:
         """from_env() reads MALA_RUNS_DIR."""
         monkeypatch.setenv("MALA_RUNS_DIR", "/custom/runs")
-        config = MalaConfig.from_env()
+        # Use validate=False since /custom doesn't exist
+        config = MalaConfig.from_env(validate=False)
         assert config.runs_dir == Path("/custom/runs")
 
     def test_from_env_reads_mala_lock_dir(
@@ -106,7 +113,8 @@ class TestMalaConfigFromEnv:
     ) -> None:
         """from_env() reads MALA_LOCK_DIR."""
         monkeypatch.setenv("MALA_LOCK_DIR", "/custom/locks")
-        config = MalaConfig.from_env()
+        # Use validate=False since /custom doesn't exist
+        config = MalaConfig.from_env(validate=False)
         assert config.lock_dir == Path("/custom/locks")
 
     def test_from_env_reads_claude_config_dir(
@@ -114,7 +122,8 @@ class TestMalaConfigFromEnv:
     ) -> None:
         """from_env() reads CLAUDE_CONFIG_DIR."""
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/custom/claude")
-        config = MalaConfig.from_env()
+        # Use validate=False since /custom doesn't exist
+        config = MalaConfig.from_env(validate=False)
         assert config.claude_config_dir == Path("/custom/claude")
 
     def test_from_env_reads_braintrust_api_key(
@@ -147,6 +156,30 @@ class TestMalaConfigFromEnv:
         assert config.braintrust_enabled is False
         assert config.morph_enabled is False
 
+    def test_from_env_validates_by_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() runs validation by default and raises on errors."""
+        # Set relative path which will fail validation
+        monkeypatch.setenv("MALA_RUNS_DIR", "relative/path")
+        monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
+        monkeypatch.delenv("MORPH_API_KEY", raising=False)
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            MalaConfig.from_env()
+
+        assert "runs_dir should be an absolute path" in str(exc_info.value)
+        assert len(exc_info.value.errors) >= 1
+
+    def test_from_env_skip_validation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """from_env(validate=False) skips validation."""
+        # Set relative path which would fail validation
+        monkeypatch.setenv("MALA_RUNS_DIR", "relative/path")
+
+        # Should not raise with validate=False
+        config = MalaConfig.from_env(validate=False)
+        assert config.runs_dir == Path("relative/path")
+
 
 class TestMalaConfigValidate:
     """Tests for validate() method."""
@@ -157,6 +190,29 @@ class TestMalaConfigValidate:
         errors = config.validate()
         # Default config should be valid since home dir exists
         assert len(errors) == 0
+
+    def test_validate_missing_braintrust_api_key(self) -> None:
+        """validate() reports missing BRAINTRUST_API_KEY when enabled."""
+        config = MalaConfig(braintrust_enabled=True)
+        errors = config.validate()
+        assert any("BRAINTRUST_API_KEY" in e for e in errors)
+
+    def test_validate_missing_morph_api_key(self) -> None:
+        """validate() reports missing MORPH_API_KEY when enabled."""
+        config = MalaConfig(morph_enabled=True)
+        errors = config.validate()
+        assert any("MORPH_API_KEY" in e for e in errors)
+
+    def test_validate_api_key_present_passes(self) -> None:
+        """validate() passes when API key is present for enabled feature."""
+        config = MalaConfig(
+            braintrust_api_key="test-key",
+            morph_api_key="test-key",
+        )
+        errors = config.validate()
+        # Should pass - API keys are present
+        assert not any("BRAINTRUST_API_KEY" in e for e in errors)
+        assert not any("MORPH_API_KEY" in e for e in errors)
 
     def test_validate_custom_absolute_paths(self, tmp_path: Path) -> None:
         """Custom absolute paths pass validation."""

@@ -8,8 +8,8 @@ Environment Variables:
     MALA_RUNS_DIR: Directory for run metadata files (default: ~/.config/mala/runs)
     MALA_LOCK_DIR: Directory for file locks (default: /tmp/mala-locks)
     CLAUDE_CONFIG_DIR: Claude SDK config directory (default: ~/.claude)
-    BRAINTRUST_API_KEY: Braintrust API key (optional, enables tracing)
-    MORPH_API_KEY: Morph API key (optional, enables Morph MCP features)
+    BRAINTRUST_API_KEY: Braintrust API key (required when braintrust_enabled=True)
+    MORPH_API_KEY: Morph API key (required when morph_enabled=True)
 """
 
 from __future__ import annotations
@@ -17,6 +17,17 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+class ConfigurationError(Exception):
+    """Raised when configuration validation fails."""
+
+    def __init__(self, errors: list[str]) -> None:
+        self.errors = errors
+        message = "Configuration validation failed:\n" + "\n".join(
+            f"  - {e}" for e in errors
+        )
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -34,10 +45,10 @@ class MalaConfig:
             Env: MALA_LOCK_DIR (default: /tmp/mala-locks)
         claude_config_dir: Claude SDK configuration directory.
             Env: CLAUDE_CONFIG_DIR (default: ~/.claude)
-        braintrust_api_key: Braintrust API key for tracing (optional).
-            Env: BRAINTRUST_API_KEY
-        morph_api_key: Morph API key for MCP features (optional).
-            Env: MORPH_API_KEY
+        braintrust_api_key: Braintrust API key for tracing.
+            Env: BRAINTRUST_API_KEY (required when braintrust_enabled=True)
+        morph_api_key: Morph API key for MCP features.
+            Env: MORPH_API_KEY (required when morph_enabled=True)
         braintrust_enabled: Whether Braintrust tracing is enabled.
             Derived from braintrust_api_key presence.
         morph_enabled: Whether Morph MCP features are enabled.
@@ -85,8 +96,8 @@ class MalaConfig:
             object.__setattr__(self, "morph_enabled", True)
 
     @classmethod
-    def from_env(cls) -> MalaConfig:
-        """Create MalaConfig by loading from environment variables.
+    def from_env(cls, *, validate: bool = True) -> MalaConfig:
+        """Create MalaConfig by loading from environment variables with validation.
 
         Reads the following environment variables:
             - MALA_RUNS_DIR: Run metadata directory (optional)
@@ -95,16 +106,26 @@ class MalaConfig:
             - BRAINTRUST_API_KEY: Braintrust API key (optional)
             - MORPH_API_KEY: Morph API key (optional)
 
+        Args:
+            validate: If True (default), run validation and raise ConfigurationError
+                on any errors. Set to False to skip validation.
+
         Returns:
             MalaConfig instance with values from environment or defaults.
+
+        Raises:
+            ConfigurationError: If validate=True and configuration is invalid.
 
         Example:
             # Set environment variables first
             os.environ["MORPH_API_KEY"] = "my-key"
 
-            # Load configuration
+            # Load configuration (validates by default)
             config = MalaConfig.from_env()
             assert config.morph_enabled is True
+
+            # Skip validation if needed
+            config = MalaConfig.from_env(validate=False)
         """
         # Get path values from environment with defaults
         runs_dir = Path(
@@ -121,7 +142,7 @@ class MalaConfig:
         braintrust_api_key = os.environ.get("BRAINTRUST_API_KEY") or None
         morph_api_key = os.environ.get("MORPH_API_KEY") or None
 
-        return cls(
+        config = cls(
             runs_dir=runs_dir,
             lock_dir=lock_dir,
             claude_config_dir=claude_config_dir,
@@ -129,24 +150,38 @@ class MalaConfig:
             morph_api_key=morph_api_key,
         )
 
+        if validate:
+            errors = config.validate()
+            if errors:
+                raise ConfigurationError(errors)
+
+        return config
+
     def validate(self) -> list[str]:
         """Validate configuration and return list of errors.
 
         Checks:
+            - Feature flags have required API keys
             - Path directories can be created (or already exist)
-            - No conflicting settings
+            - Paths are absolute
 
         Returns:
             List of error messages. Empty list if configuration is valid.
 
         Example:
-            config = MalaConfig(lock_dir=Path("/nonexistent/path"))
+            config = MalaConfig(braintrust_enabled=True)  # Missing API key
             errors = config.validate()
-            if errors:
-                for error in errors:
-                    print(f"Config error: {error}")
+            # errors = ["braintrust_enabled=True requires BRAINTRUST_API_KEY"]
         """
         errors: list[str] = []
+
+        # Check required API keys for enabled features
+        if self.braintrust_enabled and not self.braintrust_api_key:
+            errors.append(
+                "braintrust_enabled=True requires BRAINTRUST_API_KEY to be set"
+            )
+        if self.morph_enabled and not self.morph_api_key:
+            errors.append("morph_enabled=True requires MORPH_API_KEY to be set")
 
         # Validate paths are absolute (recommended for deterministic behavior)
         if not self.runs_dir.is_absolute():
