@@ -295,9 +295,9 @@ class MalaOrchestrator:
             spec=spec,
         )
 
-        # Calculate new offset for next attempt
-        _, new_offset = self.quality_gate.parse_validation_evidence_from_offset(
-            log_path, offset=retry_state.log_offset
+        # Calculate new offset for next attempt (lightweight - just get file end position)
+        new_offset = self.quality_gate.get_log_end_offset(
+            log_path, start_offset=retry_state.log_offset
         )
 
         # Check for no-progress condition (same commit, no new evidence)
@@ -308,6 +308,7 @@ class MalaOrchestrator:
                 retry_state.log_offset,
                 retry_state.previous_commit_hash,
                 gate_result.commit_hash,
+                spec=spec,  # Pass spec for spec-driven evidence detection
             )
             if no_progress:
                 # Add no-progress to failure reasons and set flag
@@ -907,11 +908,9 @@ class MalaOrchestrator:
                                     )
 
                                     log_path = self.session_log_paths[issue_id]
-                                    _, new_offset = (
-                                        self.quality_gate.parse_validation_evidence_from_offset(
-                                            log_path,
-                                            offset=lifecycle_ctx.retry_state.log_offset,
-                                        )
+                                    new_offset = self.quality_gate.get_log_end_offset(
+                                        log_path,
+                                        start_offset=lifecycle_ctx.retry_state.log_offset,
                                     )
 
                                     # Transition based on review result
@@ -1230,9 +1229,16 @@ class MalaOrchestrator:
                             log_path = self.session_log_paths.get(issue_id)
 
                             if result.success and log_path and log_path.exists():
-                                # Parse final evidence for metadata (full session)
-                                evidence = self.quality_gate.parse_validation_evidence(
-                                    log_path
+                                # Build spec for evidence parsing
+                                spec = build_validation_spec(
+                                    scope=ValidationScope.PER_ISSUE,
+                                    disable_validations=self.disable_validations,
+                                    coverage_threshold=self.coverage_threshold,
+                                    repo_path=self.repo_path,
+                                )
+                                # Parse final evidence for metadata (full session) using spec-driven parsing
+                                evidence = self.quality_gate.parse_validation_evidence_with_spec(
+                                    log_path, spec
                                 )
                                 commit_result = self.quality_gate.check_commit_exists(
                                     issue_id
@@ -1252,12 +1258,7 @@ class MalaOrchestrator:
                                 # Run SpecValidationRunner.run_spec after commit detection
                                 if commit_result.exists and commit_result.commit_hash:
                                     try:
-                                        spec = build_validation_spec(
-                                            scope=ValidationScope.PER_ISSUE,
-                                            disable_validations=self.disable_validations,
-                                            coverage_threshold=self.coverage_threshold,
-                                            repo_path=self.repo_path,
-                                        )
+                                        # Reuse spec built above
                                         context = ValidationContext(
                                             issue_id=issue_id,
                                             repo_path=self.repo_path,
@@ -1329,9 +1330,15 @@ class MalaOrchestrator:
                                         )
 
                             elif not result.success and log_path and log_path.exists():
-                                # Failed run - record evidence for metadata
-                                evidence = self.quality_gate.parse_validation_evidence(
-                                    log_path
+                                # Failed run - record evidence for metadata using spec-driven parsing
+                                spec = build_validation_spec(
+                                    scope=ValidationScope.PER_ISSUE,
+                                    disable_validations=self.disable_validations,
+                                    coverage_threshold=self.coverage_threshold,
+                                    repo_path=self.repo_path,
+                                )
+                                evidence = self.quality_gate.parse_validation_evidence_with_spec(
+                                    log_path, spec
                                 )
                                 commit_result = self.quality_gate.check_commit_exists(
                                     issue_id

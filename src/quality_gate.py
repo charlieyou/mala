@@ -602,6 +602,31 @@ class QualityGate:
 
         return evidence
 
+    def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
+        """Get the byte offset at the end of a log file.
+
+        This is a lightweight method for getting the current file position
+        after reading from a given offset. Use this when you only need the
+        offset for retry scoping, not the evidence itself.
+
+        Args:
+            log_path: Path to the JSONL log file.
+            start_offset: Byte offset to start from (default 0).
+
+        Returns:
+            The byte offset at the end of the file, or start_offset if file
+            doesn't exist or can't be read.
+        """
+        if not log_path.exists():
+            return start_offset
+
+        try:
+            with open(log_path, "rb") as f:
+                f.seek(0, 2)  # Seek to end
+                return f.tell()
+        except OSError:
+            return start_offset
+
     def _get_fallback_pattern(self, kind: CommandKind) -> re.Pattern[str] | None:
         """Get fallback pattern for a CommandKind when spec pattern is missing.
 
