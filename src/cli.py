@@ -448,12 +448,19 @@ def clean() -> None:
         log("🧹", f"Removed {cleaned_locks} lock files", Colors.GREEN)
 
     if get_runs_dir().exists():
-        run_count = len(list(get_runs_dir().glob("*.json")))
+        # Use rglob to find run files in both legacy flat structure
+        # and new repo-segmented subdirectories
+        run_files = list(get_runs_dir().rglob("*.json"))
+        run_count = len(run_files)
         if run_count > 0:
             if typer.confirm(f"Remove {run_count} run metadata files?"):
-                for run_file in get_runs_dir().glob("*.json"):
+                for run_file in run_files:
                     run_file.unlink()
                     cleaned_logs += 1
+                # Also remove empty repo subdirectories
+                for subdir in get_runs_dir().iterdir():
+                    if subdir.is_dir() and not any(subdir.iterdir()):
+                        subdir.rmdir()
                 log("🧹", f"Removed {cleaned_logs} run metadata files", Colors.GREEN)
 
 
@@ -495,7 +502,9 @@ def status() -> None:
 
     # Check run metadata
     if get_runs_dir().exists():
-        run_files = list(get_runs_dir().glob("*.json"))
+        # Use rglob to find run files in both legacy flat structure
+        # and new repo-segmented subdirectories
+        run_files = list(get_runs_dir().rglob("*.json"))
         if run_files:
             log(
                 "◐",
@@ -509,5 +518,7 @@ def status() -> None:
                 mtime = datetime.fromtimestamp(run_file.stat().st_mtime).strftime(
                     "%H:%M:%S"
                 )
-                print(f"    {Colors.MUTED}{mtime} {run_file.name}{Colors.RESET}")
+                # Show relative path from runs_dir for clarity
+                rel_path = run_file.relative_to(get_runs_dir())
+                print(f"    {Colors.MUTED}{mtime} {rel_path}{Colors.RESET}")
     print()
