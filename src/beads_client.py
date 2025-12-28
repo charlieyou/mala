@@ -436,7 +436,8 @@ class BeadsClient:
                 self._log_warning(f"No children found for epic {epic_id}")
                 return []
         issues, ok = await self._fetch_base_issues()
-        if not ok:
+        if not ok and not prioritize_wip:
+            # Only abort if base fetch failed AND we're not trying to get WIP issues
             return []
         if prioritize_wip:
             issues = self._merge_wip_issues(issues, await self._fetch_wip_issues())

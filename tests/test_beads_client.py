@@ -1156,3 +1156,53 @@ class TestPipelineSteps:
         # epic-1 issues grouped together
         epic1_issues = [r for r in result if r["parent_epic"] == "epic-1"]
         assert len(epic1_issues) == 2
+
+
+class TestWipFallbackOnReadyFailure:
+    """Test that WIP issues are still fetched when bd ready fails."""
+
+    @pytest.mark.asyncio
+    async def test_returns_wip_issues_when_ready_fails(self, tmp_path: Path) -> None:
+        """When bd ready fails but prioritize_wip=True, should still return WIP issues."""
+        beads = BeadsClient(tmp_path)
+
+        async def mock_run_async(cmd: list[str]) -> SubprocessResult:
+            if cmd == ["bd", "ready", "--json"]:
+                # Simulate bd ready failure
+                return make_subprocess_result(returncode=1, stderr="bd ready failed")
+            if cmd == ["bd", "list", "--status", "in_progress", "--json"]:
+                # Return WIP issues
+                return make_subprocess_result(
+                    stdout=json.dumps([{"id": "wip-1", "priority": 1}])
+                )
+            # Return empty for other commands (like dep tree)
+            return make_subprocess_result(stdout="[]")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads, "_run_subprocess_async", AsyncMock(side_effect=mock_run_async)
+            )
+            result = await beads.get_ready_async(prioritize_wip=True)
+
+        assert result == ["wip-1"]
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_ready_fails_and_not_wip(
+        self, tmp_path: Path
+    ) -> None:
+        """When bd ready fails and prioritize_wip=False, should return empty list."""
+        beads = BeadsClient(tmp_path)
+
+        async def mock_run_async(cmd: list[str]) -> SubprocessResult:
+            if cmd == ["bd", "ready", "--json"]:
+                # Simulate bd ready failure
+                return make_subprocess_result(returncode=1, stderr="bd ready failed")
+            return make_subprocess_result(stdout="[]")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads, "_run_subprocess_async", AsyncMock(side_effect=mock_run_async)
+            )
+            result = await beads.get_ready_async(prioritize_wip=False)
+
+        assert result == []
