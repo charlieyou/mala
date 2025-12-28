@@ -5,25 +5,11 @@ Consolidates locking behavior from shell scripts.
 
 import hashlib
 import os
-import subprocess
-from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from claude_agent_sdk.types import (
-    HookContext,
-    StopHookInput,
-    SyncHookJSONOutput,
-)
-
-from .env import SCRIPTS_DIR, get_lock_dir
+from .env import get_lock_dir
 
 __all__ = ["get_lock_dir"]
-
-# Type alias for Stop hooks
-StopHook = Callable[
-    [StopHookInput, str | None, HookContext],
-    Awaitable[SyncHookJSONOutput],
-]
 
 
 def _get_lock_dir() -> Path:
@@ -293,38 +279,3 @@ def cleanup_agent_locks(agent_id: str) -> int:
             pass
 
     return cleaned
-
-
-def make_stop_hook(agent_id: str) -> StopHook:
-    """Create a Stop hook that cleans up locks for the given agent.
-
-    Args:
-        agent_id: The agent ID to clean up locks for when the agent stops.
-
-    Returns:
-        An async hook function suitable for use with ClaudeAgentOptions.hooks["Stop"].
-    """
-
-    async def cleanup_locks_on_stop(
-        hook_input: StopHookInput,
-        stderr: str | None,
-        context: HookContext,
-    ) -> SyncHookJSONOutput:
-        """Stop hook to release all locks held by this agent."""
-        script = SCRIPTS_DIR / "lock-release-all.sh"
-        try:
-            subprocess.run(
-                [str(script)],
-                env={
-                    **os.environ,
-                    "LOCK_DIR": str(_get_lock_dir()),
-                    "AGENT_ID": agent_id,
-                },
-                check=False,
-                capture_output=True,
-            )
-        except Exception:
-            pass  # Best effort cleanup, orchestrator has fallback
-        return {}
-
-    return cleanup_locks_on_stop

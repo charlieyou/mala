@@ -28,7 +28,7 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import HookMatcher
 
-from src.tools.locking import make_stop_hook
+from src.hooks import make_stop_hook
 from src.tools.env import SCRIPTS_DIR
 
 # All SDK tests are slow (require API calls)

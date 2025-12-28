@@ -5,19 +5,29 @@ Contains PreToolUse hooks and related constants for blocking dangerous commands
 and managing tool restrictions.
 """
 
+import os
+import subprocess
 from collections.abc import Awaitable, Callable
 
 from claude_agent_sdk.types import (
-    PreToolUseHookInput,
     HookContext,
+    PreToolUseHookInput,
+    StopHookInput,
     SyncHookJSONOutput,
 )
 
+from .tools.env import SCRIPTS_DIR, get_lock_dir
 from .tools.locking import get_lock_holder
 
 # Type alias for PreToolUse hooks
 PreToolUseHook = Callable[
     [PreToolUseHookInput, str | None, HookContext],
+    Awaitable[SyncHookJSONOutput],
+]
+
+# Type alias for Stop hooks
+StopHook = Callable[
+    [StopHookInput, str | None, HookContext],
     Awaitable[SyncHookJSONOutput],
 ]
 
@@ -241,3 +251,38 @@ def make_lock_enforcement_hook(
         return {}
 
     return enforce_lock_ownership
+
+
+def make_stop_hook(agent_id: str) -> StopHook:
+    """Create a Stop hook that cleans up locks for the given agent.
+
+    Args:
+        agent_id: The agent ID to clean up locks for when the agent stops.
+
+    Returns:
+        An async hook function suitable for use with ClaudeAgentOptions.hooks["Stop"].
+    """
+
+    async def cleanup_locks_on_stop(
+        hook_input: StopHookInput,
+        stderr: str | None,
+        context: HookContext,
+    ) -> SyncHookJSONOutput:
+        """Stop hook to release all locks held by this agent."""
+        script = SCRIPTS_DIR / "lock-release-all.sh"
+        try:
+            subprocess.run(
+                [str(script)],
+                env={
+                    **os.environ,
+                    "LOCK_DIR": str(get_lock_dir()),
+                    "AGENT_ID": agent_id,
+                },
+                check=False,
+                capture_output=True,
+            )
+        except Exception:
+            pass  # Best effort cleanup, orchestrator has fallback
+        return {}
+
+    return cleanup_locks_on_stop

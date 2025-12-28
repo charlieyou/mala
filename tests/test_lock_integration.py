@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.orchestrator import IMPLEMENTER_PROMPT_TEMPLATE
-from src.tools.locking import make_stop_hook
+from src.hooks import make_stop_hook
 from src.tools.env import SCRIPTS_DIR
 
 if TYPE_CHECKING:
