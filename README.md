@@ -176,6 +176,7 @@ mala (Python Orchestrator)
 8. **Codex review**: After gate passes, automated code review with fix cycle (disable with `--disable-validations=codex-review`)
 9. **On success**: Orchestrator closes the issue via `bd close`
 10. **On failure**: After retries exhausted, orchestrator marks issue with `needs-followup` label and records log path in notes
+11. **Run-level validation**: After all issues complete, a final validation pass catches cross-issue regressions (see [Run-Level Validation](#run-level-validation))
 
 ### Epics and Parent-Child Issues
 
@@ -222,8 +223,9 @@ Agents can signal non-implementation resolutions by printing these markers:
 |--------|---------|---------|
 | `ISSUE_NO_CHANGE` | Issue requires no code changes (already fixed, docs-only, etc.) | Orchestrator closes issue without requiring commit |
 | `ISSUE_OBSOLETE` | Issue is no longer relevant (superseded, invalid, etc.) | Orchestrator closes issue without requiring commit |
+| `ISSUE_ALREADY_COMPLETE` | Work was already done in a prior commit (agent found existing solution) | Orchestrator closes issue, referencing the prior commit |
 
-These markers allow agents to handle issues that don't need implementation without failing the quality gate.
+These markers allow agents to handle issues that don't need implementation without failing the quality gate. All three skip Codex review since there's no new code to review.
 
 ## Quality Gate
 
@@ -231,13 +233,13 @@ After an agent completes an issue, the orchestrator runs a quality gate that ver
 
 1. **Commit exists**: A git commit with `bd-<issue_id>` in the message, created during the current run (stale commits from previous runs are rejected via baseline timestamp)
 2. **Validation evidence**: The agent ran ALL required checks (parsed from JSONL logs):
-   - `uv sync` - dependency installation (skipped if `pyproject.toml`/`uv.lock` unchanged)
    - `pytest` - tests
    - `ruff check` - linting
    - `ruff format` - formatting
    - `ty check` - type checking
+3. **Commands succeeded**: All validation commands must exit with zero status (non-zero exits fail the gate)
 
-All validation commands must run for the gate to pass. Partial validation (e.g., only tests) is rejected. The required commands are spec-driven via `ValidationSpec`.
+All validation commands must run AND pass for the gate to pass. Partial validation (e.g., only tests) is rejected. The required commands are spec-driven via `ValidationSpec`.
 
 ### Same-Session Re-entry
 
@@ -256,14 +258,18 @@ This continues for up to `max_gate_retries` attempts (default: 3). The orchestra
 Codex review is enabled by default. After the deterministic gate passes:
 
 1. **Codex review runs**: Invokes `codex exec` with `--output-schema` for structured JSON output
-2. **JSON parsing**: Output must be valid JSON with `passed` boolean and `issues` array
-3. **Parse retry**: If JSON is invalid, retries once with stricter prompt (fail-closed behavior)
-4. **Review failure handling**: If review finds errors, orchestrator resumes the SAME session with:
+2. **Scope verification**: Review checks the diff against the issue description and acceptance criteria to catch incomplete implementations
+3. **JSON parsing**: Output must be valid JSON with `passed` boolean and `issues` array
+4. **Parse retry**: If JSON is invalid, retries once with stricter prompt (fail-closed behavior)
+5. **Review failure handling**: If review finds errors, orchestrator resumes the SAME session with:
    - List of issues (file, line, severity, message)
    - Instructions to fix errors and re-run validations
-5. **Re-gating**: After fixes, runs both deterministic gate AND Codex review again
+   - Cumulative diff from baseline (includes all work across retry attempts)
+6. **Re-gating**: After fixes, runs both deterministic gate AND Codex review again
 
 Review retries are capped at `max_review_retries` (default: 5). Use `--disable-validations=codex-review` to disable.
+
+**Skipped for no-work resolutions**: Issues resolved with `ISSUE_NO_CHANGE`, `ISSUE_OBSOLETE`, or `ISSUE_ALREADY_COMPLETE` skip Codex review entirely since there's no new code to review.
 
 ### Failure Handling
 
@@ -271,6 +277,35 @@ After all retries are exhausted (gate or review), the orchestrator:
 - Marks the issue with `needs-followup` label
 - Records error summary and log path in issue notes
 - Does NOT close the issue (leaves it for manual intervention)
+
+## Run-Level Validation
+
+After all issues complete, the orchestrator runs a final validation pass. This catches issues that only manifest when all changes are combined:
+
+1. **Triggers**: After all per-issue work completes (with at least one success)
+2. **Worktree validation**: Runs tests in isolated worktree at HEAD commit
+3. **Fixer agent**: On failure, spawns a dedicated fixer agent with the failure output
+4. **Retry loop**: Continues up to `max_gate_retries` attempts
+
+**Validation scopes:**
+
+| Scope | When | What runs |
+|-------|------|-----------|
+| **Per-issue** | After each issue completes | pytest, ruff, ty |
+| **Run-level** | After all issues complete | pytest, ruff, ty, + E2E fixture test |
+
+**Test flags (apply to both scopes):**
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `slow-tests` | excluded | Pytest tests marked `@pytest.mark.slow` are skipped unless this flag is NOT in disable list |
+| `e2e` | enabled (run-level only) | E2E fixture test runs only during run-level validation |
+
+**Disable flags:**
+- `--disable-validations=run-level-validate`: Skip run-level validation entirely
+- `--disable-validations=slow-tests`: Exclude slow-marked pytest tests
+- `--disable-validations=e2e`: Disable E2E fixture test (only affects run-level)
+- `--disable-validations=followup-on-run-validate-fail`: Don't mark issues on run-level validation failure
 
 ## Lock Enforcement
 
@@ -293,6 +328,7 @@ Dangerous git operations that can cause conflicts between concurrent agents are 
 | `git reset --hard` | Discards uncommitted changes silently | Use `git checkout <file>` for specific files |
 | `git rebase` | Rewrites history, requires human input | Use `git merge` instead |
 | `git checkout -f` | Discards local changes | Commit changes first |
+| `git restore` | Discards uncommitted changes without confirmation | Commit changes first, or use `git diff` to review before discarding |
 | `git clean -f` | Removes untracked files | Use `rm` for specific files |
 | `git merge --abort` | May discard other agents' work | Resolve conflicts instead |
 
@@ -316,7 +352,18 @@ This approach avoids deadlocks that occurred when agents held file locks while w
 
 ## Validation System
 
-The validation module (`src/validation/`) provides structured validation with policy-based configuration:
+The validation module (`src/validation/`) provides structured validation with policy-based configuration.
+
+### Repo Type Detection
+
+mala automatically detects the repository type and adjusts validation accordingly:
+
+| Repo Type | Detection | Validation |
+|-----------|-----------|------------|
+| **Python** | Has `pyproject.toml`, `uv.lock`, or `requirements.txt` | Full Python toolchain (pytest, ruff, ty) |
+| **Generic** | No Python project markers | Minimal validation (no Python-specific tools) |
+
+This allows mala to process issues in non-Python repositories without failing on missing Python tooling.
 
 ### ValidationSpec
 
@@ -397,10 +444,22 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
 | `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
 | `--max-review-retries` | 5 | Maximum Codex review retry attempts per issue |
-| `--disable-validations` | - | Comma-separated: `post-validate`, `run-level-validate`, `slow-tests`, `coverage`, `e2e`, `codex-review`, `followup-on-run-validate-fail` |
+| `--disable-validations` | - | Comma-separated list (see below) |
 | `--coverage-threshold` | 85.0 | Minimum coverage percentage (0-100) |
-| `--wip` | false | Prioritize in_progress issues before open issues |
+| `--wip` | false | Include and prioritize in_progress issues (without this flag, only open issues are fetched) |
 | `--verbose/-q` | verbose | Verbose shows full tool args; quiet (`-q`) shows single line per tool call |
+
+**Disable validation flags:**
+
+| Flag | Description |
+|------|-------------|
+| `post-validate` | Skip all per-issue validation (tests, lint, typecheck) |
+| `run-level-validate` | Skip run-level validation |
+| `slow-tests` | Exclude slow tests from pytest |
+| `coverage` | Disable coverage checking |
+| `e2e` | Disable E2E fixture repo test |
+| `codex-review` | Disable Codex review |
+| `followup-on-run-validate-fail` | Don't mark issues with `needs-followup` on run-level validation failure |
 
 ### Global Configuration
 
@@ -413,6 +472,13 @@ mala uses a global config directory at `~/.config/mala/`:
 ```
 
 Environment variables are loaded from `~/.config/mala/.env` (global config).
+
+**Directory overrides** (set in `.env` or environment):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MALA_RUNS_DIR` | `~/.config/mala/runs` | Directory for run metadata |
+| `MALA_LOCK_DIR` | `~/.config/mala/locks` | Directory for filesystem locks |
 
 Note: The repo's `.env` file is for testing only and is not loaded by the program.
 
