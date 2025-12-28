@@ -92,68 +92,14 @@ __version__ = pkg_version("mala")
 PROMPT_FILE = Path(__file__).parent / "prompts" / "implementer_prompt.md"
 IMPLEMENTER_PROMPT_TEMPLATE = PROMPT_FILE.read_text()
 
-# Follow-up prompt for gate failures
-GATE_FOLLOWUP_PROMPT = """## Quality Gate Failed (Attempt {attempt}/{max_attempts})
-
-The quality gate check failed with the following issues:
-{failure_reasons}
-
-**Required actions:**
-1. Fix the issues listed above
-2. Re-run the full validation suite:
-   - `uv run pytest`
-   - `uvx ruff check .`
-   - `uvx ruff format .`
-   - `uvx ty check`
-3. Commit your changes with message: `bd-{issue_id}: <description>`
-
-Note: The orchestrator requires NEW validation evidence - re-run all validations even if you ran them before.
-"""
-
-# Follow-up prompt for Codex review failures
-CODEX_REVIEW_FOLLOWUP_PROMPT = """## Codex Review Failed (Attempt {attempt}/{max_attempts})
-
-The automated code review found the following issues:
-
-{review_issues}
-
-**Required actions:**
-1. Fix ALL issues marked as ERROR above
-2. Optionally address warnings if appropriate
-3. Re-run the full validation suite:
-   - `uv run pytest`
-   - `uvx ruff check .`
-   - `uvx ruff format .`
-   - `uvx ty check`
-4. Commit your changes with message: `bd-{issue_id}: <description>`
-
-Note: The orchestrator will re-run both the quality gate and Codex review after your fixes.
-"""
-
-# Fixer agent prompt for run-level validation failures (Gate 4)
-RUN_LEVEL_FIXER_PROMPT = """## Run-Level Validation Failed (Attempt {attempt}/{max_attempts})
-
-The run-level validation (Gate 4) found issues that need to be fixed:
-
-{failure_output}
-
-**Required actions:**
-1. Analyze the validation failure output above
-2. Identify and fix all issues causing the failure
-3. Re-run the full validation suite:
-   - `uv run pytest`
-   - `uvx ruff check .`
-   - `uvx ruff format .`
-   - `uvx ty check`
-4. Commit your changes with message: `bd-run-validation: <description>`
-
-**Context:**
-- This is a run-level validation that runs after all per-issue work is complete
-- Your fix should address the root cause, not just suppress the error
-- The orchestrator will re-run validation after your fix
-
-Do not release any locks - the orchestrator handles that.
-"""
+# Load follow-up prompts from files
+GATE_FOLLOWUP_PROMPT = (
+    Path(__file__).parent / "prompts" / "gate_followup.md"
+).read_text()
+CODEX_REVIEW_FOLLOWUP_PROMPT = (
+    Path(__file__).parent / "prompts" / "review_followup.md"
+).read_text()
+RUN_LEVEL_FIXER_PROMPT = (Path(__file__).parent / "prompts" / "fixer.md").read_text()
 
 # Bounded wait for log file (seconds)
 LOG_FILE_WAIT_TIMEOUT = 30
