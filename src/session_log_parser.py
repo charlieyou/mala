@@ -165,7 +165,7 @@ class SessionLogParser:
                 return []
             commands = []
             for block in entry.entry.message.content:
-                if isinstance(block, ToolUseBlock) and block.name == "Bash":
+                if isinstance(block, ToolUseBlock) and block.name.lower() == "bash":
                     command = block.input.get("command", "")
                     commands.append((block.id, command))
             return commands
@@ -191,7 +191,8 @@ class SessionLogParser:
         message = data.get("message", {})
         for block in message.get("content", []):
             if isinstance(block, dict) and block.get("type") == "tool_use":
-                if block.get("name") == "Bash":
+                tool_name = block.get("name", "")
+                if tool_name.lower() == "bash":
                     tool_id = block.get("id", "")
                     command = block.get("input", {}).get("command", "")
                     commands.append((tool_id, command))

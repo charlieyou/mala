@@ -159,6 +159,30 @@ class TestExtractBashCommands:
 
         assert commands == [("toolu_123", "uv run pytest")]
 
+    def test_extracts_lowercase_bash_commands(self, tmp_path: Path) -> None:
+        """Should extract 'bash' tool_use commands (case-insensitive)."""
+        log_path = tmp_path / "session.jsonl"
+        entry = {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_456",
+                        "name": "bash",
+                        "input": {"command": "uv run pytest"},
+                    }
+                ]
+            },
+        }
+        log_path.write_text(json.dumps(entry) + "\n")
+
+        parser = SessionLogParser()
+        results = list(parser.iter_jsonl_entries(log_path))
+        commands = parser.extract_bash_commands(results[0])
+
+        assert commands == [("toolu_456", "uv run pytest")]
+
     def test_returns_empty_for_user_messages(self, tmp_path: Path) -> None:
         """Should return empty list for user messages."""
         log_path = tmp_path / "session.jsonl"
