@@ -327,12 +327,9 @@ async def run_codex_review(
             )
 
             # Run codex exec with output schema
-            cmd = [
-                "codex",
-                "exec",
-                "-c",
-                f"model_reasoning_effort={thinking_mode}",
-            ]
+            cmd = ["codex", "exec"]
+            if thinking_mode is not None:
+                cmd.extend(["-c", f"model_reasoning_effort={thinking_mode}"])
             cmd.extend(
                 [
                     "--output-schema",
