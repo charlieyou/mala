@@ -124,6 +124,12 @@ class TestNullEventSink:
         assert sink.on_gate_passed(None) is None  # run-level
         assert sink.on_gate_failed("agent-1", 3, 3) is None
         assert sink.on_gate_retry("agent-1", 2, 3) is None
+        assert sink.on_gate_result("agent-1", True) is None
+        assert (
+            sink.on_gate_result("agent-1", False, ["lint failed", "tests failed"])
+            is None
+        )
+        assert sink.on_gate_result(None, True) is None  # run-level
 
         # Codex review events
         assert sink.on_review_started("agent-1", 1, 2) is None
@@ -138,6 +144,12 @@ class TestNullEventSink:
 
         # Issue lifecycle
         assert sink.on_issue_closed("agent-1", "issue-1") is None
+        assert (
+            sink.on_issue_completed("agent-1", "issue-1", True, 120.5, "Done") is None
+        )
+        assert (
+            sink.on_issue_completed("agent-1", "issue-2", False, 60.0, "Failed") is None
+        )
         assert sink.on_epic_closed("agent-1") is None
         assert sink.on_validation_result("agent-1", True) is None
 

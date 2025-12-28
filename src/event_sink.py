@@ -229,6 +229,24 @@ class MalaEventSink(Protocol):
         """
         ...
 
+    def on_gate_result(
+        self,
+        agent_id: str | None,
+        passed: bool,
+        failure_reasons: list[str] | None = None,
+    ) -> None:
+        """Called when a quality gate check completes with its result.
+
+        This provides the detailed gate result including failure reasons,
+        complementing the simpler on_gate_passed/on_gate_failed events.
+
+        Args:
+            agent_id: Agent ID (None for run-level gate).
+            passed: Whether the gate passed.
+            failure_reasons: List of failure reasons (if failed).
+        """
+        ...
+
     # -------------------------------------------------------------------------
     # Codex review events
     # -------------------------------------------------------------------------
@@ -318,6 +336,28 @@ class MalaEventSink(Protocol):
         Args:
             agent_id: Agent that completed the issue.
             issue_id: Issue that was closed.
+        """
+        ...
+
+    def on_issue_completed(
+        self,
+        agent_id: str,
+        issue_id: str,
+        success: bool,
+        duration_seconds: float,
+        summary: str,
+    ) -> None:
+        """Called when an issue implementation completes (success or failure).
+
+        This is the primary issue completion event, distinct from on_agent_completed
+        which tracks the agent lifecycle. Use this for issue-level tracking.
+
+        Args:
+            agent_id: Agent that worked on the issue.
+            issue_id: Issue that was completed.
+            success: Whether the issue was successfully implemented.
+            duration_seconds: Total time spent on the issue.
+            summary: Result summary or error message.
         """
         ...
 
@@ -485,6 +525,14 @@ class NullEventSink:
     ) -> None:
         pass
 
+    def on_gate_result(
+        self,
+        agent_id: str | None,
+        passed: bool,
+        failure_reasons: list[str] | None = None,
+    ) -> None:
+        pass
+
     def on_review_started(
         self,
         agent_id: str,
@@ -520,6 +568,16 @@ class NullEventSink:
         pass
 
     def on_issue_closed(self, agent_id: str, issue_id: str) -> None:
+        pass
+
+    def on_issue_completed(
+        self,
+        agent_id: str,
+        issue_id: str,
+        success: bool,
+        duration_seconds: float,
+        summary: str,
+    ) -> None:
         pass
 
     def on_epic_closed(self, agent_id: str) -> None:
