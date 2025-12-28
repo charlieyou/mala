@@ -135,6 +135,35 @@ class IssueProvider(Protocol):
         """
         ...
 
+    async def reset_async(
+        self, issue_id: str, log_path: Path | None = None, error: str | None = None
+    ) -> bool:
+        """Reset an issue back to ready status.
+
+        Called when an implementation attempt fails and the issue should be
+        made available for retry.
+
+        Args:
+            issue_id: The issue ID to reset.
+            log_path: Optional path to the JSONL log file from the attempt.
+            error: Optional error message describing the failure.
+
+        Returns:
+            True if successfully reset, False otherwise.
+        """
+        ...
+
+    async def get_epic_children_async(self, epic_id: str) -> set[str]:
+        """Get all child issue IDs of an epic.
+
+        Args:
+            epic_id: The epic ID to get children for.
+
+        Returns:
+            Set of child issue IDs, or empty set if not found or on error.
+        """
+        ...
+
 
 @runtime_checkable
 class CodeReviewer(Protocol):

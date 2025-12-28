@@ -1350,11 +1350,11 @@ class TestAsyncBeadsClientWithTimeout:
 
         # Use a real slow command instead of mocking subprocess.run
         # (since we now use asyncio.create_subprocess_exec)
-        orchestrator.beads.timeout_seconds = 0.5
+        orchestrator.beads.timeout_seconds = 0.5  # type: ignore[attr-defined]
 
         async def slow_beads_call() -> None:
             # Use sleep as a slow command
-            await orchestrator.beads._run_subprocess_async(["sleep", "0.2"])
+            await orchestrator.beads._run_subprocess_async(["sleep", "0.2"])  # type: ignore[attr-defined]
             task_completions.append(("beads", time.monotonic() - start))
 
         # Run slow beads call concurrently with fast task
@@ -1378,11 +1378,11 @@ class TestAsyncBeadsClientWithTimeout:
     ) -> None:
         """When bd command times out, should return timeout result, not hang."""
         # Use a very short timeout for testing
-        orchestrator.beads.timeout_seconds = 0.1
+        orchestrator.beads.timeout_seconds = 0.1  # type: ignore[attr-defined]
 
         start = time.monotonic()
         # Run a command that would take longer than timeout
-        result = await orchestrator.beads._run_subprocess_async(["sleep", "10"])
+        result = await orchestrator.beads._run_subprocess_async(["sleep", "10"])  # type: ignore[attr-defined]
         elapsed = time.monotonic() - start
 
         # Should return timeout result
@@ -1396,8 +1396,8 @@ class TestAsyncBeadsClientWithTimeout:
         self, orchestrator: MalaOrchestrator
     ) -> None:
         """When claim times out, should return False (safe fallback)."""
-        original_timeout = orchestrator.beads.timeout_seconds
-        orchestrator.beads.timeout_seconds = 0.1
+        original_timeout = orchestrator.beads.timeout_seconds  # type: ignore[attr-defined]
+        orchestrator.beads.timeout_seconds = 0.1  # type: ignore[attr-defined]
 
         # Mock _run_subprocess_async to simulate timeout
         async def mock_timeout(*args: object, **kwargs: object) -> SubprocessResult:
@@ -1411,7 +1411,7 @@ class TestAsyncBeadsClientWithTimeout:
 
             assert result is False
         finally:
-            orchestrator.beads.timeout_seconds = original_timeout
+            orchestrator.beads.timeout_seconds = original_timeout  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_orchestrator_uses_async_beads_methods(
