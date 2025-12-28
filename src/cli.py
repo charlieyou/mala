@@ -11,7 +11,6 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -65,13 +64,17 @@ def bootstrap() -> None:
     if _bootstrapped:
         return
 
-    # Load environment variables early (needed for BRAINTRUST_API_KEY)
+    # Load environment variables early (needed for config)
     load_user_env()
 
     # Setup Braintrust tracing BEFORE importing claude_agent_sdk anywhere
     # This patches the SDK before any imports can use the unpatched version
-    braintrust_api_key = os.environ.get("BRAINTRUST_API_KEY")
-    if braintrust_api_key:
+    # Note: We use MalaConfig here to read BRAINTRUST_API_KEY consistently
+    # from the environment (which now includes user .env after load_user_env)
+    from .config import MalaConfig
+
+    config = MalaConfig.from_env(validate=False)
+    if config.braintrust_api_key:
         try:
             from braintrust.wrappers.claude_agent_sdk import setup_claude_agent_sdk
 

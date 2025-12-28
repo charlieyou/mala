@@ -3781,23 +3781,21 @@ class TestGetMcpServers:
         assert result == {}
 
     def test_returns_config_when_api_key_set(self, tmp_path: Path) -> None:
-        """get_mcp_servers returns config when MORPH_API_KEY is set."""
+        """get_mcp_servers returns config when morph_api_key is provided."""
         from src.orchestrator import get_mcp_servers
 
-        with patch.dict(os.environ, {"MORPH_API_KEY": "test-key"}):
-            result = get_mcp_servers(tmp_path, morph_enabled=True)
+        result = get_mcp_servers(tmp_path, morph_api_key="test-key", morph_enabled=True)
 
         assert "morphllm" in result
         assert result["morphllm"]["env"]["MORPH_API_KEY"] == "test-key"
 
     def test_raises_error_when_api_key_missing(self, tmp_path: Path) -> None:
-        """get_mcp_servers raises ValueError when MORPH_API_KEY missing but morph_enabled=True."""
+        """get_mcp_servers raises ValueError when morph_api_key missing but morph_enabled=True."""
         from src.orchestrator import get_mcp_servers
 
-        env_without_key = {k: v for k, v in os.environ.items() if k != "MORPH_API_KEY"}
-        with patch.dict(os.environ, env_without_key, clear=True):
-            with pytest.raises(ValueError) as exc_info:
-                get_mcp_servers(tmp_path, morph_enabled=True)
+        with pytest.raises(ValueError) as exc_info:
+            # morph_api_key is None but morph_enabled=True (default)
+            get_mcp_servers(tmp_path, morph_enabled=True)
 
-        assert "MORPH_API_KEY" in str(exc_info.value)
-        assert "morph_api_key parameter" in str(exc_info.value)
+        assert "morph_api_key is required" in str(exc_info.value)
+        assert "MalaConfig" in str(exc_info.value)

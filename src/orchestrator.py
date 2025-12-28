@@ -171,23 +171,21 @@ def get_mcp_servers(
 
     Args:
         repo_path: Path to the repository.
-        morph_api_key: Morph API key. If None, reads from MORPH_API_KEY env var.
+        morph_api_key: Morph API key. Required when morph_enabled=True.
         morph_enabled: Whether to enable Morph MCP server. Defaults to True.
 
     Returns:
         Dictionary of MCP server configurations. Empty if morph_enabled=False.
 
     Raises:
-        ValueError: If morph_enabled=True but no API key is provided or set.
+        ValueError: If morph_enabled=True but morph_api_key is not provided.
     """
     if not morph_enabled:
         return {}
-    # Use provided key, fall back to environment variable
-    api_key = morph_api_key or os.environ.get("MORPH_API_KEY")
-    if not api_key:
+    if not morph_api_key:
         raise ValueError(
-            "MORPH_API_KEY is required when morph_enabled=True. "
-            "Set MORPH_API_KEY or pass morph_api_key parameter."
+            "morph_api_key is required when morph_enabled=True. "
+            "Pass morph_api_key from MalaConfig or set morph_enabled=False."
         )
     return {
         "morphllm": {
@@ -195,7 +193,7 @@ def get_mcp_servers(
             "args": ["-y", "@morphllm/morphmcp"],
             "cwd": str(repo_path),
             "env": {
-                "MORPH_API_KEY": api_key,
+                "MORPH_API_KEY": morph_api_key,
                 "ENABLED_TOOLS": "all",
                 "WORKSPACE_MODE": "true",
                 "WORKSPACE_PATH": str(repo_path),
