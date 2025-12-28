@@ -1056,3 +1056,103 @@ class TestGetReadyMethodsConsistentOrdering:
         assert ids_result == issues_ids
         # Verify priority ordering
         assert ids_result == ["task-2", "task-3", "task-1"]
+
+
+class TestPipelineSteps:
+    """Unit tests for pipeline step functions with fixture data."""
+
+    def test_merge_wip_issues_adds_missing(self) -> None:
+        """_merge_wip_issues adds WIP issues not in base list."""
+        base = [{"id": "a"}, {"id": "b"}]
+        wip = [{"id": "b"}, {"id": "c"}]
+        result = BeadsClient._merge_wip_issues(base, wip)
+        assert len(result) == 3
+        assert [r["id"] for r in result] == ["a", "b", "c"]
+
+    def test_merge_wip_issues_empty_base(self) -> None:
+        """_merge_wip_issues with empty base returns all WIP."""
+        wip = [{"id": "x"}, {"id": "y"}]
+        result = BeadsClient._merge_wip_issues([], wip)
+        assert [r["id"] for r in result] == ["x", "y"]
+
+    def test_merge_wip_issues_empty_wip(self) -> None:
+        """_merge_wip_issues with empty WIP returns base unchanged."""
+        base = [{"id": "a"}]
+        result = BeadsClient._merge_wip_issues(base, [])
+        assert result == base
+
+    def test_apply_filters_excludes_ids(self) -> None:
+        """_apply_filters excludes specified IDs."""
+        issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+        result = BeadsClient._apply_filters(issues, {"b"}, None, None)
+        assert [r["id"] for r in result] == ["a", "c"]
+
+    def test_apply_filters_excludes_epics(self) -> None:
+        """_apply_filters excludes issue_type=epic."""
+        issues = [{"id": "a"}, {"id": "b", "issue_type": "epic"}]
+        result = BeadsClient._apply_filters(issues, set(), None, None)
+        assert [r["id"] for r in result] == ["a"]
+
+    def test_apply_filters_by_epic_children(self) -> None:
+        """_apply_filters includes only epic children when specified."""
+        issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+        result = BeadsClient._apply_filters(issues, set(), {"a", "c"}, None)
+        assert [r["id"] for r in result] == ["a", "c"]
+
+    def test_apply_filters_by_only_ids(self) -> None:
+        """_apply_filters includes only specified IDs."""
+        issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+        result = BeadsClient._apply_filters(issues, set(), None, {"b"})
+        assert [r["id"] for r in result] == ["b"]
+
+    def test_sort_issues_by_priority(self, tmp_path: Path) -> None:
+        """_sort_issues sorts by priority when focus=False."""
+        beads = BeadsClient(tmp_path)
+        issues = [
+            {"id": "a", "priority": 3},
+            {"id": "b", "priority": 1},
+            {"id": "c", "priority": 2},
+        ]
+        result = beads._sort_issues(issues, focus=False, prioritize_wip=False)
+        assert [r["id"] for r in result] == ["b", "c", "a"]
+
+    def test_sort_issues_prioritizes_wip(self, tmp_path: Path) -> None:
+        """_sort_issues puts in_progress first when prioritize_wip=True."""
+        beads = BeadsClient(tmp_path)
+        issues = [
+            {"id": "a", "priority": 1, "status": "open"},
+            {"id": "b", "priority": 2, "status": "in_progress"},
+            {"id": "c", "priority": 3, "status": "open"},
+        ]
+        result = beads._sort_issues(issues, focus=False, prioritize_wip=True)
+        assert result[0]["id"] == "b"  # in_progress first
+
+    def test_sort_issues_by_epic_groups(self, tmp_path: Path) -> None:
+        """_sort_issues groups by parent_epic when focus=True."""
+        beads = BeadsClient(tmp_path)
+        issues = [
+            {
+                "id": "a",
+                "priority": 2,
+                "parent_epic": "epic-1",
+                "updated_at": "2025-01-01",
+            },
+            {
+                "id": "b",
+                "priority": 1,
+                "parent_epic": "epic-2",
+                "updated_at": "2025-01-01",
+            },
+            {
+                "id": "c",
+                "priority": 3,
+                "parent_epic": "epic-1",
+                "updated_at": "2025-01-01",
+            },
+        ]
+        result = beads._sort_issues(issues, focus=True, prioritize_wip=False)
+        # epic-2 has lower min priority (1), so it comes first
+        assert result[0]["id"] == "b"
+        # epic-1 issues grouped together
+        epic1_issues = [r for r in result if r["parent_epic"] == "epic-1"]
+        assert len(epic1_issues) == 2

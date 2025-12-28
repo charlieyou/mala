@@ -410,7 +410,9 @@ class BeadsClient:
             return []
         try:
             wip = json.loads(result.stdout)
-            return [w for w in wip if isinstance(wip, list) and not w.get("blocked_by")]
+            if not isinstance(wip, list):
+                return []
+            return [w for w in wip if w.get("blocked_by") is None]
         except json.JSONDecodeError:
             return []
 
