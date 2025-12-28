@@ -151,7 +151,8 @@ class CommandRunner:
                 If None (default), uses process group on Unix, disabled on Windows.
                 When True, creates a new session and kills the entire process group
                 on timeout using os.killpg(). When False, only terminates the
-                main process.
+                main process. Note: On Windows, process groups are not supported
+                and this parameter is ignored (always treated as False).
 
         Returns:
             CommandResult with execution details.
@@ -160,11 +161,12 @@ class CommandRunner:
         merged_env = self._merge_env(env)
 
         # Use process group on Unix for proper child termination (default behavior)
+        # On Windows, os.killpg is not available, so always disable process groups
         effective_use_process_group = (
             use_process_group
             if use_process_group is not None
             else sys.platform != "win32"
-        )
+        ) and sys.platform != "win32"
 
         start = time.monotonic()
         proc = subprocess.Popen(
@@ -272,7 +274,9 @@ class CommandRunner:
                 If None (default), uses process group on Unix, disabled on Windows.
                 When True, creates a new session (os.setsid) and kills the entire
                 process group on timeout using os.killpg(). When False, only
-                terminates the main process.
+                terminates the main process. Note: On Windows, process groups
+                are not supported and this parameter is ignored (always treated
+                as False).
 
         Returns:
             CommandResult with execution details.
@@ -281,11 +285,12 @@ class CommandRunner:
         merged_env = self._merge_env(env)
 
         # Use process group on Unix for proper child termination (default behavior)
+        # On Windows, os.killpg is not available, so always disable process groups
         effective_use_process_group = (
             use_process_group
             if use_process_group is not None
             else sys.platform != "win32"
-        )
+        ) and sys.platform != "win32"
 
         start = time.monotonic()
         try:

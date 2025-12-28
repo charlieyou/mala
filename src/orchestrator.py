@@ -93,6 +93,9 @@ __version__ = pkg_version("mala")
 # Prompt file paths (actual file reads deferred to first use)
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 PROMPT_FILE = _PROMPT_DIR / "implementer_prompt.md"
+GATE_FOLLOWUP_FILE = _PROMPT_DIR / "gate_followup.md"
+REVIEW_FOLLOWUP_FILE = _PROMPT_DIR / "review_followup.md"
+FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
 
 
 @functools.cache
@@ -104,19 +107,19 @@ def _get_implementer_prompt() -> str:
 @functools.cache
 def _get_gate_followup_prompt() -> str:
     """Load gate follow-up prompt (cached on first use)."""
-    return (_PROMPT_DIR / "gate_followup.md").read_text()
+    return GATE_FOLLOWUP_FILE.read_text()
 
 
 @functools.cache
 def _get_review_followup_prompt() -> str:
     """Load review follow-up prompt (cached on first use)."""
-    return (_PROMPT_DIR / "review_followup.md").read_text()
+    return REVIEW_FOLLOWUP_FILE.read_text()
 
 
 @functools.cache
 def _get_fixer_prompt() -> str:
     """Load fixer prompt (cached on first use)."""
-    return (_PROMPT_DIR / "fixer.md").read_text()
+    return FIXER_PROMPT_FILE.read_text()
 
 
 # Bounded wait for log file (seconds)
