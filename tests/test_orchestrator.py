@@ -2288,7 +2288,7 @@ class TestRunLevelValidation:
 class TestValidationResultMetadata:
     """Test validation execution and metadata population after commit detection.
 
-    Verifies mala-yg9.2.4: ValidationRunner.run_spec should be invoked after
+    Verifies mala-yg9.2.4: SpecValidationRunner.run_spec should be invoked after
     commit detection and ValidationResult should be recorded in IssueRun.
     """
 
@@ -2298,7 +2298,8 @@ class TestValidationResultMetadata:
     ) -> None:
         """Successful gate should populate validation result in IssueRun metadata."""
         from src.logging.run_metadata import IssueRun, RunMetadata
-        from src.validation.runner import ValidationResult, ValidationRunner
+        from src.validation.result import ValidationResult
+        from src.validation.spec_runner import SpecValidationRunner
         from src.validation.spec import ValidationArtifacts
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
@@ -2366,7 +2367,7 @@ class TestValidationResultMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch.object(ValidationRunner, "run_spec", mock_run_spec),
+            patch.object(SpecValidationRunner, "run_spec", mock_run_spec),
             patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
@@ -2391,9 +2392,10 @@ class TestValidationResultMetadata:
     async def test_validation_runner_invoked_after_commit_detection(
         self, tmp_path: Path
     ) -> None:
-        """ValidationRunner.run_spec should be invoked after commit is detected."""
+        """SpecValidationRunner.run_spec should be invoked after commit is detected."""
         from src.logging.run_metadata import IssueRun, RunMetadata
-        from src.validation.runner import ValidationResult, ValidationRunner
+        from src.validation.result import ValidationResult
+        from src.validation.spec_runner import SpecValidationRunner
         from src.validation.spec import ValidationArtifacts
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
@@ -2462,7 +2464,7 @@ class TestValidationResultMetadata:
             patch.object(
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
-            patch.object(ValidationRunner, "run_spec", mock_run_spec),
+            patch.object(SpecValidationRunner, "run_spec", mock_run_spec),
             patch.object(RunMetadata, "record_issue", capture_record),
             patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),

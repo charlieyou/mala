@@ -60,13 +60,13 @@ from .tools.locking import (
     cleanup_agent_locks,
     make_stop_hook,
 )
-from .validation.runner import ValidationRunner, ValidationConfig
 from .validation.spec import (
     IssueResolution,
     ValidationContext,
     ValidationScope,
     build_validation_spec,
 )
+from .validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
     from .validation.result import ValidationResult
@@ -394,16 +394,8 @@ class MalaOrchestrator:
             scope=ValidationScope.RUN_LEVEL,
         )
 
-        # Create validation runner
-        runner = ValidationRunner(
-            self.repo_path,
-            ValidationConfig(
-                run_slow_tests="slow-tests" not in (self.disable_validations or set()),
-                run_e2e="e2e" not in (self.disable_validations or set()),
-                coverage="coverage" not in (self.disable_validations or set()),
-                coverage_min=int(self.coverage_threshold),
-            ),
-        )
+        # Create validation runner (uses SpecValidationRunner directly)
+        runner = SpecValidationRunner(self.repo_path)
 
         # Retry loop with fixer agent
         for attempt in range(1, self.max_gate_retries + 1):
@@ -1246,7 +1238,7 @@ class MalaOrchestrator:
                                     failure_reasons=[],
                                 )
 
-                                # Run ValidationRunner.run_spec after commit detection
+                                # Run SpecValidationRunner.run_spec after commit detection
                                 if commit_result.exists and commit_result.commit_hash:
                                     try:
                                         spec = build_validation_spec(
@@ -1263,26 +1255,7 @@ class MalaOrchestrator:
                                             scope=ValidationScope.PER_ISSUE,
                                             log_path=log_path,
                                         )
-                                        runner = ValidationRunner(
-                                            self.repo_path,
-                                            ValidationConfig(
-                                                run_slow_tests="slow-tests"
-                                                not in (
-                                                    self.disable_validations or set()
-                                                ),
-                                                run_e2e="e2e"
-                                                not in (
-                                                    self.disable_validations or set()
-                                                ),
-                                                coverage="coverage"
-                                                not in (
-                                                    self.disable_validations or set()
-                                                ),
-                                                coverage_min=int(
-                                                    self.coverage_threshold
-                                                ),
-                                            ),
-                                        )
+                                        runner = SpecValidationRunner(self.repo_path)
                                         runner_result = await runner.run_spec(
                                             spec, context
                                         )

@@ -84,7 +84,7 @@ class TestRunLevelValidation:
 
         with (
             patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
-            patch("src.orchestrator.ValidationRunner") as MockRunner,
+            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
@@ -145,7 +145,7 @@ class TestRunLevelValidation:
         with (
             patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
             patch.object(orchestrator, "_run_fixer_agent", side_effect=mock_fixer),
-            patch("src.orchestrator.ValidationRunner") as MockRunner,
+            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
@@ -211,7 +211,7 @@ class TestRunLevelValidation:
 
         with (
             patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
-            patch("src.orchestrator.ValidationRunner") as MockRunner,
+            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)

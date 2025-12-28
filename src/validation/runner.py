@@ -1,11 +1,22 @@
 """Post-commit validation runner for mala.
 
-This module provides the ValidationRunner facade that delegates to:
-- LegacyValidationRunner: validate_commit() using ValidationConfig
-- SpecValidationRunner: run_spec() using ValidationSpec + ValidationContext
+DEPRECATION NOTICE:
+    ValidationRunner is a legacy facade for backwards compatibility only.
+    New code should use SpecValidationRunner directly with ValidationSpec.
 
-For new code, prefer using SpecValidationRunner directly with ValidationSpec.
-This facade exists for backwards compatibility.
+This module provides:
+- ValidationRunner: DEPRECATED facade (wraps both legacy and spec runners)
+- LegacyValidationRunner: Legacy API using ValidationConfig (re-exported)
+- SpecValidationRunner: Modern API using ValidationSpec (re-exported)
+
+Migration guide:
+    # Old (deprecated):
+    runner = ValidationRunner(repo_path, ValidationConfig(...))
+    result = await runner.run_spec(spec, context)
+
+    # New (recommended):
+    runner = SpecValidationRunner(repo_path)
+    result = await runner.run_spec(spec, context)
 """
 
 from __future__ import annotations
@@ -55,17 +66,33 @@ def _format_step_output(step: ValidationStepResult) -> str:
 
 
 class ValidationRunner:
-    """Facade for post-commit validation runners.
+    """DEPRECATED: Facade for post-commit validation runners.
+
+    .. deprecated::
+        Use SpecValidationRunner directly for spec-based validation.
+        This class exists only for backwards compatibility with code
+        that uses the legacy validate_commit() API.
 
     This class delegates to:
     - LegacyValidationRunner for validate_commit() using ValidationConfig
     - SpecValidationRunner for run_spec() using ValidationSpec + ValidationContext
 
-    For new code, prefer using the specific runner classes directly.
+    For new code, use SpecValidationRunner directly:
+
+        # Recommended approach:
+        runner = SpecValidationRunner(repo_path)
+        result = await runner.run_spec(spec, context)
+
+    The validate_commit() method is the only remaining use case for this class.
+    If you're only using run_spec(), switch to SpecValidationRunner.
     """
 
     def __init__(self, repo_path: Path, config: ValidationConfig):
         """Initialize the validation runner facade.
+
+        .. deprecated::
+            For spec-based validation, use SpecValidationRunner directly.
+            This constructor is only needed for legacy validate_commit() usage.
 
         Args:
             repo_path: Path to the repository to validate.

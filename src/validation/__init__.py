@@ -3,11 +3,17 @@
 This package provides validation runners for clean-room validation
 in temporary git worktrees:
 
-- ValidationRunner: Facade that delegates to specialized runners
-- SpecValidationRunner: Modern API using ValidationSpec + ValidationContext
+- SpecValidationRunner: Modern API using ValidationSpec + ValidationContext (RECOMMENDED)
 - LegacyValidationRunner: Legacy API using ValidationConfig
+- ValidationRunner: DEPRECATED facade (use SpecValidationRunner directly)
 
-For new code, prefer SpecValidationRunner with ValidationSpec.
+For new code, use SpecValidationRunner with ValidationSpec:
+
+    from src.validation import SpecValidationRunner, build_validation_spec
+
+    runner = SpecValidationRunner(repo_path)
+    spec = build_validation_spec(scope=ValidationScope.PER_ISSUE, ...)
+    result = await runner.run_spec(spec, context)
 """
 
 from .coverage import (
