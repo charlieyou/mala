@@ -1,6 +1,7 @@
 """MalaOrchestrator: Orchestrates parallel issue processing using Claude Agent SDK."""
 
 import asyncio
+import functools
 import os
 import time
 import uuid
@@ -89,18 +90,34 @@ from importlib.metadata import version as pkg_version
 
 __version__ = pkg_version("mala")
 
-# Load implementer prompt from file
-PROMPT_FILE = Path(__file__).parent / "prompts" / "implementer_prompt.md"
-IMPLEMENTER_PROMPT_TEMPLATE = PROMPT_FILE.read_text()
+# Prompt file paths (actual file reads deferred to first use)
+_PROMPT_DIR = Path(__file__).parent / "prompts"
+PROMPT_FILE = _PROMPT_DIR / "implementer_prompt.md"
 
-# Load follow-up prompts from files
-GATE_FOLLOWUP_PROMPT = (
-    Path(__file__).parent / "prompts" / "gate_followup.md"
-).read_text()
-CODEX_REVIEW_FOLLOWUP_PROMPT = (
-    Path(__file__).parent / "prompts" / "review_followup.md"
-).read_text()
-RUN_LEVEL_FIXER_PROMPT = (Path(__file__).parent / "prompts" / "fixer.md").read_text()
+
+@functools.cache
+def _get_implementer_prompt() -> str:
+    """Load implementer prompt template (cached on first use)."""
+    return PROMPT_FILE.read_text()
+
+
+@functools.cache
+def _get_gate_followup_prompt() -> str:
+    """Load gate follow-up prompt (cached on first use)."""
+    return (_PROMPT_DIR / "gate_followup.md").read_text()
+
+
+@functools.cache
+def _get_review_followup_prompt() -> str:
+    """Load review follow-up prompt (cached on first use)."""
+    return (_PROMPT_DIR / "review_followup.md").read_text()
+
+
+@functools.cache
+def _get_fixer_prompt() -> str:
+    """Load fixer prompt (cached on first use)."""
+    return (_PROMPT_DIR / "fixer.md").read_text()
+
 
 # Bounded wait for log file (seconds)
 LOG_FILE_WAIT_TIMEOUT = 30
@@ -522,7 +539,7 @@ class MalaOrchestrator:
         """
         agent_id = f"fixer-{uuid.uuid4().hex[:8]}"
 
-        prompt = RUN_LEVEL_FIXER_PROMPT.format(
+        prompt = _get_fixer_prompt().format(
             attempt=attempt,
             max_attempts=self.max_gate_retries,
             failure_output=failure_output,
@@ -641,7 +658,7 @@ class MalaOrchestrator:
         # Claude session ID will be captured from ResultMessage
         claude_session_id: str | None = None
 
-        prompt = IMPLEMENTER_PROMPT_TEMPLATE.format(
+        prompt = _get_implementer_prompt().format(
             issue_id=issue_id,
             repo_path=self.repo_path,
             lock_dir=get_lock_dir(),
@@ -828,7 +845,7 @@ class MalaOrchestrator:
                                             f"- {r}"
                                             for r in gate_result.failure_reasons
                                         )
-                                        followup = GATE_FOLLOWUP_PROMPT.format(
+                                        followup = _get_gate_followup_prompt().format(
                                             attempt=lifecycle_ctx.retry_state.gate_attempt,
                                             max_attempts=self.max_gate_retries,
                                             failure_reasons=failure_text,
@@ -931,7 +948,7 @@ class MalaOrchestrator:
                                             else review_result.parse_error
                                             or "Unknown review failure"
                                         )
-                                        followup = CODEX_REVIEW_FOLLOWUP_PROMPT.format(
+                                        followup = _get_review_followup_prompt().format(
                                             attempt=lifecycle_ctx.retry_state.review_attempt,
                                             max_attempts=self.max_review_retries,
                                             review_issues=review_issues_text,

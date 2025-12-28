@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.orchestrator import IMPLEMENTER_PROMPT_TEMPLATE
+from src.orchestrator import _get_implementer_prompt
 from src.hooks import make_stop_hook
 from src.tools.env import SCRIPTS_DIR
 
@@ -113,16 +113,16 @@ class TestPromptTemplateIntegration:
     """Test that the prompt template correctly configures lock environment."""
 
     def test_template_includes_scripts_dir_placeholder(self) -> None:
-        assert "{scripts_dir}" in IMPLEMENTER_PROMPT_TEMPLATE
+        assert "{scripts_dir}" in _get_implementer_prompt()
 
     def test_template_includes_lock_dir_placeholder(self) -> None:
-        assert "{lock_dir}" in IMPLEMENTER_PROMPT_TEMPLATE
+        assert "{lock_dir}" in _get_implementer_prompt()
 
     def test_template_includes_agent_id_placeholder(self) -> None:
-        assert "{agent_id}" in IMPLEMENTER_PROMPT_TEMPLATE
+        assert "{agent_id}" in _get_implementer_prompt()
 
     def test_template_formats_correctly(self, lock_env: Path) -> None:
-        prompt = IMPLEMENTER_PROMPT_TEMPLATE.format(
+        prompt = _get_implementer_prompt().format(
             issue_id="bd-99",
             repo_path="/tmp/repo",
             lock_dir=lock_env,
