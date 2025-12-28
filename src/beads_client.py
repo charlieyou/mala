@@ -21,24 +21,10 @@ if TYPE_CHECKING:
     from pathlib import Path
     from collections.abc import Callable
 
+    from src.validation.command_runner import CommandResult
+
 # Default timeout for bd/git subprocess calls (seconds)
 DEFAULT_COMMAND_TIMEOUT = 30.0
-
-
-class SubprocessResult:
-    """Result of a subprocess execution, compatible with subprocess.CompletedProcess."""
-
-    def __init__(
-        self,
-        args: list[str],
-        returncode: int,
-        stdout: str = "",
-        stderr: str = "",
-    ):
-        self.args = args
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
 
 
 class BeadsClient:
@@ -74,7 +60,7 @@ class BeadsClient:
         self,
         cmd: list[str],
         timeout: float | None = None,
-    ) -> SubprocessResult:
+    ) -> CommandResult:
         """Run subprocess asynchronously with timeout and proper termination.
 
         Uses CommandRunner for consistent subprocess handling with process-group
@@ -86,7 +72,7 @@ class BeadsClient:
             timeout: Override timeout (uses self.timeout_seconds if None).
 
         Returns:
-            SubprocessResult, or a failed result on timeout/error.
+            CommandResult with execution details.
         """
         effective_timeout = timeout if timeout is not None else self.timeout_seconds
         result = await self._runner.run_async(cmd, timeout=effective_timeout)
@@ -95,17 +81,11 @@ class BeadsClient:
             self._log_warning(
                 f"Command timed out after {effective_timeout}s: {' '.join(cmd)}"
             )
-            return SubprocessResult(args=cmd, returncode=1, stdout="", stderr="timeout")
 
         if not result.ok and result.stderr:
             self._log_warning(f"Command failed: {' '.join(cmd)}: {result.stderr}")
 
-        return SubprocessResult(
-            args=cmd,
-            returncode=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
-        )
+        return result
 
     # --- Async methods (non-blocking, use in async context) ---
 

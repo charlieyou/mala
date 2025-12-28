@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from claude_agent_sdk.types import ResultMessage
 
-from src.beads_client import BeadsClient, SubprocessResult
+from src.beads_client import BeadsClient
 from src.orchestrator import (
     IssueResult,
     MalaOrchestrator,
@@ -1485,9 +1485,9 @@ class TestAsyncBeadsClientWithTimeout:
         result = await orchestrator.beads._run_subprocess_async(["sleep", "10"])  # type: ignore[attr-defined]
         elapsed = time.monotonic() - start
 
-        # Should return timeout result
-        assert result.returncode == 1
-        assert result.stderr == "timeout"
+        # Should return timeout result (124 is standard timeout exit code)
+        assert result.returncode == 124
+        assert result.timed_out is True
         # Should complete quickly due to timeout, not hang for 10s
         assert elapsed < 3.0, f"Timeout didn't work: took {elapsed:.2f}s"
 
@@ -1500,8 +1500,8 @@ class TestAsyncBeadsClientWithTimeout:
         orchestrator.beads.timeout_seconds = 0.1  # type: ignore[attr-defined]
 
         # Mock _run_subprocess_async to simulate timeout
-        async def mock_timeout(*args: object, **kwargs: object) -> SubprocessResult:
-            return SubprocessResult(args=[], returncode=1, stdout="", stderr="timeout")
+        async def mock_timeout(*args: object, **kwargs: object) -> CommandResult:
+            return CommandResult(command=[], returncode=1, stdout="", stderr="timeout")
 
         try:
             with patch.object(
@@ -1679,9 +1679,9 @@ class TestSubprocessTerminationOnTimeout:
         result = await beads._run_subprocess_async(["sleep", "60"])
         elapsed = time.monotonic() - start
 
-        # Should return timeout result
-        assert result.returncode == 1
-        assert result.stderr == "timeout"
+        # Should return timeout result (124 is standard timeout exit code)
+        assert result.returncode == 124
+        assert result.timed_out is True
 
         # Should complete quickly (timeout + termination grace period)
         assert elapsed < 5.0, f"Took too long: {elapsed:.2f}s"

@@ -10,15 +10,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.beads_client import BeadsClient, SubprocessResult
+from src.beads_client import BeadsClient
+from src.validation.command_runner import CommandResult
 
 
-def make_subprocess_result(
+def make_command_result(
     returncode: int = 0, stdout: str = "", stderr: str = ""
-) -> SubprocessResult:
-    """Create a mock subprocess result."""
-    return SubprocessResult(
-        args=[],
+) -> CommandResult:
+    """Create a mock command result."""
+    return CommandResult(
+        command=[],
         returncode=returncode,
         stdout=stdout,
         stderr=stderr,
@@ -41,7 +42,7 @@ class TestGetParentEpicAsync:
 
         with pytest.MonkeyPatch.context() as mp:
             mock_run_async = AsyncMock(
-                return_value=make_subprocess_result(stdout=task_tree)
+                return_value=make_command_result(stdout=task_tree)
             )
             mp.setattr(beads, "_run_subprocess_async", mock_run_async)
             result = await beads.get_parent_epic_async("task-1")
@@ -64,7 +65,7 @@ class TestGetParentEpicAsync:
             ]
         )
         with pytest.MonkeyPatch.context() as mp:
-            mock_run = AsyncMock(return_value=make_subprocess_result(stdout=tree_json))
+            mock_run = AsyncMock(return_value=make_command_result(stdout=tree_json))
             mp.setattr(beads, "_run_subprocess_async", mock_run)
             result = await beads.get_parent_epic_async("orphan-task")
 
@@ -77,7 +78,7 @@ class TestGetParentEpicAsync:
         beads = BeadsClient(tmp_path, log_warning=warnings.append)
         with pytest.MonkeyPatch.context() as mp:
             mock_run = AsyncMock(
-                return_value=make_subprocess_result(returncode=1, stderr="bd error")
+                return_value=make_command_result(returncode=1, stderr="bd error")
             )
             mp.setattr(beads, "_run_subprocess_async", mock_run)
             result = await beads.get_parent_epic_async("task-1")
@@ -92,7 +93,7 @@ class TestGetParentEpicAsync:
         beads = BeadsClient(tmp_path)
         with pytest.MonkeyPatch.context() as mp:
             mock_run = AsyncMock(
-                return_value=make_subprocess_result(stdout="not valid json")
+                return_value=make_command_result(stdout="not valid json")
             )
             mp.setattr(beads, "_run_subprocess_async", mock_run)
             result = await beads.get_parent_epic_async("task-1")
@@ -123,7 +124,7 @@ class TestGetParentEpicAsync:
             ]
         )
         with pytest.MonkeyPatch.context() as mp:
-            mock_run = AsyncMock(return_value=make_subprocess_result(stdout=tree_json))
+            mock_run = AsyncMock(return_value=make_command_result(stdout=tree_json))
             mp.setattr(beads, "_run_subprocess_async", mock_run)
             result = await beads.get_parent_epic_async("task-1")
 
@@ -183,7 +184,7 @@ class TestParentEpicCaching:
 
         with pytest.MonkeyPatch.context() as mp:
             mock_run_async = AsyncMock(
-                return_value=make_subprocess_result(stdout=task_tree)
+                return_value=make_command_result(stdout=task_tree)
             )
             mp.setattr(beads, "_run_subprocess_async", mock_run_async)
 
@@ -203,7 +204,7 @@ class TestParentEpicCaching:
         beads = BeadsClient(tmp_path)
         tree_json = json.dumps([{"id": "orphan", "issue_type": "task", "depth": 0}])
         with pytest.MonkeyPatch.context() as mp:
-            mock_run = AsyncMock(return_value=make_subprocess_result(stdout=tree_json))
+            mock_run = AsyncMock(return_value=make_command_result(stdout=tree_json))
             mp.setattr(beads, "_run_subprocess_async", mock_run)
 
             # First call
@@ -229,7 +230,7 @@ class TestParentEpicCaching:
 
         with pytest.MonkeyPatch.context() as mp:
             mock_run_async = AsyncMock(
-                return_value=make_subprocess_result(stdout=task_tree)
+                return_value=make_command_result(stdout=task_tree)
             )
             mp.setattr(beads, "_run_subprocess_async", mock_run_async)
 
@@ -258,11 +259,11 @@ class TestParentEpicCaching:
 
         call_count = 0
 
-        async def mock_run(cmd: list[str]) -> SubprocessResult:
+        async def mock_run(cmd: list[str]) -> CommandResult:
             nonlocal call_count
             call_count += 1
             issue_id = cmd[3]
-            return make_subprocess_result(stdout=make_tree_response(issue_id))
+            return make_command_result(stdout=make_tree_response(issue_id))
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(beads, "_run_subprocess_async", mock_run)
@@ -290,10 +291,10 @@ class TestParentEpicCaching:
 
         call_count = 0
 
-        async def counting_mock_run(cmd: list[str]) -> SubprocessResult:
+        async def counting_mock_run(cmd: list[str]) -> CommandResult:
             nonlocal call_count
             call_count += 1
-            return make_subprocess_result(stdout=task_tree)
+            return make_command_result(stdout=task_tree)
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(beads, "_run_subprocess_async", counting_mock_run)
@@ -334,13 +335,13 @@ class TestParentEpicCaching:
             ]
         )
 
-        async def mock_run(cmd: list[str]) -> SubprocessResult:
+        async def mock_run(cmd: list[str]) -> CommandResult:
             issue_id = cmd[3]
             if issue_id == "task-1":
-                return make_subprocess_result(stdout=task1_tree)
+                return make_command_result(stdout=task1_tree)
             elif issue_id == "child-epic":
-                return make_subprocess_result(stdout=child_epic_tree)
-            return make_subprocess_result(returncode=1, stderr="not found")
+                return make_command_result(stdout=child_epic_tree)
+            return make_command_result(returncode=1, stderr="not found")
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(beads, "_run_subprocess_async", mock_run)
@@ -383,13 +384,13 @@ class TestParentEpicCaching:
             ]
         )
 
-        async def mock_run(cmd: list[str]) -> SubprocessResult:
+        async def mock_run(cmd: list[str]) -> CommandResult:
             issue_id = cmd[3]
             if issue_id == "task-a":
-                return make_subprocess_result(stdout=task_a_tree)
+                return make_command_result(stdout=task_a_tree)
             elif issue_id == "task-b":
-                return make_subprocess_result(stdout=task_b_tree)
-            return make_subprocess_result(returncode=1, stderr="not found")
+                return make_command_result(stdout=task_b_tree)
+            return make_command_result(returncode=1, stderr="not found")
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(beads, "_run_subprocess_async", mock_run)
@@ -435,7 +436,7 @@ class TestGetReadyAsyncBlockedEpicFiltering:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
             )
             mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
             mp.setattr(beads, "_is_epic_blocked_async", mock_is_epic_blocked)
@@ -468,7 +469,7 @@ class TestGetReadyAsyncBlockedEpicFiltering:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
             )
             mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
 
@@ -504,7 +505,7 @@ class TestGetReadyAsyncBlockedEpicFiltering:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
             )
             mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
             mp.setattr(beads, "_is_epic_blocked_async", mock_is_epic_blocked)
@@ -546,7 +547,7 @@ class TestGetReadyAsyncBlockedEpicFiltering:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
             )
             mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
             mp.setattr(beads, "_is_epic_blocked_async", mock_is_epic_blocked)
@@ -592,7 +593,7 @@ class TestGetReadyAsyncBlockedEpicFiltering:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
             )
             mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
             mp.setattr(beads, "_is_epic_blocked_async", mock_is_epic_blocked)
@@ -634,7 +635,7 @@ class TestGetReadyAsyncBlockedEpicFiltering:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
             )
             mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
             mp.setattr(beads, "_is_epic_blocked_async", mock_is_epic_blocked)
@@ -701,7 +702,7 @@ class TestNestedEpicsFocusGrouping:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
             )
             mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
 
@@ -768,7 +769,7 @@ class TestNestedEpicsFocusGrouping:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
             )
             mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
 
@@ -791,7 +792,7 @@ class TestIsEpicBlockedAsync:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=epic_json)),
+                AsyncMock(return_value=make_command_result(stdout=epic_json)),
             )
             result = await beads._is_epic_blocked_async("epic-1")
 
@@ -813,7 +814,7 @@ class TestIsEpicBlockedAsync:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=epic_json)),
+                AsyncMock(return_value=make_command_result(stdout=epic_json)),
             )
             result = await beads._is_epic_blocked_async("epic-1")
 
@@ -835,7 +836,7 @@ class TestIsEpicBlockedAsync:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=epic_json)),
+                AsyncMock(return_value=make_command_result(stdout=epic_json)),
             )
             result = await beads._is_epic_blocked_async("epic-1")
 
@@ -851,7 +852,7 @@ class TestIsEpicBlockedAsync:
                 beads,
                 "_run_subprocess_async",
                 AsyncMock(
-                    return_value=make_subprocess_result(returncode=1, stderr="error")
+                    return_value=make_command_result(returncode=1, stderr="error")
                 ),
             )
             result = await beads._is_epic_blocked_async("epic-1")
@@ -865,7 +866,7 @@ class TestIsEpicBlockedAsync:
         epic_json = json.dumps({"id": "epic-1", "status": "blocked"})
 
         with pytest.MonkeyPatch.context() as mp:
-            mock_run = AsyncMock(return_value=make_subprocess_result(stdout=epic_json))
+            mock_run = AsyncMock(return_value=make_command_result(stdout=epic_json))
             mp.setattr(beads, "_run_subprocess_async", mock_run)
 
             # First call
@@ -888,7 +889,7 @@ class TestIsEpicBlockedAsync:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=epic_json)),
+                AsyncMock(return_value=make_command_result(stdout=epic_json)),
             )
             result = await beads._is_epic_blocked_async("epic-1")
 
@@ -939,7 +940,7 @@ class TestGetReadyMethodsConsistentOrdering:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
             )
             mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
 
@@ -981,10 +982,10 @@ class TestGetReadyMethodsConsistentOrdering:
             ]
         )
 
-        async def mock_run(cmd: list[str]) -> SubprocessResult:
+        async def mock_run(cmd: list[str]) -> CommandResult:
             if "--status" in cmd and "in_progress" in cmd:
-                return make_subprocess_result(stdout=wip_response)
-            return make_subprocess_result(stdout=ready_response)
+                return make_command_result(stdout=wip_response)
+            return make_command_result(stdout=ready_response)
 
         async def mock_get_parent_epics(
             issue_ids: list[str],
@@ -1044,7 +1045,7 @@ class TestGetReadyMethodsConsistentOrdering:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
             )
             mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
 
@@ -1166,17 +1167,17 @@ class TestWipFallbackOnReadyFailure:
         """When bd ready fails but prioritize_wip=True, should still return WIP issues."""
         beads = BeadsClient(tmp_path)
 
-        async def mock_run_async(cmd: list[str]) -> SubprocessResult:
+        async def mock_run_async(cmd: list[str]) -> CommandResult:
             if cmd == ["bd", "ready", "--json"]:
                 # Simulate bd ready failure
-                return make_subprocess_result(returncode=1, stderr="bd ready failed")
+                return make_command_result(returncode=1, stderr="bd ready failed")
             if cmd == ["bd", "list", "--status", "in_progress", "--json"]:
                 # Return WIP issues
-                return make_subprocess_result(
+                return make_command_result(
                     stdout=json.dumps([{"id": "wip-1", "priority": 1}])
                 )
             # Return empty for other commands (like dep tree)
-            return make_subprocess_result(stdout="[]")
+            return make_command_result(stdout="[]")
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
@@ -1193,11 +1194,11 @@ class TestWipFallbackOnReadyFailure:
         """When bd ready fails and prioritize_wip=False, should return empty list."""
         beads = BeadsClient(tmp_path)
 
-        async def mock_run_async(cmd: list[str]) -> SubprocessResult:
+        async def mock_run_async(cmd: list[str]) -> CommandResult:
             if cmd == ["bd", "ready", "--json"]:
                 # Simulate bd ready failure
-                return make_subprocess_result(returncode=1, stderr="bd ready failed")
-            return make_subprocess_result(stdout="[]")
+                return make_command_result(returncode=1, stderr="bd ready failed")
+            return make_command_result(stdout="[]")
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
@@ -1223,7 +1224,7 @@ class TestFetchBaseIssues:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout=issues_json)),
+                AsyncMock(return_value=make_command_result(stdout=issues_json)),
             )
             issues, ok = await beads._fetch_base_issues()
 
@@ -1241,7 +1242,7 @@ class TestFetchBaseIssues:
                 beads,
                 "_run_subprocess_async",
                 AsyncMock(
-                    return_value=make_subprocess_result(returncode=1, stderr="error")
+                    return_value=make_command_result(returncode=1, stderr="error")
                 ),
             )
             issues, ok = await beads._fetch_base_issues()
@@ -1258,7 +1259,7 @@ class TestFetchBaseIssues:
             mp.setattr(
                 beads,
                 "_run_subprocess_async",
-                AsyncMock(return_value=make_subprocess_result(stdout="not json")),
+                AsyncMock(return_value=make_command_result(stdout="not json")),
             )
             issues, ok = await beads._fetch_base_issues()
 
