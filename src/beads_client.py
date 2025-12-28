@@ -296,53 +296,15 @@ class BeadsClient:
         return "".join(chr(255 - ord(c)) for c in timestamp)
 
     # ───────────────────────────────────────────────────────────────────────────
-    # Pipeline functions for _fetch_and_filter_issues
+    # Pure pipeline functions for issue processing (no I/O, no side effects)
     # ───────────────────────────────────────────────────────────────────────────
 
-    async def _fetch_base_issues(self) -> list[dict[str, object]]:
-        """Fetch ready issues from bd CLI.
-
-        Returns:
-            List of issue dicts from 'bd ready --json', or empty list on error.
-        """
-        result = await self._run_subprocess_async(["bd", "ready", "--json"])
-        if result.returncode != 0:
-            self._log_warning(f"bd ready failed: {result.stderr}")
-            return []
-        try:
-            issues = json.loads(result.stdout)
-            return list(issues) if isinstance(issues, list) else []
-        except json.JSONDecodeError:
-            return []
-
-    async def _fetch_wip_issues(self) -> list[dict[str, object]]:
-        """Fetch in_progress issues from bd CLI.
-
-        Returns:
-            List of unblocked WIP issue dicts, or empty list on error.
-        """
-        result = await self._run_subprocess_async(
-            ["bd", "list", "--status", "in_progress", "--json"]
-        )
-        if result.returncode != 0:
-            return []
-        try:
-            wip_issues = json.loads(result.stdout)
-            if not isinstance(wip_issues, list):
-                return []
-            # Filter to unblocked WIP issues only
-            return [wip for wip in wip_issues if wip.get("blocked_by") is None]
-        except json.JSONDecodeError:
-            return []
-
+    @staticmethod
     def _merge_wip_issues(
-        self,
         base_issues: list[dict[str, object]],
         wip_issues: list[dict[str, object]],
     ) -> list[dict[str, object]]:
-        """Merge WIP issues into base issue list.
-
-        Pure function that adds WIP issues not already in the base list.
+        """Merge WIP issues into base issue list (pure function).
 
         Args:
             base_issues: List of issues from bd ready.
@@ -358,43 +320,24 @@ class BeadsClient:
                 merged.append(wip)
         return merged
 
-    def _apply_filters(
-        self,
+    @staticmethod
+    def _filter_issues(
         issues: list[dict[str, object]],
         exclude_ids: set[str],
         epic_children: set[str] | None,
         only_ids: set[str] | None,
-        suppress_warn_ids: set[str],
     ) -> list[dict[str, object]]:
-        """Apply filtering to issue list.
-
-        Pure function that filters by:
-        - Excluding IDs in exclude_ids
-        - Excluding epics (issue_type == "epic")
-        - Including only epic children if epic_children is set
-        - Including only IDs in only_ids if set
-
-        Also logs warnings for requested IDs not in the ready set.
+        """Filter issue list by various criteria (pure function).
 
         Args:
             issues: List of issues to filter.
             exclude_ids: Set of issue IDs to exclude.
             epic_children: Optional set of epic child IDs to include.
             only_ids: Optional set of issue IDs to include exclusively.
-            suppress_warn_ids: Set of issue IDs to suppress from warnings.
 
         Returns:
             Filtered list of issues.
         """
-        ready_issue_ids: set[str] = {str(i["id"]) for i in issues}
-
-        if only_ids:
-            not_ready = only_ids - ready_issue_ids - suppress_warn_ids
-            if not_ready:
-                self._log_warning(
-                    f"Specified IDs not ready: {', '.join(sorted(not_ready))}"
-                )
-
         return [
             i
             for i in issues
@@ -404,40 +347,43 @@ class BeadsClient:
             and (only_ids is None or str(i["id"]) in only_ids)
         ]
 
-    async def _enrich_with_epics(
-        self,
+    @staticmethod
+    def _filter_blocked_epics(
         issues: list[dict[str, object]],
+        parent_epics: dict[str, str | None],
+        blocked_epics: set[str],
     ) -> list[dict[str, object]]:
-        """Add parent_epic info and filter out issues with blocked epics.
-
-        Enriches each issue with a 'parent_epic' field and removes
-        issues whose parent epic is blocked.
+        """Filter out issues with blocked parent epics (pure function).
 
         Args:
-            issues: List of issues to enrich.
+            issues: List of issues to filter.
+            parent_epics: Mapping of issue_id -> parent_epic_id.
+            blocked_epics: Set of blocked epic IDs.
 
         Returns:
-            Enriched list with blocked-epic issues removed.
+            Filtered list excluding issues with blocked parent epics.
         """
-        if not issues:
-            return issues
-
-        issue_ids = [str(i["id"]) for i in issues]
-        parent_epics = await self.get_parent_epics_async(issue_ids)
-
-        unique_epics = {epic for epic in parent_epics.values() if epic is not None}
-        blocked_epics = await self._get_blocked_epics_async(unique_epics)
-
-        # Filter out issues with blocked parent epics
-        filtered = [
+        return [
             i for i in issues if parent_epics.get(str(i["id"])) not in blocked_epics
         ]
 
-        # Add parent_epic field to each issue
-        for issue in filtered:
-            issue["parent_epic"] = parent_epics.get(str(issue["id"]))
+    @staticmethod
+    def _add_parent_epic_field(
+        issues: list[dict[str, object]],
+        parent_epics: dict[str, str | None],
+    ) -> list[dict[str, object]]:
+        """Add parent_epic field to each issue (pure function).
 
-        return filtered
+        Args:
+            issues: List of issues to enrich.
+            parent_epics: Mapping of issue_id -> parent_epic_id.
+
+        Returns:
+            List of issues with parent_epic field added.
+        """
+        for issue in issues:
+            issue["parent_epic"] = parent_epics.get(str(issue["id"]))
+        return issues
 
     def _sort_issues(
         self,
@@ -445,14 +391,10 @@ class BeadsClient:
         by_epic_groups: bool,
         prioritize_wip: bool,
     ) -> list[dict[str, object]]:
-        """Sort issues by priority with optional epic grouping and WIP prioritization.
-
-        Pure function that sorts issues. When by_epic_groups is True,
-        issues are grouped by parent_epic and sorted within/between groups.
-        When prioritize_wip is True, in_progress issues sort before others.
+        """Sort issues by priority with optional grouping (pure function).
 
         Args:
-            issues: List of issues (must have parent_epic field if by_epic_groups=True).
+            issues: List of issues with parent_epic field if by_epic_groups=True.
             by_epic_groups: If True, group by parent epic before sorting.
             prioritize_wip: If True, sort in_progress issues first.
 
@@ -461,34 +403,25 @@ class BeadsClient:
         """
         if not issues:
             return issues
-
         sorted_issues = list(issues)
-
         if by_epic_groups:
             sorted_issues = self._sort_by_epic_groups_sync(sorted_issues)
         else:
-            # Default sort by priority only
             sorted_issues.sort(key=lambda i: i.get("priority") or 0)
-
         if prioritize_wip:
-            # in_progress issues get status_order=0, others get 1
-            # Use stable sort to preserve prior ordering within each status
             sorted_issues.sort(
                 key=lambda i: (0 if i.get("status") == "in_progress" else 1,)
             )
-
         return sorted_issues
 
     def _sort_by_epic_groups_sync(
         self, issues: list[dict[str, object]]
     ) -> list[dict[str, object]]:
-        """Sort issues by epic groups for focus mode (sync version).
+        """Sort issues by epic groups for focus mode (pure function).
 
-        Groups issues by parent_epic field (must be pre-populated), then sorts:
+        Groups issues by parent_epic field, then sorts:
         1. Groups by (min_priority, max_updated DESC)
         2. Within groups by (priority, updated DESC)
-
-        Orphan tasks (no parent epic) form a virtual group with the same rules.
 
         Args:
             issues: List of issue dicts with parent_epic field.
@@ -498,32 +431,22 @@ class BeadsClient:
         """
         if not issues:
             return issues
-
-        # Group issues by parent epic (None for orphans)
         groups: dict[str | None, list[dict[str, object]]] = {}
         for issue in issues:
             epic = issue.get("parent_epic")
-            # Handle the case where parent_epic is not a string
             epic_key: str | None = str(epic) if epic is not None else None
             if epic_key not in groups:
                 groups[epic_key] = []
             groups[epic_key].append(issue)
 
         def get_priority(issue: dict[str, object]) -> int:
-            """Extract priority as int, defaulting to 0."""
             prio = issue.get("priority")
-            if prio is None:
-                return 0
-            if isinstance(prio, int):
-                return prio
-            return int(str(prio))
+            return int(str(prio)) if prio is not None else 0
 
         def get_updated_at(issue: dict[str, object]) -> str:
-            """Extract updated_at as string, defaulting to empty."""
             val = issue.get("updated_at")
             return str(val) if val is not None else ""
 
-        # Sort within each group by (priority, updated DESC)
         for group_issues in groups.values():
             group_issues.sort(
                 key=lambda i: (
@@ -532,20 +455,52 @@ class BeadsClient:
                 )
             )
 
-        # Compute group sort key: (min_priority, -max_updated)
         def group_sort_key(epic: str | None) -> tuple[int, str]:
             group_issues = groups[epic]
             min_priority = min(get_priority(i) for i in group_issues)
             max_updated = max(get_updated_at(i) for i in group_issues)
             return (min_priority, self._negate_timestamp(max_updated))
 
-        # Sort groups and flatten
         sorted_epics = sorted(groups.keys(), key=group_sort_key)
         result: list[dict[str, object]] = []
         for epic in sorted_epics:
             result.extend(groups[epic])
-
         return result
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # Async I/O helpers (not pure - they do subprocess/network calls)
+    # ───────────────────────────────────────────────────────────────────────────
+
+    async def _fetch_ready_issues(self) -> tuple[list[dict[str, object]], bool]:
+        """Fetch ready issues from bd CLI.
+
+        Returns:
+            Tuple of (issues list, success flag). On failure, returns ([], False).
+        """
+        result = await self._run_subprocess_async(["bd", "ready", "--json"])
+        if result.returncode != 0:
+            self._log_warning(f"bd ready failed: {result.stderr}")
+            return [], False
+        try:
+            issues = json.loads(result.stdout)
+            return (list(issues), True) if isinstance(issues, list) else ([], True)
+        except json.JSONDecodeError:
+            return [], False
+
+    async def _fetch_wip_issues(self) -> list[dict[str, object]]:
+        """Fetch unblocked in_progress issues from bd CLI."""
+        result = await self._run_subprocess_async(
+            ["bd", "list", "--status", "in_progress", "--json"]
+        )
+        if result.returncode != 0:
+            return []
+        try:
+            wip_issues = json.loads(result.stdout)
+            if not isinstance(wip_issues, list):
+                return []
+            return [wip for wip in wip_issues if wip.get("blocked_by") is None]
+        except json.JSONDecodeError:
+            return []
 
     async def _fetch_and_filter_issues(
         self,
@@ -556,68 +511,35 @@ class BeadsClient:
         prioritize_wip: bool = False,
         focus: bool = True,
     ) -> list[dict[str, object]]:
-        """Fetch and filter ready issues with all enrichment applied.
-
-        This is the shared implementation for get_ready_async and get_ready_issues_async.
-        Returns fully filtered, enriched, and sorted issue dicts.
-
-        Args:
-            exclude_ids: Set of issue IDs to exclude from results.
-            epic_id: Optional epic ID to filter by - only return children of this epic.
-            only_ids: Optional set of issue IDs to include exclusively.
-            suppress_warn_ids: Optional set of issue IDs to suppress from warnings.
-            prioritize_wip: If True, sort in_progress issues before open issues.
-            focus: If True, group tasks by parent epic and complete one epic at a time.
-
-        Returns:
-            List of issue dicts with id, title, priority, status, and parent_epic fields.
-            Sorted by priority (lower = higher priority) with optional epic grouping.
-        """
+        """Fetch, filter, enrich, and sort ready issues."""
         exclude_ids = exclude_ids or set()
         suppress_warn_ids = suppress_warn_ids or set()
-
-        # Get epic children if filtering by epic
         epic_children: set[str] | None = None
         if epic_id:
             epic_children = await self.get_epic_children_async(epic_id)
             if not epic_children:
                 self._log_warning(f"No children found for epic {epic_id}")
                 return []
-
-        # Fetch base issues (return early on failure)
-        base_issues = await self._fetch_base_issues()
-        if not base_issues and not prioritize_wip:
-            # Only return early if we have nothing to work with
-            # When prioritize_wip=True, we may still get WIP issues
+        base, ok = await self._fetch_ready_issues()
+        if not ok:
             return []
-
-        # Merge WIP issues only when prioritize_wip=True
-        if prioritize_wip:
-            wip_issues = await self._fetch_wip_issues()
-            issues = self._merge_wip_issues(base_issues, wip_issues)
-        else:
-            issues = base_issues
-
-        # Apply filters
-        issues = self._apply_filters(
-            issues=issues,
-            exclude_ids=exclude_ids,
-            epic_children=epic_children,
-            only_ids=only_ids,
-            suppress_warn_ids=suppress_warn_ids,
+        wip = await self._fetch_wip_issues() if prioritize_wip else []
+        issues = self._merge_wip_issues(base, wip) if prioritize_wip else base
+        if only_ids:
+            bad = only_ids - {str(i["id"]) for i in issues} - suppress_warn_ids
+            if bad:
+                self._log_warning(f"Specified IDs not ready: {', '.join(sorted(bad))}")
+        issues = self._filter_issues(issues, exclude_ids, epic_children, only_ids)
+        if not issues:
+            return []
+        epics = await self.get_parent_epics_async([str(i["id"]) for i in issues])
+        blocked = await self._get_blocked_epics_async({e for e in epics.values() if e})
+        issues = self._add_parent_epic_field(
+            self._filter_blocked_epics(issues, epics, blocked), epics
         )
-
-        # Enrich with epic info and filter out blocked epics
-        issues = await self._enrich_with_epics(issues)
-
-        # Sort issues
-        sorted_issues = self._sort_issues(
-            issues=issues,
-            by_epic_groups=focus,
-            prioritize_wip=prioritize_wip,
+        return self._sort_issues(
+            issues, by_epic_groups=focus, prioritize_wip=prioritize_wip
         )
-
-        return sorted_issues
 
     async def get_ready_async(
         self,

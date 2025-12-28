@@ -6,9 +6,9 @@ represents a stage boundary that the orchestrator interacts with.
 
 Design principles:
 - Protocols use structural typing (typing.Protocol) for flexibility
-- Methods are minimal - only what the orchestrator actually calls
+- Methods match exactly what the orchestrator actually calls
 - Result types are referenced from existing modules, not redefined
-- All methods are async to match the orchestrator's async architecture
+- BeadsClient, run_codex_review, and QualityGate conform to these protocols
 
 Usage:
     These protocols enable:
@@ -25,13 +25,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from .codex_review import CodexReviewResult
-    from .quality_gate import GateResult
+    from .quality_gate import CommitResult, GateResult, ValidationEvidence
     from .validation.spec import ValidationSpec
-
-
-# Type alias for review result (references existing CodexReviewResult)
-# This allows protocols to use a cleaner name while maintaining compatibility
-ReviewResult = "CodexReviewResult"
 
 
 @runtime_checkable
@@ -45,14 +40,11 @@ class IssueProvider(Protocol):
     The canonical implementation is BeadsClient, which wraps the bd CLI.
     Test implementations can use in-memory state for isolation.
 
-    Methods:
-        get_ready: Fetch list of ready issue IDs, sorted by priority.
-        claim: Claim an issue by setting status to in_progress.
-        close: Close an issue by setting status to closed.
-        mark_needs_followup: Mark an issue as needing follow-up.
+    Methods match BeadsClient's async API exactly so BeadsClient conforms
+    to this protocol without adaptation.
     """
 
-    async def get_ready(
+    async def get_ready_async(
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
@@ -76,7 +68,7 @@ class IssueProvider(Protocol):
         """
         ...
 
-    async def claim(self, issue_id: str) -> bool:
+    async def claim_async(self, issue_id: str) -> bool:
         """Claim an issue by setting status to in_progress.
 
         Args:
@@ -87,7 +79,7 @@ class IssueProvider(Protocol):
         """
         ...
 
-    async def close(self, issue_id: str) -> bool:
+    async def close_async(self, issue_id: str) -> bool:
         """Close an issue by setting status to closed.
 
         Args:
@@ -98,7 +90,7 @@ class IssueProvider(Protocol):
         """
         ...
 
-    async def mark_needs_followup(
+    async def mark_needs_followup_async(
         self, issue_id: str, reason: str, log_path: Path | None = None
     ) -> bool:
         """Mark an issue as needing follow-up.
@@ -116,22 +108,48 @@ class IssueProvider(Protocol):
         """
         ...
 
+    async def get_issue_description_async(self, issue_id: str) -> str | None:
+        """Get the description of an issue.
+
+        Args:
+            issue_id: The issue ID to get description for.
+
+        Returns:
+            The issue description string, or None if not found.
+        """
+        ...
+
+    async def close_eligible_epics_async(self) -> bool:
+        """Auto-close epics where all children are complete.
+
+        Returns:
+            True if any epics were closed, False otherwise.
+        """
+        ...
+
+    async def commit_issues_async(self) -> bool:
+        """Commit .beads/issues.jsonl if it has changes.
+
+        Returns:
+            True if commit succeeded, False otherwise.
+        """
+        ...
+
 
 @runtime_checkable
 class CodeReviewer(Protocol):
     """Protocol for code review operations.
 
-    Provides a method for reviewing commits and returning structured results.
-    The orchestrator uses this to run post-commit code reviews.
+    Provides a callable interface for reviewing commits and returning
+    structured results. The orchestrator uses this to run post-commit
+    code reviews.
 
-    The canonical implementation wraps run_codex_review(), which uses Codex CLI.
+    The canonical implementation is the run_codex_review function, which
+    conforms to this protocol as a callable with matching signature.
     Test implementations can return predetermined results for isolation.
-
-    Methods:
-        review: Run code review on a commit and return structured results.
     """
 
-    async def review(
+    async def __call__(
         self,
         repo_path: Path,
         commit_sha: str,
@@ -153,8 +171,8 @@ class CodeReviewer(Protocol):
             thinking_mode: Optional reasoning effort level for reviewer.
 
         Returns:
-            ReviewResult (CodexReviewResult) with review outcome. On parse
-            failure after all retries, returns passed=False (fail-closed).
+            CodexReviewResult with review outcome. On parse failure after
+            all retries, returns passed=False (fail-closed).
         """
         ...
 
@@ -163,23 +181,18 @@ class CodeReviewer(Protocol):
 class GateChecker(Protocol):
     """Protocol for quality gate checking.
 
-    Provides a method for verifying agent work meets quality requirements.
+    Provides methods for verifying agent work meets quality requirements.
     The orchestrator uses this after each agent attempt to determine if
     the issue was successfully resolved.
 
-    The canonical implementation is QualityGate.
-    Test implementations can verify specific conditions for isolation.
+    The canonical implementation is QualityGate, which conforms to this
+    protocol. Test implementations can verify specific conditions for isolation.
 
-    The gate checks:
-    - Commit exists with correct issue ID
-    - Validation commands ran (parsed from JSONL logs)
-    - No-change/obsolete resolutions have rationale and clean tree
-
-    Methods:
-        check: Run quality gate check and return results.
+    Methods match QualityGate's API exactly so QualityGate conforms to this
+    protocol without adaptation.
     """
 
-    def check(
+    def check_with_resolution(
         self,
         issue_id: str,
         log_path: Path,
@@ -206,5 +219,81 @@ class GateChecker(Protocol):
 
         Raises:
             ValueError: If spec is not provided.
+        """
+        ...
+
+    def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
+        """Get the byte offset at the end of a log file.
+
+        This is a lightweight method for getting the current file position
+        after reading from a given offset. Use this when you only need the
+        offset for retry scoping, not the evidence itself.
+
+        Args:
+            log_path: Path to the JSONL log file.
+            start_offset: Byte offset to start from (default 0).
+
+        Returns:
+            The byte offset at the end of the file, or start_offset if file
+            doesn't exist or can't be read.
+        """
+        ...
+
+    def check_no_progress(
+        self,
+        log_path: Path,
+        log_offset: int,
+        previous_commit_hash: str | None,
+        current_commit_hash: str | None,
+        spec: ValidationSpec | None = None,
+    ) -> bool:
+        """Check if no progress was made since the last attempt.
+
+        No progress is detected when:
+        - The commit hash hasn't changed (or both are None)
+        - No new validation evidence was found after the log offset
+
+        Args:
+            log_path: Path to the JSONL log file from agent session.
+            log_offset: Byte offset marking the end of the previous attempt.
+            previous_commit_hash: Commit hash from the previous attempt.
+            current_commit_hash: Commit hash from this attempt.
+            spec: Optional ValidationSpec for spec-driven evidence detection.
+
+        Returns:
+            True if no progress was made, False if progress was detected.
+        """
+        ...
+
+    def parse_validation_evidence_with_spec(
+        self, log_path: Path, spec: ValidationSpec, offset: int = 0
+    ) -> ValidationEvidence:
+        """Parse JSONL log for validation evidence using spec-defined patterns.
+
+        Args:
+            log_path: Path to the JSONL log file.
+            spec: ValidationSpec defining detection patterns.
+            offset: Byte offset to start parsing from (default 0).
+
+        Returns:
+            ValidationEvidence with flags indicating which validations ran.
+        """
+        ...
+
+    def check_commit_exists(
+        self, issue_id: str, baseline_timestamp: int | None = None
+    ) -> CommitResult:
+        """Check if a commit with bd-<issue_id> exists in recent history.
+
+        Searches commits from the last 30 days to accommodate long-running
+        work that may span multiple days.
+
+        Args:
+            issue_id: The issue ID to search for (without bd- prefix).
+            baseline_timestamp: Unix timestamp. If provided, only accepts
+                commits created after this time.
+
+        Returns:
+            CommitResult indicating whether a matching commit exists.
         """
         ...
