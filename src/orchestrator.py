@@ -20,7 +20,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import HookMatcher
 
 from .beads_client import BeadsClient
-from .braintrust_integration import TracedAgentExecution
+from .telemetry import BraintrustProvider, NullTelemetryProvider, TelemetryProvider
 from .codex_review import run_codex_review, format_review_issues, CodexReviewResult
 from .git_utils import (
     get_git_commit_async,
@@ -239,6 +239,7 @@ class MalaOrchestrator:
         issue_provider: IssueProvider | None = None,
         code_reviewer: CodeReviewer | None = None,
         gate_checker: GateChecker | None = None,
+        telemetry_provider: TelemetryProvider | None = None,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
@@ -292,6 +293,14 @@ class MalaOrchestrator:
         self.code_reviewer: CodeReviewer = (
             DefaultCodeReviewer() if code_reviewer is None else code_reviewer
         )
+
+        # TelemetryProvider: BraintrustProvider when enabled, else NullTelemetryProvider
+        if telemetry_provider is not None:
+            self.telemetry_provider: TelemetryProvider = telemetry_provider
+        elif braintrust_enabled:
+            self.telemetry_provider = BraintrustProvider()
+        else:
+            self.telemetry_provider = NullTelemetryProvider()
 
         # Cached per-issue validation spec (built once at run start)
         self.per_issue_spec: ValidationSpec | None = None
@@ -778,11 +787,11 @@ class MalaOrchestrator:
             },
         )
 
-        # Braintrust tracing context
-        tracer = TracedAgentExecution(
-            issue_id=issue_id,
-            agent_id=agent_id,
+        # Telemetry tracing context (uses injected provider)
+        tracer = self.telemetry_provider.create_span(
+            issue_id,
             metadata={
+                "agent_id": agent_id,
                 "mala_version": __version__,
                 "project_dir": self.repo_path.name,
                 "git_branch": await get_git_branch_async(self.repo_path),

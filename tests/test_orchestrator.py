@@ -760,6 +760,35 @@ class TestOrchestratorInitialization:
         orch = MalaOrchestrator(repo_path=tmp_path, focus=False)
         assert orch.focus is False
 
+    def test_telemetry_provider_default_null_when_braintrust_disabled(
+        self, tmp_path: Path
+    ) -> None:
+        """Default telemetry provider is NullTelemetryProvider when braintrust disabled."""
+        from src.telemetry import NullTelemetryProvider
+
+        orch = MalaOrchestrator(repo_path=tmp_path, braintrust_enabled=False)
+        assert isinstance(orch.telemetry_provider, NullTelemetryProvider)
+
+    def test_telemetry_provider_braintrust_when_enabled(self, tmp_path: Path) -> None:
+        """Telemetry provider is BraintrustProvider when braintrust_enabled=True."""
+        from src.telemetry import BraintrustProvider
+
+        orch = MalaOrchestrator(repo_path=tmp_path, braintrust_enabled=True)
+        assert isinstance(orch.telemetry_provider, BraintrustProvider)
+
+    def test_telemetry_provider_injection(self, tmp_path: Path) -> None:
+        """Telemetry provider can be injected for testing."""
+        from src.telemetry import NullTelemetryProvider
+
+        custom_provider = NullTelemetryProvider()
+        orch = MalaOrchestrator(
+            repo_path=tmp_path,
+            braintrust_enabled=True,  # Would default to Braintrust
+            telemetry_provider=custom_provider,  # But we override
+        )
+        # Injected provider should be used, not the default
+        assert orch.telemetry_provider is custom_provider
+
 
 class TestEpicFilterAsync:
     """Test epic filter functionality in BeadsClient (async)."""
@@ -1589,14 +1618,8 @@ class TestMissingLogFile:
             patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
             patch("src.orchestrator.get_git_branch_async", return_value="main"),
             patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
-            patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+            # TracedAgentExecution removed - telemetry_provider injected via constructor
         ):
-            # Setup tracer mock
-            mock_tracer = MagicMock()
-            mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
-            mock_tracer.__exit__ = MagicMock(return_value=None)
-            mock_tracer_cls.return_value = mock_tracer
-
             start = time.monotonic()
             result = await orchestrator.run_implementer("test-issue")
             elapsed = time.monotonic() - start
@@ -1649,14 +1672,8 @@ class TestMissingLogFile:
             patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
             patch("src.orchestrator.get_git_branch_async", return_value="main"),
             patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
-            patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+            # TracedAgentExecution removed - telemetry_provider injected via constructor
         ):
-            # Setup tracer mock
-            mock_tracer = MagicMock()
-            mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
-            mock_tracer.__exit__ = MagicMock(return_value=None)
-            mock_tracer_cls.return_value = mock_tracer
-
             result = await orchestrator.run_implementer("issue-xyz")
 
         # Summary should mention session log and the timeout
@@ -1833,13 +1850,8 @@ class TestAgentEnvInheritance:
                 patch("src.orchestrator.ClaudeSDKClient", MockClient),
                 patch("src.orchestrator.get_git_branch_async", return_value="main"),
                 patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
-                patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+                # TracedAgentExecution removed - telemetry_provider injected via constructor
             ):
-                mock_tracer = MagicMock()
-                mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
-                mock_tracer.__exit__ = MagicMock(return_value=None)
-                mock_tracer_cls.return_value = mock_tracer
-
                 await orchestrator.run_implementer("test-issue")
 
             # Verify the captured env includes our test var
@@ -3395,7 +3407,7 @@ class TestBaselineCommitSelection:
             patch(
                 "src.orchestrator.run_codex_review", side_effect=mock_run_codex_review
             ),
-            patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+            # TracedAgentExecution removed - telemetry_provider injected via constructor
             patch("src.orchestrator.get_claude_log_path", return_value=log_file),
             patch.object(
                 orchestrator.beads,
@@ -3403,11 +3415,6 @@ class TestBaselineCommitSelection:
                 return_value="Test issue",
             ),
         ):
-            mock_tracer = MagicMock()
-            mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
-            mock_tracer.__exit__ = MagicMock(return_value=None)
-            mock_tracer_cls.return_value = mock_tracer
-
             await orchestrator.run_implementer("fresh-issue")
 
         # For fresh issues, codex review should receive current HEAD as baseline
@@ -3480,7 +3487,7 @@ class TestBaselineCommitSelection:
             patch(
                 "src.orchestrator.run_codex_review", side_effect=mock_run_codex_review
             ),
-            patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+            # TracedAgentExecution removed - telemetry_provider injected via constructor
             patch("src.orchestrator.get_claude_log_path", return_value=log_file),
             patch.object(
                 orchestrator.beads,
@@ -3488,11 +3495,6 @@ class TestBaselineCommitSelection:
                 return_value="Test issue",
             ),
         ):
-            mock_tracer = MagicMock()
-            mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
-            mock_tracer.__exit__ = MagicMock(return_value=None)
-            mock_tracer_cls.return_value = mock_tracer
-
             await orchestrator.run_implementer("resumed-issue")
 
         # For resumed issues, baseline should be the git-derived one (parent of first commit)
@@ -3557,7 +3559,7 @@ class TestBaselineCommitSelection:
                 "src.orchestrator.get_baseline_for_issue",
                 side_effect=mock_get_baseline_for_issue,
             ),
-            patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+            # TracedAgentExecution removed - telemetry_provider injected via constructor
             patch("src.orchestrator.get_claude_log_path", return_value=log_file),
             patch.object(
                 orchestrator.beads,
@@ -3565,11 +3567,6 @@ class TestBaselineCommitSelection:
                 return_value="Test",
             ),
         ):
-            mock_tracer = MagicMock()
-            mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
-            mock_tracer.__exit__ = MagicMock(return_value=None)
-            mock_tracer_cls.return_value = mock_tracer
-
             await orchestrator.run_implementer("priority-test")
 
         # get_baseline_for_issue should be called first
@@ -3691,7 +3688,7 @@ class TestCodexReviewUsesCurrentHead:
                 "src.orchestrator.run_codex_review",
                 side_effect=mock_run_codex_review,
             ),
-            patch("src.orchestrator.TracedAgentExecution") as mock_tracer_cls,
+            # TracedAgentExecution removed - telemetry_provider injected via constructor
             patch("src.orchestrator.get_claude_log_path", return_value=log_file),
             patch.object(orchestrator, "quality_gate", mock_quality_gate),
             patch.object(
@@ -3700,11 +3697,6 @@ class TestCodexReviewUsesCurrentHead:
                 return_value="Test issue",
             ),
         ):
-            mock_tracer = MagicMock()
-            mock_tracer.__enter__ = MagicMock(return_value=mock_tracer)
-            mock_tracer.__exit__ = MagicMock(return_value=None)
-            mock_tracer_cls.return_value = mock_tracer
-
             await orchestrator.run_implementer("test-issue")
 
         # The key assertion: codex review should receive current HEAD,
