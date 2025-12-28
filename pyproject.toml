@@ -27,6 +27,9 @@ artifacts = ["src/scripts/*.sh"]
 [tool.ty.environment]
 root = ["."]
 
+[tool.ty.src]
+exclude = ["tests"]
+
 [tool.ty.rules]
 # Set all ty rules to error level for strictest checking
 possibly-unresolved-reference = "error"
