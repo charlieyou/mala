@@ -262,18 +262,24 @@ class MalaOrchestrator:
 
         # Initialize pipeline stage implementations (use defaults if not provided)
         # GateChecker: QualityGate for post-run validation
-        self.quality_gate: GateChecker = gate_checker or QualityGate(self.repo_path)
+        self.quality_gate: GateChecker = (
+            QualityGate(self.repo_path) if gate_checker is None else gate_checker
+        )
 
         # IssueProvider: BeadsClient for issue tracking
         def log_warning(msg: str) -> None:
             log("⚠", msg, Colors.YELLOW)
 
-        self.beads: IssueProvider = issue_provider or BeadsClient(
-            self.repo_path, log_warning=log_warning
+        self.beads: IssueProvider = (
+            BeadsClient(self.repo_path, log_warning=log_warning)
+            if issue_provider is None
+            else issue_provider
         )
 
         # CodeReviewer: DefaultCodeReviewer wrapping run_codex_review
-        self.code_reviewer: CodeReviewer = code_reviewer or DefaultCodeReviewer()
+        self.code_reviewer: CodeReviewer = (
+            DefaultCodeReviewer() if code_reviewer is None else code_reviewer
+        )
 
         # Cached per-issue validation spec (built once at run start)
         self.per_issue_spec: ValidationSpec | None = None
