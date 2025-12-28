@@ -748,7 +748,12 @@ class TestIssueResolutionMarkerParsing:
             {
                 "type": "assistant",
                 "message": {
-                    "content": [{"type": "text", "text": "Let me check the code."}]
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Let me check the code.",
+                        }
+                    ]
                 },
             }
         )
@@ -2127,6 +2132,81 @@ class TestSpecDrivenEvidencePatterns:
         # If it used hardcoded patterns, it would fail (pytest not found)
         assert result.passed is True, (
             f"Gate should use spec patterns, not hardcoded. Failures: {result.failure_reasons}"
+        )
+
+    def test_spec_pattern_changes_propagate_to_evidence_detection(
+        self, tmp_path: Path
+    ) -> None:
+        """Changing spec command patterns automatically updates evidence detection.
+
+        This test verifies the key invariant from mala-yg9.7: when you update
+        a ValidationCommand's detection_pattern in the spec, the QualityGate
+        evidence detection uses the new pattern immediately without any other
+        code changes.
+        """
+        import re
+
+        from src.validation.spec import (
+            CommandKind,
+            ValidationCommand,
+            ValidationScope,
+            ValidationSpec,
+        )
+
+        # Create a log with a non-standard test command
+        log_path = tmp_path / "session.jsonl"
+        lines = [
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Bash",
+                                "input": {"command": "uv run my_custom_runner tests/"},
+                            }
+                        ]
+                    },
+                }
+            ),
+        ]
+        log_path.write_text("\n".join(lines) + "\n")
+
+        gate = QualityGate(tmp_path)
+
+        # Spec V1: Pattern does NOT match "my_custom_runner"
+        spec_v1 = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command=["uv", "run", "pytest"],
+                    kind=CommandKind.TEST,
+                    detection_pattern=re.compile(r"\bpytest\b"),  # Won't match
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+        )
+        evidence_v1 = gate.parse_validation_evidence_with_spec(log_path, spec_v1)
+        assert evidence_v1.pytest_ran is False, (
+            "Spec V1 pattern should NOT match my_custom_runner"
+        )
+
+        # Spec V2: Update pattern to match "my_custom_runner"
+        spec_v2 = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="test",
+                    command=["uv", "run", "my_custom_runner"],
+                    kind=CommandKind.TEST,
+                    detection_pattern=re.compile(r"\bmy_custom_runner\b"),  # Will match
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+        )
+        evidence_v2 = gate.parse_validation_evidence_with_spec(log_path, spec_v2)
+        assert evidence_v2.pytest_ran is True, (
+            "Spec V2 pattern SHOULD match my_custom_runner - pattern change propagated"
         )
 
 

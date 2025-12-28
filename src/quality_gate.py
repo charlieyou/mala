@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
@@ -24,6 +25,18 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.validation.spec import ValidationSpec
+
+
+# Private fallback patterns for backward compatibility.
+# Production code should use parse_validation_evidence_with_spec() with a ValidationSpec
+# that defines detection_pattern on each command. These patterns are only used when
+# a ValidationSpec command lacks a detection_pattern (legacy/testing scenarios).
+_FALLBACK_PATTERNS: dict[str, re.Pattern[str]] = {
+    "pytest": re.compile(r"\b(uv\s+run\s+)?pytest\b"),
+    "ruff_check": re.compile(r"\b(uvx\s+)?ruff\s+check\b"),
+    "ruff_format": re.compile(r"\b(uvx\s+)?ruff\s+format\b"),
+    "ty_check": re.compile(r"\b(uvx\s+)?ty\s+check\b"),
+}
 
 
 @dataclass
@@ -145,13 +158,10 @@ class GateResult:
 class QualityGate:
     """Quality gate for verifying agent work meets requirements."""
 
-    # Patterns for detecting validation commands in Bash tool calls
-    VALIDATION_PATTERNS: ClassVar[dict[str, re.Pattern[str]]] = {
-        "pytest": re.compile(r"\b(uv\s+run\s+)?pytest\b"),
-        "ruff_check": re.compile(r"\b(uvx\s+)?ruff\s+check\b"),
-        "ruff_format": re.compile(r"\b(uvx\s+)?ruff\s+format\b"),
-        "ty_check": re.compile(r"\b(uvx\s+)?ty\s+check\b"),
-    }
+    # DEPRECATED: Use parse_validation_evidence_with_spec() with a ValidationSpec instead.
+    # This alias is kept for backward compatibility with tests.
+    # Will be removed in a future version.
+    VALIDATION_PATTERNS: ClassVar[dict[str, re.Pattern[str]]] = _FALLBACK_PATTERNS
 
     # Patterns for detecting issue resolution markers in log text
     RESOLUTION_PATTERNS: ClassVar[dict[str, re.Pattern[str]]] = {
@@ -314,12 +324,22 @@ class QualityGate:
     def parse_validation_evidence(self, log_path: Path) -> ValidationEvidence:
         """Parse JSONL log file for validation command evidence.
 
+        .. deprecated::
+            Use :meth:`parse_validation_evidence_with_spec` with a ValidationSpec
+            for production code. This method uses hardcoded patterns.
+
         Args:
             log_path: Path to the JSONL log file from agent session.
 
         Returns:
             ValidationEvidence with flags for each detected command.
         """
+        warnings.warn(
+            "parse_validation_evidence() uses hardcoded patterns. "
+            "Use parse_validation_evidence_with_spec() with a ValidationSpec instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         evidence, _ = self.parse_validation_evidence_from_offset(log_path, offset=0)
         return evidence
 
@@ -327,6 +347,10 @@ class QualityGate:
         self, log_path: Path, offset: int = 0
     ) -> tuple[ValidationEvidence, int]:
         """Parse JSONL log file for validation command evidence starting at offset.
+
+        .. deprecated::
+            Use :meth:`parse_validation_evidence_with_spec` with a ValidationSpec
+            for production code. This method uses hardcoded patterns.
 
         This allows scoping evidence to a specific attempt by starting from
         the byte offset where the previous attempt ended.
@@ -397,16 +421,16 @@ class QualityGate:
                             command = input_data.get("command", "")
 
                             # Check against validation patterns and record tool_id mapping
-                            if self.VALIDATION_PATTERNS["pytest"].search(command):
+                            if _FALLBACK_PATTERNS["pytest"].search(command):
                                 evidence.pytest_ran = True
                                 tool_id_to_command[tool_id] = "pytest"
-                            if self.VALIDATION_PATTERNS["ruff_check"].search(command):
+                            if _FALLBACK_PATTERNS["ruff_check"].search(command):
                                 evidence.ruff_check_ran = True
                                 tool_id_to_command[tool_id] = "ruff check"
-                            if self.VALIDATION_PATTERNS["ruff_format"].search(command):
+                            if _FALLBACK_PATTERNS["ruff_format"].search(command):
                                 evidence.ruff_format_ran = True
                                 tool_id_to_command[tool_id] = "ruff format"
-                            if self.VALIDATION_PATTERNS["ty_check"].search(command):
+                            if _FALLBACK_PATTERNS["ty_check"].search(command):
                                 evidence.ty_check_ran = True
                                 tool_id_to_command[tool_id] = "ty check"
 
@@ -580,10 +604,10 @@ class QualityGate:
     def _get_fallback_pattern(self, kind: CommandKind) -> re.Pattern[str] | None:
         """Get fallback pattern for a CommandKind when spec pattern is missing."""
         fallback_map = {
-            CommandKind.TEST: self.VALIDATION_PATTERNS["pytest"],
-            CommandKind.LINT: self.VALIDATION_PATTERNS["ruff_check"],
-            CommandKind.FORMAT: self.VALIDATION_PATTERNS["ruff_format"],
-            CommandKind.TYPECHECK: self.VALIDATION_PATTERNS["ty_check"],
+            CommandKind.TEST: _FALLBACK_PATTERNS["pytest"],
+            CommandKind.LINT: _FALLBACK_PATTERNS["ruff_check"],
+            CommandKind.FORMAT: _FALLBACK_PATTERNS["ruff_format"],
+            CommandKind.TYPECHECK: _FALLBACK_PATTERNS["ty_check"],
         }
         return fallback_map.get(kind)
 
@@ -726,6 +750,10 @@ class QualityGate:
     ) -> GateResult:
         """Run full quality gate check.
 
+        .. deprecated::
+            Use :meth:`check_with_resolution` with a ValidationSpec for production
+            code. This method uses hardcoded patterns and lacks resolution support.
+
         Verifies:
         1. A commit exists with bd-<issue_id> in the message
         2. Validation commands (pytest, ruff) were executed
@@ -739,6 +767,12 @@ class QualityGate:
         Returns:
             GateResult with pass/fail and failure reasons.
         """
+        warnings.warn(
+            "check() uses hardcoded patterns and lacks resolution support. "
+            "Use check_with_resolution() with a ValidationSpec instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         failure_reasons: list[str] = []
 
         # Check for matching commit
