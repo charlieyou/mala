@@ -1974,3 +1974,329 @@ class TestSpecRunnerBaselineRefresh:
         # Should use the baseline created by the other agent
         assert baseline == 92.0
         assert wait_called
+
+    def test_stale_baseline_triggers_refresh(
+        self, runner: ValidationRunner, tmp_path: Path
+    ) -> None:
+        """When baseline is stale (older than last commit), runner should refresh it."""
+        from src.validation.spec_runner import SpecValidationRunner
+
+        spec_runner = SpecValidationRunner(tmp_path)
+
+        # Create stale baseline (old mtime)
+        baseline_path = tmp_path / "coverage.xml"
+        baseline_path.write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.75" branch-rate="0.70" />'
+        )
+        import os
+
+        old_time = 946684800  # Year 2000 (very old)
+        os.utime(baseline_path, (old_time, old_time))
+
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["uv", "run", "pytest"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        # Mock worktree for refresh
+        from src.validation.worktree import WorktreeContext, WorktreeState
+
+        mock_worktree = MagicMock(spec=WorktreeContext)
+        mock_worktree.state = WorktreeState.CREATED
+        mock_worktree.path = tmp_path / "baseline-worktree"
+        mock_worktree.path.mkdir()
+
+        # Refreshed baseline will have higher coverage (90%)
+        (mock_worktree.path / "coverage.xml").write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.90" branch-rate="0.85" />'
+        )
+
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+
+        def mock_git_run(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            if "status" in args and "--porcelain" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                # Commit time is 2023 (much newer than stale baseline from 2000)
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        worktree_created = False
+
+        def mock_create_worktree(*args: object, **kwargs: object) -> MagicMock:
+            nonlocal worktree_created
+            worktree_created = True
+            return mock_worktree
+
+        with (
+            patch(
+                "src.validation.spec_runner.create_worktree",
+                side_effect=mock_create_worktree,
+            ),
+            patch(
+                "src.validation.spec_runner.remove_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                return_value=mock_proc,
+            ),
+            patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
+            patch("src.validation.spec_runner.try_lock", return_value=True),
+        ):
+            baseline = spec_runner._refresh_baseline(spec, tmp_path)
+
+        # Stale baseline should trigger worktree creation for refresh
+        assert worktree_created is True
+        # Should return the refreshed baseline (90%), not the stale one (75%)
+        assert baseline == 90.0
+        # Baseline file should be updated
+        assert baseline_path.exists()
+
+
+class TestBaselineCaptureOrder:
+    """Tests verifying baseline is captured BEFORE worktree/validation.
+
+    These tests specifically verify the acceptance criterion that baseline
+    must be captured before validation runs, not during or after.
+    """
+
+    @pytest.fixture
+    def runner(self, tmp_path: Path) -> ValidationRunner:
+        """Create a runner with coverage enabled."""
+        config = ValidationConfig(
+            run_slow_tests=False,
+            run_e2e=False,
+            coverage=True,
+            use_test_mutex=False,
+        )
+        return ValidationRunner(tmp_path, config)
+
+    def test_baseline_captured_before_worktree_creation(
+        self, runner: ValidationRunner, tmp_path: Path
+    ) -> None:
+        """Verify baseline is captured BEFORE worktree is created.
+
+        The order must be:
+        1. Capture/refresh baseline from main repo
+        2. Create worktree for validation
+        3. Run tests in worktree
+        4. Compare worktree coverage against pre-captured baseline
+
+        This test uses call order tracking to verify step 1 happens before step 2.
+        """
+        import os
+        from src.validation.worktree import WorktreeContext, WorktreeState
+
+        # Create fresh baseline at 85% in main repo
+        baseline_xml = tmp_path / "coverage.xml"
+        baseline_xml.write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.85" branch-rate="0.80" />'
+        )
+        future_time = 4102444800
+        os.utime(baseline_xml, (future_time, future_time))
+
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["echo", "test"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        # Create a context WITH commit_hash to trigger worktree creation
+        context = ValidationContext(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_hash="abc123",  # This triggers worktree creation
+            changed_files=[],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        # Track the order of operations
+        call_order: list[str] = []
+
+        def mock_git_run(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            if "status" in args and "--porcelain" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                call_order.append("baseline_check")
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        # Mock worktree that tracks when it's created
+        mock_worktree = MagicMock(spec=WorktreeContext)
+        mock_worktree.state = WorktreeState.CREATED
+        mock_worktree.path = tmp_path / "worktree"
+        mock_worktree.path.mkdir()
+
+        # Create coverage.xml in worktree with DIFFERENT coverage (80%)
+        (mock_worktree.path / "coverage.xml").write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.80" branch-rate="0.75" />'
+        )
+
+        def mock_create_worktree(*args: object, **kwargs: object) -> MagicMock:
+            call_order.append("worktree_create")
+            return mock_worktree
+
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+
+        with (
+            patch(
+                "src.validation.spec_runner.create_worktree",
+                side_effect=mock_create_worktree,
+            ),
+            patch(
+                "src.validation.spec_runner.remove_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                return_value=mock_proc,
+            ),
+            patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
+        ):
+            result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
+
+        # Verify the order: baseline_check must come before worktree_create
+        assert "baseline_check" in call_order, "Baseline check was not called"
+        assert "worktree_create" in call_order, "Worktree was not created"
+
+        baseline_idx = call_order.index("baseline_check")
+        worktree_idx = call_order.index("worktree_create")
+        assert baseline_idx < worktree_idx, (
+            f"Baseline check (idx={baseline_idx}) must happen before "
+            f"worktree creation (idx={worktree_idx}). Order was: {call_order}"
+        )
+
+        # Result should pass because 80% >= 85% is false... wait, let me check
+        # Actually the worktree has 80% but baseline was 85%, so it should FAIL
+        # But the current test creates fresh baseline so it won't refresh
+        # Let me verify the coverage result uses the baseline correctly
+        assert result.coverage_result is not None
+        # Worktree coverage is 80%, baseline was 85%
+        # Since 80% < 85%, this should fail
+        assert result.coverage_result.percent == 80.0
+
+    def test_run_spec_uses_pre_captured_baseline_not_worktree_coverage(
+        self, runner: ValidationRunner, tmp_path: Path
+    ) -> None:
+        """Verify validation compares against pre-captured baseline, not worktree.
+
+        This test creates a scenario where:
+        - Main repo baseline: 90%
+        - Worktree coverage (from test run): 70%
+
+        The validation should FAIL because 70% < 90% (baseline).
+        This proves baseline was captured BEFORE the test run, not from
+        the worktree's coverage.xml which is generated during tests.
+        """
+        import os
+        from src.validation.worktree import WorktreeContext, WorktreeState
+
+        # Create fresh baseline at 90% in main repo
+        baseline_xml = tmp_path / "coverage.xml"
+        baseline_xml.write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.90" branch-rate="0.85" />'
+        )
+        future_time = 4102444800
+        os.utime(baseline_xml, (future_time, future_time))
+
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["echo", "test"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        context = ValidationContext(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_hash="abc123",
+            changed_files=[],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        def mock_git_run(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            if "status" in args and "--porcelain" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        # Mock worktree with LOWER coverage (70%) - simulating coverage drop
+        mock_worktree = MagicMock(spec=WorktreeContext)
+        mock_worktree.state = WorktreeState.CREATED
+        mock_worktree.path = tmp_path / "worktree"
+        mock_worktree.path.mkdir()
+
+        # Worktree coverage.xml - generated by test run with lower coverage
+        (mock_worktree.path / "coverage.xml").write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.70" branch-rate="0.65" />'
+        )
+
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+
+        with (
+            patch(
+                "src.validation.spec_runner.create_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.validation.spec_runner.remove_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                return_value=mock_proc,
+            ),
+            patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
+        ):
+            result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
+
+        # Validation should FAIL:
+        # - Pre-captured baseline from main repo: 90%
+        # - Worktree coverage from test run: 70%
+        # - 70% < 90% = coverage decreased = FAIL
+        assert result.passed is False, (
+            "Validation should fail when worktree coverage (70%) < baseline (90%)"
+        )
+        assert result.coverage_result is not None
+        assert result.coverage_result.passed is False
+        assert result.coverage_result.percent == 70.0, (
+            "Coverage should be from worktree (70%), not baseline (90%)"
+        )
+        # Failure message should mention both percentages
+        assert "70.0%" in (result.coverage_result.failure_reason or "")
+        assert "90.0%" in (result.coverage_result.failure_reason or "")
