@@ -152,6 +152,57 @@ class TestCommandRunner:
         child_output = tmp_path / "child_output.txt"
         assert not child_output.exists(), "Child process should have been killed"
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    def test_sigterm_grace_period(self, tmp_path: Path) -> None:
+        """Verify SIGTERM grace period allows graceful shutdown (sync).
+
+        Uses a process that catches SIGTERM and exits cleanly within grace period.
+        """
+        script = tmp_path / "graceful.sh"
+        script.write_text(
+            """#!/bin/bash
+            trap 'echo "caught SIGTERM" > "$1/graceful.txt"; exit 42' TERM
+            sleep 10
+            """
+        )
+        script.chmod(0o755)
+
+        runner = CommandRunner(
+            cwd=tmp_path, timeout_seconds=0.1, kill_grace_seconds=2.0
+        )
+        result = runner.run([str(script), str(tmp_path)])
+
+        assert result.timed_out is True
+        graceful_file = tmp_path / "graceful.txt"
+        assert graceful_file.exists(), "Process should have caught SIGTERM"
+        assert "caught SIGTERM" in graceful_file.read_text()
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    def test_sigkill_after_grace_period(self, tmp_path: Path) -> None:
+        """Verify SIGKILL sent after grace period if SIGTERM ignored (sync)."""
+        script = tmp_path / "ignore_sigterm.sh"
+        script.write_text(
+            """#!/bin/bash
+            trap '' TERM
+            echo "started" > "$1/started.txt"
+            sleep 10
+            echo "survived" > "$1/survived.txt"
+            """
+        )
+        script.chmod(0o755)
+
+        runner = CommandRunner(
+            cwd=tmp_path, timeout_seconds=0.1, kill_grace_seconds=0.1
+        )
+        start = time.monotonic()
+        result = runner.run([str(script), str(tmp_path)])
+        elapsed = time.monotonic() - start
+
+        assert result.timed_out is True
+        assert elapsed < 1.0, f"Process hung, took {elapsed}s"
+        assert (tmp_path / "started.txt").exists()
+        assert not (tmp_path / "survived.txt").exists()
+
     def test_run_with_env(self, tmp_path: Path) -> None:
         runner = CommandRunner(cwd=tmp_path)
         result = runner.run(
@@ -213,6 +264,77 @@ class TestAsyncCommandRunner:
 
         child_output = tmp_path / "child_output.txt"
         assert not child_output.exists(), "Child process should have been killed"
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    async def test_async_sigterm_grace_period(self, tmp_path: Path) -> None:
+        """Verify SIGTERM grace period allows graceful shutdown.
+
+        Uses a process that catches SIGTERM and exits cleanly within grace period.
+        Verifies it exits with its own exit code (not SIGKILL's 137).
+        """
+        script = tmp_path / "graceful.sh"
+        script.write_text(
+            """#!/bin/bash
+            trap 'echo "caught SIGTERM" > "$1/graceful.txt"; exit 42' TERM
+            # Sleep forever, waiting for signal
+            sleep 10
+            """
+        )
+        script.chmod(0o755)
+
+        # Use short timeout but long grace period to ensure SIGTERM path
+        runner = CommandRunner(
+            cwd=tmp_path, timeout_seconds=0.1, kill_grace_seconds=2.0
+        )
+        result = await runner.run_async([str(script), str(tmp_path)])
+
+        assert result.timed_out is True
+
+        # Verify the process caught SIGTERM and exited gracefully
+        graceful_file = tmp_path / "graceful.txt"
+        assert graceful_file.exists(), "Process should have caught SIGTERM"
+        assert "caught SIGTERM" in graceful_file.read_text()
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    async def test_async_sigkill_after_grace_period(self, tmp_path: Path) -> None:
+        """Verify SIGKILL sent after grace period if SIGTERM ignored.
+
+        Uses a process that ignores SIGTERM. After the grace period expires,
+        SIGKILL should forcibly terminate it.
+        """
+        script = tmp_path / "ignore_sigterm.sh"
+        script.write_text(
+            """#!/bin/bash
+            # Ignore SIGTERM
+            trap '' TERM
+            # Write a marker to show we started
+            echo "started" > "$1/started.txt"
+            # Sleep forever - should be SIGKILLed
+            sleep 10
+            # This should never execute
+            echo "survived" > "$1/survived.txt"
+            """
+        )
+        script.chmod(0o755)
+
+        # Very short grace period to speed up test
+        runner = CommandRunner(
+            cwd=tmp_path, timeout_seconds=0.1, kill_grace_seconds=0.1
+        )
+        start = time.monotonic()
+        result = await runner.run_async([str(script), str(tmp_path)])
+        elapsed = time.monotonic() - start
+
+        assert result.timed_out is True
+        # Should complete within timeout + grace + small buffer, not hang
+        assert elapsed < 1.0, f"Process hung, took {elapsed}s"
+
+        # Process was started
+        assert (tmp_path / "started.txt").exists()
+        # But was killed before completing (no survived.txt)
+        assert not (tmp_path / "survived.txt").exists()
 
 
 class TestConvenienceFunctions:
