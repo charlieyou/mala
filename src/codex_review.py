@@ -6,13 +6,14 @@ Uses codex exec with --output-schema for structured JSON responses.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+from src.validation.command_runner import CommandRunner
 
 
 @dataclass
@@ -314,6 +315,8 @@ async def run_codex_review(
         CodexReviewResult with review outcome. If JSON parsing fails after
         all retries, the result will have passed=False (fail-closed).
     """
+    runner = CommandRunner(cwd=repo_path)
+
     for attempt in range(1, max_retries + 1):
         # Create temporary files for schema and output
         with (
@@ -357,28 +360,20 @@ async def run_codex_review(
                     prompt,
                 ]
             )
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                cwd=repo_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
 
-            stdout, stderr = await proc.communicate()
-            raw_output = stdout.decode("utf-8", errors="replace")
-            stderr_text = stderr.decode("utf-8", errors="replace")
+            result = await runner.run_async(cmd)
 
             # Parse session log path from stderr if capture is enabled
             session_log_path = None
             if capture_session_log:
-                session_log_path = _parse_session_log_path(stderr_text)
+                session_log_path = _parse_session_log_path(result.stderr)
 
-            if proc.returncode != 0:
+            if result.returncode != 0:
                 return CodexReviewResult(
                     passed=False,
                     issues=[],
-                    raw_output=raw_output,
-                    parse_error=f"codex exited with code {proc.returncode}: {stderr_text.strip()}",
+                    raw_output=result.stdout,
+                    parse_error=f"codex exited with code {result.returncode}: {result.stderr.strip()}",
                     attempt=attempt,
                     session_log_path=session_log_path,
                 )
@@ -390,7 +385,7 @@ async def run_codex_review(
                 return CodexReviewResult(
                     passed=False,
                     issues=[],
-                    raw_output=raw_output,
+                    raw_output=result.stdout,
                     parse_error=f"Failed to read output file: {e}",
                     attempt=attempt,
                     session_log_path=session_log_path,

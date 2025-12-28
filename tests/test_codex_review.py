@@ -13,7 +13,7 @@ import json
 import os
 import stat
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -24,6 +24,7 @@ from src.codex_review import (
     format_review_issues,
     run_codex_review,
 )
+from src.validation.command_runner import CommandResult
 
 
 class TestExtractJson:
@@ -346,27 +347,33 @@ class TestRunCodexReview:
         # First return invalid JSON, second returns valid
         call_count = 0
 
-        async def mock_subprocess(*args: str, **kwargs: object) -> AsyncMock:
+        async def mock_run_async(
+            self: object, cmd: list[str], **kwargs: object
+        ) -> CommandResult:
             nonlocal call_count
             call_count += 1
-            mock_proc = AsyncMock()
-            mock_proc.returncode = 0
-            mock_proc.communicate.return_value = (b"", b"")
 
             # Find -o flag and write response to that file
-            args_list = list(args)
-            for i, arg in enumerate(args_list):
-                if arg == "-o" and i + 1 < len(args_list):
-                    output_path = args_list[i + 1]
+            for i, arg in enumerate(cmd):
+                if arg == "-o" and i + 1 < len(cmd):
+                    output_path = cmd[i + 1]
                     if call_count == 1:
                         Path(output_path).write_text("Invalid JSON response")
                     else:
                         Path(output_path).write_text('{"passed": true, "issues": []}')
                     break
 
-            return mock_proc
+            return CommandResult(
+                command=cmd,
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
 
-        with patch("asyncio.create_subprocess_exec", mock_subprocess):
+        with patch(
+            "src.codex_review.CommandRunner.run_async",
+            mock_run_async,
+        ):
             result = await run_codex_review(repo_path, "abc1234", max_retries=2)
 
         assert call_count == 2
@@ -379,22 +386,27 @@ class TestRunCodexReview:
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
 
-        async def mock_subprocess(*args: str, **kwargs: object) -> AsyncMock:
-            mock_proc = AsyncMock()
-            mock_proc.returncode = 0
-            mock_proc.communicate.return_value = (b"", b"")
-
+        async def mock_run_async(
+            self: object, cmd: list[str], **kwargs: object
+        ) -> CommandResult:
             # Find -o flag and write invalid response
-            args_list = list(args)
-            for i, arg in enumerate(args_list):
-                if arg == "-o" and i + 1 < len(args_list):
-                    output_path = args_list[i + 1]
+            for i, arg in enumerate(cmd):
+                if arg == "-o" and i + 1 < len(cmd):
+                    output_path = cmd[i + 1]
                     Path(output_path).write_text("Not JSON at all")
                     break
 
-            return mock_proc
+            return CommandResult(
+                command=cmd,
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
 
-        with patch("asyncio.create_subprocess_exec", mock_subprocess):
+        with patch(
+            "src.codex_review.CommandRunner.run_async",
+            mock_run_async,
+        ):
             result = await run_codex_review(repo_path, "abc1234", max_retries=2)
 
         assert result.passed is False
