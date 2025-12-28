@@ -158,6 +158,56 @@ class TestPromptLazyLoading:
         assert len(_get_review_followup_prompt()) > 0
         assert len(_get_fixer_prompt()) > 0
 
+    def test_import_succeeds_without_prompt_files(self, tmp_path: Path) -> None:
+        """Import succeeds even when prompt files don't exist (lazy loading).
+
+        This validates the first acceptance criterion: 'import src.orchestrator
+        succeeds without filesystem access to prompts'.
+        """
+        # Create a test script that patches prompt paths to non-existent files
+        # then imports the module - if import succeeds, lazy loading works
+        test_script = tmp_path / "test_import.py"
+        test_script.write_text(
+            """\
+import sys
+from pathlib import Path
+
+# Store original for restoration
+_orig_truediv = Path.__truediv__
+
+def _patched_truediv(self, key):
+    result = _orig_truediv(self, key)
+    # If this is a prompt file path, redirect to non-existent location
+    if str(result).endswith(".md") and "prompts" in str(result):
+        return Path("/nonexistent/prompt/file.md")
+    return result
+
+Path.__truediv__ = _patched_truediv
+
+# Now import orchestrator - should succeed without reading files
+try:
+    from src import orchestrator
+    print("IMPORT_SUCCESS")
+except FileNotFoundError:
+    print("IMPORT_FAILED: FileNotFoundError during import")
+except Exception as e:
+    print(f"IMPORT_FAILED: {type(e).__name__}: {e}")
+"""
+        )
+
+        # Run the test script in subprocess
+        result = subprocess.run(
+            [sys.executable, str(test_script)],
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parent.parent,  # Run from repo root
+        )
+
+        assert "IMPORT_SUCCESS" in result.stdout, (
+            f"Import should succeed without prompt files.\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
 
 class TestGetReadyIssuesAsync:
     """Test beads.get_ready_async handles bd CLI JSON and errors."""
