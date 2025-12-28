@@ -220,7 +220,7 @@ class MalaOrchestrator:
         max_gate_retries: int = 3,
         max_review_retries: int = 2,
         disable_validations: set[str] | None = None,
-        coverage_threshold: float = 85.0,
+        coverage_threshold: float | None = None,
         morph_enabled: bool = True,
         prioritize_wip: bool = False,
         focus: bool = True,
