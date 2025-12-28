@@ -295,7 +295,7 @@ class BeadsClient:
         # This works for ISO timestamps like "2025-01-15T10:30:00Z"
         return "".join(chr(255 - ord(c)) for c in timestamp)
 
-    async def get_ready_async(
+    async def _fetch_and_filter_issues(
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
@@ -303,8 +303,11 @@ class BeadsClient:
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
-    ) -> list[str]:
-        """Get list of ready issue IDs via bd CLI, sorted by priority (async version).
+    ) -> list[dict[str, object]]:
+        """Fetch and filter ready issues with all enrichment applied.
+
+        This is the shared implementation for get_ready_async and get_ready_issues_async.
+        Returns fully filtered, enriched, and sorted issue dicts.
 
         Args:
             exclude_ids: Set of issue IDs to exclude from results.
@@ -313,14 +316,10 @@ class BeadsClient:
             suppress_warn_ids: Optional set of issue IDs to suppress from warnings.
             prioritize_wip: If True, sort in_progress issues before open issues.
             focus: If True, group tasks by parent epic and complete one epic at a time.
-                When focus=True, groups are sorted by (min_priority, max_updated DESC)
-                and within groups by (priority, updated DESC). Orphan tasks form a
-                virtual group with the same sorting rules.
 
         Returns:
-            List of issue IDs sorted by priority (lower = higher priority).
-            When prioritize_wip is True, in_progress issues come first.
-            When focus is True, tasks are grouped by epic.
+            List of issue dicts with id, title, priority, status, and parent_epic fields.
+            Sorted by priority (lower = higher priority) with optional epic grouping.
         """
         exclude_ids = exclude_ids or set()
         suppress_warn_ids = suppress_warn_ids or set()
@@ -378,27 +377,26 @@ class BeadsClient:
                 and (only_ids is None or i["id"] in only_ids)
             ]
 
-            # Exclude tasks whose parent epic is blocked
+            # Get parent epics for all filtered tasks and exclude blocked ones
             if filtered:
-                # Get parent epics for all filtered tasks
                 issue_ids = [str(i["id"]) for i in filtered]
                 parent_epics = await self.get_parent_epics_async(issue_ids)
 
-                # Find unique non-None parent epics
                 unique_epics = {
                     epic for epic in parent_epics.values() if epic is not None
                 }
-
-                # Get which epics are blocked
                 blocked_epics = await self._get_blocked_epics_async(unique_epics)
 
-                # Filter out tasks with blocked parent epics
                 if blocked_epics:
                     filtered = [
                         i
                         for i in filtered
                         if parent_epics.get(str(i["id"])) not in blocked_epics
                     ]
+
+                # Add parent_epic field to each issue
+                for issue in filtered:
+                    issue["parent_epic"] = parent_epics.get(str(issue["id"]))
 
             # Apply epic-grouped sorting when focus=True
             if focus and filtered:
@@ -407,8 +405,7 @@ class BeadsClient:
                 # Default sort by priority only
                 filtered.sort(key=lambda i: i.get("priority") or 0)
 
-            # Sort by priority, and optionally by status (in_progress first)
-            # Default to 0 (P0) for issues without priority to match bd CLI behavior
+            # Sort by status when prioritize_wip is True
             if prioritize_wip:
                 # in_progress issues get status_order=0, others get 1
                 # When focus=True, epic grouping is preserved as a stable sort
@@ -416,9 +413,46 @@ class BeadsClient:
                     key=lambda i: (0 if i.get("status") == "in_progress" else 1,)
                 )
 
-            return [str(i["id"]) for i in filtered]
+            return filtered
         except json.JSONDecodeError:
             return []
+
+    async def get_ready_async(
+        self,
+        exclude_ids: set[str] | None = None,
+        epic_id: str | None = None,
+        only_ids: set[str] | None = None,
+        suppress_warn_ids: set[str] | None = None,
+        prioritize_wip: bool = False,
+        focus: bool = True,
+    ) -> list[str]:
+        """Get list of ready issue IDs via bd CLI, sorted by priority (async version).
+
+        Args:
+            exclude_ids: Set of issue IDs to exclude from results.
+            epic_id: Optional epic ID to filter by - only return children of this epic.
+            only_ids: Optional set of issue IDs to include exclusively.
+            suppress_warn_ids: Optional set of issue IDs to suppress from warnings.
+            prioritize_wip: If True, sort in_progress issues before open issues.
+            focus: If True, group tasks by parent epic and complete one epic at a time.
+                When focus=True, groups are sorted by (min_priority, max_updated DESC)
+                and within groups by (priority, updated DESC). Orphan tasks form a
+                virtual group with the same sorting rules.
+
+        Returns:
+            List of issue IDs sorted by priority (lower = higher priority).
+            When prioritize_wip is True, in_progress issues come first.
+            When focus is True, tasks are grouped by epic.
+        """
+        filtered = await self._fetch_and_filter_issues(
+            exclude_ids=exclude_ids,
+            epic_id=epic_id,
+            only_ids=only_ids,
+            suppress_warn_ids=suppress_warn_ids,
+            prioritize_wip=prioritize_wip,
+            focus=focus,
+        )
+        return [str(i["id"]) for i in filtered]
 
     async def get_ready_issues_async(
         self,
@@ -446,96 +480,14 @@ class BeadsClient:
             List of issue dicts with id, title, priority, status, and parent_epic fields.
             Sorted by priority (lower = higher priority) with optional epic grouping.
         """
-        exclude_ids = exclude_ids or set()
-        suppress_warn_ids = suppress_warn_ids or set()
-
-        # Get epic children if filtering by epic
-        epic_children: set[str] | None = None
-        if epic_id:
-            epic_children = await self.get_epic_children_async(epic_id)
-            if not epic_children:
-                self._log_warning(f"No children found for epic {epic_id}")
-                return []
-
-        result = await self._run_subprocess_async(["bd", "ready", "--json"])
-        if result.returncode != 0:
-            self._log_warning(f"bd ready failed: {result.stderr}")
-            return []
-        try:
-            issues = json.loads(result.stdout)
-
-            # Only include in_progress issues when --wip flag is set
-            if prioritize_wip:
-                wip_result = await self._run_subprocess_async(
-                    ["bd", "list", "--status", "in_progress", "--json"]
-                )
-                if wip_result.returncode == 0:
-                    try:
-                        wip_issues = json.loads(wip_result.stdout)
-                        ready_ids = {i["id"] for i in issues}
-                        for wip in wip_issues:
-                            if (
-                                wip["id"] not in ready_ids
-                                and wip.get("blocked_by") is None
-                            ):
-                                issues.append(wip)
-                    except json.JSONDecodeError:
-                        pass
-
-            ready_issue_ids = {i["id"] for i in issues}
-
-            if only_ids:
-                not_ready = only_ids - ready_issue_ids - suppress_warn_ids
-                if not_ready:
-                    self._log_warning(
-                        f"Specified IDs not ready: {', '.join(sorted(not_ready))}"
-                    )
-
-            filtered = [
-                i
-                for i in issues
-                if i["id"] not in exclude_ids
-                and i.get("issue_type") != "epic"
-                and (epic_children is None or i["id"] in epic_children)
-                and (only_ids is None or i["id"] in only_ids)
-            ]
-
-            # Exclude tasks whose parent epic is blocked
-            if filtered:
-                issue_ids = [str(i["id"]) for i in filtered]
-                parent_epics = await self.get_parent_epics_async(issue_ids)
-
-                unique_epics = {
-                    epic for epic in parent_epics.values() if epic is not None
-                }
-                blocked_epics = await self._get_blocked_epics_async(unique_epics)
-
-                if blocked_epics:
-                    filtered = [
-                        i
-                        for i in filtered
-                        if parent_epics.get(str(i["id"])) not in blocked_epics
-                    ]
-
-                # Add parent_epic field to each issue
-                for issue in filtered:
-                    issue["parent_epic"] = parent_epics.get(str(issue["id"]))
-
-            # Apply epic-grouped sorting when focus=True
-            if focus and filtered:
-                filtered = await self._sort_by_epic_groups(filtered)
-            else:
-                filtered.sort(key=lambda i: i.get("priority") or 0)
-
-            # Sort by status when prioritize_wip is True
-            if prioritize_wip:
-                filtered.sort(
-                    key=lambda i: (0 if i.get("status") == "in_progress" else 1,)
-                )
-
-            return filtered
-        except json.JSONDecodeError:
-            return []
+        return await self._fetch_and_filter_issues(
+            exclude_ids=exclude_ids,
+            epic_id=epic_id,
+            only_ids=only_ids,
+            suppress_warn_ids=suppress_warn_ids,
+            prioritize_wip=prioritize_wip,
+            focus=focus,
+        )
 
     async def claim_async(self, issue_id: str) -> bool:
         """Claim an issue by setting status to in_progress (async version).

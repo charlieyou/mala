@@ -893,3 +893,166 @@ class TestIsEpicBlockedAsync:
             result = await beads._is_epic_blocked_async("epic-1")
 
         assert result is True
+
+
+class TestGetReadyMethodsConsistentOrdering:
+    """Test that get_ready_async and get_ready_issues_async return consistent ordering."""
+
+    @pytest.mark.asyncio
+    async def test_both_methods_return_same_order(self, tmp_path: Path) -> None:
+        """get_ready_async and get_ready_issues_async should return IDs in same order."""
+        beads = BeadsClient(tmp_path)
+
+        ready_response = json.dumps(
+            [
+                {
+                    "id": "task-1",
+                    "issue_type": "task",
+                    "priority": 2,
+                    "updated_at": "2025-01-01T10:00:00Z",
+                },
+                {
+                    "id": "task-2",
+                    "issue_type": "task",
+                    "priority": 1,
+                    "updated_at": "2025-01-01T11:00:00Z",
+                },
+                {
+                    "id": "task-3",
+                    "issue_type": "task",
+                    "priority": 1,
+                    "updated_at": "2025-01-01T09:00:00Z",
+                },
+            ]
+        )
+
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {
+                "task-1": "epic-a",
+                "task-2": "epic-a",
+                "task-3": "epic-b",
+            }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+            )
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+
+            ids_result = await beads.get_ready_async(focus=True)
+            issues_result = await beads.get_ready_issues_async(focus=True)
+
+        # Both methods should return the same order
+        issues_ids = [str(i["id"]) for i in issues_result]
+        assert ids_result == issues_ids
+
+    @pytest.mark.asyncio
+    async def test_both_methods_consistent_with_prioritize_wip(
+        self, tmp_path: Path
+    ) -> None:
+        """Both methods should have consistent ordering with prioritize_wip=True."""
+        beads = BeadsClient(tmp_path)
+
+        ready_response = json.dumps(
+            [
+                {
+                    "id": "task-1",
+                    "issue_type": "task",
+                    "priority": 1,
+                    "status": "ready",
+                    "updated_at": "2025-01-01T10:00:00Z",
+                },
+            ]
+        )
+
+        wip_response = json.dumps(
+            [
+                {
+                    "id": "task-2",
+                    "issue_type": "task",
+                    "priority": 2,
+                    "status": "in_progress",
+                    "updated_at": "2025-01-01T09:00:00Z",
+                },
+            ]
+        )
+
+        async def mock_run(cmd: list[str]) -> SubprocessResult:
+            if "--status" in cmd and "in_progress" in cmd:
+                return make_subprocess_result(stdout=wip_response)
+            return make_subprocess_result(stdout=ready_response)
+
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {issue_id: None for issue_id in issue_ids}
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+
+            ids_result = await beads.get_ready_async(prioritize_wip=True, focus=False)
+            issues_result = await beads.get_ready_issues_async(
+                prioritize_wip=True, focus=False
+            )
+
+        # Both methods should return in_progress task first
+        issues_ids = [str(i["id"]) for i in issues_result]
+        assert ids_result == issues_ids
+        assert ids_result[0] == "task-2"  # WIP comes first
+
+    @pytest.mark.asyncio
+    async def test_both_methods_consistent_with_focus_false(
+        self, tmp_path: Path
+    ) -> None:
+        """Both methods should have consistent ordering with focus=False (priority only)."""
+        beads = BeadsClient(tmp_path)
+
+        ready_response = json.dumps(
+            [
+                {
+                    "id": "task-1",
+                    "issue_type": "task",
+                    "priority": 3,
+                    "updated_at": "2025-01-01T10:00:00Z",
+                },
+                {
+                    "id": "task-2",
+                    "issue_type": "task",
+                    "priority": 1,
+                    "updated_at": "2025-01-01T09:00:00Z",
+                },
+                {
+                    "id": "task-3",
+                    "issue_type": "task",
+                    "priority": 2,
+                    "updated_at": "2025-01-01T11:00:00Z",
+                },
+            ]
+        )
+
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {issue_id: None for issue_id in issue_ids}
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_subprocess_result(stdout=ready_response)),
+            )
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+
+            ids_result = await beads.get_ready_async(focus=False)
+            issues_result = await beads.get_ready_issues_async(focus=False)
+
+        # Both methods should return the same order (sorted by priority)
+        issues_ids = [str(i["id"]) for i in issues_result]
+        assert ids_result == issues_ids
+        # Verify priority ordering
+        assert ids_result == ["task-2", "task-3", "task-1"]
