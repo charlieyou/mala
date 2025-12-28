@@ -15,13 +15,11 @@ import asyncio
 import json
 from typing import TYPE_CHECKING
 
-from src.validation.command_runner import CommandRunner
+from src.validation.command_runner import CommandResult, CommandRunner
 
 if TYPE_CHECKING:
     from pathlib import Path
     from collections.abc import Callable
-
-    from src.validation.command_runner import CommandResult
 
 # Default timeout for bd/git subprocess calls (seconds)
 DEFAULT_COMMAND_TIMEOUT = 30.0
@@ -72,7 +70,8 @@ class BeadsClient:
             timeout: Override timeout (uses self.timeout_seconds if None).
 
         Returns:
-            CommandResult with execution details.
+            CommandResult with execution details. On timeout, returns
+            returncode=1 and stderr="timeout" for backward compatibility.
         """
         effective_timeout = timeout if timeout is not None else self.timeout_seconds
         result = await self._runner.run_async(cmd, timeout=effective_timeout)
@@ -80,6 +79,15 @@ class BeadsClient:
         if result.timed_out:
             self._log_warning(
                 f"Command timed out after {effective_timeout}s: {' '.join(cmd)}"
+            )
+            # Return backward-compatible timeout result
+            return CommandResult(
+                command=cmd,
+                returncode=1,
+                stdout="",
+                stderr="timeout",
+                duration_seconds=result.duration_seconds,
+                timed_out=True,
             )
 
         if not result.ok and result.stderr:
