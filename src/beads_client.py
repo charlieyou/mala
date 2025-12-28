@@ -439,3 +439,54 @@ class BeadsClient:
         """
         result = await self._run_subprocess_async(["bd", "close", issue_id])
         return result.returncode == 0
+
+    async def get_parent_epic_async(self, issue_id: str) -> str | None:
+        """Get the parent epic ID for an issue.
+
+        Uses `bd dep tree <id> --direction=down` to get the ancestor chain.
+        The parent epic is the first ancestor with issue_type == "epic".
+
+        Args:
+            issue_id: The issue ID to find the parent epic for.
+
+        Returns:
+            The parent epic ID, or None if no parent epic exists (orphan).
+        """
+        result = await self._run_subprocess_async(
+            ["bd", "dep", "tree", issue_id, "--direction=down", "--json"]
+        )
+        if result.returncode != 0:
+            self._log_warning(f"bd dep tree failed for {issue_id}: {result.stderr}")
+            return None
+        try:
+            tree = json.loads(result.stdout)
+            # Find the first ancestor (depth > 0) with issue_type == "epic"
+            for item in tree:
+                if item.get("depth", 0) > 0 and item.get("issue_type") == "epic":
+                    return item["id"]
+            return None
+        except json.JSONDecodeError:
+            return None
+
+    async def get_parent_epics_async(
+        self, issue_ids: list[str]
+    ) -> dict[str, str | None]:
+        """Get parent epic IDs for multiple issues efficiently.
+
+        Makes one subprocess call per issue to get its parent epic.
+        Results are cached so that subsequent calls for the same issue
+        don't require additional subprocess calls.
+
+        Args:
+            issue_ids: List of issue IDs to find parent epics for.
+
+        Returns:
+            Dict mapping each issue ID to its parent epic ID (or None for orphans).
+        """
+        result: dict[str, str | None] = {}
+        # Process all issues concurrently
+        tasks = [self.get_parent_epic_async(issue_id) for issue_id in issue_ids]
+        parent_epics = await asyncio.gather(*tasks)
+        for issue_id, parent_epic in zip(issue_ids, parent_epics, strict=True):
+            result[issue_id] = parent_epic
+        return result
