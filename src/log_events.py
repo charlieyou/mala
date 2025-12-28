@@ -30,6 +30,12 @@ Example JSONL entries:
     {"type": "assistant", "message": {"content": [
         {"type": "text", "text": "Here are the files..."}
     ]}}
+
+Parsing Modes:
+    - parse_log_entry(): Lenient mode for production use. Returns None for
+      unrecognized entries (forward compatibility).
+    - parse_log_entry_strict(): Strict mode for testing/debugging. Raises
+      LogParseError with detailed schema information on parse failures.
 """
 
 from __future__ import annotations
@@ -131,18 +137,32 @@ class UserLogEntry:
 LogEntry = AssistantLogEntry | UserLogEntry
 
 
+# Expected schema description for error messages
+_SCHEMA_DESCRIPTION = """
+Expected Claude Agent SDK JSONL schema:
+  {"type": "assistant"|"user", "message": {"content": [<blocks>]}}
+
+Content block types:
+  - {"type": "text", "text": "<string>"}
+  - {"type": "tool_use", "id": "<string>", "name": "<string>", "input": {...}}
+  - {"type": "tool_result", "tool_use_id": "<string>", "content": ..., "is_error": <bool>}
+""".strip()
+
+
 class LogParseError(Exception):
     """Error raised when log parsing fails with schema validation error.
 
     Attributes:
         reason: Human-readable explanation of what was expected.
         data: The raw data that failed to parse.
+        schema_hint: Reference to the expected schema format.
     """
 
     def __init__(self, reason: str, data: dict[str, Any] | None = None):
         self.reason = reason
         self.data = data
-        super().__init__(f"Log parse error: {reason}")
+        self.schema_hint = _SCHEMA_DESCRIPTION
+        super().__init__(f"Log parse error: {reason}\n\n{_SCHEMA_DESCRIPTION}")
 
 
 def _parse_content_block(block: dict[str, Any]) -> ContentBlock | None:
@@ -192,12 +212,103 @@ def _parse_content_block(block: dict[str, Any]) -> ContentBlock | None:
     return None
 
 
+def _parse_content_block_strict(block: dict[str, Any], index: int) -> ContentBlock:
+    """Parse a content block in strict mode, raising on errors.
+
+    Args:
+        block: Raw dict data for a content block.
+        index: Index of this block in the content array (for error messages).
+
+    Returns:
+        Parsed ContentBlock.
+
+    Raises:
+        LogParseError: If the block cannot be parsed.
+    """
+    if not isinstance(block, dict):
+        raise LogParseError(
+            f"Content block at index {index} must be a dict, got {type(block).__name__}",
+            data={"block": block, "index": index},
+        )
+
+    block_type = block.get("type")
+    if block_type is None:
+        raise LogParseError(
+            f"Content block at index {index} missing required 'type' field",
+            data={"block": block, "index": index},
+        )
+
+    if block_type == "text":
+        text = block.get("text")
+        if text is None:
+            raise LogParseError(
+                f"Text block at index {index} missing required 'text' field",
+                data={"block": block, "index": index},
+            )
+        if not isinstance(text, str):
+            raise LogParseError(
+                f"Text block at index {index} has invalid 'text' type: "
+                f"expected str, got {type(text).__name__}",
+                data={"block": block, "index": index},
+            )
+        return TextBlock(text=text)
+
+    if block_type == "tool_use":
+        tool_id = block.get("id", "")
+        name = block.get("name", "")
+        tool_input = block.get("input", {})
+        if not isinstance(tool_id, str):
+            raise LogParseError(
+                f"tool_use block at index {index} has invalid 'id' type: "
+                f"expected str, got {type(tool_id).__name__}",
+                data={"block": block, "index": index},
+            )
+        if not isinstance(name, str):
+            raise LogParseError(
+                f"tool_use block at index {index} has invalid 'name' type: "
+                f"expected str, got {type(name).__name__}",
+                data={"block": block, "index": index},
+            )
+        if not isinstance(tool_input, dict):
+            raise LogParseError(
+                f"tool_use block at index {index} has invalid 'input' type: "
+                f"expected dict, got {type(tool_input).__name__}",
+                data={"block": block, "index": index},
+            )
+        return ToolUseBlock(id=tool_id, name=name, input=tool_input)
+
+    if block_type == "tool_result":
+        tool_use_id = block.get("tool_use_id", "")
+        content = block.get("content", "")
+        is_error = block.get("is_error", False)
+        if not isinstance(tool_use_id, str):
+            raise LogParseError(
+                f"tool_result block at index {index} has invalid 'tool_use_id' type: "
+                f"expected str, got {type(tool_use_id).__name__}",
+                data={"block": block, "index": index},
+            )
+        if not isinstance(is_error, bool):
+            is_error = bool(is_error)
+        return ToolResultBlock(
+            tool_use_id=tool_use_id, content=content, is_error=is_error
+        )
+
+    # Unknown block type - raise in strict mode
+    raise LogParseError(
+        f"Unknown content block type '{block_type}' at index {index}. "
+        f"Expected: text, tool_use, or tool_result",
+        data={"block": block, "index": index},
+    )
+
+
 def parse_log_entry(data: dict[str, Any]) -> LogEntry | None:
-    """Parse a raw JSONL entry dict into a typed LogEntry.
+    """Parse a raw JSONL entry dict into a typed LogEntry (lenient mode).
 
     This function validates the structure of JSONL log entries from Claude
     Agent SDK and returns typed objects. Unknown entry types or malformed
     entries return None (not an error) to support forward compatibility.
+
+    For strict parsing with detailed error messages, use parse_log_entry_strict().
 
     Args:
         data: Parsed JSON object from a JSONL line.
@@ -247,6 +358,96 @@ def parse_log_entry(data: dict[str, Any]) -> LogEntry | None:
         block = _parse_content_block(block_data)
         if block is not None:
             content_blocks.append(block)
+
+    if entry_type == "assistant":
+        return AssistantLogEntry(message=AssistantMessage(content=content_blocks))
+    else:
+        return UserLogEntry(message=UserMessage(content=content_blocks))
+
+
+def parse_log_entry_strict(data: dict[str, Any]) -> LogEntry:
+    """Parse a raw JSONL entry dict into a typed LogEntry (strict mode).
+
+    Unlike parse_log_entry(), this function raises LogParseError with detailed
+    schema information when parsing fails. Use this for testing, debugging,
+    or when you need clear error messages about schema violations.
+
+    Args:
+        data: Parsed JSON object from a JSONL line.
+
+    Returns:
+        LogEntry (AssistantLogEntry or UserLogEntry).
+
+    Raises:
+        LogParseError: If the entry doesn't match the expected schema.
+            The error includes:
+            - A specific reason explaining what was wrong
+            - The problematic data
+            - A reference to the expected schema format
+
+    Example:
+        >>> data = {"type": "invalid"}
+        >>> parse_log_entry_strict(data)
+        Traceback (most recent call last):
+            ...
+        LogParseError: Log parse error: Entry type must be 'assistant' or 'user', got 'invalid'
+    """
+    if not isinstance(data, dict):
+        raise LogParseError(
+            f"Entry must be a dict, got {type(data).__name__}",
+            data=None,
+        )
+
+    entry_type = data.get("type")
+    message_data = data.get("message")
+
+    # Also check for role-based messages (alternative format)
+    if entry_type is None and isinstance(message_data, dict):
+        entry_type = message_data.get("role")
+
+    if entry_type is None:
+        raise LogParseError(
+            "Entry missing required 'type' field. "
+            "Expected top-level 'type' or 'message.role'",
+            data=data,
+        )
+
+    if entry_type not in ("assistant", "user"):
+        raise LogParseError(
+            f"Entry type must be 'assistant' or 'user', got '{entry_type}'",
+            data=data,
+        )
+
+    if message_data is None:
+        raise LogParseError(
+            "Entry missing required 'message' field",
+            data=data,
+        )
+
+    if not isinstance(message_data, dict):
+        raise LogParseError(
+            f"Entry 'message' must be a dict, got {type(message_data).__name__}",
+            data=data,
+        )
+
+    content_data = message_data.get("content")
+    if content_data is None:
+        raise LogParseError(
+            "Entry 'message' missing required 'content' field",
+            data=data,
+        )
+
+    if not isinstance(content_data, list):
+        raise LogParseError(
+            f"Entry 'message.content' must be a list, got {type(content_data).__name__}",
+            data=data,
+        )
+
+    # Parse content blocks in strict mode
+    content_blocks: list[ContentBlock] = []
+    for i, block_data in enumerate(content_data):
+        block = _parse_content_block_strict(block_data, i)
+        content_blocks.append(block)
 
     if entry_type == "assistant":
         return AssistantLogEntry(message=AssistantMessage(content=content_blocks))

@@ -4,10 +4,15 @@ These tests verify that src/log_events.py correctly parses the log format
 produced by Claude Agent SDK. They serve as contract tests - if the SDK
 changes its log format, these tests will fail, alerting us to update our
 parsing logic.
+
+Test fixtures are stored in tests/fixtures/sdk_log_samples.jsonl containing
+real JSONL entries from Claude Agent SDK sessions.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -22,10 +27,99 @@ from src.log_events import (
     UserLogEntry,
     UserMessage,
     parse_log_entry,
+    parse_log_entry_strict,
 )
 
 if TYPE_CHECKING:
     from src.log_events import ContentBlock, LogEntry
+
+
+# Path to JSONL fixture file
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+SDK_LOG_SAMPLES = FIXTURES_DIR / "sdk_log_samples.jsonl"
+
+
+# =============================================================================
+# Contract Tests with JSONL Fixture File
+# =============================================================================
+
+
+class TestJSONLFixtureFile:
+    """Test parsing entries from the JSONL fixture file."""
+
+    def test_fixture_file_exists(self) -> None:
+        """Verify the JSONL fixture file exists."""
+        assert SDK_LOG_SAMPLES.exists(), f"Fixture file not found: {SDK_LOG_SAMPLES}"
+
+    def test_all_fixture_entries_parse_successfully(self) -> None:
+        """All entries in the fixture file should parse without error."""
+        entries: list[tuple[int, dict]] = []
+        with open(SDK_LOG_SAMPLES) as f:
+            for line_num, line in enumerate(f, 1):
+                if line.strip():
+                    data = json.loads(line)
+                    entries.append((line_num, data))
+
+        assert len(entries) > 0, "Fixture file is empty"
+
+        for line_num, data in entries:
+            entry = parse_log_entry(data)
+            assert entry is not None, f"Failed to parse fixture line {line_num}: {data}"
+
+    def test_fixture_contains_tool_use_entries(self) -> None:
+        """Fixture file should contain tool_use entries."""
+        tool_use_count = 0
+        with open(SDK_LOG_SAMPLES) as f:
+            for line in f:
+                if line.strip():
+                    data = json.loads(line)
+                    entry = parse_log_entry(data)
+                    if isinstance(entry, AssistantLogEntry):
+                        for block in entry.message.content:
+                            if isinstance(block, ToolUseBlock):
+                                tool_use_count += 1
+
+        assert tool_use_count > 0, "Fixture file should contain tool_use entries"
+
+    def test_fixture_contains_tool_result_entries(self) -> None:
+        """Fixture file should contain tool_result entries."""
+        tool_result_count = 0
+        with open(SDK_LOG_SAMPLES) as f:
+            for line in f:
+                if line.strip():
+                    data = json.loads(line)
+                    entry = parse_log_entry(data)
+                    if isinstance(entry, UserLogEntry):
+                        for block in entry.message.content:
+                            if isinstance(block, ToolResultBlock):
+                                tool_result_count += 1
+
+        assert tool_result_count > 0, "Fixture file should contain tool_result entries"
+
+    def test_fixture_contains_text_blocks(self) -> None:
+        """Fixture file should contain text blocks."""
+        text_block_count = 0
+        with open(SDK_LOG_SAMPLES) as f:
+            for line in f:
+                if line.strip():
+                    data = json.loads(line)
+                    entry = parse_log_entry(data)
+                    if isinstance(entry, AssistantLogEntry):
+                        for block in entry.message.content:
+                            if isinstance(block, TextBlock):
+                                text_block_count += 1
+
+        assert text_block_count > 0, "Fixture file should contain text blocks"
+
+    def test_fixture_strict_parsing(self) -> None:
+        """All fixture entries should also pass strict parsing."""
+        with open(SDK_LOG_SAMPLES) as f:
+            for line_num, line in enumerate(f, 1):
+                if line.strip():
+                    data = json.loads(line)
+                    # Should not raise
+                    entry = parse_log_entry_strict(data)
+                    assert entry is not None, f"Line {line_num} returned None"
 
 
 # =============================================================================
@@ -538,3 +632,139 @@ class TestLogParseError:
 
         assert error.reason == "Invalid message structure"
         assert error.data == {"type": "unknown", "bad": True}
+
+    def test_error_includes_schema_hint(self) -> None:
+        """LogParseError should include schema documentation in message."""
+        error = LogParseError("Test error")
+
+        assert error.schema_hint is not None
+        assert "assistant" in error.schema_hint
+        assert "tool_use" in error.schema_hint
+        assert error.schema_hint in str(error)
+
+
+class TestStrictParsing:
+    """Test parse_log_entry_strict for detailed error messages."""
+
+    def test_strict_valid_entry_succeeds(self) -> None:
+        """Valid entries should parse successfully in strict mode."""
+        data = {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "Hello"}]},
+        }
+
+        entry = parse_log_entry_strict(data)
+
+        assert isinstance(entry, AssistantLogEntry)
+
+    def test_strict_invalid_type_raises_error(self) -> None:
+        """Invalid entry type should raise LogParseError with details."""
+        data = {"type": "invalid", "message": {"content": []}}
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        error = exc_info.value
+        assert "invalid" in error.reason
+        assert "assistant" in error.reason or "user" in error.reason
+        assert error.data == data
+        # Schema should be in the exception message
+        assert "tool_use" in str(error)
+
+    def test_strict_missing_type_raises_error(self) -> None:
+        """Missing type field should raise LogParseError."""
+        data = {"message": {"content": []}}
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        assert "type" in exc_info.value.reason.lower()
+
+    def test_strict_missing_message_raises_error(self) -> None:
+        """Missing message field should raise LogParseError."""
+        data = {"type": "assistant"}
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        assert "message" in exc_info.value.reason.lower()
+
+    def test_strict_missing_content_raises_error(self) -> None:
+        """Missing content field should raise LogParseError."""
+        data = {"type": "assistant", "message": {}}
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        assert "content" in exc_info.value.reason.lower()
+
+    def test_strict_non_list_content_raises_error(self) -> None:
+        """Non-list content should raise LogParseError."""
+        data = {"type": "assistant", "message": {"content": "not a list"}}
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        assert "list" in exc_info.value.reason.lower()
+
+    def test_strict_unknown_block_type_raises_error(self) -> None:
+        """Unknown block type should raise error in strict mode."""
+        data = {
+            "type": "assistant",
+            "message": {"content": [{"type": "unknown_future_type", "data": "test"}]},
+        }
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        assert "unknown_future_type" in exc_info.value.reason
+        assert "index 0" in exc_info.value.reason
+
+    def test_strict_non_dict_block_raises_error(self) -> None:
+        """Non-dict content block should raise error in strict mode."""
+        data = {
+            "type": "assistant",
+            "message": {"content": ["just a string"]},
+        }
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        assert "dict" in exc_info.value.reason.lower()
+        assert "index 0" in exc_info.value.reason
+
+    def test_strict_text_block_missing_text_field(self) -> None:
+        """Text block without text field should raise error."""
+        data = {
+            "type": "assistant",
+            "message": {"content": [{"type": "text"}]},
+        }
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        assert "text" in exc_info.value.reason.lower()
+
+    def test_strict_tool_use_invalid_input_type(self) -> None:
+        """tool_use with non-dict input should raise error."""
+        data = {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "id": "1", "name": "Bash", "input": "not dict"}
+                ]
+            },
+        }
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        assert "input" in exc_info.value.reason.lower()
+        assert "dict" in exc_info.value.reason.lower()
+
+    def test_strict_non_dict_input_raises_error(self) -> None:
+        """Non-dict entry should raise LogParseError."""
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict("not a dict")  # type: ignore[arg-type]
+
+        assert "dict" in exc_info.value.reason.lower()

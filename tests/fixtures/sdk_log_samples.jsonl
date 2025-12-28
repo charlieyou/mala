@@ -1,0 +1,10 @@
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_pytest_123", "name": "Bash", "input": {"command": "uv run pytest"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_pytest_123", "content": "5 passed in 0.42s", "is_error": false}]}}
+{"type": "assistant", "message": {"content": [{"type": "text", "text": "All tests passed! Let me run the linter next."}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_ruff_456", "name": "Bash", "input": {"command": "uvx ruff check ."}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_ruff_456", "content": "All checks passed!", "is_error": false}]}}
+{"type": "assistant", "message": {"content": [{"type": "text", "text": "ISSUE_NO_CHANGE: The feature already exists in src/utils.py"}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_read_789", "name": "Read", "input": {"file_path": "/path/to/file.py"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_read_789", "content": "def example():\n    pass", "is_error": false}]}}
+{"type": "assistant", "message": {"content": [{"type": "text", "text": "Let me check the tests."}, {"type": "tool_use", "id": "toolu_mixed_1", "name": "Bash", "input": {"command": "ls tests/"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_mixed_1", "content": "Exit code 1\nNo such file or directory", "is_error": true}]}}
