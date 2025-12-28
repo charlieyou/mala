@@ -768,3 +768,70 @@ class TestStrictParsing:
             parse_log_entry_strict("not a dict")  # type: ignore[arg-type]
 
         assert "dict" in exc_info.value.reason.lower()
+
+    def test_strict_tool_use_missing_id_raises_error(self) -> None:
+        """tool_use without id field should raise error in strict mode."""
+        data = {
+            "type": "assistant",
+            "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {}}]},
+        }
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        assert "id" in exc_info.value.reason.lower()
+        assert "missing" in exc_info.value.reason.lower()
+
+    def test_strict_tool_use_missing_name_raises_error(self) -> None:
+        """tool_use without name field should raise error in strict mode."""
+        data = {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "tool_use", "id": "toolu_1", "input": {}}]
+            },
+        }
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        assert "name" in exc_info.value.reason.lower()
+        assert "missing" in exc_info.value.reason.lower()
+
+    def test_strict_tool_result_missing_tool_use_id_raises_error(self) -> None:
+        """tool_result without tool_use_id field should raise error in strict mode."""
+        data = {
+            "type": "user",
+            "message": {
+                "content": [
+                    {"type": "tool_result", "content": "output", "is_error": False}
+                ]
+            },
+        }
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        assert "tool_use_id" in exc_info.value.reason.lower()
+        assert "missing" in exc_info.value.reason.lower()
+
+    def test_strict_tool_result_non_bool_is_error_raises_error(self) -> None:
+        """tool_result with non-bool is_error should raise error in strict mode."""
+        data = {
+            "type": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_1",
+                        "content": "output",
+                        "is_error": "false",  # String instead of bool
+                    }
+                ]
+            },
+        }
+
+        with pytest.raises(LogParseError) as exc_info:
+            parse_log_entry_strict(data)
+
+        assert "is_error" in exc_info.value.reason.lower()
+        assert "bool" in exc_info.value.reason.lower()

@@ -254,13 +254,24 @@ def _parse_content_block_strict(block: dict[str, Any], index: int) -> ContentBlo
         return TextBlock(text=text)
 
     if block_type == "tool_use":
-        tool_id = block.get("id", "")
-        name = block.get("name", "")
+        tool_id = block.get("id")
+        name = block.get("name")
         tool_input = block.get("input", {})
+        # Require id and name fields in strict mode
+        if tool_id is None:
+            raise LogParseError(
+                f"tool_use block at index {index} missing required 'id' field",
+                data={"block": block, "index": index},
+            )
         if not isinstance(tool_id, str):
             raise LogParseError(
                 f"tool_use block at index {index} has invalid 'id' type: "
                 f"expected str, got {type(tool_id).__name__}",
+                data={"block": block, "index": index},
+            )
+        if name is None:
+            raise LogParseError(
+                f"tool_use block at index {index} missing required 'name' field",
                 data={"block": block, "index": index},
             )
         if not isinstance(name, str):
@@ -278,17 +289,28 @@ def _parse_content_block_strict(block: dict[str, Any], index: int) -> ContentBlo
         return ToolUseBlock(id=tool_id, name=name, input=tool_input)
 
     if block_type == "tool_result":
-        tool_use_id = block.get("tool_use_id", "")
+        tool_use_id = block.get("tool_use_id")
         content = block.get("content", "")
         is_error = block.get("is_error", False)
+        # Require tool_use_id field in strict mode
+        if tool_use_id is None:
+            raise LogParseError(
+                f"tool_result block at index {index} missing required 'tool_use_id' field",
+                data={"block": block, "index": index},
+            )
         if not isinstance(tool_use_id, str):
             raise LogParseError(
                 f"tool_result block at index {index} has invalid 'tool_use_id' type: "
                 f"expected str, got {type(tool_use_id).__name__}",
                 data={"block": block, "index": index},
             )
+        # Require is_error to be a proper boolean in strict mode
         if not isinstance(is_error, bool):
-            is_error = bool(is_error)
+            raise LogParseError(
+                f"tool_result block at index {index} has invalid 'is_error' type: "
+                f"expected bool, got {type(is_error).__name__}",
+                data={"block": block, "index": index},
+            )
         return ToolResultBlock(
             tool_use_id=tool_use_id, content=content, is_error=is_error
         )
