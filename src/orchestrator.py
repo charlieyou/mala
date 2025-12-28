@@ -31,6 +31,7 @@ from .hooks import (
     block_dangerous_commands,
     block_morph_replaced_tools,
     make_lock_enforcement_hook,
+    make_stop_hook,
 )
 from .lifecycle import (
     Effect,
@@ -68,7 +69,6 @@ from .tools.env import (
 from .tools.locking import (
     release_run_locks,
     cleanup_agent_locks,
-    make_stop_hook,
 )
 from .validation.spec import (
     IssueResolution,
@@ -986,7 +986,14 @@ class MalaOrchestrator:
         return True
 
     async def run(self) -> tuple[int, int]:
-        """Main orchestration loop. Returns (success_count, total_count)."""
+        """Main orchestration loop. Returns (success_count, total_count).
+
+        This is the async entry point - use this when you're already in an async context
+        (e.g., inside an async function, using asyncio.run(), or in a framework that
+        manages the event loop).
+
+        For sync usage, see run_sync().
+        """
         print()
         log("●", "mala orchestrator", Colors.MAGENTA)
         log("◐", f"repo: {self.repo_path}", Colors.MUTED)
@@ -1459,3 +1466,45 @@ class MalaOrchestrator:
             # Gate 4 failed - return 0 successes to trigger non-zero exit
             return (0, total)
         return (success_count, total)
+
+    def run_sync(self) -> tuple[int, int]:
+        """Synchronous wrapper for run(). Returns (success_count, total_count).
+
+        Use this method when calling from synchronous code. It handles event loop
+        creation and cleanup automatically.
+
+        Raises:
+            RuntimeError: If called from within an async context (e.g., inside an
+                async function or when an event loop is already running). In that
+                case, use `await orchestrator.run()` instead.
+
+        Example usage::
+
+            # From sync code (scripts, CLI, tests)
+            orchestrator = MalaOrchestrator(repo_path=Path("."))
+            success_count, total = orchestrator.run_sync()
+
+            # From async code
+            async def main():
+                orchestrator = MalaOrchestrator(repo_path=Path("."))
+                success_count, total = await orchestrator.run()
+
+        Returns:
+            Tuple of (success_count, total_count).
+        """
+        # Check if we're already in an async context
+        try:
+            asyncio.get_running_loop()
+            # If we get here, there's a running event loop - can't use run_sync()
+            raise RuntimeError(
+                "run_sync() cannot be called from within an async context. "
+                "Use 'await orchestrator.run()' instead."
+            )
+        except RuntimeError as e:
+            # Check if it's our error or the "no running event loop" error
+            if "run_sync() cannot be called" in str(e):
+                raise
+            # No running event loop - this is the expected case for sync usage
+
+        # Create a new event loop and run
+        return asyncio.run(self.run())

@@ -1963,6 +1963,7 @@ class TestGateFlowSequencing:
         ):
             success_count, _total = await orchestrator.run()
 
+        # Issue should be closed despite no commit
         assert success_count == 1
         assert "issue-obsolete" in close_calls
 
@@ -2330,17 +2331,7 @@ class TestRunLevelValidation:
                 orchestrator, "run_implementer", side_effect=mock_run_implementer
             ),
             patch.object(
-                orchestrator.beads, "close_async", side_effect=mock_close_async
-            ),
-            patch.object(
-                orchestrator.beads,
-                "close_eligible_epics_async",
-                return_value=False,
-            ),
-            patch.object(
-                orchestrator.beads,
-                "mark_needs_followup_async",
-                side_effect=mock_mark_followup_async,
+                orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
             patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
@@ -3613,3 +3604,65 @@ class TestCodexReviewUsesCurrentHead:
             f"Codex review should use current HEAD ({current_head}), "
             f"not agent's commit ({agent_commit}). Got: {captured_review_commits[0]}"
         )
+
+
+class TestRunSync:
+    """Test run_sync() method for synchronous usage."""
+
+    def test_run_sync_from_sync_context(self, tmp_path: Path) -> None:
+        """run_sync() should work when called from sync code."""
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_issues=0)
+
+        # Mock the async run() to return immediately
+        with patch.object(
+            orchestrator,
+            "run",
+            new_callable=AsyncMock,
+            return_value=(0, 0),
+        ):
+            success_count, total = orchestrator.run_sync()
+
+        assert success_count == 0
+        assert total == 0
+
+    def test_run_sync_from_async_context_raises(self, tmp_path: Path) -> None:
+        """run_sync() should raise RuntimeError when called from async context."""
+        orchestrator = MalaOrchestrator(repo_path=tmp_path)
+
+        async def call_run_sync_from_async() -> None:
+            # This should raise because we're already in an async context
+            orchestrator.run_sync()
+
+        with pytest.raises(RuntimeError) as exc_info:
+            asyncio.run(call_run_sync_from_async())
+
+        assert "run_sync() cannot be called from within an async context" in str(
+            exc_info.value
+        )
+        assert "await orchestrator.run()" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_run_works_in_async_context(self, tmp_path: Path) -> None:
+        """run() should work when awaited from async context."""
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_issues=0)
+
+        # Mock dependencies that run() needs
+        with (
+            patch.object(
+                orchestrator.beads,
+                "get_ready_async",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
+            patch("src.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
+            patch("src.orchestrator.write_run_marker"),
+            patch("src.orchestrator.remove_run_marker"),
+        ):
+            (tmp_path / "locks").mkdir(exist_ok=True)
+            (tmp_path / "runs").mkdir(exist_ok=True)
+
+            success_count, total = await orchestrator.run()
+
+        assert success_count == 0
+        assert total == 0
