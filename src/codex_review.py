@@ -330,10 +330,9 @@ async def run_codex_review(
             cmd = [
                 "codex",
                 "exec",
+                "-c",
+                f"model_reasoning_effort={thinking_mode}",
             ]
-            # Add thinking mode config if specified
-            if thinking_mode:
-                cmd.extend(["-c", f"model_reasoning_effort={thinking_mode}"])
             cmd.extend(
                 [
                     "--output-schema",

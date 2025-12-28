@@ -345,7 +345,7 @@ def run(
             "--codex-thinking-mode",
             help="Reasoning effort level for Codex reviews (e.g., 'high', 'medium', 'low', 'xhigh')",
         ),
-    ] = None,
+    ] = "high",
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
