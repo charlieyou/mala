@@ -9,14 +9,33 @@ Usage:
     mala status
 """
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
+from typing import Any
 
 from .tools.env import USER_CONFIG_DIR, get_runs_dir, load_user_env
 
 # Bootstrap state: tracks whether bootstrap() has been called
+# These are populated on first access via __getattr__
 _bootstrapped = False
 _braintrust_enabled = False
+
+# Lazy-loaded module cache for SDK-dependent imports
+# These are populated on first access via __getattr__
+_lazy_modules: dict[str, Any] = {}
+
+# Names that are lazily loaded (for __getattr__ to handle)
+_LAZY_NAMES = frozenset(
+    {
+        "BeadsClient",
+        "MalaOrchestrator",
+        "get_lock_dir",
+        "get_running_instances",
+        "get_running_instances_for_dir",
+    }
+)
 
 
 def bootstrap() -> None:
@@ -69,8 +88,9 @@ import typer
 
 from .logging.console import Colors, log, set_verbose
 
-# SDK-dependent imports (MalaOrchestrator, BeadsClient, get_lock_dir) are deferred
-# to function bodies to ensure bootstrap() runs before claude_agent_sdk is imported.
+# SDK-dependent imports (BeadsClient, MalaOrchestrator, get_lock_dir, run_metadata)
+# are lazy-loaded via __getattr__ to ensure bootstrap() runs before claude_agent_sdk
+# is imported. Access them as module attributes: BeadsClient, MalaOrchestrator, etc.
 
 
 def display_dry_run_tasks(
@@ -382,15 +402,15 @@ def run(
         log("✗", f"Repository not found: {repo_path}", Colors.RED)
         raise typer.Exit(1)
 
-    # Import SDK-dependent modules at runtime (after bootstrap has been called)
-    from .beads_client import BeadsClient
-    from .orchestrator import MalaOrchestrator
+    # Access lazy-loaded SDK-dependent modules via module attribute
+    # (deferred import ensures bootstrap() runs before claude_agent_sdk is loaded)
+    from . import cli as _cli
 
     # Handle dry-run mode: display task order and exit
     if dry_run:
 
         async def _dry_run() -> None:
-            beads = BeadsClient(repo_path)
+            beads = _cli.BeadsClient(repo_path)
             issues = await beads.get_ready_issues_async(
                 epic_id=epic,
                 only_ids=only_ids,
@@ -414,7 +434,7 @@ def run(
         "codex_thinking_mode": codex_thinking_mode,
     }
 
-    orchestrator = MalaOrchestrator(
+    orchestrator = _cli.MalaOrchestrator(
         repo_path=repo_path,
         max_agents=max_agents,
         timeout_minutes=timeout,
@@ -442,14 +462,14 @@ def run(
 @app.command()
 def clean() -> None:
     """Clean up locks and JSONL logs."""
-    # Import get_lock_dir at runtime to avoid SDK import at module level
-    from .tools.locking import get_lock_dir
+    # Access lazy-loaded get_lock_dir via module attribute
+    from . import cli as _cli
 
     cleaned_locks = 0
     cleaned_logs = 0
 
-    if get_lock_dir().exists():
-        for lock in get_lock_dir().glob("*.lock"):
+    if _cli.get_lock_dir().exists():
+        for lock in _cli.get_lock_dir().glob("*.lock"):
             lock.unlink()
             cleaned_locks += 1
 
@@ -488,21 +508,17 @@ def status(
     By default, shows status only for mala running in the current directory.
     Use --all to show all running instances across all directories.
     """
-    # Import at runtime to avoid SDK import at module level
-    from .logging.run_metadata import (
-        get_running_instances,
-        get_running_instances_for_dir,
-    )
-    from .tools.locking import get_lock_dir
+    # Access lazy-loaded modules via module attribute
+    from . import cli as _cli
 
     print()
     cwd = Path.cwd().resolve()
 
     # Get running instances (filtered by cwd unless --all)
     if all_instances:
-        instances = get_running_instances()
+        instances = _cli.get_running_instances()
     else:
-        instances = get_running_instances_for_dir(cwd)
+        instances = _cli.get_running_instances_for_dir(cwd)
 
     if not instances:
         if all_instances:
@@ -550,8 +566,8 @@ def status(
     print()
 
     # Check locks (show all locks, not filtered by directory)
-    if get_lock_dir().exists():
-        locks = list(get_lock_dir().glob("*.lock"))
+    if _cli.get_lock_dir().exists():
+        locks = list(_cli.get_lock_dir().glob("*.lock"))
         if locks:
             log("⚠", f"{len(locks)} active locks", Colors.YELLOW)
             for lock in locks[:5]:
@@ -647,3 +663,35 @@ def _display_instance(instance: object, indent: bool = False) -> None:
             print(f"{prefix}{Colors.MUTED}pid: {pid}{Colors.RESET}")
         else:
             log("◐", f"pid: {pid}", Colors.MUTED)
+
+
+def __getattr__(name: str) -> Any:  # noqa: ANN401
+    """Lazy-load SDK-dependent modules on first access."""
+    if name not in _LAZY_NAMES:
+        raise AttributeError(f"module {__name__} has no attribute {name}")
+
+    if name in _lazy_modules:
+        return _lazy_modules[name]
+
+    if name == "BeadsClient":
+        from .beads_client import BeadsClient
+
+        _lazy_modules[name] = BeadsClient
+    elif name == "MalaOrchestrator":
+        from .orchestrator import MalaOrchestrator
+
+        _lazy_modules[name] = MalaOrchestrator
+    elif name == "get_lock_dir":
+        from .tools.locking import get_lock_dir
+
+        _lazy_modules[name] = get_lock_dir
+    elif name == "get_running_instances":
+        from .logging.run_metadata import get_running_instances
+
+        _lazy_modules[name] = get_running_instances
+    elif name == "get_running_instances_for_dir":
+        from .logging.run_metadata import get_running_instances_for_dir
+
+        _lazy_modules[name] = get_running_instances_for_dir
+
+    return _lazy_modules[name]
