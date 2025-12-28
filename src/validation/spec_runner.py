@@ -395,6 +395,9 @@ class SpecValidationRunner:
     ) -> ValidationResult:
         """Execute all commands in the spec.
 
+        Uses a pipeline pattern: run_commands -> check_coverage -> run_e2e -> build_result.
+        Each step can return early on failure.
+
         Args:
             spec: Validation spec with commands.
             context: Validation context.
@@ -410,11 +413,75 @@ class SpecValidationRunner:
         # Build environment
         env = self._build_spec_env(context, run_id)
 
-        steps: list[ValidationStepResult] = []
-        coverage_result: CoverageResult | None = None
-
         # Write manifest of expected commands for debugging
         expected_commands = [cmd.name for cmd in spec.commands]
+        self._write_initial_manifest(
+            log_dir, expected_commands, cwd, run_id, context, spec
+        )
+
+        # Pipeline step 1: Run all commands
+        steps, failure = self._run_commands(spec, cwd, env, log_dir)
+        if failure is not None:
+            self._write_completion_manifest(log_dir, expected_commands, steps, failure)
+            return ValidationResult(
+                passed=False,
+                steps=steps,
+                failure_reasons=[failure],
+                artifacts=artifacts,
+            )
+
+        # Pipeline step 2: Check coverage if enabled
+        coverage_result = self._run_coverage_check(
+            spec, cwd, log_dir, artifacts, baseline_percent
+        )
+        if coverage_result is not None and not coverage_result.passed:
+            reason = coverage_result.failure_reason or "Coverage check failed"
+            self._write_completion_manifest(log_dir, expected_commands, steps, reason)
+            return ValidationResult(
+                passed=False,
+                steps=steps,
+                failure_reasons=[reason],
+                artifacts=artifacts,
+                coverage_result=coverage_result,
+            )
+
+        # Pipeline step 3: Run E2E if enabled (only for run-level scope)
+        e2e_result = self._run_e2e_check(spec, env, cwd, log_dir, artifacts)
+        if e2e_result is not None and not e2e_result.passed:
+            if e2e_result.status != E2EStatus.SKIPPED:
+                reason = e2e_result.failure_reason or "E2E failed"
+                self._write_completion_manifest(
+                    log_dir, expected_commands, steps, reason
+                )
+                return ValidationResult(
+                    passed=False,
+                    steps=steps,
+                    failure_reasons=[reason],
+                    artifacts=artifacts,
+                    coverage_result=coverage_result,
+                    e2e_result=e2e_result,
+                )
+
+        # Pipeline step 4: Build success result
+        self._write_completion_manifest(log_dir, expected_commands, steps, None)
+        return ValidationResult(
+            passed=True,
+            steps=steps,
+            artifacts=artifacts,
+            coverage_result=coverage_result,
+            e2e_result=e2e_result,
+        )
+
+    def _write_initial_manifest(
+        self,
+        log_dir: Path,
+        expected_commands: list[str],
+        cwd: Path,
+        run_id: str,
+        context: ValidationContext,
+        spec: ValidationSpec,
+    ) -> None:
+        """Write initial manifest of expected commands for debugging."""
         manifest_path = log_dir / "validation_manifest.json"
         manifest_path.write_text(
             json.dumps(
@@ -429,7 +496,26 @@ class SpecValidationRunner:
             )
         )
 
-        # Execute each command in order
+    def _run_commands(
+        self,
+        spec: ValidationSpec,
+        cwd: Path,
+        env: dict[str, str],
+        log_dir: Path,
+    ) -> tuple[list[ValidationStepResult], str | None]:
+        """Execute all commands in the spec.
+
+        Args:
+            spec: Validation spec with commands.
+            cwd: Working directory for commands.
+            env: Environment variables.
+            log_dir: Directory for logs.
+
+        Returns:
+            Tuple of (steps, failure_reason). If failure_reason is None, all commands passed.
+        """
+        steps: list[ValidationStepResult] = []
+
         for i, cmd in enumerate(spec.commands):
             # Log command start for debugging
             start_marker = log_dir / f"{i:02d}_{cmd.name.replace(' ', '_')}.started"
@@ -453,73 +539,71 @@ class SpecValidationRunner:
                 details = format_step_output(step.stdout_tail, step.stderr_tail)
                 if details:
                     reason = f"{reason}: {details}"
-                # Write final manifest with actual results
-                self._write_completion_manifest(
-                    log_dir, expected_commands, steps, reason
-                )
-                return ValidationResult(
-                    passed=False,
-                    steps=steps,
-                    failure_reasons=[reason],
-                    artifacts=artifacts,
-                )
+                return steps, reason
 
-        # Handle coverage if enabled
-        if spec.coverage.enabled:
-            coverage_result = self._check_coverage(
-                spec.coverage, cwd, log_dir, baseline_percent
-            )
-            if coverage_result.report_path:
-                artifacts.coverage_report = coverage_result.report_path
+        return steps, None
 
-            # Fail on coverage error or threshold not met
-            if not coverage_result.passed:
-                reason = coverage_result.failure_reason or "Coverage check failed"
-                self._write_completion_manifest(
-                    log_dir, expected_commands, steps, reason
-                )
-                return ValidationResult(
-                    passed=False,
-                    steps=steps,
-                    failure_reasons=[reason],
-                    artifacts=artifacts,
-                    coverage_result=coverage_result,
-                )
+    def _run_coverage_check(
+        self,
+        spec: ValidationSpec,
+        cwd: Path,
+        log_dir: Path,
+        artifacts: ValidationArtifacts,
+        baseline_percent: float | None,
+    ) -> CoverageResult | None:
+        """Run coverage check if enabled.
 
-        # Handle E2E if enabled (only for run-level scope)
+        Args:
+            spec: Validation spec with coverage config.
+            cwd: Working directory where coverage.xml should be.
+            log_dir: Directory for logs.
+            artifacts: Artifacts to update with coverage report path.
+            baseline_percent: Baseline coverage for "no decrease" mode.
+
+        Returns:
+            CoverageResult if coverage is enabled, None otherwise.
+        """
+        if not spec.coverage.enabled:
+            return None
+
+        coverage_result = self._check_coverage(
+            spec.coverage, cwd, log_dir, baseline_percent
+        )
+        if coverage_result.report_path:
+            artifacts.coverage_report = coverage_result.report_path
+
+        return coverage_result
+
+    def _run_e2e_check(
+        self,
+        spec: ValidationSpec,
+        env: dict[str, str],
+        cwd: Path,
+        log_dir: Path,
+        artifacts: ValidationArtifacts,
+    ) -> E2EResult | None:
+        """Run E2E validation if enabled (only for run-level scope).
+
+        Args:
+            spec: Validation spec with E2E config.
+            env: Environment variables.
+            cwd: Working directory.
+            log_dir: Directory for logs.
+            artifacts: Artifacts to update with fixture path.
+
+        Returns:
+            E2EResult if E2E is enabled and scope is run-level, None otherwise.
+        """
         from .spec import ValidationScope
 
-        e2e_result_final: E2EResult | None = None
-        if spec.e2e.enabled and spec.scope == ValidationScope.RUN_LEVEL:
-            e2e_result = self._run_spec_e2e(spec.e2e, env, cwd, log_dir)
-            e2e_result_final = e2e_result
-            if e2e_result.fixture_path:
-                artifacts.e2e_fixture_path = e2e_result.fixture_path
+        if not spec.e2e.enabled or spec.scope != ValidationScope.RUN_LEVEL:
+            return None
 
-            if not e2e_result.passed and e2e_result.status != E2EStatus.SKIPPED:
-                reason = e2e_result.failure_reason or "E2E failed"
-                self._write_completion_manifest(
-                    log_dir, expected_commands, steps, reason
-                )
-                return ValidationResult(
-                    passed=False,
-                    steps=steps,
-                    failure_reasons=[reason],
-                    artifacts=artifacts,
-                    coverage_result=coverage_result,
-                    e2e_result=e2e_result,
-                )
+        e2e_result = self._run_spec_e2e(spec.e2e, env, cwd, log_dir)
+        if e2e_result.fixture_path:
+            artifacts.e2e_fixture_path = e2e_result.fixture_path
 
-        # Write final manifest on success
-        self._write_completion_manifest(log_dir, expected_commands, steps, None)
-
-        return ValidationResult(
-            passed=True,
-            steps=steps,
-            artifacts=artifacts,
-            coverage_result=coverage_result,
-            e2e_result=e2e_result_final,
-        )
+        return e2e_result
 
     def _write_completion_manifest(
         self,
@@ -539,7 +623,9 @@ class SpecValidationRunner:
             "commands_executed": len(actual_commands),
             "commands_expected": len(expected_commands),
             "all_executed": expected_commands == actual_commands,
-            "missing_commands": [c for c in expected_commands if c not in actual_commands],
+            "missing_commands": [
+                c for c in expected_commands if c not in actual_commands
+            ],
             "failure_reason": failure_reason,
             "steps": [
                 {
