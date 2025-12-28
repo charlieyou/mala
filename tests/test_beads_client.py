@@ -1206,3 +1206,203 @@ class TestWipFallbackOnReadyFailure:
             result = await beads.get_ready_async(prioritize_wip=False)
 
         assert result == []
+
+
+class TestFetchBaseIssues:
+    """Unit tests for _fetch_base_issues pipeline step."""
+
+    @pytest.mark.asyncio
+    async def test_returns_issues_on_success(self, tmp_path: Path) -> None:
+        """_fetch_base_issues returns issues and True on success."""
+        beads = BeadsClient(tmp_path)
+        issues_json = json.dumps(
+            [{"id": "a", "priority": 1}, {"id": "b", "priority": 2}]
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_subprocess_result(stdout=issues_json)),
+            )
+            issues, ok = await beads._fetch_base_issues()
+
+        assert ok is True
+        assert len(issues) == 2
+        assert issues[0]["id"] == "a"
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_on_failure(self, tmp_path: Path) -> None:
+        """_fetch_base_issues returns empty list and False on bd failure."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(
+                    return_value=make_subprocess_result(returncode=1, stderr="error")
+                ),
+            )
+            issues, ok = await beads._fetch_base_issues()
+
+        assert ok is False
+        assert issues == []
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_on_invalid_json(self, tmp_path: Path) -> None:
+        """_fetch_base_issues returns empty list and False on invalid JSON."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_subprocess_result(stdout="not json")),
+            )
+            issues, ok = await beads._fetch_base_issues()
+
+        assert ok is False
+        assert issues == []
+
+
+class TestEnrichWithEpics:
+    """Unit tests for _enrich_with_epics pipeline step."""
+
+    @pytest.mark.asyncio
+    async def test_adds_parent_epic_info(self, tmp_path: Path) -> None:
+        """_enrich_with_epics adds parent_epic field to issues."""
+        beads = BeadsClient(tmp_path)
+        issues: list[dict[str, object]] = [{"id": "a"}, {"id": "b"}]
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "get_parent_epics_async",
+                AsyncMock(return_value={"a": "epic-1", "b": None}),
+            )
+            mp.setattr(beads, "_get_blocked_epics_async", AsyncMock(return_value=set()))
+            result = await beads._enrich_with_epics(issues)
+
+        assert result[0]["parent_epic"] == "epic-1"
+        assert result[1]["parent_epic"] is None
+
+    @pytest.mark.asyncio
+    async def test_filters_blocked_epics(self, tmp_path: Path) -> None:
+        """_enrich_with_epics filters issues whose parent epic is blocked."""
+        beads = BeadsClient(tmp_path)
+        issues: list[dict[str, object]] = [{"id": "a"}, {"id": "b"}]
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "get_parent_epics_async",
+                AsyncMock(return_value={"a": "epic-1", "b": "epic-2"}),
+            )
+            mp.setattr(
+                beads, "_get_blocked_epics_async", AsyncMock(return_value={"epic-2"})
+            )
+            result = await beads._enrich_with_epics(issues)
+
+        assert len(result) == 1
+        assert result[0]["id"] == "a"
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_unchanged(self, tmp_path: Path) -> None:
+        """_enrich_with_epics returns empty list as-is."""
+        beads = BeadsClient(tmp_path)
+        result = await beads._enrich_with_epics([])
+        assert result == []
+
+
+class TestWarnMissingIds:
+    """Unit tests for _warn_missing_ids helper."""
+
+    def test_logs_warning_for_missing_ids(self, tmp_path: Path) -> None:
+        """_warn_missing_ids logs warning when only_ids not found in issues."""
+        beads = BeadsClient(tmp_path)
+        warnings: list[str] = []
+        beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
+
+        issues: list[dict[str, object]] = [{"id": "a"}, {"id": "b"}]
+        beads._warn_missing_ids({"a", "c", "d"}, issues, set())
+
+        assert len(warnings) == 1
+        assert "c" in warnings[0] and "d" in warnings[0]
+
+    def test_respects_suppress_ids(self, tmp_path: Path) -> None:
+        """_warn_missing_ids does not warn for suppressed IDs."""
+        beads = BeadsClient(tmp_path)
+        warnings: list[str] = []
+        beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
+
+        issues: list[dict[str, object]] = [{"id": "a"}]
+        beads._warn_missing_ids({"a", "b", "c"}, issues, {"b"})
+
+        assert len(warnings) == 1
+        assert "b" not in warnings[0]
+        assert "c" in warnings[0]
+
+    def test_no_warning_when_all_ids_found(self, tmp_path: Path) -> None:
+        """_warn_missing_ids does not log when all IDs are found."""
+        beads = BeadsClient(tmp_path)
+        warnings: list[str] = []
+        beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
+
+        issues: list[dict[str, object]] = [{"id": "a"}, {"id": "b"}]
+        beads._warn_missing_ids({"a", "b"}, issues, set())
+
+        assert warnings == []
+
+    def test_no_warning_when_only_ids_none(self, tmp_path: Path) -> None:
+        """_warn_missing_ids does nothing when only_ids is None."""
+        beads = BeadsClient(tmp_path)
+        warnings: list[str] = []
+        beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
+
+        beads._warn_missing_ids(None, [], set())
+
+        assert warnings == []
+
+
+class TestResolveEpicChildren:
+    """Unit tests for _resolve_epic_children helper."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_epic_id(self, tmp_path: Path) -> None:
+        """_resolve_epic_children returns None when epic_id is None."""
+        beads = BeadsClient(tmp_path)
+        result = await beads._resolve_epic_children(None)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_children_when_found(self, tmp_path: Path) -> None:
+        """_resolve_epic_children returns children set when epic has children."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "get_epic_children_async",
+                AsyncMock(return_value={"child-1", "child-2"}),
+            )
+            result = await beads._resolve_epic_children("epic-1")
+
+        assert result == {"child-1", "child-2"}
+
+    @pytest.mark.asyncio
+    async def test_logs_warning_and_returns_empty_when_no_children(
+        self, tmp_path: Path
+    ) -> None:
+        """_resolve_epic_children logs warning when epic has no children."""
+        beads = BeadsClient(tmp_path)
+        warnings: list[str] = []
+        beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "get_epic_children_async", AsyncMock(return_value=set()))
+            result = await beads._resolve_epic_children("epic-1")
+
+        assert result == set()
+        assert len(warnings) == 1
+        assert "epic-1" in warnings[0]

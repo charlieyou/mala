@@ -416,6 +416,28 @@ class BeadsClient:
         except json.JSONDecodeError:
             return []
 
+    def _warn_missing_ids(
+        self,
+        only_ids: set[str] | None,
+        issues: list[dict[str, object]],
+        suppress_ids: set[str],
+    ) -> None:
+        """Log warning for specified IDs not found in issues."""
+        if not only_ids:
+            return
+        bad = only_ids - {str(i["id"]) for i in issues} - suppress_ids
+        if bad:
+            self._log_warning(f"Specified IDs not ready: {', '.join(sorted(bad))}")
+
+    async def _resolve_epic_children(self, epic_id: str | None) -> set[str] | None:
+        """Resolve epic children, logging warning if epic has none. Returns None to abort."""
+        if not epic_id:
+            return None  # Sentinel: no epic filter
+        children = await self.get_epic_children_async(epic_id)
+        if not children:
+            self._log_warning(f"No children found for epic {epic_id}")
+        return children  # Empty set signals abort, non-empty signals filter
+
     async def _fetch_and_filter_issues(
         self,
         exclude_ids: set[str] | None = None,
@@ -426,32 +448,19 @@ class BeadsClient:
         focus: bool = True,
     ) -> list[dict[str, object]]:
         """Fetch, filter, enrich, and sort ready issues."""
-        exclude_ids, suppress_warn_ids = (
-            exclude_ids or set(),
-            suppress_warn_ids or set(),
-        )
-        epic_children: set[str] | None = None
-        if epic_id:
-            if not (epic_children := await self.get_epic_children_async(epic_id)):
-                self._log_warning(f"No children found for epic {epic_id}")
-                return []
+        exclude_ids = exclude_ids or set()
+        epic_children = await self._resolve_epic_children(epic_id)
+        if epic_id and not epic_children:
+            return []
         issues, ok = await self._fetch_base_issues()
         if not ok and not prioritize_wip:
-            # Only abort if base fetch failed AND we're not trying to get WIP issues
             return []
         if prioritize_wip:
             issues = self._merge_wip_issues(issues, await self._fetch_wip_issues())
-        if only_ids:
-            bad = only_ids - {str(i["id"]) for i in issues} - suppress_warn_ids
-            if bad:
-                self._log_warning(f"Specified IDs not ready: {', '.join(sorted(bad))}")
-        return self._sort_issues(
-            await self._enrich_with_epics(
-                self._apply_filters(issues, exclude_ids, epic_children, only_ids)
-            ),
-            focus,
-            prioritize_wip,
-        )
+        self._warn_missing_ids(only_ids, issues, suppress_warn_ids or set())
+        filtered = self._apply_filters(issues, exclude_ids, epic_children, only_ids)
+        enriched = await self._enrich_with_epics(filtered)
+        return self._sort_issues(enriched, focus, prioritize_wip)
 
     async def get_ready_async(
         self,
