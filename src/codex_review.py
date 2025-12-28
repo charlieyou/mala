@@ -88,11 +88,26 @@ Your job is to review **scope completeness and code correctness** - things that 
 ## Your Review Focus
 
 ### 1. Scope Completeness (PRIMARY)
-Compare the diff against the issue's **"In:" scope items** only:
-- Flag as ERROR if any "In:" scope item is NOT addressed in the diff
-- Be specific: quote the missing scope item in the error message
+Compare the diff against the issue's scope:
+- **"In:" items**: Flag as ERROR if any "In:" scope item is NOT addressed
+- **"Out:" items**: These are EXPLICITLY EXCLUDED from scope. Do NOT flag violations that match "Out:" items - they are intentionally not being changed.
 
-### 2. Code Correctness (SECONDARY)
+Example: If scope says "In: Make helper functions pure" and "Out: Change subprocess calls", do NOT flag that subprocess-calling functions are not pure - they are out of scope.
+
+### 2. Scope Contradiction Detection
+If "In:" and "Out:" items contradict each other (e.g., "In: pure functions" + "Out: don't change I/O" when existing functions do I/O), report this as:
+- severity: "warning"
+- message: "Scope contradiction: [describe the contradiction]. Consider revising issue scope."
+
+Do NOT fail the review for scope contradictions - they are issue definition problems, not code problems.
+
+### 3. Pre-existing Code
+Only flag **changes introduced by this diff**:
+- Do NOT flag "behavior changes" for code that existed before this diff
+- If behavior X existed before the diff and still exists after, it's not a regression
+- Use context from the diff hunks to determine what was added vs what existed
+
+### 4. Code Correctness (SECONDARY)
 - Bugs, logic errors, security issues, data integrity problems
 - Ignore: style, formatting, test coverage, type errors (already validated)
 
@@ -103,12 +118,14 @@ Do NOT flag issues for:
 - Linting/formatting (ruff verified this)
 - Type errors (ty verified this)
 - Coverage (quality gate verified this)
-- Acceptance criteria like "All existing tests pass" - these are runtime validations, not code review items
+- Acceptance criteria like "All existing tests pass" - these are runtime validations
+- Pre-existing code that hasn't changed
+- Things explicitly listed in "Out:" scope
 
 ## Severity
 
-- error: MISSING SCOPE ITEM, bug, security issue, data loss
-- warning: partial implementation, risk, edge case
+- error: MISSING SCOPE ITEM (from "In:" list only), bug, security issue, data loss
+- warning: scope contradiction, partial implementation, risk, edge case
 - info: minor suggestion
 
 ## Output
@@ -118,7 +135,8 @@ JSON with: file (repo-relative path or "N/A"), line (int or null), severity, mes
 ## Rules
 
 - passed=false if ANY "In:" scope item is missing OR any severity="error" issue
-- passed=true if all scope items addressed and no errors (warnings/info OK)
+- passed=true if all "In:" scope items addressed and no errors (warnings/info OK)
+- Scope contradictions are warnings, not errors - passed can still be true
 - Output only valid JSON matching the schema
 """
 
