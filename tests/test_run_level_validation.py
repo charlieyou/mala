@@ -285,6 +285,7 @@ class TestRunLevelValidationIntegration:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -340,6 +341,7 @@ class TestRunLevelValidationIntegration:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -407,6 +409,7 @@ class TestRunLevelValidationIntegration:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -468,6 +471,7 @@ class TestRunLevelValidationIntegration:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:

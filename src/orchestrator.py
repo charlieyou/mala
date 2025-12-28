@@ -223,6 +223,7 @@ class MalaOrchestrator:
         coverage_threshold: float = 85.0,
         morph_enabled: bool = True,
         prioritize_wip: bool = False,
+        focus: bool = True,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
@@ -237,6 +238,7 @@ class MalaOrchestrator:
         self.coverage_threshold = coverage_threshold
         self.morph_enabled = morph_enabled
         self.prioritize_wip = prioritize_wip
+        self.focus = focus
 
         self.active_tasks: dict[str, asyncio.Task] = {}
         self.agent_ids: dict[str, str] = {}
@@ -1154,6 +1156,7 @@ class MalaOrchestrator:
                         only_ids=self.only_ids,
                         suppress_warn_ids=suppress_warn_ids,
                         prioritize_wip=self.prioritize_wip,
+                        focus=self.focus,
                     )
                     if not limit_reached
                     else []

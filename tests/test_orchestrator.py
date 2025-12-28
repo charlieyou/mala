@@ -409,6 +409,7 @@ class TestRunOrchestrationLoop:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             return []
 
@@ -440,6 +441,7 @@ class TestRunOrchestrationLoop:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             # Return issues only on first call
             nonlocal call_count
@@ -511,6 +513,7 @@ class TestFailedTaskResetsIssue:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -576,6 +579,7 @@ class TestFailedTaskResetsIssue:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -632,6 +636,16 @@ class TestOrchestratorInitialization:
         relative = Path(".")
         orch = MalaOrchestrator(repo_path=relative)
         assert orch.repo_path.is_absolute()
+
+    def test_focus_default_true(self, tmp_path: Path) -> None:
+        """Focus parameter should default to True."""
+        orch = MalaOrchestrator(repo_path=tmp_path)
+        assert orch.focus is True
+
+    def test_focus_explicit_false(self, tmp_path: Path) -> None:
+        """Focus parameter can be explicitly set to False."""
+        orch = MalaOrchestrator(repo_path=tmp_path, focus=False)
+        assert orch.focus is False
 
 
 class TestEpicFilterAsync:
@@ -1176,6 +1190,7 @@ class TestOrchestratorQualityGateIntegration:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1238,6 +1253,7 @@ class TestOrchestratorQualityGateIntegration:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1366,6 +1382,7 @@ class TestAsyncBeadsClientWithTimeout:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             return []
 
@@ -1719,6 +1736,7 @@ class TestLockDirNestedCreation:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             return []
 
@@ -1785,6 +1803,7 @@ class TestGateFlowSequencing:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1864,6 +1883,7 @@ class TestGateFlowSequencing:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1943,6 +1963,7 @@ class TestRetryExhaustion:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2009,6 +2030,7 @@ class TestRetryExhaustion:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2088,6 +2110,7 @@ class TestRunLevelValidation:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2159,6 +2182,7 @@ class TestRunLevelValidation:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2239,6 +2263,7 @@ class TestRunLevelValidation:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2332,6 +2357,7 @@ class TestValidationResultMetadata:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2438,6 +2464,7 @@ class TestValidationResultMetadata:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2537,6 +2564,7 @@ class TestResolutionRecordingInMetadata:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2626,6 +2654,7 @@ class TestResolutionRecordingInMetadata:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2707,6 +2736,7 @@ class TestResolutionRecordingInMetadata:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2793,6 +2823,7 @@ class TestEpicClosureAfterChildCompletion:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2862,6 +2893,7 @@ class TestEpicClosureAfterChildCompletion:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2936,6 +2968,7 @@ class TestEpicClosureAfterChildCompletion:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal call_count
             call_count += 1
@@ -3089,6 +3122,7 @@ class TestFailedRunQualityGateEvidence:
             only_ids: set[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
+            focus: bool = True,
         ) -> list[str]:
             nonlocal first_call
             if first_call:

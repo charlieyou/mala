@@ -291,7 +291,14 @@ class TestValidationRunner:
 
     @pytest.fixture
     def runner(self, tmp_path: Path) -> ValidationRunner:
-        """Create a runner with minimal config."""
+        """Create a runner with minimal config.
+
+        Creates a pyproject.toml to trigger Python repo detection,
+        which is required for commands to be generated.
+        """
+        # Create pyproject.toml so repo is detected as Python
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+
         config = ValidationConfig(
             run_slow_tests=False,
             run_e2e=False,
@@ -315,6 +322,9 @@ class TestValidationRunner:
         assert "pytest" in names
 
     def test_build_validation_commands_with_coverage(self, tmp_path: Path) -> None:
+        # Create pyproject.toml so repo is detected as Python
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+
         config = ValidationConfig(
             run_slow_tests=True,
             coverage=True,
@@ -332,10 +342,11 @@ class TestValidationRunner:
                 break
 
         assert pytest_cmd is not None
-        assert "--cov" in pytest_cmd
-        assert "src" in pytest_cmd
+        # Commands now come from build_validation_spec which uses --cov=src format
+        assert any("--cov" in arg for arg in pytest_cmd)
         assert "--cov-branch" in pytest_cmd
-        assert "--cov-fail-under=80" in pytest_cmd
+        # Coverage threshold is passed as float, so it may be 80 or 80.0
+        assert any("--cov-fail-under=80" in arg for arg in pytest_cmd)
         assert "-m" in pytest_cmd
         assert "slow or not slow" in pytest_cmd
 
