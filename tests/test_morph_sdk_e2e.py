@@ -1,19 +1,17 @@
 """Real Agent SDK E2E tests for MorphLLM MCP integration.
 
-These tests spawn actual Claude agents and verify MCP tool behavior.
+These tests spawn actual Claude agents and verify MCP tool behavior
+using a mock MCP server that mimics MorphLLM's tools.
 
 Requirements:
 - Claude Code CLI must be authenticated (run `claude` to verify)
-- MORPH_API_KEY must be set in ~/.config/mala/.env or environment
 
 Run with: uv run pytest tests/test_morph_sdk_e2e.py -m slow -v
 """
 
-import os
+import sys
 import pytest
 from pathlib import Path
-
-from dotenv import load_dotenv
 
 from claude_agent_sdk import (
     ClaudeSDKClient,
@@ -27,29 +25,24 @@ from claude_agent_sdk.types import (
     SyncHookJSONOutput,
 )
 
-# Load env - try local .env first, then user config
-# (avoids importing cli.py which triggers Braintrust)
-_repo_root = Path(__file__).parent.parent
-load_dotenv(_repo_root / ".env")  # Local .env takes precedence
-load_dotenv(Path.home() / ".config" / "mala" / ".env")  # Fallback to global
-
 # All SDK tests are slow (require API calls)
 pytestmark = [pytest.mark.slow, pytest.mark.morph]
 
 # Define MCP config inline to avoid importing from cli.py (which triggers Braintrust)
 MORPH_DISALLOWED_TOOLS = ["Edit", "Grep"]
 
+# Path to the mock MCP server
+MOCK_MCP_SERVER = Path(__file__).parent / "mock_mcp_server.py"
+
 
 def get_mcp_servers(repo_path: Path) -> dict:
-    """Get MCP servers configuration for agents."""
+    """Get MCP servers configuration using mock server."""
     return {
         "morphllm": {
-            "command": "npx",
-            "args": ["-y", "@morphllm/morphmcp"],
+            "command": sys.executable,
+            "args": [str(MOCK_MCP_SERVER)],
             "env": {
-                "MORPH_API_KEY": os.environ["MORPH_API_KEY"],
-                "ENABLED_TOOLS": "all",
-                "WORKSPACE_MODE": "true",
+                "WORKSPACE_PATH": str(repo_path),
             },
         }
     }
@@ -68,13 +61,6 @@ async def block_morph_replaced_tools(
             "reason": f"Use MorphLLM MCP tool instead of {tool_name}",
         }
     return {}
-
-
-@pytest.fixture(autouse=True)
-def require_morph_api_key() -> None:
-    """Skip tests if MORPH_API_KEY is not set."""
-    if not os.environ.get("MORPH_API_KEY"):
-        pytest.skip("MORPH_API_KEY not set - add to ~/.config/mala/.env")
 
 
 @pytest.fixture
