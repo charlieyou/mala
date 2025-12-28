@@ -20,7 +20,14 @@ import pytest
 from claude_agent_sdk.types import ResultMessage
 
 from src.beads_client import BeadsClient, SubprocessResult
-from src.orchestrator import IssueResult, MalaOrchestrator, _get_implementer_prompt
+from src.orchestrator import (
+    IssueResult,
+    MalaOrchestrator,
+    _get_fixer_prompt,
+    _get_gate_followup_prompt,
+    _get_implementer_prompt,
+    _get_review_followup_prompt,
+)
 from src.validation.command_runner import CommandResult
 
 
@@ -108,6 +115,48 @@ class TestPromptTemplate:
         assert placeholders == expected_keys, (
             f"Mismatch: template has {placeholders}, format expects {expected_keys}"
         )
+
+
+class TestPromptLazyLoading:
+    """Test that prompts are lazy-loaded and cached."""
+
+    def test_prompts_are_cached_functions(self) -> None:
+        """All prompt loaders should use functools.cache."""
+        # Verify each prompt function has cache_info (attribute from functools.cache)
+        assert hasattr(_get_implementer_prompt, "cache_info")
+        assert hasattr(_get_gate_followup_prompt, "cache_info")
+        assert hasattr(_get_review_followup_prompt, "cache_info")
+        assert hasattr(_get_fixer_prompt, "cache_info")
+
+    def test_prompts_cached_after_first_call(self) -> None:
+        """Prompts should be read from disk only once per session."""
+        # Clear any existing cache
+        _get_implementer_prompt.cache_clear()
+
+        # Before calling: cache should be empty
+        info_before = _get_implementer_prompt.cache_info()
+        assert info_before.currsize == 0, "Cache should be empty before first call"
+
+        # First call: cache miss
+        _ = _get_implementer_prompt()
+        info_after_first = _get_implementer_prompt.cache_info()
+        assert info_after_first.misses == 1, "First call should be a cache miss"
+        assert info_after_first.currsize == 1, (
+            "Cache should have 1 entry after first call"
+        )
+
+        # Second call: cache hit
+        _ = _get_implementer_prompt()
+        info_after_second = _get_implementer_prompt.cache_info()
+        assert info_after_second.hits == 1, "Second call should be a cache hit"
+        assert info_after_second.misses == 1, "Should still have only 1 miss"
+
+    def test_all_prompt_loaders_return_non_empty_content(self) -> None:
+        """All prompt loaders should return non-empty strings."""
+        assert len(_get_implementer_prompt()) > 0
+        assert len(_get_gate_followup_prompt()) > 0
+        assert len(_get_review_followup_prompt()) > 0
+        assert len(_get_fixer_prompt()) > 0
 
 
 class TestGetReadyIssuesAsync:
