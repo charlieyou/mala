@@ -135,6 +135,7 @@ class CommandRunner:
         cmd: list[str],
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        use_process_group: bool | None = None,
     ) -> CommandResult:
         """Run a command synchronously.
 
@@ -146,6 +147,11 @@ class CommandRunner:
             cmd: Command and arguments to run.
             env: Environment variables (merged with os.environ).
             timeout: Override default timeout for this command.
+            use_process_group: Whether to use process group for termination.
+                If None (default), uses process group on Unix, disabled on Windows.
+                When True, creates a new session and kills the entire process group
+                on timeout using os.killpg(). When False, only terminates the
+                main process.
 
         Returns:
             CommandResult with execution details.
@@ -153,8 +159,12 @@ class CommandRunner:
         effective_timeout = timeout if timeout is not None else self.timeout_seconds
         merged_env = self._merge_env(env)
 
-        # Use process group on Unix for proper child termination
-        use_process_group = sys.platform != "win32"
+        # Use process group on Unix for proper child termination (default behavior)
+        effective_use_process_group = (
+            use_process_group
+            if use_process_group is not None
+            else sys.platform != "win32"
+        )
 
         start = time.monotonic()
         proc = subprocess.Popen(
@@ -164,7 +174,7 @@ class CommandRunner:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            start_new_session=use_process_group,
+            start_new_session=effective_use_process_group,
         )
 
         try:
@@ -181,7 +191,9 @@ class CommandRunner:
         except subprocess.TimeoutExpired:
             # Terminate the process group properly
             duration = time.monotonic() - start
-            stdout, stderr = self._terminate_process_sync(proc, use_process_group)
+            stdout, stderr = self._terminate_process_sync(
+                proc, effective_use_process_group
+            )
             return CommandResult(
                 command=cmd,
                 returncode=TIMEOUT_EXIT_CODE,
@@ -244,16 +256,23 @@ class CommandRunner:
         cmd: list[str],
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        use_process_group: bool | None = None,
     ) -> CommandResult:
         """Run a command asynchronously.
 
         Uses asyncio subprocess for proper async timeout handling with
-        process-group termination.
+        process-group termination. On timeout, sends SIGTERM to the process
+        group, waits kill_grace_seconds, then sends SIGKILL if still running.
 
         Args:
             cmd: Command and arguments to run.
             env: Environment variables (merged with os.environ).
             timeout: Override default timeout for this command.
+            use_process_group: Whether to use process group for termination.
+                If None (default), uses process group on Unix, disabled on Windows.
+                When True, creates a new session (os.setsid) and kills the entire
+                process group on timeout using os.killpg(). When False, only
+                terminates the main process.
 
         Returns:
             CommandResult with execution details.
@@ -261,8 +280,12 @@ class CommandRunner:
         effective_timeout = timeout if timeout is not None else self.timeout_seconds
         merged_env = self._merge_env(env)
 
-        # Use process group on Unix for proper child termination
-        use_process_group = sys.platform != "win32"
+        # Use process group on Unix for proper child termination (default behavior)
+        effective_use_process_group = (
+            use_process_group
+            if use_process_group is not None
+            else sys.platform != "win32"
+        )
 
         start = time.monotonic()
         try:
@@ -272,7 +295,7 @@ class CommandRunner:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.cwd,
                 env=merged_env,
-                start_new_session=use_process_group,
+                start_new_session=effective_use_process_group,
             )
 
             try:
@@ -291,7 +314,7 @@ class CommandRunner:
                 )
             except TimeoutError:
                 duration = time.monotonic() - start
-                await self._terminate_process(proc, use_process_group)
+                await self._terminate_process(proc, effective_use_process_group)
                 return CommandResult(
                     command=cmd,
                     returncode=TIMEOUT_EXIT_CODE,

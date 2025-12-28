@@ -203,6 +203,45 @@ class TestCommandRunner:
         assert (tmp_path / "started.txt").exists()
         assert not (tmp_path / "survived.txt").exists()
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    def test_use_process_group_true_kills_children(self, tmp_path: Path) -> None:
+        """Verify use_process_group=True kills child processes on timeout."""
+        script = tmp_path / "spawner.sh"
+        script.write_text(
+            """#!/bin/bash
+            (sleep 0.3; echo "child survived" > "$1/child_output.txt") &
+            sleep 10
+            """
+        )
+        script.chmod(0o755)
+
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.1)
+        result = runner.run([str(script), str(tmp_path)], use_process_group=True)
+
+        assert result.timed_out is True
+        time.sleep(0.5)
+        assert not (tmp_path / "child_output.txt").exists(), "Child should be killed"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    def test_use_process_group_false_leaves_children(self, tmp_path: Path) -> None:
+        """Verify use_process_group=False only kills parent, children survive."""
+        script = tmp_path / "spawner.sh"
+        script.write_text(
+            """#!/bin/bash
+            (sleep 0.2; echo "child survived" > "$1/child_output.txt") &
+            sleep 10
+            """
+        )
+        script.chmod(0o755)
+
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.1)
+        result = runner.run([str(script), str(tmp_path)], use_process_group=False)
+
+        assert result.timed_out is True
+        time.sleep(0.5)
+        # With use_process_group=False, child process survives
+        assert (tmp_path / "child_output.txt").exists(), "Child should survive"
+
     def test_run_with_env(self, tmp_path: Path) -> None:
         runner = CommandRunner(cwd=tmp_path)
         result = runner.run(
@@ -335,6 +374,55 @@ class TestAsyncCommandRunner:
         assert (tmp_path / "started.txt").exists()
         # But was killed before completing (no survived.txt)
         assert not (tmp_path / "survived.txt").exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    async def test_async_use_process_group_true_kills_children(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify use_process_group=True kills child processes on async timeout."""
+        script = tmp_path / "spawner.sh"
+        script.write_text(
+            """#!/bin/bash
+            (sleep 0.3; echo "child survived" > "$1/child_output.txt") &
+            sleep 10
+            """
+        )
+        script.chmod(0o755)
+
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.1)
+        result = await runner.run_async(
+            [str(script), str(tmp_path)], use_process_group=True
+        )
+
+        assert result.timed_out is True
+        await asyncio.sleep(0.5)
+        assert not (tmp_path / "child_output.txt").exists(), "Child should be killed"
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    async def test_async_use_process_group_false_leaves_children(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify use_process_group=False only kills parent, children survive."""
+        script = tmp_path / "spawner.sh"
+        script.write_text(
+            """#!/bin/bash
+            (sleep 0.2; echo "child survived" > "$1/child_output.txt") &
+            sleep 10
+            """
+        )
+        script.chmod(0o755)
+
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.1)
+        result = await runner.run_async(
+            [str(script), str(tmp_path)], use_process_group=False
+        )
+
+        assert result.timed_out is True
+        await asyncio.sleep(0.5)
+        # With use_process_group=False, child process survives
+        assert (tmp_path / "child_output.txt").exists(), "Child should survive"
 
 
 class TestConvenienceFunctions:
