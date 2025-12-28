@@ -418,16 +418,26 @@ class SpecValidationRunner:
 
             # Replace any existing --cov-fail-under with 0
             # This ensures we capture baseline even if it's below pyproject.toml threshold
+            # Also remove slow test markers to avoid running expensive E2E tests
+            # during baseline refresh (baseline only needs coverage from fast tests)
             new_pytest_cmd = []
             skip_next = False
+            skip_markers = False
             for arg in pytest_cmd:
                 if skip_next:
                     skip_next = False
+                    continue
+                if skip_markers:
+                    skip_markers = False
                     continue
                 if arg.startswith("--cov-fail-under="):
                     continue
                 if arg == "--cov-fail-under":
                     skip_next = True
+                    continue
+                # Remove slow test markers - baseline refresh should only run fast tests
+                if arg == "-m":
+                    skip_markers = True
                     continue
                 new_pytest_cmd.append(arg)
             new_pytest_cmd.append("--cov-fail-under=0")

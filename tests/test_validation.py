@@ -1694,6 +1694,122 @@ class TestSpecRunnerBaselineRefresh:
         # Baseline file should be updated
         assert baseline_path.exists()
 
+    def test_baseline_refresh_strips_slow_test_markers(
+        self, runner: SpecValidationRunner, tmp_path: Path
+    ) -> None:
+        """Baseline refresh should strip -m markers to avoid running slow tests.
+
+        When the spec includes slow tests (e.g., -m 'slow or not slow'), the
+        baseline refresh should exclude these to avoid timing out on expensive
+        E2E tests that are not needed for coverage calculation.
+        """
+        # Spec with slow test markers (typical run-level configuration)
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=[
+                        "uv",
+                        "run",
+                        "pytest",
+                        "--cov=src",
+                        "-m",
+                        "slow or not slow",
+                        "--cov-fail-under=85",
+                    ],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.RUN_LEVEL,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        # Mock worktree for refresh
+        from src.validation.worktree import WorktreeContext, WorktreeState
+
+        mock_worktree = MagicMock(spec=WorktreeContext)
+        mock_worktree.state = WorktreeState.CREATED
+        mock_worktree.path = tmp_path / "baseline-worktree"
+        mock_worktree.path.mkdir()
+
+        (mock_worktree.path / "coverage.xml").write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.88" branch-rate="0.82" />'
+        )
+
+        # Capture the command that was run
+        captured_commands: list[list[str]] = []
+
+        def mock_popen_capture(
+            cmd: list[str], *args: object, **kwargs: object
+        ) -> MagicMock:
+            captured_commands.append(cmd)
+            mock = MagicMock()
+            mock.communicate.return_value = ("ok", "")
+            mock.returncode = 0
+            mock.stdout = MagicMock()
+            mock.stderr = MagicMock()
+            mock.stdout.close = MagicMock()
+            mock.stderr.close = MagicMock()
+            mock.wait = MagicMock(return_value=0)
+            return mock
+
+        def mock_git_run(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            if "status" in args and "--porcelain" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        with (
+            patch(
+                "src.validation.spec_runner.create_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.validation.spec_runner.remove_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                side_effect=mock_popen_capture,
+            ),
+            patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
+            patch("src.validation.spec_runner.try_lock", return_value=True),
+        ):
+            runner._refresh_baseline(spec, tmp_path)
+
+        # Find the pytest command
+        pytest_cmds = [c for c in captured_commands if "pytest" in c]
+        assert len(pytest_cmds) >= 1, (
+            f"Expected pytest command, got: {captured_commands}"
+        )
+
+        pytest_cmd = pytest_cmds[-1]  # The actual pytest run (not uv sync)
+
+        # Verify -m marker was stripped
+        assert "-m" not in pytest_cmd, (
+            f"Expected -m marker to be stripped, but found in: {pytest_cmd}"
+        )
+        assert "slow or not slow" not in pytest_cmd, (
+            f"Expected marker value to be stripped, but found in: {pytest_cmd}"
+        )
+
+        # Verify --cov-fail-under was replaced with 0
+        assert "--cov-fail-under=0" in pytest_cmd, (
+            f"Expected --cov-fail-under=0, but got: {pytest_cmd}"
+        )
+        assert "--cov-fail-under=85" not in pytest_cmd, (
+            f"Original threshold should be removed, but found in: {pytest_cmd}"
+        )
+
+        # Verify other coverage flags preserved
+        assert "--cov=src" in pytest_cmd, f"Expected --cov=src in: {pytest_cmd}"
+
 
 class TestBaselineCaptureOrder:
     """Tests verifying baseline is captured BEFORE worktree/validation.
