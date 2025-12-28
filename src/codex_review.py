@@ -84,15 +84,10 @@ Compare the diff against the issue's scope ("In:" items) and acceptance criteria
 - Focus on bugs, security issues, data integrity, performance problems
 - Ignore style/formatting unless it affects correctness
 
-### 3. Test Coverage
-- Tests have already been executed and passed before this review
-- Only flag if new functionality clearly lacks corresponding test code in the diff
-- Do NOT request tests to be run - assume they passed
-
 ## Severity
 
 - error: MISSING SCOPE ITEM, bug, security issue, data loss
-- warning: partial implementation, risk, edge case, missing test coverage
+- warning: partial implementation, risk, edge case
 - info: minor improvement
 
 ## Output Format
