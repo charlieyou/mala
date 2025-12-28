@@ -199,6 +199,98 @@ class BeadsClient:
         except json.JSONDecodeError:
             return set()
 
+    async def _sort_by_epic_groups(
+        self, issues: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        """Sort issues by epic groups for focus mode.
+
+        Groups issues by parent epic, then sorts:
+        1. Groups by (min_priority, max_updated DESC)
+        2. Within groups by (priority, updated DESC)
+
+        Orphan tasks (no parent epic) form a virtual group with the same rules.
+
+        Args:
+            issues: List of issue dicts to sort.
+
+        Returns:
+            Sorted list of issue dicts.
+        """
+        if not issues:
+            return issues
+
+        # Get parent epics for all issues
+        issue_ids = [str(i["id"]) for i in issues]
+        parent_epics = await self.get_parent_epics_async(issue_ids)
+
+        # Group issues by parent epic (None for orphans)
+        groups: dict[str | None, list[dict[str, object]]] = {}
+        for issue in issues:
+            epic = parent_epics.get(str(issue["id"]))
+            if epic not in groups:
+                groups[epic] = []
+            groups[epic].append(issue)
+
+        def get_priority(issue: dict[str, object]) -> int:
+            """Extract priority as int, defaulting to 0."""
+            prio = issue.get("priority")
+            if prio is None:
+                return 0
+            if isinstance(prio, int):
+                return prio
+            return int(str(prio))
+
+        def get_updated_at(issue: dict[str, object]) -> str:
+            """Extract updated_at as string, defaulting to empty."""
+            val = issue.get("updated_at")
+            return str(val) if val is not None else ""
+
+        # Sort within each group by (priority, updated DESC)
+        for epic, group_issues in groups.items():
+            group_issues.sort(
+                key=lambda i: (
+                    get_priority(i),
+                    self._negate_timestamp(get_updated_at(i)),
+                )
+            )
+
+        # Compute group sort key: (min_priority, -max_updated)
+        def group_sort_key(epic: str | None) -> tuple[int, str]:
+            group_issues = groups[epic]
+            min_priority = min(get_priority(i) for i in group_issues)
+            # Find max updated_at (most recent first)
+            max_updated = max(get_updated_at(i) for i in group_issues)
+            # Negate by prepending ~ to reverse sort (~ > any alphanum)
+            # We want max_updated DESC, so higher updated = earlier in sort
+            return (min_priority, self._negate_timestamp(max_updated))
+
+        # Sort groups and flatten
+        sorted_epics = sorted(groups.keys(), key=group_sort_key)
+        result: list[dict[str, object]] = []
+        for epic in sorted_epics:
+            result.extend(groups[epic])
+
+        return result
+
+    def _negate_timestamp(self, timestamp: object) -> str:
+        """Negate a timestamp string for descending sort.
+
+        Converts each character to its complement relative to 'z'/'9'
+        so that lexicographic sort becomes descending.
+
+        Args:
+            timestamp: ISO timestamp string or empty string.
+
+        Returns:
+            Negated string for descending sort.
+        """
+        if not timestamp or not isinstance(timestamp, str):
+            # Empty/missing timestamps sort last (after all real timestamps)
+            return "~"  # ~ sorts after alphanumeric
+        # Negate each character: higher chars become lower
+        # This works for ISO timestamps like "2025-01-15T10:30:00Z"
+        return "".join(chr(255 - ord(c)) for c in timestamp)
+
     async def get_ready_async(
         self,
         exclude_ids: set[str] | None = None,
@@ -206,6 +298,7 @@ class BeadsClient:
         only_ids: set[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
+        focus: bool = True,
     ) -> list[str]:
         """Get list of ready issue IDs via bd CLI, sorted by priority (async version).
 
@@ -215,10 +308,15 @@ class BeadsClient:
             only_ids: Optional set of issue IDs to include exclusively.
             suppress_warn_ids: Optional set of issue IDs to suppress from warnings.
             prioritize_wip: If True, sort in_progress issues before open issues.
+            focus: If True, group tasks by parent epic and complete one epic at a time.
+                When focus=True, groups are sorted by (min_priority, max_updated DESC)
+                and within groups by (priority, updated DESC). Orphan tasks form a
+                virtual group with the same sorting rules.
 
         Returns:
             List of issue IDs sorted by priority (lower = higher priority).
             When prioritize_wip is True, in_progress issues come first.
+            When focus is True, tasks are grouped by epic.
         """
         exclude_ids = exclude_ids or set()
         suppress_warn_ids = suppress_warn_ids or set()
@@ -276,20 +374,23 @@ class BeadsClient:
                 and (only_ids is None or i["id"] in only_ids)
             ]
 
+            # Apply epic-grouped sorting when focus=True
+            if focus and filtered:
+                filtered = await self._sort_by_epic_groups(filtered)
+            else:
+                # Default sort by priority only
+                filtered.sort(key=lambda i: i.get("priority") or 0)
+
             # Sort by priority, and optionally by status (in_progress first)
             # Default to 0 (P0) for issues without priority to match bd CLI behavior
             if prioritize_wip:
                 # in_progress issues get status_order=0, others get 1
+                # When focus=True, epic grouping is preserved as a stable sort
                 filtered.sort(
-                    key=lambda i: (
-                        0 if i.get("status") == "in_progress" else 1,
-                        i.get("priority") or 0,
-                    )
+                    key=lambda i: (0 if i.get("status") == "in_progress" else 1,)
                 )
-            else:
-                filtered.sort(key=lambda i: i.get("priority") or 0)
 
-            return [i["id"] for i in filtered]
+            return [str(i["id"]) for i in filtered]
         except json.JSONDecodeError:
             return []
 
