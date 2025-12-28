@@ -3221,11 +3221,13 @@ class TestBaselineCommitSelection:
             max_retries: int = 2,
             issue_description: str | None = None,
             baseline_commit: str | None = None,
+            capture_session_log: bool = False,
         ) -> MagicMock:
             captured_baseline.append(baseline_commit)
             result = MagicMock()
             result.issues = []
             result.parse_error = None
+            result.session_log_path = None
             return result
 
         mock_client = AsyncMock()
@@ -3303,11 +3305,13 @@ class TestBaselineCommitSelection:
             max_retries: int = 2,
             issue_description: str | None = None,
             baseline_commit: str | None = None,
+            capture_session_log: bool = False,
         ) -> MagicMock:
             captured_baseline.append(baseline_commit)
             result = MagicMock()
             result.issues = []
             result.parse_error = None
+            result.session_log_path = None
             return result
 
         mock_client = AsyncMock()
@@ -3483,6 +3487,7 @@ class TestCodexReviewUsesCurrentHead:
             max_retries: int = 2,
             issue_description: str | None = None,
             baseline_commit: str | None = None,
+            capture_session_log: bool = False,
         ) -> CodexReviewResult:
             captured_review_commits.append(commit_hash)
             return CodexReviewResult(

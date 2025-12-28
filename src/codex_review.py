@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 
@@ -32,6 +34,7 @@ class CodexReviewResult:
     raw_output: str = ""
     parse_error: str | None = None
     attempt: int = 1
+    session_log_path: str | None = None
 
 
 # JSON schema for structured output (used with codex exec --output-schema)
@@ -214,12 +217,48 @@ def _parse_review_json(output: str) -> tuple[bool, list[ReviewIssue], str | None
     return passed, issues, None
 
 
+def _parse_session_log_path(stderr: str) -> str | None:
+    """Parse session ID from codex stderr and construct log path.
+
+    Codex outputs "session id: <uuid>" in its header. Session logs are stored
+    at ~/.codex/sessions/YYYY/MM/DD/rollout-{datetime}-{session-id}.jsonl.
+
+    Args:
+        stderr: Stderr output from codex exec.
+
+    Returns:
+        Full path to the session log file if found and exists, None otherwise.
+    """
+    # Match "session id: <uuid>" pattern
+    match = re.search(r"session id:\s*([0-9a-f-]+)", stderr, re.IGNORECASE)
+    if not match:
+        return None
+
+    session_id = match.group(1)
+
+    # Session logs are stored in ~/.codex/sessions/YYYY/MM/DD/
+    codex_sessions = Path.home() / ".codex" / "sessions"
+    now = datetime.now()
+    date_dir = codex_sessions / str(now.year) / f"{now.month:02d}" / f"{now.day:02d}"
+
+    if not date_dir.exists():
+        return None
+
+    # Find the file matching the session ID
+    # Format: rollout-{datetime}-{session-id}.jsonl
+    for log_file in date_dir.glob(f"*{session_id}.jsonl"):
+        return str(log_file)
+
+    return None
+
+
 async def run_codex_review(
     repo_path: Path,
     commit_sha: str,
     max_retries: int = 2,
     issue_description: str | None = None,
     baseline_commit: str | None = None,
+    capture_session_log: bool = False,
 ) -> CodexReviewResult:
     """Run Codex code review on a commit with JSON output and retry logic.
 
@@ -235,6 +274,8 @@ async def run_codex_review(
             If provided, reviews the diff from baseline to commit_sha instead of
             commit vs its parent. This is used for retry scenarios where multiple
             fix commits have been made.
+        capture_session_log: If True, capture and return the codex session log path.
+            Only enabled in verbose mode to avoid overhead.
 
     Returns:
         CodexReviewResult with review outcome. If JSON parsing fails after
@@ -286,15 +327,21 @@ async def run_codex_review(
 
             stdout, stderr = await proc.communicate()
             raw_output = stdout.decode("utf-8", errors="replace")
+            stderr_text = stderr.decode("utf-8", errors="replace")
+
+            # Parse session log path from stderr if capture is enabled
+            session_log_path = None
+            if capture_session_log:
+                session_log_path = _parse_session_log_path(stderr_text)
 
             if proc.returncode != 0:
-                error_msg = stderr.decode("utf-8", errors="replace").strip()
                 return CodexReviewResult(
                     passed=False,
                     issues=[],
                     raw_output=raw_output,
-                    parse_error=f"codex exited with code {proc.returncode}: {error_msg}",
+                    parse_error=f"codex exited with code {proc.returncode}: {stderr_text.strip()}",
                     attempt=attempt,
+                    session_log_path=session_log_path,
                 )
 
             # Read the structured output
@@ -307,6 +354,7 @@ async def run_codex_review(
                     raw_output=raw_output,
                     parse_error=f"Failed to read output file: {e}",
                     attempt=attempt,
+                    session_log_path=session_log_path,
                 )
 
             # Try to parse the JSON output
@@ -320,6 +368,7 @@ async def run_codex_review(
                     raw_output=output,
                     parse_error=None,
                     attempt=attempt,
+                    session_log_path=session_log_path,
                 )
 
             # Parse failed - retry if we have attempts left
@@ -333,6 +382,7 @@ async def run_codex_review(
                 raw_output=output,
                 parse_error=parse_error,
                 attempt=attempt,
+                session_log_path=session_log_path,
             )
 
         finally:

@@ -39,7 +39,14 @@ from .lifecycle import (
     LifecycleContext,
     LifecycleState,
 )
-from .logging.console import Colors, log, log_tool, log_agent_text, truncate_text
+from .logging.console import (
+    Colors,
+    log,
+    log_tool,
+    log_agent_text,
+    truncate_text,
+    is_verbose_enabled,
+)
 from .logging.run_metadata import (
     RunMetadata,
     RunConfig,
@@ -249,6 +256,9 @@ class MalaOrchestrator:
 
         # Track session log paths for quality gate (issue_id -> log_path)
         self.session_log_paths: dict[str, Path] = {}
+
+        # Track codex review session log paths (issue_id -> log_path)
+        self.codex_review_log_paths: dict[str, str] = {}
 
         # Quality gate for post-run validation
         self.quality_gate = QualityGate(self.repo_path)
@@ -904,7 +914,14 @@ class MalaOrchestrator:
                                         max_retries=2,  # JSON parse retries
                                         issue_description=issue_description,
                                         baseline_commit=baseline_commit_hash,
+                                        capture_session_log=is_verbose_enabled(),
                                     )
+
+                                    # Store codex review log path if captured
+                                    if review_result.session_log_path:
+                                        self.codex_review_log_paths[issue_id] = (
+                                            review_result.session_log_path
+                                        )
 
                                     log_path = self.session_log_paths[issue_id]
                                     new_offset = self.quality_gate.get_log_end_offset(
@@ -1396,11 +1413,15 @@ class MalaOrchestrator:
                                 review_attempts=result.review_attempts,
                                 validation=validation_result,
                                 resolution=result.resolution,
+                                codex_review_log_path=self.codex_review_log_paths.get(
+                                    issue_id
+                                ),
                             )
                             run_metadata.record_issue(issue_run)
 
-                            # Pop log path after recording
+                            # Pop log paths after recording
                             self.session_log_paths.pop(issue_id, None)
+                            self.codex_review_log_paths.pop(issue_id, None)
 
                             duration_str = f"{result.duration_seconds:.0f}s"
                             if result.success:

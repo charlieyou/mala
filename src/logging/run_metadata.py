@@ -67,6 +67,8 @@ class IssueRun:
     # Validation results and resolution (from mala-e0i)
     validation: ValidationResult | None = None
     resolution: IssueResolution | None = None
+    # Codex review session log path (verbose mode only)
+    codex_review_log_path: str | None = None
 
 
 @dataclass
@@ -324,6 +326,7 @@ class RunMetadata:
                 review_attempts=issue_data.get("review_attempts", 0),
                 validation=validation,
                 resolution=resolution,
+                codex_review_log_path=issue_data.get("codex_review_log_path"),
             )
             metadata.issues[issue_id] = issue
 
