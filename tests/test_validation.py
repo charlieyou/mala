@@ -1352,3 +1352,530 @@ class TestSpecBasedValidation:
             # Verify remove_worktree was called with validation_passed=False
             assert len(remove_worktree_called_with) == 1
             assert remove_worktree_called_with[0][1] is False
+
+
+class TestSpecRunnerNoDecreaseMode:
+    """Tests for the SpecValidationRunner's 'no decrease' coverage mode.
+
+    In no-decrease mode (min_percent=None), the runner should:
+    1. Capture baseline coverage before validation
+    2. Auto-refresh baseline when stale or missing
+    3. Compare current coverage against baseline
+    """
+
+    @pytest.fixture
+    def runner(self, tmp_path: Path) -> ValidationRunner:
+        """Create a runner with coverage enabled but no explicit threshold."""
+        config = ValidationConfig(
+            run_slow_tests=False,
+            run_e2e=False,
+            coverage=True,
+            coverage_min=85,  # This is overridden by spec
+            use_test_mutex=False,
+        )
+        return ValidationRunner(tmp_path, config)
+
+    def test_no_decrease_mode_uses_baseline_when_fresh(
+        self, runner: ValidationRunner, tmp_path: Path
+    ) -> None:
+        """When baseline is fresh, use it as threshold."""
+        # Create fresh baseline at 80%
+        baseline_xml = tmp_path / "coverage.xml"
+        baseline_xml.write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.80" branch-rate="0.75" />'
+        )
+        # Set mtime to future (fresh)
+        import os
+
+        future_time = 4102444800
+        os.utime(baseline_xml, (future_time, future_time))
+
+        # Create spec with no-decrease mode (min_percent=None)
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["echo", "test"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(
+                enabled=True,
+                min_percent=None,  # No-decrease mode
+            ),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        context = ValidationContext(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_hash="",  # Validate in place
+            changed_files=[],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+
+        # Mock git commands to report clean repo with old commit
+        def mock_git_run(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            if "status" in args and "--porcelain" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        with (
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                return_value=mock_proc,
+            ),
+            patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
+        ):
+            result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
+            # Should pass because 80% >= 80% baseline
+            assert result.passed is True
+            assert result.coverage_result is not None
+            assert result.coverage_result.passed is True
+            assert result.coverage_result.percent == 80.0
+
+    def test_no_decrease_mode_fails_when_coverage_decreases(
+        self, runner: ValidationRunner, tmp_path: Path
+    ) -> None:
+        """When current coverage is below baseline, validation fails."""
+        # Create fresh baseline at 90%
+        baseline_xml = tmp_path / "coverage.xml"
+        baseline_xml.write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.90" branch-rate="0.85" />'
+        )
+        import os
+
+        future_time = 4102444800
+        os.utime(baseline_xml, (future_time, future_time))
+
+        # Create spec with no-decrease mode
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["echo", "test"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(
+                enabled=True,
+                min_percent=None,  # No-decrease mode
+            ),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        context = ValidationContext(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_hash="",
+            changed_files=[],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        # Create a worktree path for the test output
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+
+        # Create coverage.xml with lower coverage in worktree
+        (worktree_path / "coverage.xml").write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.70" branch-rate="0.65" />'
+        )
+
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+
+        def mock_git_run(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            if "status" in args and "--porcelain" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        with (
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                return_value=mock_proc,
+            ),
+            patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
+        ):
+            # Override context to use worktree path for coverage check
+            result = runner._spec_runner._execute_spec_commands(
+                spec=spec,
+                context=context,
+                cwd=worktree_path,
+                artifacts=ValidationArtifacts(log_dir=tmp_path),
+                log_dir=tmp_path,
+                run_id="test",
+                baseline_percent=90.0,  # Pass baseline explicitly
+            )
+            # Should fail because 70% < 90% baseline
+            assert result.passed is False
+            assert result.coverage_result is not None
+            assert result.coverage_result.passed is False
+            assert "70.0%" in (result.coverage_result.failure_reason or "")
+            assert "90.0%" in (result.coverage_result.failure_reason or "")
+
+    def test_no_decrease_mode_passes_when_coverage_increases(
+        self, runner: ValidationRunner, tmp_path: Path
+    ) -> None:
+        """When current coverage exceeds baseline, validation passes."""
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+
+        # Create coverage.xml with higher coverage in worktree
+        (worktree_path / "coverage.xml").write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.95" branch-rate="0.90" />'
+        )
+
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["echo", "test"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        context = ValidationContext(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_hash="",
+            changed_files=[],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+
+        with patch(
+            "src.validation.command_runner.subprocess.Popen",
+            return_value=mock_proc,
+        ):
+            result = runner._spec_runner._execute_spec_commands(
+                spec=spec,
+                context=context,
+                cwd=worktree_path,
+                artifacts=ValidationArtifacts(log_dir=tmp_path),
+                log_dir=tmp_path,
+                run_id="test",
+                baseline_percent=80.0,  # Lower baseline
+            )
+            # Should pass because 95% > 80% baseline
+            assert result.passed is True
+            assert result.coverage_result is not None
+            assert result.coverage_result.passed is True
+            assert result.coverage_result.percent == 95.0
+
+    def test_explicit_threshold_overrides_no_decrease_mode(
+        self, runner: ValidationRunner, tmp_path: Path
+    ) -> None:
+        """When min_percent is explicitly set, baseline is not used."""
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+
+        # Create coverage.xml at 75%
+        (worktree_path / "coverage.xml").write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.75" branch-rate="0.70" />'
+        )
+
+        # Explicit threshold of 70% - should pass
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["echo", "test"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(
+                enabled=True,
+                min_percent=70.0,  # Explicit threshold
+            ),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        context = ValidationContext(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_hash="",
+            changed_files=[],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+
+        with patch(
+            "src.validation.command_runner.subprocess.Popen",
+            return_value=mock_proc,
+        ):
+            result = runner._spec_runner._execute_spec_commands(
+                spec=spec,
+                context=context,
+                cwd=worktree_path,
+                artifacts=ValidationArtifacts(log_dir=tmp_path),
+                log_dir=tmp_path,
+                run_id="test",
+                baseline_percent=90.0,  # This should be ignored
+            )
+            # Should pass because 75% >= 70% (explicit threshold used, not baseline)
+            assert result.passed is True
+            assert result.coverage_result is not None
+            assert result.coverage_result.passed is True
+
+
+class TestSpecRunnerBaselineRefresh:
+    """Tests for the SpecValidationRunner's baseline auto-refresh behavior.
+
+    The runner should automatically refresh baseline when:
+    1. Baseline file is missing
+    2. Baseline file is stale (older than last commit)
+    3. Repo has uncommitted changes
+    """
+
+    @pytest.fixture
+    def runner(self, tmp_path: Path) -> ValidationRunner:
+        """Create a runner with coverage enabled."""
+        config = ValidationConfig(
+            run_slow_tests=False,
+            run_e2e=False,
+            coverage=True,
+            use_test_mutex=False,
+        )
+        return ValidationRunner(tmp_path, config)
+
+    def test_baseline_refresh_when_missing(
+        self, runner: ValidationRunner, tmp_path: Path
+    ) -> None:
+        """When baseline is missing, runner should refresh it."""
+        from src.validation.spec_runner import SpecValidationRunner
+
+        spec_runner = SpecValidationRunner(tmp_path)
+
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["uv", "run", "pytest"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        # Mock worktree and commands for refresh
+        from src.validation.worktree import WorktreeContext, WorktreeState
+
+        mock_worktree = MagicMock(spec=WorktreeContext)
+        mock_worktree.state = WorktreeState.CREATED
+        mock_worktree.path = tmp_path / "baseline-worktree"
+        mock_worktree.path.mkdir()
+
+        # Create coverage.xml in worktree
+        (mock_worktree.path / "coverage.xml").write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.85" branch-rate="0.80" />'
+        )
+
+        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
+
+        def mock_git_run(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            if "status" in args and "--porcelain" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        # Ensure baseline doesn't exist initially
+        baseline_path = tmp_path / "coverage.xml"
+        assert not baseline_path.exists()
+
+        with (
+            patch(
+                "src.validation.spec_runner.create_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.validation.spec_runner.remove_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.validation.command_runner.subprocess.Popen",
+                return_value=mock_proc,
+            ),
+            patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
+            patch(
+                "src.validation.spec_runner.try_lock", return_value=True
+            ),  # Get lock immediately
+        ):
+            baseline = spec_runner._refresh_baseline(spec, tmp_path)
+
+        # Baseline should be created
+        assert baseline == 85.0
+        assert baseline_path.exists()
+
+    def test_baseline_refresh_skipped_when_fresh(
+        self, runner: ValidationRunner, tmp_path: Path
+    ) -> None:
+        """When baseline is fresh, refresh should be skipped."""
+        from src.validation.spec_runner import SpecValidationRunner
+
+        spec_runner = SpecValidationRunner(tmp_path)
+
+        # Create fresh baseline
+        baseline_path = tmp_path / "coverage.xml"
+        baseline_path.write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.88" branch-rate="0.82" />'
+        )
+        import os
+
+        future_time = 4102444800
+        os.utime(baseline_path, (future_time, future_time))
+
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["uv", "run", "pytest"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        def mock_git_run(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            if "status" in args and "--porcelain" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        worktree_created = False
+
+        def mock_create_worktree(*args: object, **kwargs: object) -> MagicMock:
+            nonlocal worktree_created
+            worktree_created = True
+            raise AssertionError("Should not create worktree when baseline is fresh")
+
+        with (
+            patch(
+                "src.validation.spec_runner.create_worktree",
+                side_effect=mock_create_worktree,
+            ),
+            patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
+        ):
+            baseline = spec_runner._refresh_baseline(spec, tmp_path)
+
+        # Should return cached baseline without creating worktree
+        assert baseline == 88.0
+        assert not worktree_created
+
+    def test_baseline_refresh_with_lock_contention(
+        self, runner: ValidationRunner, tmp_path: Path
+    ) -> None:
+        """When another agent holds the lock, wait and use their refreshed baseline."""
+        from src.validation.spec_runner import SpecValidationRunner
+
+        spec_runner = SpecValidationRunner(tmp_path)
+
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["uv", "run", "pytest"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        # Initially no baseline
+        baseline_path = tmp_path / "coverage.xml"
+        assert not baseline_path.exists()
+
+        def mock_git_run_stale(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            """Simulate stale baseline initially."""
+            if "status" in args and "--porcelain" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        # Simulate another agent refreshing baseline while we wait
+        wait_called = False
+
+        def mock_wait_for_lock(*args: object, **kwargs: object) -> bool:
+            nonlocal wait_called
+            wait_called = True
+            # Simulate other agent creating the baseline
+            baseline_path.write_text(
+                '<?xml version="1.0"?>\n<coverage line-rate="0.92" branch-rate="0.87" />'
+            )
+            import os
+
+            future_time = 4102444800
+            os.utime(baseline_path, (future_time, future_time))
+            return True
+
+        def mock_git_run_fresh(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            """After wait, baseline is fresh."""
+            if "status" in args and "--porcelain" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        with (
+            patch(
+                "src.validation.spec_runner.try_lock", return_value=False
+            ),  # Lock held by other
+            patch(
+                "src.validation.spec_runner.wait_for_lock",
+                side_effect=mock_wait_for_lock,
+            ),
+            patch(
+                "src.validation.coverage.subprocess.run", side_effect=mock_git_run_fresh
+            ),
+        ):
+            baseline = spec_runner._refresh_baseline(spec, tmp_path)
+
+        # Should use the baseline created by the other agent
+        assert baseline == 92.0
+        assert wait_called

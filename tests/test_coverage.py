@@ -685,3 +685,168 @@ class TestIsBaselineStale:
             result = is_baseline_stale(report, tmp_path)
 
         assert result is True
+
+
+class TestNoDecreaseMode:
+    """Tests for the 'no decrease' coverage mode.
+
+    In no-decrease mode (min_percent=None), coverage is compared against
+    a baseline file rather than a fixed threshold. The baseline should be
+    captured before validation and refreshed when stale.
+    """
+
+    def test_baseline_used_when_threshold_none(self, tmp_path: Path) -> None:
+        """When min_percent is None, baseline coverage is used as threshold."""
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+
+        # Get baseline - this would be the main repo's coverage
+        baseline = get_baseline_coverage(report)
+        assert baseline == 90.0
+
+        # Create a new coverage report with same coverage - should pass
+        result = parse_and_check_coverage(report, min_percent=baseline)
+        assert result.passed is True
+        assert result.percent == 90.0
+
+    def test_baseline_comparison_fails_when_coverage_decreases(
+        self, tmp_path: Path
+    ) -> None:
+        """Coverage below baseline should fail in no-decrease mode."""
+        baseline_report = tmp_path / "baseline.xml"
+        baseline_report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+
+        # Get baseline coverage
+        baseline = get_baseline_coverage(baseline_report)
+        assert baseline == 90.0
+
+        # Create a report with lower coverage
+        current_report = tmp_path / "coverage.xml"
+        current_report.write_text(VALID_COVERAGE_XML_50_PERCENT)
+
+        # Check current against baseline - should fail
+        result = parse_and_check_coverage(current_report, min_percent=baseline)
+        assert result.passed is False
+        assert result.status == CoverageStatus.FAILED
+        assert result.failure_reason is not None
+        assert "50.0%" in result.failure_reason
+        assert "90.0%" in result.failure_reason
+
+    def test_baseline_comparison_passes_when_coverage_increases(
+        self, tmp_path: Path
+    ) -> None:
+        """Coverage above baseline should pass in no-decrease mode."""
+        baseline_report = tmp_path / "baseline.xml"
+        baseline_report.write_text(VALID_COVERAGE_XML_50_PERCENT)
+
+        # Get baseline coverage
+        baseline = get_baseline_coverage(baseline_report)
+        assert baseline == 50.0
+
+        # Create a report with higher coverage
+        current_report = tmp_path / "coverage.xml"
+        current_report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+
+        # Check current against baseline - should pass
+        result = parse_and_check_coverage(current_report, min_percent=baseline)
+        assert result.passed is True
+        assert result.status == CoverageStatus.PASSED
+        assert result.percent == 90.0
+
+    def test_baseline_comparison_passes_when_coverage_equal(
+        self, tmp_path: Path
+    ) -> None:
+        """Coverage equal to baseline should pass in no-decrease mode."""
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+
+        # Get baseline coverage
+        baseline = get_baseline_coverage(report)
+        assert baseline == 90.0
+
+        # Check same file against baseline - should pass
+        result = parse_and_check_coverage(report, min_percent=baseline)
+        assert result.passed is True
+        assert result.percent == 90.0
+
+    def test_stale_baseline_detected_after_new_commit(self, tmp_path: Path) -> None:
+        """Baseline should be stale when there's a newer commit."""
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+
+        # Set mtime to old time
+        old_time = 946684800  # Year 2000
+        os.utime(report, (old_time, old_time))
+
+        # Mock a recent commit
+        def mock_run(
+            args: list[str], **_kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            if "status" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                # Commit time is 2023 (much newer than baseline)
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        with patch("src.validation.coverage.subprocess.run", side_effect=mock_run):
+            assert is_baseline_stale(report, tmp_path) is True
+
+    def test_fresh_baseline_not_stale_after_commit(self, tmp_path: Path) -> None:
+        """Baseline should not be stale when it's newer than the last commit."""
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+
+        # Set mtime to future time (simulating baseline created after commit)
+        future_time = 4102444800  # Year 2099
+        os.utime(report, (future_time, future_time))
+
+        # Mock an old commit
+        def mock_run(
+            args: list[str], **_kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            if "status" in args:
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            elif "log" in args:
+                # Old commit time
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="1700000000\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        with patch("src.validation.coverage.subprocess.run", side_effect=mock_run):
+            assert is_baseline_stale(report, tmp_path) is False
+
+    def test_explicit_threshold_overrides_baseline(self, tmp_path: Path) -> None:
+        """When an explicit threshold is provided, baseline is not used."""
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_50_PERCENT)  # 50% coverage
+
+        # Even though baseline might be 90%, explicit threshold of 40% should pass
+        result = parse_and_check_coverage(report, min_percent=40.0)
+        assert result.passed is True
+        assert result.percent == 50.0
+
+        # Explicit threshold of 60% should fail despite coverage being "good enough"
+        result = parse_and_check_coverage(report, min_percent=60.0)
+        assert result.passed is False
+        assert result.status == CoverageStatus.FAILED
+
+    def test_none_baseline_returns_none(self, tmp_path: Path) -> None:
+        """Missing baseline file should return None, not raise."""
+        missing_report = tmp_path / "nonexistent.xml"
+        result = get_baseline_coverage(missing_report)
+        assert result is None
+
+    def test_malformed_baseline_raises(self, tmp_path: Path) -> None:
+        """Malformed baseline file should raise ValueError."""
+        import pytest
+
+        report = tmp_path / "coverage.xml"
+        report.write_text(INVALID_XML_SYNTAX)
+
+        with pytest.raises(ValueError) as exc_info:
+            get_baseline_coverage(report)
+        assert "Invalid coverage XML" in str(exc_info.value)
