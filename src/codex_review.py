@@ -68,42 +68,58 @@ REVIEW_OUTPUT_SCHEMA = {
 CODEX_REVIEW_PROMPT = """\
 Review the diff {diff_description}.
 
+## Pipeline Context
+
+You are the **Code Review** stage in a multi-stage validation pipeline. Before this review runs, the following has ALREADY been validated:
+
+1. **Quality Gate (already passed):**
+   - `ruff check` - linting passed
+   - `ruff format` - formatting passed
+   - `ty check` - type checking passed
+   - `pytest` - all tests passed
+   - Coverage threshold met
+
+Your job is to review **scope completeness and code correctness** - things that automated tools cannot catch.
+
 ## Issue Requirements
 
 {issue_description}
 
-## Review Focus (in priority order)
+## Your Review Focus
 
-### 1. Scope Completeness (MOST IMPORTANT)
-Compare the diff against the issue's scope ("In:" items) and acceptance criteria:
-- Flag as ERROR if any scope item is NOT addressed in the diff
-- Flag as ERROR if any acceptance criterion cannot be verified from the changes
+### 1. Scope Completeness (PRIMARY)
+Compare the diff against the issue's **"In:" scope items** only:
+- Flag as ERROR if any "In:" scope item is NOT addressed in the diff
 - Be specific: quote the missing scope item in the error message
 
-### 2. Code Correctness
-- Focus on bugs, security issues, data integrity, performance problems
-- Ignore style/formatting unless it affects correctness
+### 2. Code Correctness (SECONDARY)
+- Bugs, logic errors, security issues, data integrity problems
+- Ignore: style, formatting, test coverage, type errors (already validated)
+
+## What NOT to Check
+
+Do NOT flag issues for:
+- Tests passing (quality gate verified this)
+- Linting/formatting (ruff verified this)
+- Type errors (ty verified this)
+- Coverage (quality gate verified this)
+- Acceptance criteria like "All existing tests pass" - these are runtime validations, not code review items
 
 ## Severity
 
 - error: MISSING SCOPE ITEM, bug, security issue, data loss
 - warning: partial implementation, risk, edge case
-- info: minor improvement
+- info: minor suggestion
 
-## Output Format
+## Output
 
-For each issue: use repo-relative file path, line if possible (null if file-level),
-and a concise, actionable message. Use file "N/A" for scope/general issues.
+JSON with: file (repo-relative path or "N/A"), line (int or null), severity, message.
 
 ## Rules
 
-- passed MUST be false if ANY scope item from the issue description is missing
-- passed MUST be false if there are any issues with severity "error"
-- passed can be true if there are only warnings or info
-- line can be null if the issue is file-level or scope-level
-- Keep messages concise and actionable
-- If no issues and all scope items addressed, return passed=true and issues=[]
-- Output only JSON that conforms to the provided schema
+- passed=false if ANY "In:" scope item is missing OR any severity="error" issue
+- passed=true if all scope items addressed and no errors (warnings/info OK)
+- Output only valid JSON matching the schema
 """
 
 
