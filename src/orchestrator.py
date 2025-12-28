@@ -81,6 +81,7 @@ from .validation.e2e import E2EStatus
 
 if TYPE_CHECKING:
     from .validation.result import ValidationResult
+    from .validation.spec import ValidationSpec
 
 
 # Version (from package metadata)
@@ -205,6 +206,9 @@ class MalaOrchestrator:
 
         self.beads = BeadsClient(self.repo_path, log_warning=log_warning)
 
+        # Cached per-issue validation spec (built once at run start)
+        self.per_issue_spec: ValidationSpec | None = None
+
     def _cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup)."""
         cleaned = cleanup_agent_locks(agent_id)
@@ -225,13 +229,15 @@ class MalaOrchestrator:
 
         This is the blocking implementation that gets run via asyncio.to_thread.
         """
-        # Build a per-issue validation spec to derive expected evidence
-        spec = build_validation_spec(
-            scope=ValidationScope.PER_ISSUE,
-            disable_validations=self.disable_validations,
-            coverage_threshold=self.coverage_threshold,
-            repo_path=self.repo_path,
-        )
+        # Use cached per-issue validation spec (or build if not set)
+        if self.per_issue_spec is None:
+            self.per_issue_spec = build_validation_spec(
+                scope=ValidationScope.PER_ISSUE,
+                disable_validations=self.disable_validations,
+                coverage_threshold=self.coverage_threshold,
+                repo_path=self.repo_path,
+            )
+        spec = self.per_issue_spec
 
         # Use check_with_resolution which handles no-op/obsolete cases
         gate_result = self.quality_gate.check_with_resolution(
@@ -1118,6 +1124,14 @@ class MalaOrchestrator:
         )
         run_metadata = RunMetadata(self.repo_path, run_config, __version__)
 
+        # Build per-issue validation spec once (reused throughout the run)
+        self.per_issue_spec = build_validation_spec(
+            scope=ValidationScope.PER_ISSUE,
+            disable_validations=self.disable_validations,
+            coverage_threshold=self.coverage_threshold,
+            repo_path=self.repo_path,
+        )
+
         # Write run marker to indicate this instance is running
         # This is used by `mala status` to detect running instances
         write_run_marker(
@@ -1215,13 +1229,9 @@ class MalaOrchestrator:
                             log_path = self.session_log_paths.get(issue_id)
 
                             if result.success and log_path and log_path.exists():
-                                # Build spec for evidence parsing
-                                spec = build_validation_spec(
-                                    scope=ValidationScope.PER_ISSUE,
-                                    disable_validations=self.disable_validations,
-                                    coverage_threshold=self.coverage_threshold,
-                                    repo_path=self.repo_path,
-                                )
+                                # Use cached per-issue validation spec
+                                assert self.per_issue_spec is not None
+                                spec = self.per_issue_spec
                                 # Parse final evidence for metadata (full session) using spec-driven parsing
                                 evidence = self.quality_gate.parse_validation_evidence_with_spec(
                                     log_path, spec
@@ -1313,13 +1323,9 @@ class MalaOrchestrator:
                                         )
 
                             elif not result.success and log_path and log_path.exists():
-                                # Failed run - record evidence for metadata using spec-driven parsing
-                                spec = build_validation_spec(
-                                    scope=ValidationScope.PER_ISSUE,
-                                    disable_validations=self.disable_validations,
-                                    coverage_threshold=self.coverage_threshold,
-                                    repo_path=self.repo_path,
-                                )
+                                # Failed run - record evidence for metadata using cached spec
+                                assert self.per_issue_spec is not None
+                                spec = self.per_issue_spec
                                 evidence = self.quality_gate.parse_validation_evidence_with_spec(
                                     log_path, spec
                                 )
