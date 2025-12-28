@@ -11,7 +11,7 @@ from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any, Literal
 
-from ..tools.env import get_runs_dir
+from ..tools.env import get_repo_runs_dir
 from ..validation.spec import (
     IssueResolution,
     ResolutionOutcome,
@@ -340,12 +340,22 @@ class RunMetadata:
     def save(self) -> Path:
         """Save run metadata to JSON file.
 
+        Saves to a repo-specific subdirectory with timestamp-based filename
+        for easier sorting: {runs_dir}/{repo-safe-name}/{timestamp}_{short-uuid}.json
+
         Returns:
             Path to the saved metadata file.
         """
         self.completed_at = datetime.now(UTC)
-        get_runs_dir().mkdir(parents=True, exist_ok=True)
-        path = get_runs_dir() / f"{self.run_id}.json"
+        # Use repo-specific subdirectory
+        runs_dir = get_repo_runs_dir(self.repo_path)
+        runs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Use timestamp + short UUID for filename
+        timestamp = self.started_at.strftime("%Y-%m-%dT%H-%M-%S")
+        short_id = self.run_id[:8]
+        path = runs_dir / f"{timestamp}_{short_id}.json"
+
         with open(path, "w") as f:
             json.dump(self._to_dict(), f, indent=2)
         return path

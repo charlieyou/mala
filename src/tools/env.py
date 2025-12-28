@@ -24,6 +24,22 @@ def get_runs_dir() -> Path:
     return Path(os.environ.get("MALA_RUNS_DIR", str(USER_CONFIG_DIR / "runs")))
 
 
+def get_repo_runs_dir(repo_path: Path) -> Path:
+    """Get runs directory segmented by repo path.
+
+    Converts repo path to a safe directory name by replacing '/' with '-'.
+    Example: /home/cyou/mala -> -home-cyou-mala
+
+    Args:
+        repo_path: Repository path to segment runs by.
+
+    Returns:
+        Path to the repo-specific runs directory.
+    """
+    safe_name = encode_repo_path(repo_path)
+    return get_runs_dir() / safe_name
+
+
 # Lock directory for multi-agent coordination
 # Can be overridden via MALA_LOCK_DIR environment variable
 def get_lock_dir() -> Path:

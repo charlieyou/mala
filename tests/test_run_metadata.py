@@ -333,15 +333,25 @@ class TestRunMetadataSerialization:
 
     def test_save_and_load_roundtrip(self, metadata_with_issues: RunMetadata) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Override get_runs_dir for test using patch
+            # Override get_repo_runs_dir for test using patch
             from unittest.mock import patch
 
+            # Mock get_repo_runs_dir to return a temp subdirectory
+            def mock_get_repo_runs_dir(repo_path: Path) -> Path:
+                # Simulate repo-specific subdirectory
+                return Path(tmpdir) / "-tmp-test-repo"
+
             with patch(
-                "src.logging.run_metadata.get_runs_dir", return_value=Path(tmpdir)
+                "src.logging.run_metadata.get_repo_runs_dir", mock_get_repo_runs_dir
             ):
                 # Save
                 path = metadata_with_issues.save()
                 assert path.exists()
+                # Verify new filename format: timestamp_shortid.json
+                assert "_" in path.name
+                assert path.name.endswith(".json")
+                # Verify it's in a repo-specific subdirectory
+                assert path.parent.name == "-tmp-test-repo"
 
                 # Load
                 loaded = RunMetadata.load(path)
@@ -376,6 +386,55 @@ class TestRunMetadataSerialization:
                 assert loaded.run_validation is not None
                 assert loaded.run_validation.passed is True
                 assert loaded.run_validation.e2e_passed is True
+
+    def test_save_creates_repo_segmented_directory(self) -> None:
+        """Test that save creates files in repo-segmented subdirectories."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from unittest.mock import patch
+
+            config = RunConfig(
+                max_agents=1,
+                timeout_minutes=10,
+                max_issues=None,
+                epic_id=None,
+                only_ids=None,
+                braintrust_enabled=False,
+            )
+            metadata = RunMetadata(
+                repo_path=Path("/home/user/my-project"),
+                config=config,
+                version="1.0.0",
+            )
+
+            # Mock get_runs_dir to return temp directory
+            with patch("src.tools.env.get_runs_dir", return_value=Path(tmpdir)):
+                # Import after patching so encode_repo_path uses real implementation
+                from src.tools.env import get_repo_runs_dir
+
+                # Verify the path is correctly segmented
+                repo_runs_dir = get_repo_runs_dir(Path("/home/user/my-project"))
+                assert repo_runs_dir == Path(tmpdir) / "-home-user-my-project"
+
+            # Now test the full save with mocked get_repo_runs_dir
+            def mock_get_repo_runs_dir(repo_path: Path) -> Path:
+                return Path(tmpdir) / "-home-user-my-project"
+
+            with patch(
+                "src.logging.run_metadata.get_repo_runs_dir", mock_get_repo_runs_dir
+            ):
+                path = metadata.save()
+
+                # Verify file is in correct subdirectory
+                assert path.parent.name == "-home-user-my-project"
+                assert path.parent.parent == Path(tmpdir)
+
+                # Verify filename format: YYYY-MM-DDTHH-MM-SS_shortid.json
+                import re
+
+                pattern = r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[a-f0-9]{8}\.json"
+                assert re.match(pattern, path.name), (
+                    f"Filename {path.name} doesn't match expected pattern"
+                )
 
     def test_load_handles_missing_optional_fields(self) -> None:
         """Test that load handles files without new optional fields."""
