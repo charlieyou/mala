@@ -21,14 +21,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from src.codex_review import CodexReviewResult
-    from src.quality_gate import GateResult
-    from src.validation.spec import IssueResolution
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from src.validation.spec import ResolutionOutcome
+
+if TYPE_CHECKING:
+    from src.validation.spec import IssueResolution
 
 # Resolution outcomes that skip codex review (no new code to review)
 _SKIP_REVIEW_OUTCOMES = frozenset(
@@ -38,6 +36,83 @@ _SKIP_REVIEW_OUTCOMES = frozenset(
         ResolutionOutcome.ALREADY_COMPLETE,
     }
 )
+
+
+# ---------------------------------------------------------------------------
+# Local outcome protocols: define the interface lifecycle needs from infra
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class GateOutcome(Protocol):
+    """Protocol defining what lifecycle needs from a gate result.
+
+    Callers (orchestrator) pass infra GateResult objects that satisfy this
+    protocol. Lifecycle only accesses these fields.
+    """
+
+    @property
+    def passed(self) -> bool:
+        """Whether the gate check passed."""
+        ...
+
+    @property
+    def failure_reasons(self) -> list[str]:
+        """Reasons for failure (empty if passed)."""
+        ...
+
+    @property
+    def commit_hash(self) -> str | None:
+        """Commit hash if a commit was found."""
+        ...
+
+    @property
+    def no_progress(self) -> bool:
+        """Whether no progress was detected since last attempt."""
+        ...
+
+    @property
+    def resolution(self) -> IssueResolution | None:
+        """Issue resolution if a resolution marker was found."""
+        ...
+
+
+@dataclass(frozen=True)
+class ReviewIssueOutcome:
+    """A single issue from a code review.
+
+    This is a local type that matches the fields lifecycle needs from
+    review issues for building failure messages.
+    """
+
+    file: str
+    line: int | None
+    severity: str  # "error", "warning", "info"
+    message: str
+
+
+@runtime_checkable
+class ReviewOutcome(Protocol):
+    """Protocol defining what lifecycle needs from a review result.
+
+    Callers (orchestrator) pass infra CodexReviewResult objects that satisfy
+    this protocol. Lifecycle only accesses these fields.
+    """
+
+    @property
+    def passed(self) -> bool:
+        """Whether the review passed."""
+        ...
+
+    @property
+    def parse_error(self) -> str | None:
+        """Parse error message if JSON parsing failed."""
+        ...
+
+    @property
+    def issues(self) -> list[ReviewIssueOutcome]:
+        """List of issues found during review."""
+        ...
 
 
 class LifecycleState(Enum):
@@ -121,9 +196,9 @@ class LifecycleContext:
     final_result: str = ""
     success: bool = False
     # Last gate result for building failure messages
-    last_gate_result: GateResult | None = None
+    last_gate_result: GateOutcome | None = None
     # Last review result for building follow-up prompts
-    last_review_result: CodexReviewResult | None = None
+    last_review_result: ReviewOutcome | None = None
     # Resolution for issue (no-op, obsolete, etc.)
     resolution: IssueResolution | None = None
 
@@ -238,7 +313,7 @@ class ImplementerLifecycle:
         )
 
     def on_gate_result(
-        self, ctx: LifecycleContext, gate_result: GateResult, new_log_offset: int
+        self, ctx: LifecycleContext, gate_result: GateOutcome, new_log_offset: int
     ) -> TransitionResult:
         """Handle quality gate result.
 
@@ -319,7 +394,7 @@ class ImplementerLifecycle:
     def on_review_result(
         self,
         ctx: LifecycleContext,
-        review_result: CodexReviewResult,
+        review_result: ReviewOutcome,
         new_log_offset: int,
     ) -> TransitionResult:
         """Handle Codex review result.
