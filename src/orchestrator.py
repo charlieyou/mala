@@ -20,6 +20,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import HookMatcher
 
 from .beads_client import BeadsClient
+from .config import MalaConfig
 from .telemetry import BraintrustProvider, NullTelemetryProvider, TelemetryProvider
 from .codex_review import run_codex_review, format_review_issues, CodexReviewResult
 from .git_utils import (
@@ -163,26 +164,30 @@ class DefaultCodeReviewer:
         )
 
 
-def get_mcp_servers(repo_path: Path, morph_enabled: bool = True) -> dict:
+def get_mcp_servers(
+    repo_path: Path, morph_api_key: str | None = None, morph_enabled: bool = True
+) -> dict:
     """Get MCP servers configuration for agents.
 
     Args:
         repo_path: Path to the repository.
+        morph_api_key: Morph API key. If None, reads from MORPH_API_KEY env var.
         morph_enabled: Whether to enable Morph MCP server. Defaults to True.
 
     Returns:
         Dictionary of MCP server configurations. Empty if morph_enabled=False.
 
     Raises:
-        ValueError: If morph_enabled=True but MORPH_API_KEY is not set.
+        ValueError: If morph_enabled=True but no API key is provided or set.
     """
     if not morph_enabled:
         return {}
-    api_key = os.environ.get("MORPH_API_KEY")
+    # Use provided key, fall back to environment variable
+    api_key = morph_api_key or os.environ.get("MORPH_API_KEY")
     if not api_key:
         raise ValueError(
-            "MORPH_API_KEY environment variable is required when morph_enabled=True. "
-            "Set MORPH_API_KEY or pass morph_enabled=False."
+            "MORPH_API_KEY is required when morph_enabled=True. "
+            "Set MORPH_API_KEY or pass morph_api_key parameter."
         )
     return {
         "morphllm": {
@@ -225,12 +230,12 @@ class MalaOrchestrator:
         max_issues: int | None = None,
         epic_id: str | None = None,
         only_ids: set[str] | None = None,
-        braintrust_enabled: bool = False,
+        braintrust_enabled: bool | None = None,
         max_gate_retries: int = 3,
         max_review_retries: int = 2,
         disable_validations: set[str] | None = None,
         coverage_threshold: float | None = None,
-        morph_enabled: bool = True,
+        morph_enabled: bool | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
         cli_args: dict[str, object] | None = None,
@@ -240,6 +245,8 @@ class MalaOrchestrator:
         code_reviewer: CodeReviewer | None = None,
         gate_checker: GateChecker | None = None,
         telemetry_provider: TelemetryProvider | None = None,
+        # Centralized configuration (optional, uses from_env() if not provided)
+        config: MalaConfig | None = None,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
@@ -251,12 +258,29 @@ class MalaOrchestrator:
         self.max_issues = max_issues
         self.epic_id = epic_id
         self.only_ids = only_ids
-        self.braintrust_enabled = braintrust_enabled
+
+        # Use config if provided, otherwise load from environment
+        # Store config for later use (e.g., passing API keys to get_mcp_servers)
+        self._config = (
+            config if config is not None else MalaConfig.from_env(validate=False)
+        )
+
+        # Derive feature flags from config if not explicitly provided
+        # This allows explicit parameters to override config values
+        if braintrust_enabled is not None:
+            self.braintrust_enabled = braintrust_enabled
+        else:
+            self.braintrust_enabled = self._config.braintrust_enabled
+
+        if morph_enabled is not None:
+            self.morph_enabled = morph_enabled
+        else:
+            self.morph_enabled = self._config.morph_enabled
+
         self.max_gate_retries = max_gate_retries
         self.max_review_retries = max_review_retries
         self.disable_validations = disable_validations
         self.coverage_threshold = coverage_threshold
-        self.morph_enabled = morph_enabled
         self.prioritize_wip = prioritize_wip
         self.focus = focus
         self.cli_args = cli_args
@@ -297,7 +321,7 @@ class MalaOrchestrator:
         # TelemetryProvider: BraintrustProvider when enabled, else NullTelemetryProvider
         if telemetry_provider is not None:
             self.telemetry_provider: TelemetryProvider = telemetry_provider
-        elif braintrust_enabled:
+        elif self.braintrust_enabled:
             self.telemetry_provider = BraintrustProvider()
         else:
             self.telemetry_provider = NullTelemetryProvider()
@@ -638,7 +662,9 @@ class MalaOrchestrator:
             system_prompt={"type": "preset", "preset": "claude_code"},
             setting_sources=["project", "user"],
             mcp_servers=get_mcp_servers(
-                self.repo_path, morph_enabled=self.morph_enabled
+                self.repo_path,
+                morph_api_key=self._config.morph_api_key,
+                morph_enabled=self.morph_enabled,
             ),
             disallowed_tools=MORPH_DISALLOWED_TOOLS if self.morph_enabled else ["Edit"],
             env=agent_env,
@@ -770,7 +796,9 @@ class MalaOrchestrator:
             system_prompt={"type": "preset", "preset": "claude_code"},
             setting_sources=["project", "user"],
             mcp_servers=get_mcp_servers(
-                self.repo_path, morph_enabled=self.morph_enabled
+                self.repo_path,
+                morph_api_key=self._config.morph_api_key,
+                morph_enabled=self.morph_enabled,
             ),
             # Always block Edit since lock enforcement doesn't cover it.
             # When morph enabled, also block Grep (replaced by warpgrep).

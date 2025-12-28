@@ -31,6 +31,7 @@ _lazy_modules: dict[str, Any] = {}
 _LAZY_NAMES = frozenset(
     {
         "BeadsClient",
+        "MalaConfig",
         "MalaOrchestrator",
         "get_lock_dir",
         "get_running_instances",
@@ -230,11 +231,6 @@ app = typer.Typer(
 )
 
 
-def get_morph_api_key() -> str | None:
-    """Get MORPH_API_KEY from environment. Returns None if missing."""
-    return os.environ.get("MORPH_API_KEY") or None
-
-
 @app.command()
 def run(
     repo_path: Annotated[
@@ -399,16 +395,6 @@ def run(
     # Ensure user config directory exists
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Check Morph API key (optional - enables morph features when present)
-    morph_api_key = get_morph_api_key()
-    morph_enabled = morph_api_key is not None
-    if not morph_enabled:
-        log(
-            "⚠",
-            "MORPH_API_KEY not set - Morph MCP features disabled",
-            Colors.YELLOW,
-        )
-
     if not repo_path.exists():
         log("✗", f"Repository not found: {repo_path}", Colors.RED)
         raise typer.Exit(1)
@@ -441,6 +427,9 @@ def run(
         "codex_thinking_mode": codex_thinking_mode,
     }
 
+    # Construct config from environment (orchestrator uses this for API keys and feature flags)
+    config = _lazy("MalaConfig").from_env(validate=False)
+
     orchestrator = _lazy("MalaOrchestrator")(
         repo_path=repo_path,
         max_agents=max_agents,
@@ -453,11 +442,11 @@ def run(
         max_review_retries=max_review_retries,
         disable_validations=disable_set,
         coverage_threshold=coverage_threshold,
-        morph_enabled=morph_enabled,
         prioritize_wip=wip,
         focus=focus,
         cli_args=cli_args,
         codex_thinking_mode=codex_thinking_mode,
+        config=config,
     )
 
     success_count, total = asyncio.run(orchestrator.run())
@@ -680,6 +669,10 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from .beads_client import BeadsClient
 
         _lazy_modules[name] = BeadsClient
+    elif name == "MalaConfig":
+        from .config import MalaConfig
+
+        _lazy_modules[name] = MalaConfig
     elif name == "MalaOrchestrator":
         from .orchestrator import MalaOrchestrator
 

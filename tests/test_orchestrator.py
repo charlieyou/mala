@@ -3800,4 +3800,4 @@ class TestGetMcpServers:
                 get_mcp_servers(tmp_path, morph_enabled=True)
 
         assert "MORPH_API_KEY" in str(exc_info.value)
-        assert "morph_enabled=False" in str(exc_info.value)
+        assert "morph_api_key parameter" in str(exc_info.value)

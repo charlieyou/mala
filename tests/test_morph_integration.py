@@ -256,33 +256,27 @@ class TestMorphDisallowedTools:
         assert isinstance(MORPH_DISALLOWED_TOOLS, list)
 
 
-class TestMorphApiKeyValidation:
-    """Test API key validation."""
+class TestMorphApiKeyConfig:
+    """Test API key configuration via MalaConfig."""
 
-    def test_missing_api_key_returns_none(self) -> None:
-        """get_morph_api_key should return None if key is missing."""
+    def test_missing_api_key_in_config(self) -> None:
+        """MalaConfig should have None morph_api_key when not set."""
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("MORPH_API_KEY", None)
-            from src.cli import get_morph_api_key
+            from src.config import MalaConfig
 
-            result = get_morph_api_key()
-            assert result is None
+            config = MalaConfig.from_env(validate=False)
+            assert config.morph_api_key is None
+            assert config.morph_enabled is False
 
-    def test_empty_api_key_returns_none(self) -> None:
-        """get_morph_api_key should return None if key is empty string."""
-        with patch.dict(os.environ, {"MORPH_API_KEY": ""}):
-            from src.cli import get_morph_api_key
-
-            result = get_morph_api_key()
-            assert result is None
-
-    def test_api_key_present_returns_key(self) -> None:
-        """get_morph_api_key should return the key if present."""
+    def test_api_key_present_in_config(self) -> None:
+        """MalaConfig should have morph_api_key when set."""
         with patch.dict(os.environ, {"MORPH_API_KEY": "test-key-123"}):
-            from src.cli import get_morph_api_key
+            from src.config import MalaConfig
 
-            result = get_morph_api_key()
-            assert result == "test-key-123"
+            config = MalaConfig.from_env(validate=False)
+            assert config.morph_api_key == "test-key-123"
+            assert config.morph_enabled is True
 
 
 class TestMcpServerConfig:
@@ -302,12 +296,12 @@ class TestMcpServerConfig:
 
     def test_get_mcp_servers_includes_api_key(self) -> None:
         """MCP server config should include API key in env."""
-        with patch.dict(os.environ, {"MORPH_API_KEY": "my-secret-key"}):
-            from src.orchestrator import get_mcp_servers
+        from src.orchestrator import get_mcp_servers
 
-            config = get_mcp_servers(Path("/tmp/repo"))
+        # Now pass morph_api_key directly
+        config = get_mcp_servers(Path("/tmp/repo"), morph_api_key="my-secret-key")
 
-            assert config["morphllm"]["env"]["MORPH_API_KEY"] == "my-secret-key"
+        assert config["morphllm"]["env"]["MORPH_API_KEY"] == "my-secret-key"
 
     def test_get_mcp_servers_enables_all_tools(self) -> None:
         """MCP server config should enable all tools."""

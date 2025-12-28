@@ -156,67 +156,34 @@ class DummyOrchestrator:
         return (1, 1)
 
 
-def test_get_morph_api_key_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that get_morph_api_key returns None when MORPH_API_KEY is missing."""
-    cli = _reload_cli(monkeypatch)
-    monkeypatch.delenv("MORPH_API_KEY", raising=False)
-
-    result = cli.get_morph_api_key()
-    assert result is None
-
-
-def test_get_morph_api_key_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that get_morph_api_key returns None when MORPH_API_KEY is empty string."""
-    cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "")
-
-    result = cli.get_morph_api_key()
-    assert result is None
-
-
-def test_get_morph_api_key_present(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that get_morph_api_key returns the key when present."""
-    cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key-123")
-
-    result = cli.get_morph_api_key()
-    assert result == "test-key-123"
-
-
-def test_run_without_morph_api_key_continues(
+def test_run_without_morph_api_key_passes_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that CLI continues when MORPH_API_KEY is missing and passes morph_enabled=False."""
+    """Test that CLI passes config to orchestrator when MORPH_API_KEY is missing."""
     cli = _reload_cli(monkeypatch)
     monkeypatch.delenv("MORPH_API_KEY", raising=False)
-
-    logs: list[tuple[object, ...]] = []
-
-    def _log(*args: object, **_kwargs: object) -> None:
-        logs.append(args)
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
-    monkeypatch.setattr(cli, "log", _log)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(repo_path=tmp_path)
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_kwargs is not None
-    assert DummyOrchestrator.last_kwargs["morph_enabled"] is False
+    # CLI now passes config instead of morph_enabled
+    assert "config" in DummyOrchestrator.last_kwargs
+    config = DummyOrchestrator.last_kwargs["config"]
+    assert config.morph_api_key is None
+    assert config.morph_enabled is False
 
-    # Verify warning was logged
-    warning_logged = any("MORPH_API_KEY not set" in str(args) for args in logs)
-    assert warning_logged, "Expected warning about missing MORPH_API_KEY"
 
-
-def test_run_with_morph_api_key_enabled(
+def test_run_with_morph_api_key_passes_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that CLI passes morph_enabled=True when MORPH_API_KEY is set."""
+    """Test that CLI passes config with morph_api_key when MORPH_API_KEY is set."""
     cli = _reload_cli(monkeypatch)
     monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
@@ -230,7 +197,11 @@ def test_run_with_morph_api_key_enabled(
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_kwargs is not None
-    assert DummyOrchestrator.last_kwargs["morph_enabled"] is True
+    # CLI now passes config instead of morph_enabled
+    assert "config" in DummyOrchestrator.last_kwargs
+    config = DummyOrchestrator.last_kwargs["config"]
+    assert config.morph_api_key == "test-key"
+    assert config.morph_enabled is True
 
 
 def test_run_invalid_only_exits(
@@ -283,7 +254,9 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert verbose_calls["enabled"] is True
     assert DummyOrchestrator.last_kwargs is not None
     assert DummyOrchestrator.last_kwargs["only_ids"] == {"id-1", "id-2"}
-    assert DummyOrchestrator.last_kwargs["morph_enabled"] is True
+    # CLI now passes config instead of morph_enabled
+    config = DummyOrchestrator.last_kwargs["config"]
+    assert config.morph_enabled is True
     assert config_dir.exists()
 
 
