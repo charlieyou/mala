@@ -6,8 +6,8 @@ The run-level validation (Gate 4) found issues that need to be fixed:
 
 **Required actions:**
 1. Analyze the validation failure output above
-2. Identify and fix all issues causing the failure
-3. Re-run the full validation suite:
+2. Fix ALL issues causing the failure - including pre-existing errors in files that weren't touched by any agent
+3. Re-run the full validation suite on the ENTIRE codebase:
    - `uv run pytest`
    - `uvx ruff check .`
    - `uvx ruff format .`
@@ -17,6 +17,7 @@ The run-level validation (Gate 4) found issues that need to be fixed:
 **Context:**
 - This is a run-level validation that runs after all per-issue work is complete
 - Your fix should address the root cause, not just suppress the error
+- Fix ALL lint/type errors you see, even if they're pre-existing - do NOT use `git blame` to decide whether to fix
 - The orchestrator will re-run validation after your fix
 
 Do not release any locks - the orchestrator handles that.
