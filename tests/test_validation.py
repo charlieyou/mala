@@ -21,7 +21,6 @@ from src.validation import (
     ValidationConfig,
     ValidationContext,
     ValidationResult,
-    ValidationRunner,
     ValidationScope,
     ValidationSpec,
     ValidationStepResult,
@@ -29,7 +28,7 @@ from src.validation import (
     format_step_output,
     tail,
 )
-from src.validation.spec_runner import CommandFailure
+from src.validation.spec_runner import CommandFailure, SpecValidationRunner
 
 
 def mock_popen_success(
@@ -258,339 +257,13 @@ class TestCheckE2EPrereqs:
             assert result is None
 
 
-class TestValidationRunner:
-    """Test ValidationRunner class."""
+class TestSpecValidationRunner:
+    """Test SpecValidationRunner class (modern API)."""
 
     @pytest.fixture
-    def runner(self, tmp_path: Path) -> ValidationRunner:
-        """Create a runner with minimal config."""
-        config = ValidationConfig(
-            run_slow_tests=False,
-            run_e2e=False,
-            coverage=False,
-            use_test_mutex=False,
-        )
-        return ValidationRunner(tmp_path, config)
-
-    def test_init(self, tmp_path: Path) -> None:
-        config = ValidationConfig()
-        runner = ValidationRunner(tmp_path, config)
-        assert runner.repo_path == tmp_path.resolve()
-        assert runner.config is config
-
-    def test_build_validation_commands_minimal(self, runner: ValidationRunner) -> None:
-        commands = runner._build_validation_commands()
-        names = [name for name, _ in commands]
-        assert "ruff format" in names
-        assert "ruff check" in names
-        assert "ty check" in names
-        assert "pytest" in names
-
-    def test_build_validation_commands_with_coverage(self, tmp_path: Path) -> None:
-        config = ValidationConfig(
-            run_slow_tests=True,
-            coverage=True,
-            coverage_min=80,
-            coverage_source="src",
-            use_test_mutex=False,
-        )
-        runner = ValidationRunner(tmp_path, config)
-        commands = runner._build_validation_commands()
-
-        pytest_cmd = None
-        for name, cmd in commands:
-            if name == "pytest":
-                pytest_cmd = cmd
-                break
-
-        assert pytest_cmd is not None
-        assert "--cov" in pytest_cmd
-        assert "src" in pytest_cmd
-        assert "--cov-branch" in pytest_cmd
-        assert "--cov-fail-under=80" in pytest_cmd
-        assert "-m" in pytest_cmd
-        assert "slow or not slow" in pytest_cmd
-
-    def test_run_command_success(self, runner: ValidationRunner) -> None:
-        mock_proc = mock_popen_success(stdout="hello\n", stderr="", returncode=0)
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
-            result = runner._run_command("echo", ["echo", "hello"], Path("."), {})
-            assert result.ok is True
-            assert result.returncode == 0
-            assert result.name == "echo"
-
-    def test_run_command_failure(self, runner: ValidationRunner) -> None:
-        mock_proc = mock_popen_success(stdout="", stderr="command failed", returncode=1)
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
-            result = runner._run_command("false", ["false"], Path("."), {})
-            assert result.ok is False
-            assert result.returncode == 1
-            assert "command failed" in result.stderr_tail
-
-    def test_run_command_timeout(self, tmp_path: Path) -> None:
-        config = ValidationConfig(
-            use_test_mutex=False,
-            step_timeout_seconds=0.1,
-        )
-        runner = ValidationRunner(tmp_path, config)
-
-        mock_proc = mock_popen_timeout()
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
-            result = runner._run_command("sleep", ["sleep", "10"], Path("."), {})
-            assert result.ok is False
-            assert result.returncode == 124  # Standard timeout exit code
-
-    def test_run_validation_steps_all_pass(self, runner: ValidationRunner) -> None:
-        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
-            result = runner._run_validation_steps(Path("."), "test", include_e2e=False)
-            assert result.passed is True
-            assert len(result.steps) == 4  # ruff format, ruff check, ty, pytest
-
-    def test_run_validation_steps_first_fails(self, runner: ValidationRunner) -> None:
-        mock_proc = mock_popen_success(stdout="", stderr="sync failed", returncode=1)
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
-            result = runner._run_validation_steps(Path("."), "test", include_e2e=False)
-            assert result.passed is False
-            assert len(result.steps) == 1  # Stops after first failure
-            assert "ruff format failed" in result.failure_reasons[0]
-
-    def test_validate_commit_worktree_add_fails(self, runner: ValidationRunner) -> None:
-        mock_result = subprocess.CompletedProcess(
-            args=[],
-            returncode=1,
-            stdout="",
-            stderr="fatal: not a git repository",
-        )
-        with patch("subprocess.run", return_value=mock_result):
-            with patch("shutil.rmtree"):
-                result = runner._validate_commit_sync("abc123", "test")
-                assert result.passed is False
-                assert result.retriable is False
-                assert "git worktree add" in result.failure_reasons[0]
-
-    @pytest.mark.asyncio
-    async def test_validate_commit_async_wrapper(
-        self, runner: ValidationRunner
-    ) -> None:
-        """Test that validate_commit properly wraps the sync method."""
-        # Mock git worktree commands (still uses subprocess.run)
-        mock_git_result = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout="ok",
-            stderr="",
-        )
-        # Mock validation commands (uses Popen)
-        mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
-        with (
-            patch("subprocess.run", return_value=mock_git_result),
-            patch(
-                "src.validation.command_runner.subprocess.Popen",
-                return_value=mock_proc,
-            ),
-            patch("shutil.rmtree"),
-        ):
-            result = await runner.validate_commit("abc123", "test")
-            assert result.passed is True
-
-
-class TestValidationRunnerWithMutex:
-    """Test ValidationRunner with test mutex enabled."""
-
-    def test_wrap_with_mutex(self, tmp_path: Path) -> None:
-        config = ValidationConfig(use_test_mutex=True)
-        runner = ValidationRunner(tmp_path, config)
-
-        wrapped = runner._wrap_with_mutex(["pytest", "-v"])
-        assert "test-mutex.sh" in wrapped[0]
-        assert wrapped[1:] == ["pytest", "-v"]
-
-
-class TestE2EValidation:
-    """Test E2E validation (with mocked prereqs and commands)."""
-
-    def test_run_e2e_missing_prereqs(self, tmp_path: Path) -> None:
-        config = ValidationConfig(run_e2e=True, use_test_mutex=False)
-        runner = ValidationRunner(tmp_path, config)
-
-        with patch("shutil.which", return_value=None):
-            result = runner._run_e2e("test", {})
-            assert result.passed is False
-            assert result.retriable is False
-            assert "mala CLI not found" in result.failure_reasons[0]
-
-    def test_run_e2e_success(self, tmp_path: Path) -> None:
-        config = ValidationConfig(run_e2e=True, use_test_mutex=False)
-        runner = ValidationRunner(tmp_path, config)
-
-        mock_result = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout="passed",
-            stderr="",
-        )
-
-        with (
-            patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("subprocess.run", return_value=mock_result),
-        ):
-            result = runner._run_e2e("test", {"MORPH_API_KEY": "test-key"})
-            assert result.passed is True
-
-    def test_run_e2e_command_uses_valid_flags(self, tmp_path: Path) -> None:
-        """Test that E2E command only uses flags supported by the mala CLI.
-
-        Ensures --no-post-validate and --no-e2e are not used since they don't
-        exist in the CLI. This covers the acceptance criteria from mala-w8w.2.
-        """
-        config = ValidationConfig(run_e2e=True, use_test_mutex=False)
-        runner = ValidationRunner(tmp_path, config)
-
-        captured_cmd: list[str] = []
-
-        def capture_popen(cmd: list[str], **kwargs: object) -> MagicMock:
-            captured_cmd.extend(cmd)
-            mock_proc = MagicMock()
-            mock_proc.communicate.return_value = ("", "")
-            mock_proc.returncode = 0
-            mock_proc.pid = 12345
-            return mock_proc
-
-        # Also mock subprocess.run for git init, etc. in fixture setup
-        mock_run_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
-
-        with (
-            patch("shutil.which", return_value="/usr/bin/fake"),
-            patch(
-                "src.validation.command_runner.subprocess.Popen",
-                side_effect=capture_popen,
-            ),
-            patch("subprocess.run", return_value=mock_run_result),
-        ):
-            runner._run_e2e("test", {"MORPH_API_KEY": "test-key"})
-
-        # These flags do not exist in the mala CLI
-        assert "--no-post-validate" not in captured_cmd, (
-            "mala CLI has no --no-post-validate flag"
-        )
-        assert "--no-e2e" not in captured_cmd, "mala CLI has no --no-e2e flag"
-        # These are valid flags
-        assert "mala" in captured_cmd
-        assert "run" in captured_cmd
-
-
-class TestTimeoutHandling:
-    """Test timeout handling for CommandRunner.
-
-    These tests ensure timeout is properly detected and the process
-    is terminated with proper process-group killing.
-    """
-
-    def test_run_command_timeout_with_string_output(self, tmp_path: Path) -> None:
-        """Timeout returns output captured during termination."""
-        config = ValidationConfig(
-            use_test_mutex=False,
-            step_timeout_seconds=0.1,
-        )
-        runner = ValidationRunner(tmp_path, config)
-
-        # Mock Popen that times out, then returns output on terminate
-        mock_proc = MagicMock()
-        mock_proc.communicate.side_effect = [
-            subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1),
-            ("terminated output", "terminated error"),  # Output from terminate
-        ]
-        mock_proc.pid = 12345
-        mock_proc.returncode = None
-
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
-            result = runner._run_command("sleep", ["sleep", "10"], Path("."), {})
-            assert result.ok is False
-            assert result.returncode == 124
-            assert "terminated output" in result.stdout_tail
-            assert "terminated error" in result.stderr_tail
-
-    def test_run_command_timeout_with_none_output(self, tmp_path: Path) -> None:
-        """Timeout with no output captured."""
-        config = ValidationConfig(
-            use_test_mutex=False,
-            step_timeout_seconds=0.1,
-        )
-        runner = ValidationRunner(tmp_path, config)
-
-        # Mock Popen that times out with no output
-        mock_proc = MagicMock()
-        mock_proc.communicate.side_effect = [
-            subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1),
-            ("", ""),  # No output from terminate
-        ]
-        mock_proc.pid = 12345
-        mock_proc.returncode = None
-
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
-            result = runner._run_command("sleep", ["sleep", "10"], Path("."), {})
-            assert result.ok is False
-            assert result.returncode == 124
-            assert result.stdout_tail == ""
-            assert result.stderr_tail == ""
-
-    def test_run_command_timeout_with_bytes_output(self, tmp_path: Path) -> None:
-        """Timeout - CommandRunner now uses text=True so output is always str."""
-        config = ValidationConfig(
-            use_test_mutex=False,
-            step_timeout_seconds=0.1,
-        )
-        runner = ValidationRunner(tmp_path, config)
-
-        # With text=True, Popen returns strings not bytes
-        mock_proc = MagicMock()
-        mock_proc.communicate.side_effect = [
-            subprocess.TimeoutExpired(cmd=["sleep"], timeout=0.1),
-            ("string output", "string error"),
-        ]
-        mock_proc.pid = 12345
-        mock_proc.returncode = None
-
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
-            result = runner._run_command("sleep", ["sleep", "10"], Path("."), {})
-            assert result.ok is False
-            assert result.returncode == 124
-            assert "string output" in result.stdout_tail
-            assert "string error" in result.stderr_tail
-
-
-class TestSpecBasedValidation:
-    """Test ValidationRunner.run_spec() with ValidationSpec + ValidationContext."""
-
-    @pytest.fixture
-    def runner(self, tmp_path: Path) -> ValidationRunner:
-        """Create a runner with minimal config."""
-        config = ValidationConfig(
-            run_slow_tests=False,
-            run_e2e=False,
-            coverage=False,
-            use_test_mutex=False,
-        )
-        return ValidationRunner(tmp_path, config)
+    def runner(self, tmp_path: Path) -> SpecValidationRunner:
+        """Create a spec runner."""
+        return SpecValidationRunner(tmp_path)
 
     @pytest.fixture
     def basic_spec(self) -> ValidationSpec:
@@ -622,7 +295,7 @@ class TestSpecBasedValidation:
 
     def test_run_spec_single_command_passes(
         self,
-        runner: ValidationRunner,
+        runner: SpecValidationRunner,
         basic_spec: ValidationSpec,
         context: ValidationContext,
         tmp_path: Path,
@@ -642,7 +315,7 @@ class TestSpecBasedValidation:
 
     def test_run_spec_single_command_fails(
         self,
-        runner: ValidationRunner,
+        runner: SpecValidationRunner,
         basic_spec: ValidationSpec,
         context: ValidationContext,
         tmp_path: Path,
@@ -658,7 +331,7 @@ class TestSpecBasedValidation:
             assert "echo test failed" in result.failure_reasons[0]
 
     def test_run_spec_multiple_commands_all_pass(
-        self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
+        self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
         """Test run_spec with multiple passing commands."""
         spec = ValidationSpec(
@@ -693,7 +366,7 @@ class TestSpecBasedValidation:
             assert len(result.steps) == 3
 
     def test_run_spec_stops_on_first_failure(
-        self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
+        self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
         """Test that run_spec stops execution on first command failure."""
         spec = ValidationSpec(
@@ -744,7 +417,7 @@ class TestSpecBasedValidation:
             assert "fail2 failed" in result.failure_reasons[0]
 
     def test_run_commands_raises_command_failure_on_error(
-        self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
+        self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
         """Test that _run_commands raises CommandFailure on command failure.
 
@@ -789,9 +462,9 @@ class TestSpecBasedValidation:
             "src.validation.command_runner.subprocess.Popen",
             side_effect=mock_popen_calls,
         ):
-            env = runner._spec_runner._build_spec_env(context, "test-run")
+            env = runner._build_spec_env(context, "test-run")
             with pytest.raises(CommandFailure) as exc_info:
-                runner._spec_runner._run_commands(spec, tmp_path, env, tmp_path)
+                runner._run_commands(spec, tmp_path, env, tmp_path)
 
             # Verify the exception contains the right data
             assert len(exc_info.value.steps) == 2
@@ -800,7 +473,7 @@ class TestSpecBasedValidation:
             assert "fail2 failed" in exc_info.value.reason
 
     def test_run_spec_allow_fail_continues(
-        self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
+        self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
         """Test that allow_fail=True continues execution after failure."""
         spec = ValidationSpec(
@@ -851,7 +524,7 @@ class TestSpecBasedValidation:
             assert len(result.steps) == 3  # All steps ran
 
     def test_run_spec_uses_mutex_when_requested(
-        self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
+        self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
         """Test that use_test_mutex wraps command with mutex script."""
         spec = ValidationSpec(
@@ -888,7 +561,7 @@ class TestSpecBasedValidation:
 
     def test_run_spec_writes_log_files(
         self,
-        runner: ValidationRunner,
+        runner: SpecValidationRunner,
         basic_spec: ValidationSpec,
         context: ValidationContext,
         tmp_path: Path,
@@ -912,7 +585,7 @@ class TestSpecBasedValidation:
         assert "stderr content" in stderr_log.read_text()
 
     def test_run_spec_coverage_enabled_passes(
-        self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
+        self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
         """Test coverage validation when coverage.xml exists and passes threshold."""
         # Create a valid coverage.xml
@@ -949,7 +622,7 @@ class TestSpecBasedValidation:
             assert result.coverage_result.percent == 90.0
 
     def test_run_spec_coverage_enabled_fails(
-        self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
+        self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
         """Test coverage validation when coverage.xml exists but fails threshold."""
         # Create a coverage.xml below threshold
@@ -987,7 +660,7 @@ class TestSpecBasedValidation:
             assert "70.0%" in result.coverage_result.failure_reason
 
     def test_run_spec_coverage_missing_file(
-        self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
+        self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
         """Test coverage validation when coverage.xml is missing."""
         spec = ValidationSpec(
@@ -1018,7 +691,7 @@ class TestSpecBasedValidation:
             assert "not found" in (result.coverage_result.failure_reason or "")
 
     def test_run_spec_e2e_only_for_run_level(
-        self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
+        self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
         """Test that E2E only runs for per-issue scope."""
         # Per-issue context - E2E should not run
@@ -1045,16 +718,13 @@ class TestSpecBasedValidation:
             e2e_run_called = True
             return MagicMock(passed=True, fixture_path=None)
 
-        # Patch on the internal spec runner since ValidationRunner delegates to it
-        with patch.object(
-            runner._spec_runner, "_run_spec_e2e", side_effect=mock_e2e_run
-        ):
+        with patch.object(runner, "_run_spec_e2e", side_effect=mock_e2e_run):
             result = runner._run_spec_sync(spec, per_issue_context, log_dir=tmp_path)
             assert result.passed is True
             assert not e2e_run_called
 
     def test_run_spec_e2e_runs_for_run_level(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """Test that E2E runs for run-level scope."""
         run_level_context = ValidationContext(
@@ -1080,17 +750,14 @@ class TestSpecBasedValidation:
             fixture_path=tmp_path / "fixture",
         )
 
-        # Patch on the internal spec runner since ValidationRunner delegates to it
-        with patch.object(
-            runner._spec_runner, "_run_spec_e2e", return_value=mock_e2e_result
-        ):
+        with patch.object(runner, "_run_spec_e2e", return_value=mock_e2e_result):
             result = runner._run_spec_sync(spec, run_level_context, log_dir=tmp_path)
             assert result.passed is True
 
     @pytest.mark.asyncio
     async def test_run_spec_async(
         self,
-        runner: ValidationRunner,
+        runner: SpecValidationRunner,
         basic_spec: ValidationSpec,
         context: ValidationContext,
         tmp_path: Path,
@@ -1105,7 +772,7 @@ class TestSpecBasedValidation:
 
     def test_run_spec_timeout_handling(
         self,
-        runner: ValidationRunner,
+        runner: SpecValidationRunner,
         basic_spec: ValidationSpec,
         context: ValidationContext,
         tmp_path: Path,
@@ -1141,8 +808,7 @@ class TestSpecBasedValidation:
         mock_worktree_ctx.path = tmp_path / "worktree"
         mock_worktree_ctx.path.mkdir()
 
-        config = ValidationConfig(use_test_mutex=False)
-        runner = ValidationRunner(repo_path, config)
+        runner = SpecValidationRunner(repo_path)
 
         context = ValidationContext(
             issue_id="test-123",
@@ -1194,8 +860,7 @@ class TestSpecBasedValidation:
         mock_worktree_ctx.state = WorktreeState.FAILED
         mock_worktree_ctx.error = "git worktree add failed"
 
-        config = ValidationConfig(use_test_mutex=False)
-        runner = ValidationRunner(tmp_path, config)
+        runner = SpecValidationRunner(tmp_path)
 
         context = ValidationContext(
             issue_id="test-123",
@@ -1221,7 +886,7 @@ class TestSpecBasedValidation:
             assert "Worktree creation failed" in result.failure_reasons[0]
 
     def test_build_spec_env(
-        self, runner: ValidationRunner, context: ValidationContext
+        self, runner: SpecValidationRunner, context: ValidationContext
     ) -> None:
         """Test _build_spec_env includes expected variables."""
         env = runner._build_spec_env(context, "run-123")
@@ -1230,7 +895,7 @@ class TestSpecBasedValidation:
         assert "test-123" in env["AGENT_ID"]
 
     def test_build_spec_env_run_level(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """Test _build_spec_env with run-level context (no issue_id)."""
         context = ValidationContext(
@@ -1257,10 +922,9 @@ class TestSpecBasedValidation:
         mock_worktree_removed = MagicMock(spec=WorktreeContext)
         mock_worktree_removed.state = WorktreeState.REMOVED
 
-        config = ValidationConfig(use_test_mutex=False)
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
-        runner = ValidationRunner(repo_path, config)
+        runner = SpecValidationRunner(repo_path)
 
         context = ValidationContext(
             issue_id="test-123",
@@ -1326,10 +990,9 @@ class TestSpecBasedValidation:
         mock_worktree_kept = MagicMock(spec=WorktreeContext)
         mock_worktree_kept.state = WorktreeState.KEPT
 
-        config = ValidationConfig(use_test_mutex=False)
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
-        runner = ValidationRunner(repo_path, config)
+        runner = SpecValidationRunner(repo_path)
 
         context = ValidationContext(
             issue_id="test-123",
@@ -1392,19 +1055,12 @@ class TestSpecRunnerNoDecreaseMode:
     """
 
     @pytest.fixture
-    def runner(self, tmp_path: Path) -> ValidationRunner:
-        """Create a runner with coverage enabled but no explicit threshold."""
-        config = ValidationConfig(
-            run_slow_tests=False,
-            run_e2e=False,
-            coverage=True,
-            coverage_min=85,  # This is overridden by spec
-            use_test_mutex=False,
-        )
-        return ValidationRunner(tmp_path, config)
+    def runner(self, tmp_path: Path) -> SpecValidationRunner:
+        """Create a spec runner for coverage tests."""
+        return SpecValidationRunner(tmp_path)
 
     def test_no_decrease_mode_uses_baseline_when_fresh(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """When baseline is fresh, use it as threshold."""
         # Create fresh baseline at 80%
@@ -1472,7 +1128,7 @@ class TestSpecRunnerNoDecreaseMode:
             assert result.coverage_result.percent == 80.0
 
     def test_baseline_captured_before_validation_not_during(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """Verify baseline is captured BEFORE validation, not from current run.
 
@@ -1544,7 +1200,7 @@ class TestSpecRunnerNoDecreaseMode:
         ):
             # Execute validation with the pre-captured baseline (90%)
             # The worktree has 70% coverage, which is below baseline
-            result = runner._spec_runner._run_validation_pipeline(
+            result = runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
                 cwd=worktree_path,  # Tests run in worktree with 70% coverage
@@ -1567,7 +1223,7 @@ class TestSpecRunnerNoDecreaseMode:
             assert "90.0%" in (result.coverage_result.failure_reason or "")
 
     def test_no_decrease_mode_fails_when_coverage_decreases(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """When current coverage is below baseline, validation fails."""
         # Create fresh baseline at 90%
@@ -1635,7 +1291,7 @@ class TestSpecRunnerNoDecreaseMode:
             patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
         ):
             # Override context to use worktree path for coverage check
-            result = runner._spec_runner._run_validation_pipeline(
+            result = runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
                 cwd=worktree_path,
@@ -1652,7 +1308,7 @@ class TestSpecRunnerNoDecreaseMode:
             assert "90.0%" in (result.coverage_result.failure_reason or "")
 
     def test_no_decrease_mode_passes_when_coverage_increases(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """When current coverage exceeds baseline, validation passes."""
         worktree_path = tmp_path / "worktree"
@@ -1690,7 +1346,7 @@ class TestSpecRunnerNoDecreaseMode:
             "src.validation.command_runner.subprocess.Popen",
             return_value=mock_proc,
         ):
-            result = runner._spec_runner._run_validation_pipeline(
+            result = runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
                 cwd=worktree_path,
@@ -1706,7 +1362,7 @@ class TestSpecRunnerNoDecreaseMode:
             assert result.coverage_result.percent == 95.0
 
     def test_explicit_threshold_overrides_no_decrease_mode(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """When min_percent is explicitly set, baseline is not used."""
         worktree_path = tmp_path / "worktree"
@@ -1748,7 +1404,7 @@ class TestSpecRunnerNoDecreaseMode:
             "src.validation.command_runner.subprocess.Popen",
             return_value=mock_proc,
         ):
-            result = runner._spec_runner._run_validation_pipeline(
+            result = runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
                 cwd=worktree_path,
@@ -1773,24 +1429,14 @@ class TestSpecRunnerBaselineRefresh:
     """
 
     @pytest.fixture
-    def runner(self, tmp_path: Path) -> ValidationRunner:
-        """Create a runner with coverage enabled."""
-        config = ValidationConfig(
-            run_slow_tests=False,
-            run_e2e=False,
-            coverage=True,
-            use_test_mutex=False,
-        )
-        return ValidationRunner(tmp_path, config)
+    def runner(self, tmp_path: Path) -> SpecValidationRunner:
+        """Create a spec runner for baseline tests."""
+        return SpecValidationRunner(tmp_path)
 
     def test_baseline_refresh_when_missing(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """When baseline is missing, runner should refresh it."""
-        from src.validation.spec_runner import SpecValidationRunner
-
-        spec_runner = SpecValidationRunner(tmp_path)
-
         spec = ValidationSpec(
             commands=[
                 ValidationCommand(
@@ -1852,20 +1498,16 @@ class TestSpecRunnerBaselineRefresh:
                 "src.validation.spec_runner.try_lock", return_value=True
             ),  # Get lock immediately
         ):
-            baseline = spec_runner._refresh_baseline(spec, tmp_path)
+            baseline = runner._refresh_baseline(spec, tmp_path)
 
         # Baseline should be created
         assert baseline == 85.0
         assert baseline_path.exists()
 
     def test_baseline_refresh_skipped_when_fresh(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """When baseline is fresh, refresh should be skipped."""
-        from src.validation.spec_runner import SpecValidationRunner
-
-        spec_runner = SpecValidationRunner(tmp_path)
-
         # Create fresh baseline
         baseline_path = tmp_path / "coverage.xml"
         baseline_path.write_text(
@@ -1914,20 +1556,16 @@ class TestSpecRunnerBaselineRefresh:
             ),
             patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
         ):
-            baseline = spec_runner._refresh_baseline(spec, tmp_path)
+            baseline = runner._refresh_baseline(spec, tmp_path)
 
         # Should return cached baseline without creating worktree
         assert baseline == 88.0
         assert not worktree_created
 
     def test_baseline_refresh_with_lock_contention(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """When another agent holds the lock, wait and use their refreshed baseline."""
-        from src.validation.spec_runner import SpecValidationRunner
-
-        spec_runner = SpecValidationRunner(tmp_path)
-
         spec = ValidationSpec(
             commands=[
                 ValidationCommand(
@@ -1997,20 +1635,16 @@ class TestSpecRunnerBaselineRefresh:
                 "src.validation.coverage.subprocess.run", side_effect=mock_git_run_fresh
             ),
         ):
-            baseline = spec_runner._refresh_baseline(spec, tmp_path)
+            baseline = runner._refresh_baseline(spec, tmp_path)
 
         # Should use the baseline created by the other agent
         assert baseline == 92.0
         assert wait_called
 
     def test_stale_baseline_triggers_refresh(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """When baseline is stale (older than last commit), runner should refresh it."""
-        from src.validation.spec_runner import SpecValidationRunner
-
-        spec_runner = SpecValidationRunner(tmp_path)
-
         # Create stale baseline (old mtime)
         baseline_path = tmp_path / "coverage.xml"
         baseline_path.write_text(
@@ -2084,7 +1718,7 @@ class TestSpecRunnerBaselineRefresh:
             patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
             patch("src.validation.spec_runner.try_lock", return_value=True),
         ):
-            baseline = spec_runner._refresh_baseline(spec, tmp_path)
+            baseline = runner._refresh_baseline(spec, tmp_path)
 
         # Stale baseline should trigger worktree creation for refresh
         assert worktree_created is True
@@ -2102,18 +1736,12 @@ class TestBaselineCaptureOrder:
     """
 
     @pytest.fixture
-    def runner(self, tmp_path: Path) -> ValidationRunner:
-        """Create a runner with coverage enabled."""
-        config = ValidationConfig(
-            run_slow_tests=False,
-            run_e2e=False,
-            coverage=True,
-            use_test_mutex=False,
-        )
-        return ValidationRunner(tmp_path, config)
+    def runner(self, tmp_path: Path) -> SpecValidationRunner:
+        """Create a spec runner for baseline tests."""
+        return SpecValidationRunner(tmp_path)
 
     def test_baseline_captured_before_worktree_creation(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """Verify baseline is captured BEFORE worktree is created.
 
@@ -2224,11 +1852,10 @@ class TestBaselineCaptureOrder:
         # Let me verify the coverage result uses the baseline correctly
         assert result.coverage_result is not None
         # Worktree coverage is 80%, baseline was 85%
-        # Since 80% < 85%, this should fail
         assert result.coverage_result.percent == 80.0
 
     def test_run_spec_uses_pre_captured_baseline_not_worktree_coverage(
-        self, runner: ValidationRunner, tmp_path: Path
+        self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """Verify validation compares against pre-captured baseline, not worktree.
 

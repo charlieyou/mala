@@ -4,8 +4,6 @@ This package provides validation runners for clean-room validation
 in temporary git worktrees:
 
 - SpecValidationRunner: Modern API using ValidationSpec + ValidationContext (RECOMMENDED)
-- LegacyValidationRunner: Legacy API using ValidationConfig
-- ValidationRunner: DEPRECATED facade (use SpecValidationRunner directly)
 
 For new code, use SpecValidationRunner with ValidationSpec:
 
@@ -40,10 +38,10 @@ from .helpers import (
     tail,
     write_fixture_repo,
 )
-from .legacy_runner import LegacyValidationRunner, ValidationConfig
+from .legacy_runner import ValidationConfig
 from .result import ValidationResult, ValidationStepResult
 from .runner import (
-    ValidationRunner,
+    SpecValidationRunner,
 )
 from .spec import (
     CommandKind,
@@ -61,7 +59,6 @@ from .spec import (
     classify_change,
     detect_repo_type,
 )
-from .spec_runner import SpecValidationRunner
 from .worktree import (
     WorktreeConfig,
     WorktreeContext,
@@ -87,11 +84,10 @@ __all__ = [
     "E2ERunnerConfig",
     "E2EStatus",
     "IssueResolution",
-    # Runners
-    "LegacyValidationRunner",
     # Repo type detection
     "RepoType",
     "ResolutionOutcome",
+    # Runners
     "SpecValidationRunner",
     "ValidationArtifacts",
     "ValidationCommand",
@@ -99,7 +95,6 @@ __all__ = [
     "ValidationContext",
     # Result types
     "ValidationResult",
-    "ValidationRunner",
     "ValidationScope",
     "ValidationSpec",
     "ValidationStepResult",
