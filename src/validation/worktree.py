@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import re
 import shutil
-import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from src.validation.command_runner import run_command
+
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from src.validation.command_runner import CommandResult
 
 
 # Pattern for valid path components (alphanumeric, dash, underscore, dot)
@@ -188,11 +191,9 @@ def create_worktree(
             ctx.error = f"Failed to remove stale worktree: {e}"
             return ctx
 
-    result = subprocess.run(
+    result = run_command(
         ["git", "worktree", "add", "--detach", str(worktree_path), commit_sha],
         cwd=ctx.repo_path,
-        capture_output=True,
-        text=True,
     )
 
     if result.returncode != 0:
@@ -235,11 +236,9 @@ def remove_worktree(
         cmd.append("--force")
     cmd.append(str(ctx.path))
 
-    result = subprocess.run(
+    result = run_command(
         cmd,
         cwd=ctx.repo_path,
-        capture_output=True,
-        text=True,
     )
 
     # Track git command failure
@@ -264,11 +263,9 @@ def remove_worktree(
                 git_error = f"Directory cleanup failed: {e}"
 
     # Prune the worktree list to clean up stale git metadata
-    subprocess.run(
+    run_command(
         ["git", "worktree", "prune"],
         cwd=ctx.repo_path,
-        capture_output=True,
-        text=True,
     )
 
     # Report failure if git command failed or directory cleanup failed
@@ -315,11 +312,9 @@ def cleanup_stale_worktrees(
                 cleaned += _cleanup_run_dir(repo_path, run_dir)
 
     # Prune the worktree list
-    subprocess.run(
+    run_command(
         ["git", "worktree", "prune"],
         cwd=repo_path,
-        capture_output=True,
-        text=True,
     )
 
     return cleaned
@@ -338,11 +333,9 @@ def _cleanup_run_dir(repo_path: Path, run_dir: Path) -> int:
                 continue
 
             # Try git worktree remove, then force delete
-            subprocess.run(
+            run_command(
                 ["git", "worktree", "remove", "--force", str(attempt_dir)],
                 cwd=repo_path,
-                capture_output=True,
-                text=True,
             )
 
             if attempt_dir.exists():
@@ -366,7 +359,7 @@ def _cleanup_run_dir(repo_path: Path, run_dir: Path) -> int:
     return cleaned
 
 
-def _format_git_error(cmd_name: str, result: subprocess.CompletedProcess[str]) -> str:
+def _format_git_error(cmd_name: str, result: CommandResult) -> str:
     """Format a git command error message."""
     msg = f"{cmd_name} exited {result.returncode}"
     stderr = result.stderr.strip()

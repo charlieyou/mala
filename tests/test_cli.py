@@ -8,6 +8,10 @@ from unittest.mock import patch
 import pytest
 import typer
 
+import src.orchestrator
+import src.beads_client
+import src.tools.locking
+
 
 def _reload_cli(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     monkeypatch.setenv("BRAINTRUST_API_KEY", "")
@@ -193,7 +197,7 @@ def test_run_without_morph_api_key_continues(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
     monkeypatch.setattr(cli, "log", _log)
 
@@ -218,7 +222,7 @@ def test_run_with_morph_api_key_enabled(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -259,7 +263,7 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", _set_verbose)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -297,7 +301,7 @@ def test_run_quiet_mode_sets_verbose_false(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", _set_verbose)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -321,7 +325,7 @@ def test_run_default_verbose_mode(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", _set_verbose)
 
     with pytest.raises(typer.Exit):
@@ -372,7 +376,7 @@ def test_clean_removes_locks_and_logs(
     def _log(*args: object, **_kwargs: object) -> None:
         logs.append(args)
 
-    monkeypatch.setattr(cli, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
     monkeypatch.setattr(cli, "log", _log)
     monkeypatch.setattr(cli.typer, "confirm", lambda _msg: True)
@@ -403,7 +407,7 @@ def test_status_outputs_summary(
     (run_dir / "two.json").write_text("{}")
 
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
 
     cli.status()
@@ -423,7 +427,7 @@ def test_run_disable_validations_valid(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -508,7 +512,7 @@ def test_run_validation_flags_passed_to_orchestrator(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -533,7 +537,7 @@ def test_run_validation_flags_defaults(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit):
@@ -555,7 +559,7 @@ def test_run_wip_flag_passed_to_orchestrator(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -575,7 +579,7 @@ def test_run_focus_flag_default_true(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -595,7 +599,7 @@ def test_run_no_focus_flag_passed_to_orchestrator(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -615,7 +619,7 @@ def test_run_focus_composes_with_wip(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -636,7 +640,7 @@ def test_run_codex_review_disabled_via_disable_validations(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -816,8 +820,8 @@ def test_dry_run_exits_without_processing(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
-    monkeypatch.setattr(cli, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(src.beads_client, "BeadsClient", DummyBeadsClient)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -840,7 +844,7 @@ def test_dry_run_passes_flags_to_beads_client(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(src.beads_client, "BeadsClient", DummyBeadsClient)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit):
@@ -871,7 +875,7 @@ def test_dry_run_displays_empty_task_list(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(src.beads_client, "BeadsClient", DummyBeadsClient)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -908,7 +912,7 @@ def test_dry_run_displays_tasks_with_metadata(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(src.beads_client, "BeadsClient", DummyBeadsClient)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -955,7 +959,7 @@ def test_dry_run_focus_mode_groups_by_epic(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(src.beads_client, "BeadsClient", DummyBeadsClient)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:

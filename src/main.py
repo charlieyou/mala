@@ -11,8 +11,13 @@ Usage:
     mala status
 """
 
-from .cli import app, bootstrap
+from .cli import bootstrap
+
+# Call bootstrap at module import time so the console entrypoint (src.main:app)
+# runs bootstrap before importing the CLI app (which imports claude_agent_sdk)
+bootstrap()
+
+from .cli import app  # noqa: E402
 
 if __name__ == "__main__":
-    bootstrap()
     app()

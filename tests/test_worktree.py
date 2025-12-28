@@ -1,15 +1,15 @@
 """Unit tests for src/validation/worktree.py - git worktree utilities.
 
-These tests mock subprocess calls to test worktree logic without actually
+These tests mock run_command calls to test worktree logic without actually
 creating git worktrees.
 """
 
-import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from src.validation.command_runner import CommandResult
 from src.validation.worktree import (
     WorktreeConfig,
     WorktreeContext,
@@ -146,14 +146,16 @@ class TestCreateWorktree:
         return WorktreeConfig(base_dir=tmp_path / "worktrees")
 
     def test_create_success(self, config: WorktreeConfig, tmp_path: Path) -> None:
-        mock_result = subprocess.CompletedProcess(
-            args=[],
+        mock_result = CommandResult(
+            command=[],
             returncode=0,
             stdout="",
             stderr="",
         )
 
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
+        with patch(
+            "src.validation.worktree.run_command", return_value=mock_result
+        ) as mock_run:
             ctx = create_worktree(
                 repo_path=tmp_path / "repo",
                 commit_sha="abc123",
@@ -176,14 +178,14 @@ class TestCreateWorktree:
         assert "abc123" in cmd
 
     def test_create_failure(self, config: WorktreeConfig, tmp_path: Path) -> None:
-        mock_result = subprocess.CompletedProcess(
-            args=[],
+        mock_result = CommandResult(
+            command=[],
             returncode=128,
             stdout="",
             stderr="fatal: not a git repository",
         )
 
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("src.validation.worktree.run_command", return_value=mock_result):
             with patch("shutil.rmtree"):
                 ctx = create_worktree(
                     repo_path=tmp_path / "repo",
@@ -207,11 +209,9 @@ class TestCreateWorktree:
         expected_path.mkdir(parents=True)
         (expected_path / "stale_file").touch()
 
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("src.validation.worktree.run_command", return_value=mock_result):
             ctx = create_worktree(
                 repo_path=tmp_path / "repo",
                 commit_sha="abc123",
@@ -228,11 +228,9 @@ class TestCreateWorktree:
     def test_create_increments_attempt(
         self, config: WorktreeConfig, tmp_path: Path
     ) -> None:
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("src.validation.worktree.run_command", return_value=mock_result):
             ctx1 = create_worktree(
                 repo_path=tmp_path / "repo",
                 commit_sha="abc123",
@@ -271,11 +269,9 @@ class TestRemoveWorktree:
         return ctx
 
     def test_remove_success(self, created_ctx: WorktreeContext) -> None:
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("src.validation.worktree.run_command", return_value=mock_result):
             ctx = remove_worktree(created_ctx, validation_passed=True)
 
         assert ctx.state == WorktreeState.REMOVED
@@ -292,7 +288,7 @@ class TestRemoveWorktree:
         )
 
         # Validation failed and keep_on_failure=True
-        with patch("subprocess.run") as mock_run:
+        with patch("src.validation.worktree.run_command") as mock_run:
             result_ctx = remove_worktree(ctx, validation_passed=False)
 
         assert result_ctx.state == WorktreeState.KEPT
@@ -303,11 +299,9 @@ class TestRemoveWorktree:
         self, created_ctx: WorktreeContext
     ) -> None:
         # keep_on_failure is False by default
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("src.validation.worktree.run_command", return_value=mock_result):
             ctx = remove_worktree(created_ctx, validation_passed=False)
 
         assert ctx.state == WorktreeState.REMOVED
@@ -323,18 +317,18 @@ class TestRemoveWorktree:
             state=WorktreeState.PENDING,
         )
 
-        with patch("subprocess.run") as mock_run:
+        with patch("src.validation.worktree.run_command") as mock_run:
             result_ctx = remove_worktree(ctx, validation_passed=True)
 
         assert result_ctx.state == WorktreeState.PENDING
         mock_run.assert_not_called()
 
     def test_remove_uses_force_flag(self, created_ctx: WorktreeContext) -> None:
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
+        with patch(
+            "src.validation.worktree.run_command", return_value=mock_result
+        ) as mock_run:
             remove_worktree(created_ctx, validation_passed=True)
 
         # First call should be git worktree remove --force
@@ -353,11 +347,11 @@ class TestRemoveWorktree:
             state=WorktreeState.CREATED,
         )
 
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
+        with patch(
+            "src.validation.worktree.run_command", return_value=mock_result
+        ) as mock_run:
             remove_worktree(ctx, validation_passed=True)
 
         # First call should NOT have --force
@@ -366,11 +360,11 @@ class TestRemoveWorktree:
         assert "--force" not in cmd
 
     def test_remove_prunes_worktree_list(self, created_ctx: WorktreeContext) -> None:
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
+        with patch(
+            "src.validation.worktree.run_command", return_value=mock_result
+        ) as mock_run:
             remove_worktree(created_ctx, validation_passed=True)
 
         # Should call git worktree prune after remove
@@ -399,11 +393,9 @@ class TestCleanupStaleWorktrees:
         (config.base_dir / "run-1" / "mala-10" / "2").mkdir(parents=True)
         (config.base_dir / "run-2" / "mala-20" / "1").mkdir(parents=True)
 
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("src.validation.worktree.run_command", return_value=mock_result):
             cleaned = cleanup_stale_worktrees(tmp_path / "repo", config, run_id="run-1")
 
         # Should clean 2 worktrees from run-1 only
@@ -417,11 +409,9 @@ class TestCleanupStaleWorktrees:
         (config.base_dir / "run-2" / "mala-20" / "1").mkdir(parents=True)
         (config.base_dir / "run-3" / "mala-30" / "1").mkdir(parents=True)
 
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("src.validation.worktree.run_command", return_value=mock_result):
             cleaned = cleanup_stale_worktrees(tmp_path / "repo", config)
 
         assert cleaned == 3
@@ -432,11 +422,9 @@ class TestCleanupStaleWorktrees:
         # Create a single worktree
         (config.base_dir / "run-1" / "mala-10" / "1").mkdir(parents=True)
 
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("src.validation.worktree.run_command", return_value=mock_result):
             cleanup_stale_worktrees(tmp_path / "repo", config, run_id="run-1")
 
         # Parent directories should be removed if empty
@@ -447,11 +435,11 @@ class TestCleanupStaleWorktrees:
     ) -> None:
         config.base_dir.mkdir(parents=True)
 
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
+        with patch(
+            "src.validation.worktree.run_command", return_value=mock_result
+        ) as mock_run:
             cleanup_stale_worktrees(tmp_path / "repo", config)
 
         # Should call git worktree prune
@@ -467,14 +455,14 @@ class TestErrorFormatting:
         config = WorktreeConfig(base_dir=tmp_path / "worktrees")
         long_stderr = "x" * 500
 
-        mock_result = subprocess.CompletedProcess(
-            args=[],
+        mock_result = CommandResult(
+            command=[],
             returncode=1,
             stdout="",
             stderr=long_stderr,
         )
 
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("src.validation.worktree.run_command", return_value=mock_result):
             with patch("shutil.rmtree"):
                 ctx = create_worktree(
                     repo_path=tmp_path / "repo",
@@ -577,11 +565,9 @@ class TestPathValidation:
         self, config: WorktreeConfig, tmp_path: Path
     ) -> None:
         """Valid path components should be accepted."""
-        mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("subprocess.run", return_value=mock_result):
+        with patch("src.validation.worktree.run_command", return_value=mock_result):
             ctx = create_worktree(
                 repo_path=tmp_path / "repo",
                 commit_sha="abc123",
@@ -631,12 +617,12 @@ class TestRemoveWorktreeFailurePropagation:
     ) -> None:
         """git worktree remove failure should be reported even if directory was deleted."""
         # Git command fails
-        mock_git_fail = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="worktree not found"
+        mock_git_fail = CommandResult(
+            command=[], returncode=1, stdout="", stderr="worktree not found"
         )
         # But directory doesn't exist (already deleted somehow)
         with (
-            patch("subprocess.run", return_value=mock_git_fail),
+            patch("src.validation.worktree.run_command", return_value=mock_git_fail),
             patch.object(Path, "exists", return_value=False),
         ):
             ctx = remove_worktree(created_ctx, validation_passed=True)
@@ -651,15 +637,13 @@ class TestRemoveWorktreeFailurePropagation:
         # Create the directory so exists() returns True
         created_ctx._path.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
 
-        mock_git_success = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr=""
-        )
+        mock_git_success = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
         def mock_rmtree(path: Path) -> None:
             raise OSError("Permission denied")
 
         with (
-            patch("subprocess.run", return_value=mock_git_success),
+            patch("src.validation.worktree.run_command", return_value=mock_git_success),
             patch("shutil.rmtree", side_effect=mock_rmtree),
         ):
             ctx = remove_worktree(created_ctx, validation_passed=True)
@@ -694,14 +678,14 @@ class TestRemoveWorktreeFailurePropagation:
         (ctx._path / "uncommitted.txt").write_text("precious data")
 
         # Git command fails (e.g., dirty worktree without --force)
-        mock_git_fail = subprocess.CompletedProcess(
-            args=[],
+        mock_git_fail = CommandResult(
+            command=[],
             returncode=1,
             stdout="",
             stderr="fatal: worktree has uncommitted changes",
         )
 
-        with patch("subprocess.run", return_value=mock_git_fail):
+        with patch("src.validation.worktree.run_command", return_value=mock_git_fail):
             result_ctx = remove_worktree(ctx, validation_passed=True)
 
         # Should fail
@@ -738,11 +722,11 @@ class TestRemoveWorktreeFailurePropagation:
         (ctx._path / "some_file.txt").write_text("data")
 
         # Git command fails but force_remove=True means we still cleanup
-        mock_git_fail = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="git worktree remove failed"
+        mock_git_fail = CommandResult(
+            command=[], returncode=1, stdout="", stderr="git worktree remove failed"
         )
 
-        with patch("subprocess.run", return_value=mock_git_fail):
+        with patch("src.validation.worktree.run_command", return_value=mock_git_fail):
             result_ctx = remove_worktree(ctx, validation_passed=True)
 
         # Should fail (git command failed)

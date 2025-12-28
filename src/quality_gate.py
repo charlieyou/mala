@@ -21,10 +21,10 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
+from src.validation.command_runner import run_command
 from src.validation.spec import (
     CommandKind,
     IssueResolution,
@@ -314,14 +314,12 @@ class QualityGate:
             Tuple of (is_clean, status_output). On git failure, returns
             (False, error_message) to treat unknown state as dirty.
         """
-        result = subprocess.run(
+        result = run_command(
             ["git", "status", "--porcelain"],
-            capture_output=True,
-            text=True,
             cwd=self.repo_path,
         )
         # Treat git failures as dirty/unknown state
-        if result.returncode != 0:
+        if not result.ok:
             error_msg = result.stderr.strip() or "git status failed"
             return False, f"git error: {error_msg}"
         output = result.stdout.strip()
@@ -728,7 +726,7 @@ class QualityGate:
         # Include commit timestamp in format for baseline comparison
         format_str = "%h %ct %s" if baseline_timestamp is not None else "%h %s"
 
-        result = subprocess.run(
+        result = run_command(
             [
                 "git",
                 "log",
@@ -739,12 +737,10 @@ class QualityGate:
                 "1",
                 "--since=30 days ago",
             ],
-            capture_output=True,
-            text=True,
             cwd=self.repo_path,
         )
 
-        if result.returncode != 0:
+        if not result.ok:
             return CommitResult(exists=False)
 
         output = result.stdout.strip()

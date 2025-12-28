@@ -7,7 +7,7 @@ Tests for:
 
 import json
 from pathlib import Path
-import subprocess
+from src.validation.command_runner import CommandResult
 from unittest.mock import patch
 
 from src.quality_gate import (
@@ -494,10 +494,10 @@ class TestCommitBaselineCheck:
 
         # Mock git log returning a commit with a timestamp before baseline
         # The commit exists but is older than the run started
-        with patch("src.quality_gate.subprocess.run") as mock_run:
+        with patch("src.quality_gate.run_command") as mock_run:
             # Return commit with timestamp 1000 seconds before baseline
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703500000 bd-issue-123: Old fix\n",
                 stderr="",
@@ -515,10 +515,10 @@ class TestCommitBaselineCheck:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
+        with patch("src.quality_gate.run_command") as mock_run:
             # Return commit with timestamp 1000 seconds after baseline
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-issue-123: New fix\n",
                 stderr="",
@@ -537,9 +537,9 @@ class TestCommitBaselineCheck:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 bd-issue-123: Old fix\n",
                 stderr="",
@@ -583,10 +583,10 @@ class TestCommitBaselineCheck:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
+        with patch("src.quality_gate.run_command") as mock_run:
             # Return a commit that is older than the baseline
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703500000 bd-issue-123: Old fix\n",
                 stderr="",
@@ -634,10 +634,10 @@ class TestCommitBaselineCheck:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
+        with patch("src.quality_gate.run_command") as mock_run:
             # Return a commit that is newer than the baseline
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-issue-123: New fix\n",
                 stderr="",
@@ -849,9 +849,9 @@ class TestScopeAwareEvidence:
         gate = QualityGate(tmp_path)
 
         # Mock git status to return clean working tree
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="",  # No output = clean tree
                 stderr="",
@@ -889,9 +889,9 @@ class TestScopeAwareEvidence:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="",  # No output = clean tree
                 stderr="",
@@ -927,9 +927,9 @@ class TestScopeAwareEvidence:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout=" M src/foo.py",  # Dirty tree
                 stderr="",
@@ -994,13 +994,11 @@ class TestEvidenceGateSkipsValidation:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
+        with patch("src.quality_gate.run_command") as mock_run:
             # First call: git status (clean tree)
             # Second call: git log (no commit found - should be OK for no-change)
             mock_run.side_effect = [
-                subprocess.CompletedProcess(
-                    args=[], returncode=0, stdout="", stderr=""
-                ),
+                CommandResult(command=[], returncode=0, stdout="", stderr=""),
             ]
             result = gate.check_with_resolution(
                 issue_id="test-123",
@@ -1031,9 +1029,9 @@ class TestEvidenceGateSkipsValidation:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[], returncode=0, stdout="", stderr=""
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[], returncode=0, stdout="", stderr=""
             )
             result = gate.check_with_resolution(
                 issue_id="test-123",
@@ -1067,9 +1065,9 @@ class TestEvidenceGateSkipsValidation:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[], returncode=0, stdout="", stderr=""
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[], returncode=0, stdout="", stderr=""
             )
             result = gate.check_with_resolution(
                 issue_id="test-123",
@@ -1115,9 +1113,9 @@ class TestClearFailureMessages:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[], returncode=0, stdout="", stderr=""
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[], returncode=0, stdout="", stderr=""
             )
             result = gate.check("missing-commit-123", log_path)
 
@@ -1148,9 +1146,9 @@ class TestClearFailureMessages:
         )
         log_path.write_text(log_content + "\n")
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[], returncode=0, stdout="abc1234 bd-test-123: Fix\n", stderr=""
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[], returncode=0, stdout="abc1234 bd-test-123: Fix\n", stderr=""
             )
             result = gate.check("test-123", log_path)
 
@@ -1177,9 +1175,9 @@ class TestClearFailureMessages:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[], returncode=0, stdout="", stderr=""
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[], returncode=0, stdout="", stderr=""
             )
             result = gate.check_with_resolution("test-123", log_path)
 
@@ -1355,9 +1353,9 @@ class TestCheckWithResolutionSpec:
             disable_validations={"post-validate"},
         )
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
@@ -1403,9 +1401,9 @@ class TestCheckWithResolutionSpec:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
@@ -1510,9 +1508,9 @@ class TestGitFailureHandling:
         """Git failure should return is_clean=False with error message."""
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=128,  # Git failure
                 stdout="",
                 stderr="fatal: not a git repository",
@@ -1543,9 +1541,9 @@ class TestGitFailureHandling:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=1,
                 stdout="",
                 stderr="error",
@@ -1617,9 +1615,9 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
         gate = QualityGate(tmp_path)
         offset = len(first_content.encode("utf-8"))
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
@@ -2109,9 +2107,9 @@ class TestSpecDrivenEvidencePatterns:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
@@ -2219,9 +2217,9 @@ class TestValidationExitCodeParsing:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
@@ -2295,9 +2293,9 @@ class TestValidationExitCodeParsing:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
@@ -2365,9 +2363,9 @@ class TestValidationExitCodeParsing:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
@@ -2436,9 +2434,9 @@ class TestValidationExitCodeParsing:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
@@ -2581,9 +2579,9 @@ class TestValidationExitCodeParsing:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
@@ -2625,10 +2623,10 @@ class TestAlreadyCompleteResolution:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
+        with patch("src.quality_gate.run_command") as mock_run:
             # Return a commit that exists (even if before baseline)
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="238e17f 1703400000 bd-test-123: Add feature\n",
                 stderr="",
@@ -2664,10 +2662,10 @@ class TestAlreadyCompleteResolution:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
+        with patch("src.quality_gate.run_command") as mock_run:
             # No matching commit found
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="",  # No commit output
                 stderr="",
@@ -2731,9 +2729,9 @@ class TestAlreadyCompleteResolution:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.subprocess.run") as mock_run:
-            mock_run.return_value = subprocess.CompletedProcess(
-                args=[],
+        with patch("src.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
                 returncode=0,
                 stdout="238e17f 1703400000 bd-test-123: Add feature\n",
                 stderr="",

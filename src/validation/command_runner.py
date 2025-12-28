@@ -5,6 +5,13 @@ This module provides CommandRunner for consistent subprocess handling across:
 - validation/legacy_runner.py
 - validation/spec_runner.py
 - validation/e2e.py
+- validation/worktree.py
+
+Note: BeadsClient (src/beads_client.py) maintains its own async subprocess
+implementation. This is intentional because BeadsClient is designed as an
+async-only client with additional logging and caching behavior. Both
+implementations use equivalent timeout and process-group termination semantics
+(SIGTERM → grace period → SIGKILL), ensuring consistent behavior.
 
 Key features:
 - Unified timeout handling with process-group termination

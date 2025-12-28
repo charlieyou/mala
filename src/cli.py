@@ -60,7 +60,7 @@ def is_braintrust_enabled() -> bool:
     return _braintrust_enabled
 
 
-# Now safe to import claude_agent_sdk (it's been patched if Braintrust is available)
+# Import modules that do NOT depend on claude_agent_sdk at module level
 import asyncio
 from datetime import datetime
 from typing import Annotated, Never
@@ -68,9 +68,9 @@ from typing import Annotated, Never
 import typer
 
 from .logging.console import Colors, log, set_verbose
-from .tools.locking import get_lock_dir
-from .orchestrator import MalaOrchestrator
-from .beads_client import BeadsClient
+
+# SDK-dependent imports (MalaOrchestrator, BeadsClient, get_lock_dir) are deferred
+# to function bodies to ensure bootstrap() runs before claude_agent_sdk is imported.
 
 
 def display_dry_run_tasks(
@@ -375,6 +375,10 @@ def run(
         log("✗", f"Repository not found: {repo_path}", Colors.RED)
         raise typer.Exit(1)
 
+    # Import SDK-dependent modules at runtime (after bootstrap has been called)
+    from .beads_client import BeadsClient
+    from .orchestrator import MalaOrchestrator
+
     # Handle dry-run mode: display task order and exit
     if dry_run:
 
@@ -417,6 +421,9 @@ def run(
 @app.command()
 def clean() -> None:
     """Clean up locks and JSONL logs."""
+    # Import get_lock_dir at runtime to avoid SDK import at module level
+    from .tools.locking import get_lock_dir
+
     cleaned_locks = 0
     cleaned_logs = 0
 
@@ -441,6 +448,9 @@ def clean() -> None:
 @app.command()
 def status() -> None:
     """Show current orchestrator status."""
+    # Import get_lock_dir at runtime to avoid SDK import at module level
+    from .tools.locking import get_lock_dir
+
     print()
     log("●", "mala status", Colors.MAGENTA)
     print()
