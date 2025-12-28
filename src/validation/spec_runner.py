@@ -7,6 +7,7 @@ ValidationSpec + ValidationContext, the modern API for mala validation.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import tempfile
@@ -412,9 +413,36 @@ class SpecValidationRunner:
         steps: list[ValidationStepResult] = []
         coverage_result: CoverageResult | None = None
 
+        # Write manifest of expected commands for debugging
+        expected_commands = [cmd.name for cmd in spec.commands]
+        manifest_path = log_dir / "validation_manifest.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "expected_commands": expected_commands,
+                    "cwd": str(cwd),
+                    "run_id": run_id,
+                    "issue_id": context.issue_id,
+                    "scope": spec.scope.value,
+                },
+                indent=2,
+            )
+        )
+
         # Execute each command in order
-        for cmd in spec.commands:
-            step = self._run_spec_command(cmd, cwd, env, log_dir)
+        for i, cmd in enumerate(spec.commands):
+            # Log command start for debugging
+            start_marker = log_dir / f"{i:02d}_{cmd.name.replace(' ', '_')}.started"
+            start_marker.write_text(f"command: {cmd.command}\ncwd: {cwd}\n")
+
+            try:
+                step = self._run_spec_command(cmd, cwd, env, log_dir)
+            except Exception as e:
+                # Log unexpected exceptions during command execution
+                error_path = log_dir / f"{i:02d}_{cmd.name.replace(' ', '_')}.error"
+                error_path.write_text(f"Exception: {type(e).__name__}: {e}\n")
+                raise
+
             steps.append(step)
 
             # Log output to files
@@ -425,6 +453,10 @@ class SpecValidationRunner:
                 details = format_step_output(step.stdout_tail, step.stderr_tail)
                 if details:
                     reason = f"{reason}: {details}"
+                # Write final manifest with actual results
+                self._write_completion_manifest(
+                    log_dir, expected_commands, steps, reason
+                )
                 return ValidationResult(
                     passed=False,
                     steps=steps,
@@ -442,12 +474,14 @@ class SpecValidationRunner:
 
             # Fail on coverage error or threshold not met
             if not coverage_result.passed:
+                reason = coverage_result.failure_reason or "Coverage check failed"
+                self._write_completion_manifest(
+                    log_dir, expected_commands, steps, reason
+                )
                 return ValidationResult(
                     passed=False,
                     steps=steps,
-                    failure_reasons=[
-                        coverage_result.failure_reason or "Coverage check failed"
-                    ],
+                    failure_reasons=[reason],
                     artifacts=artifacts,
                     coverage_result=coverage_result,
                 )
@@ -463,14 +497,21 @@ class SpecValidationRunner:
                 artifacts.e2e_fixture_path = e2e_result.fixture_path
 
             if not e2e_result.passed and e2e_result.status != E2EStatus.SKIPPED:
+                reason = e2e_result.failure_reason or "E2E failed"
+                self._write_completion_manifest(
+                    log_dir, expected_commands, steps, reason
+                )
                 return ValidationResult(
                     passed=False,
                     steps=steps,
-                    failure_reasons=[e2e_result.failure_reason or "E2E failed"],
+                    failure_reasons=[reason],
                     artifacts=artifacts,
                     coverage_result=coverage_result,
                     e2e_result=e2e_result,
                 )
+
+        # Write final manifest on success
+        self._write_completion_manifest(log_dir, expected_commands, steps, None)
 
         return ValidationResult(
             passed=True,
@@ -479,6 +520,39 @@ class SpecValidationRunner:
             coverage_result=coverage_result,
             e2e_result=e2e_result_final,
         )
+
+    def _write_completion_manifest(
+        self,
+        log_dir: Path,
+        expected_commands: list[str],
+        steps: list[ValidationStepResult],
+        failure_reason: str | None,
+    ) -> None:
+        """Write completion manifest with expected vs actual commands.
+
+        This helps debug cases where commands are unexpectedly skipped.
+        """
+        actual_commands = [s.name for s in steps]
+        manifest = {
+            "expected_commands": expected_commands,
+            "actual_commands": actual_commands,
+            "commands_executed": len(actual_commands),
+            "commands_expected": len(expected_commands),
+            "all_executed": expected_commands == actual_commands,
+            "missing_commands": [c for c in expected_commands if c not in actual_commands],
+            "failure_reason": failure_reason,
+            "steps": [
+                {
+                    "name": s.name,
+                    "ok": s.ok,
+                    "returncode": s.returncode,
+                    "duration_seconds": s.duration_seconds,
+                }
+                for s in steps
+            ],
+        }
+        manifest_path = log_dir / "validation_complete.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2))
 
     def _build_spec_env(
         self,
