@@ -29,6 +29,7 @@ from src.validation import (
     format_step_output,
     tail,
 )
+from src.validation.spec_runner import CommandFailure
 
 
 def mock_popen_success(
@@ -741,6 +742,62 @@ class TestSpecBasedValidation:
             assert result.passed is False
             assert len(result.steps) == 2  # Stopped after fail2
             assert "fail2 failed" in result.failure_reasons[0]
+
+    def test_run_commands_raises_command_failure_on_error(
+        self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
+    ) -> None:
+        """Test that _run_commands raises CommandFailure on command failure.
+
+        This tests the early exit behavior of _run_commands when a command
+        fails (and allow_fail is False). The exception should include all
+        steps executed so far and a descriptive failure reason.
+        """
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pass1",
+                    command=["echo", "1"],
+                    kind=CommandKind.FORMAT,
+                ),
+                ValidationCommand(
+                    name="fail2",
+                    command=["false"],
+                    kind=CommandKind.LINT,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=False),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        call_count = 0
+
+        def mock_popen_calls(cmd: list[str], **kwargs: object) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            mock_proc = MagicMock()
+            mock_proc.pid = 12345
+            if call_count == 2:
+                mock_proc.communicate.return_value = ("", "command error")
+                mock_proc.returncode = 1
+            else:
+                mock_proc.communicate.return_value = ("ok", "")
+                mock_proc.returncode = 0
+            return mock_proc
+
+        with patch(
+            "src.validation.command_runner.subprocess.Popen",
+            side_effect=mock_popen_calls,
+        ):
+            env = runner._spec_runner._build_spec_env(context, "test-run")
+            with pytest.raises(CommandFailure) as exc_info:
+                runner._spec_runner._run_commands(spec, tmp_path, env, tmp_path)
+
+            # Verify the exception contains the right data
+            assert len(exc_info.value.steps) == 2
+            assert exc_info.value.steps[0].ok is True
+            assert exc_info.value.steps[1].ok is False
+            assert "fail2 failed" in exc_info.value.reason
 
     def test_run_spec_allow_fail_continues(
         self, runner: ValidationRunner, context: ValidationContext, tmp_path: Path
@@ -1487,7 +1544,7 @@ class TestSpecRunnerNoDecreaseMode:
         ):
             # Execute validation with the pre-captured baseline (90%)
             # The worktree has 70% coverage, which is below baseline
-            result = runner._spec_runner._execute_spec_commands(
+            result = runner._spec_runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
                 cwd=worktree_path,  # Tests run in worktree with 70% coverage
@@ -1578,7 +1635,7 @@ class TestSpecRunnerNoDecreaseMode:
             patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
         ):
             # Override context to use worktree path for coverage check
-            result = runner._spec_runner._execute_spec_commands(
+            result = runner._spec_runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
                 cwd=worktree_path,
@@ -1633,7 +1690,7 @@ class TestSpecRunnerNoDecreaseMode:
             "src.validation.command_runner.subprocess.Popen",
             return_value=mock_proc,
         ):
-            result = runner._spec_runner._execute_spec_commands(
+            result = runner._spec_runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
                 cwd=worktree_path,
@@ -1691,7 +1748,7 @@ class TestSpecRunnerNoDecreaseMode:
             "src.validation.command_runner.subprocess.Popen",
             return_value=mock_proc,
         ):
-            result = runner._spec_runner._execute_spec_commands(
+            result = runner._spec_runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
                 cwd=worktree_path,

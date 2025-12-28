@@ -12,6 +12,7 @@ Usage:
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,16 @@ _LAZY_NAMES = frozenset(
         "get_running_instances_for_dir",
     }
 )
+
+
+def _lazy(name: str) -> Any:  # noqa: ANN401
+    """Access a lazy-loaded module attribute.
+
+    This function provides access to SDK-dependent imports that are
+    lazy-loaded via __getattr__. Using this avoids runtime imports
+    inside command functions while still deferring SDK loading.
+    """
+    return getattr(sys.modules[__name__], name)
 
 
 def bootstrap() -> None:
@@ -402,15 +413,11 @@ def run(
         log("✗", f"Repository not found: {repo_path}", Colors.RED)
         raise typer.Exit(1)
 
-    # Access lazy-loaded SDK-dependent modules via module attribute
-    # (deferred import ensures bootstrap() runs before claude_agent_sdk is loaded)
-    from . import cli as _cli
-
     # Handle dry-run mode: display task order and exit
     if dry_run:
 
         async def _dry_run() -> None:
-            beads = _cli.BeadsClient(repo_path)
+            beads = _lazy("BeadsClient")(repo_path)
             issues = await beads.get_ready_issues_async(
                 epic_id=epic,
                 only_ids=only_ids,
@@ -434,7 +441,7 @@ def run(
         "codex_thinking_mode": codex_thinking_mode,
     }
 
-    orchestrator = _cli.MalaOrchestrator(
+    orchestrator = _lazy("MalaOrchestrator")(
         repo_path=repo_path,
         max_agents=max_agents,
         timeout_minutes=timeout,
@@ -462,14 +469,12 @@ def run(
 @app.command()
 def clean() -> None:
     """Clean up locks and JSONL logs."""
-    # Access lazy-loaded get_lock_dir via module attribute
-    from . import cli as _cli
-
     cleaned_locks = 0
     cleaned_logs = 0
 
-    if _cli.get_lock_dir().exists():
-        for lock in _cli.get_lock_dir().glob("*.lock"):
+    lock_dir = _lazy("get_lock_dir")()
+    if lock_dir.exists():
+        for lock in lock_dir.glob("*.lock"):
             lock.unlink()
             cleaned_locks += 1
 
@@ -508,17 +513,14 @@ def status(
     By default, shows status only for mala running in the current directory.
     Use --all to show all running instances across all directories.
     """
-    # Access lazy-loaded modules via module attribute
-    from . import cli as _cli
-
     print()
     cwd = Path.cwd().resolve()
 
     # Get running instances (filtered by cwd unless --all)
     if all_instances:
-        instances = _cli.get_running_instances()
+        instances = _lazy("get_running_instances")()
     else:
-        instances = _cli.get_running_instances_for_dir(cwd)
+        instances = _lazy("get_running_instances_for_dir")(cwd)
 
     if not instances:
         if all_instances:
@@ -566,8 +568,9 @@ def status(
     print()
 
     # Check locks (show all locks, not filtered by directory)
-    if _cli.get_lock_dir().exists():
-        locks = list(_cli.get_lock_dir().glob("*.lock"))
+    lock_dir = _lazy("get_lock_dir")()
+    if lock_dir.exists():
+        locks = list(lock_dir.glob("*.lock"))
         if locks:
             log("⚠", f"{len(locks)} active locks", Colors.YELLOW)
             for lock in locks[:5]:
