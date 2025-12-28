@@ -32,13 +32,6 @@ from .legacy_runner import LegacyValidationRunner, ValidationConfig
 # Re-export spec runner
 from .spec_runner import SpecValidationRunner
 
-# Re-export helpers for backwards compatibility
-from .helpers import (
-    check_e2e_prereqs as _check_e2e_prereqs,
-    format_step_output,
-    tail as _tail,
-)
-
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -53,16 +46,7 @@ __all__ = [
     "ValidationResult",
     "ValidationRunner",
     "ValidationStepResult",
-    "_check_e2e_prereqs",
-    "_format_step_output",
-    "_tail",
 ]
-
-
-# Keep _format_step_output as a wrapper for backwards compatibility
-def _format_step_output(step: ValidationStepResult) -> str:
-    """Format step output for error messages (backwards compatibility wrapper)."""
-    return format_step_output(step.stdout_tail, step.stderr_tail)
 
 
 class ValidationRunner:

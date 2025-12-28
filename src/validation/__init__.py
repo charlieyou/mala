@@ -44,9 +44,6 @@ from .legacy_runner import LegacyValidationRunner, ValidationConfig
 from .result import ValidationResult, ValidationStepResult
 from .runner import (
     ValidationRunner,
-    _check_e2e_prereqs,
-    _format_step_output,
-    _tail,
 )
 from .spec import (
     CommandKind,
@@ -111,10 +108,6 @@ __all__ = [
     "WorktreeContext",
     "WorktreeResult",
     "WorktreeState",
-    # Backwards compatibility (private)
-    "_check_e2e_prereqs",
-    "_format_step_output",
-    "_tail",
     # Helpers (public)
     "annotate_issue",
     "build_validation_spec",
