@@ -99,6 +99,11 @@ GATE_FOLLOWUP_FILE = _PROMPT_DIR / "gate_followup.md"
 REVIEW_FOLLOWUP_FILE = _PROMPT_DIR / "review_followup.md"
 FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
 
+# Default timeout for agent execution (protects against hung MCP server subprocesses)
+# This ensures stuck subprocesses (e.g., ripgrep searching from wrong directory)
+# don't hang indefinitely even when cwd is misconfigured.
+DEFAULT_AGENT_TIMEOUT_MINUTES = 30
+
 
 @functools.cache
 def _get_implementer_prompt() -> str:
@@ -237,7 +242,11 @@ class MalaOrchestrator:
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
-        self.timeout_seconds = timeout_minutes * 60 if timeout_minutes else None
+        # Use default timeout if not specified to protect against hung MCP subprocesses
+        effective_timeout = (
+            timeout_minutes if timeout_minutes else DEFAULT_AGENT_TIMEOUT_MINUTES
+        )
+        self.timeout_seconds = effective_timeout * 60
         self.max_issues = max_issues
         self.epic_id = epic_id
         self.only_ids = only_ids

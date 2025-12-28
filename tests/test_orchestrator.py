@@ -740,7 +740,8 @@ class TestOrchestratorInitialization:
         """Default values should be set correctly."""
         orch = MalaOrchestrator(repo_path=tmp_path)
         assert orch.max_agents is None  # Unlimited by default
-        assert orch.timeout_seconds is None  # No timeout by default
+        # Default timeout of 30 min protects against hung MCP subprocesses
+        assert orch.timeout_seconds == 30 * 60
         assert orch.max_issues is None
 
     def test_repo_path_resolved(self, tmp_path: Path) -> None:
