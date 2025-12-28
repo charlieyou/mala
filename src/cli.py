@@ -158,6 +158,13 @@ def run(
             help="Prioritize in_progress issues before open issues",
         ),
     ] = False,
+    focus: Annotated[
+        bool,
+        typer.Option(
+            "--focus/--no-focus",
+            help="Group tasks by epic for focused work (default: on); --no-focus uses priority-only ordering",
+        ),
+    ] = True,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -247,6 +254,7 @@ def run(
         coverage_threshold=coverage_threshold,
         morph_enabled=morph_enabled,
         prioritize_wip=wip,
+        focus=focus,
     )
 
     success_count, total = asyncio.run(orchestrator.run())

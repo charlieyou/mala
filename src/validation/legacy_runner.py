@@ -4,9 +4,6 @@ This module provides LegacyValidationRunner which uses ValidationConfig
 to run validation. This is the older API preserved for backwards compatibility.
 
 For new code, prefer SpecValidationRunner with ValidationSpec.
-
-NOTE: Command definitions are now single-sourced from build_validation_spec()
-in spec.py to avoid drift between legacy and spec runners.
 """
 
 from __future__ import annotations
@@ -25,7 +22,6 @@ from .e2e import E2EConfig as E2ERunnerConfig
 from .e2e import E2ERunner, E2EStatus
 from .helpers import format_step_output
 from .result import ValidationResult, ValidationStepResult
-from .spec import ValidationScope, build_validation_spec
 
 
 @dataclass
@@ -136,34 +132,25 @@ class LegacyValidationRunner:
         return ValidationResult(passed=True, steps=steps)
 
     def _build_validation_commands(self) -> list[tuple[str, list[str]]]:
-        """Build validation commands by delegating to build_validation_spec.
-
-        This ensures command definitions are single-sourced from spec.py,
-        avoiding drift between legacy and spec runners.
-
-        Returns:
-            List of (name, command) tuples for validation steps.
-        """
-        # Build disable set based on legacy config
-        disable: set[str] = set()
-        if not self.config.run_slow_tests:
-            disable.add("slow-tests")
-        if not self.config.coverage:
-            disable.add("coverage")
-
-        # Get commands from the single-sourced spec builder
-        spec = build_validation_spec(
-            scope=ValidationScope.PER_ISSUE,
-            disable_validations=disable,
-            coverage_threshold=float(self.config.coverage_min),
-            repo_path=self.repo_path,
-        )
-
-        # Convert ValidationCommand objects to legacy (name, cmd) tuples
-        # Skip 'uv sync' as legacy runner doesn't do setup in worktree
-        return [
-            (cmd.name, cmd.command) for cmd in spec.commands if cmd.name != "uv sync"
+        commands: list[tuple[str, list[str]]] = [
+            ("ruff format", ["uvx", "ruff", "format", "--check", "."]),
+            ("ruff check", ["uvx", "ruff", "check", "."]),
+            ("ty check", ["uvx", "ty", "check"]),
         ]
+
+        pytest_cmd = ["uv", "run", "pytest"]
+        if self.config.run_slow_tests:
+            pytest_cmd += ["-m", "slow or not slow"]
+        if self.config.coverage:
+            pytest_cmd += [
+                "--cov",
+                self.config.coverage_source,
+                "--cov-branch",
+                "--cov-report=term-missing",
+                f"--cov-fail-under={self.config.coverage_min}",
+            ]
+        commands.append(("pytest", pytest_cmd))
+        return commands
 
     def _run_command(
         self,

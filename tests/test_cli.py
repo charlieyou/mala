@@ -416,6 +416,7 @@ def test_run_validation_flags_defaults(
     assert DummyOrchestrator.last_kwargs["disable_validations"] is None
     assert DummyOrchestrator.last_kwargs["coverage_threshold"] == 85.0
     assert DummyOrchestrator.last_kwargs["prioritize_wip"] is False
+    assert DummyOrchestrator.last_kwargs["focus"] is True
 
 
 def test_run_wip_flag_passed_to_orchestrator(
@@ -435,6 +436,67 @@ def test_run_wip_flag_passed_to_orchestrator(
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_kwargs is not None
+    assert DummyOrchestrator.last_kwargs["prioritize_wip"] is True
+
+
+def test_run_focus_flag_default_true(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --focus defaults to True (epic-grouped ordering)."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path)
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_kwargs is not None
+    assert DummyOrchestrator.last_kwargs["focus"] is True
+
+
+def test_run_no_focus_flag_passed_to_orchestrator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --no-focus flag sets focus=False for priority-only ordering."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path, focus=False)
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_kwargs is not None
+    assert DummyOrchestrator.last_kwargs["focus"] is False
+
+
+def test_run_focus_composes_with_wip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --focus and --wip flags compose correctly."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path, focus=True, wip=True)
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_kwargs is not None
+    assert DummyOrchestrator.last_kwargs["focus"] is True
     assert DummyOrchestrator.last_kwargs["prioritize_wip"] is True
 
 
