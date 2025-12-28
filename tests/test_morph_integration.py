@@ -327,6 +327,24 @@ class TestMcpServerConfig:
 
             assert config["morphllm"]["env"]["WORKSPACE_MODE"] == "true"
 
+    def test_get_mcp_servers_sets_cwd(self) -> None:
+        """MCP server config should set cwd to repo_path."""
+        with patch.dict(os.environ, {"MORPH_API_KEY": "test-key"}):
+            from src.orchestrator import get_mcp_servers
+
+            config = get_mcp_servers(Path("/my/project/path"))
+
+            assert config["morphllm"]["cwd"] == "/my/project/path"
+
+    def test_get_mcp_servers_sets_workspace_path(self) -> None:
+        """MCP server config should set WORKSPACE_PATH env var to repo_path."""
+        with patch.dict(os.environ, {"MORPH_API_KEY": "test-key"}):
+            from src.orchestrator import get_mcp_servers
+
+            config = get_mcp_servers(Path("/my/project/path"))
+
+            assert config["morphllm"]["env"]["WORKSPACE_PATH"] == "/my/project/path"
+
     def test_get_mcp_servers_disabled_returns_empty(self) -> None:
         """get_mcp_servers should return empty dict when morph_enabled=False."""
         from src.orchestrator import get_mcp_servers

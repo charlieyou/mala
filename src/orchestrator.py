@@ -183,10 +183,12 @@ def get_mcp_servers(repo_path: Path, morph_enabled: bool = True) -> dict:
         "morphllm": {
             "command": "npx",
             "args": ["-y", "@morphllm/morphmcp"],
+            "cwd": str(repo_path),
             "env": {
                 "MORPH_API_KEY": api_key,
                 "ENABLED_TOOLS": "all",
                 "WORKSPACE_MODE": "true",
+                "WORKSPACE_PATH": str(repo_path),
             },
         }
     }
@@ -602,6 +604,8 @@ class MalaOrchestrator:
             "LOCK_DIR": str(get_lock_dir()),
             "AGENT_ID": agent_id,
             "REPO_NAMESPACE": str(self.repo_path),
+            # MCP server startup timeout (5 minutes) to prevent hung subprocesses
+            "MCP_TIMEOUT": "300000",
         }
 
         # Build hooks - similar to implementer but without lock enforcement
@@ -728,6 +732,8 @@ class MalaOrchestrator:
             "LOCK_DIR": str(get_lock_dir()),
             "AGENT_ID": agent_id,
             "REPO_NAMESPACE": str(self.repo_path),
+            # MCP server startup timeout (5 minutes) to prevent hung subprocesses
+            "MCP_TIMEOUT": "300000",
         }
 
         # Build hooks list - always include dangerous commands and lock enforcement
