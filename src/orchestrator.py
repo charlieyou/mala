@@ -21,7 +21,11 @@ from claude_agent_sdk.types import HookMatcher
 from .beads_client import BeadsClient
 from .braintrust_integration import TracedAgentExecution
 from .codex_review import run_codex_review, format_review_issues
-from .git_utils import get_git_commit_async, get_git_branch_async
+from .git_utils import (
+    get_git_commit_async,
+    get_git_branch_async,
+    get_baseline_for_issue,
+)
 from .hooks import (
     MORPH_DISALLOWED_TOOLS,
     block_dangerous_commands,
@@ -632,8 +636,13 @@ class MalaOrchestrator:
         # Fetch issue description for scope verification in codex review
         issue_description = await self.beads.get_issue_description_async(issue_id)
 
-        # Capture baseline commit hash before agent starts (for cumulative diff review)
-        baseline_commit = await get_git_commit_async(self.repo_path)
+        # Derive baseline commit for cumulative diff review:
+        # 1. If git history has commits for this issue → use parent of first commit
+        # 2. If no commits yet → capture current HEAD (fresh issue)
+        baseline_commit = await get_baseline_for_issue(self.repo_path, issue_id)
+        if baseline_commit is None:
+            # Fresh issue - no prior commits, use current HEAD as baseline
+            baseline_commit = await get_git_commit_async(self.repo_path)
 
         # Initialize lifecycle with config derived from orchestrator settings
         codex_review_enabled = "codex-review" not in (self.disable_validations or set())
