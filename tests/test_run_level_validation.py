@@ -316,7 +316,7 @@ class TestRunLevelValidationIntegration:
             patch.object(
                 orchestrator, "_run_run_level_validation", side_effect=mock_run_level
             ),
-            patch("src.orchestrator.LOCK_DIR", tmp_path / "locks"),
+            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
         ):
@@ -376,7 +376,7 @@ class TestRunLevelValidationIntegration:
                 "_run_run_level_validation",
                 side_effect=mock_run_level_fails,
             ),
-            patch("src.orchestrator.LOCK_DIR", tmp_path / "locks"),
+            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
         ):
@@ -441,7 +441,7 @@ class TestRunLevelValidationIntegration:
             patch.object(
                 orchestrator, "_run_run_level_validation", side_effect=mock_run_level
             ),
-            patch("src.orchestrator.LOCK_DIR", tmp_path / "locks"),
+            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
         ):
@@ -496,7 +496,7 @@ class TestRunLevelValidationIntegration:
             patch.object(
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
-            patch("src.orchestrator.LOCK_DIR", tmp_path / "locks"),
+            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
         ):

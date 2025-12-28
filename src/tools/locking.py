@@ -17,12 +17,7 @@ from claude_agent_sdk.types import (
 
 from .env import SCRIPTS_DIR, get_lock_dir
 
-# Re-export for backwards compatibility
-# Note: LOCK_DIR is evaluated at import time. Prefer get_lock_dir() for
-# code that runs after load_user_env() to respect .env overrides.
-LOCK_DIR = get_lock_dir()
-
-__all__ = ["LOCK_DIR", "get_lock_dir"]
+__all__ = ["get_lock_dir"]
 
 # Type alias for Stop hooks
 StopHook = Callable[
@@ -32,15 +27,13 @@ StopHook = Callable[
 
 
 def _get_lock_dir() -> Path:
-    """Get the lock directory, using module-level LOCK_DIR.
+    """Get the lock directory using the accessor from env module.
 
-    This allows tests to patch src.tools.locking.LOCK_DIR and have the
-    patched value used by all functions in this module.
+    This allows tests to either:
+    1. Patch os.environ["MALA_LOCK_DIR"] before calling
+    2. Patch src.tools.env.get_lock_dir if more control needed
     """
-    # Import here to get the current module-level value (supports patching)
-    import src.tools.locking
-
-    return src.tools.locking.LOCK_DIR
+    return get_lock_dir()
 
 
 def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:

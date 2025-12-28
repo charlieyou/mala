@@ -35,12 +35,6 @@ def get_lock_dir() -> Path:
     return Path(os.environ.get("MALA_LOCK_DIR", "/tmp/mala-locks"))
 
 
-# For backwards compatibility, expose as module-level constants
-# WARNING: These are evaluated at import time, before .env is loaded.
-# Prefer using get_runs_dir() and get_lock_dir() for correct behavior.
-RUNS_DIR = get_runs_dir()
-LOCK_DIR = get_lock_dir()
-
 # Lock scripts directory (relative to this file: src/tools/env.py -> src/scripts/)
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 

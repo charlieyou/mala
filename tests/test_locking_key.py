@@ -147,11 +147,9 @@ class TestLockPathNormalization:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Absolute and relative paths should produce the same lock file path."""
-        from src.tools import locking
-
         lock_dir = tmp_path / "locks"
         lock_dir.mkdir()
-        monkeypatch.setattr(locking, "LOCK_DIR", lock_dir)
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_dir))
 
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -176,11 +174,9 @@ class TestLockPathNormalization:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Lock path should be derived from the canonical key's hash."""
-        from src.tools import locking
-
         lock_dir = tmp_path / "locks"
         lock_dir.mkdir()
-        monkeypatch.setattr(locking, "LOCK_DIR", lock_dir)
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_dir))
 
         filepath = "src/main.py"
         namespace = str(tmp_path)

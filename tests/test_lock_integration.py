@@ -13,7 +13,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -247,7 +247,9 @@ class TestStopHookIntegration:
     """Test the Stop hook cleanup mechanism."""
 
     @pytest.mark.asyncio
-    async def test_stop_hook_cleans_up_locks(self, lock_env: Path) -> None:
+    async def test_stop_hook_cleans_up_locks(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Stop hook should release all locks held by the agent."""
         agent_id = "bd-test-stophook"
         env = {
@@ -278,9 +280,9 @@ class TestStopHookIntegration:
             },
         )
 
-        # Patch LOCK_DIR to use our test directory
-        with patch("src.tools.locking.LOCK_DIR", lock_env):
-            await stop_hook(hook_input, None, cast("HookContext", MagicMock()))
+        # Set MALA_LOCK_DIR to use our test directory
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+        await stop_hook(hook_input, None, cast("HookContext", MagicMock()))
 
         # Verify locks are cleaned up
         remaining = list(lock_env.glob("*.lock"))
@@ -290,7 +292,7 @@ class TestStopHookIntegration:
 
     @pytest.mark.asyncio
     async def test_stop_hook_preserves_other_agent_locks(
-        self, lock_env: Path, tmp_path: Path
+        self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Stop hook should only clean up its own agent's locks."""
         our_agent = "bd-our-agent"
@@ -314,21 +316,22 @@ class TestStopHookIntegration:
 
         # Our agent's stop hook runs
         stop_hook = make_stop_hook(our_agent)
-        with patch("src.tools.locking.LOCK_DIR", lock_env):
-            await stop_hook(
-                cast(
-                    "StopHookInput",
-                    {
-                        "session_id": "test",
-                        "transcript_path": "/tmp/t",
-                        "cwd": "/tmp",
-                        "hook_event_name": "Stop",
-                        "stop_hook_active": True,
-                    },
-                ),
-                None,
-                cast("HookContext", MagicMock()),
-            )
+        # Set MALA_LOCK_DIR to use our test directory
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+        await stop_hook(
+            cast(
+                "StopHookInput",
+                {
+                    "session_id": "test",
+                    "transcript_path": "/tmp/t",
+                    "cwd": "/tmp",
+                    "hook_event_name": "Stop",
+                    "stop_hook_active": True,
+                },
+            ),
+            None,
+            cast("HookContext", MagicMock()),
+        )
 
         # Our lock should be gone, other's should remain (using hash-based naming)
         assert not lock_file_path(lock_env, "our-file.py", cwd).exists()
@@ -356,8 +359,8 @@ class TestOrchestratorCleanup:
         for f in ["orphan1.py", "orphan2.py"]:
             run_lock_script("lock-try.sh", [f], env)
 
-        # Patch LOCK_DIR for the locking module
-        monkeypatch.setattr("src.tools.locking.LOCK_DIR", lock_env)
+        # Set MALA_LOCK_DIR for the locking module
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
 
         # Create orchestrator and run cleanup
         orchestrator = MalaOrchestrator.__new__(MalaOrchestrator)
@@ -586,8 +589,8 @@ class TestRepoNamespaceIntegration:
         repo_namespace = str(tmp_path)
         cwd = str(tmp_path)
 
-        # Patch LOCK_DIR so get_lock_holder uses our test lock directory
-        monkeypatch.setattr("src.tools.locking.LOCK_DIR", lock_env)
+        # Set MALA_LOCK_DIR so get_lock_holder uses our test lock directory
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
 
         env = {
             **os.environ,
@@ -632,8 +635,8 @@ class TestRepoNamespaceIntegration:
         repo_path.mkdir()
         repo_namespace = str(repo_path)
 
-        # Patch LOCK_DIR
-        monkeypatch.setattr("src.tools.locking.LOCK_DIR", lock_env)
+        # Set MALA_LOCK_DIR
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
 
         env = {
             **os.environ,
@@ -772,8 +775,8 @@ class TestReleaseRunLocks:
         """Cleanup should only remove locks owned by the specified agent IDs."""
         from src.tools.locking import release_run_locks, try_lock
 
-        # Patch LOCK_DIR for the locking module
-        monkeypatch.setattr("src.tools.locking.LOCK_DIR", lock_env)
+        # Set MALA_LOCK_DIR for the locking module
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
 
         # Agent IDs from two different runs
         run1_agents = ["mala-123-aaaa", "mala-456-bbbb"]
@@ -808,7 +811,7 @@ class TestReleaseRunLocks:
         """Cleanup with empty agent list should not remove any locks."""
         from src.tools.locking import release_run_locks, try_lock
 
-        monkeypatch.setattr("src.tools.locking.LOCK_DIR", lock_env)
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
 
         # Create a lock
         assert try_lock("some_file.py", "other-agent")
@@ -827,7 +830,7 @@ class TestReleaseRunLocks:
         from src.tools.locking import release_run_locks
 
         non_existent = tmp_path / "nonexistent_locks"
-        monkeypatch.setattr("src.tools.locking.LOCK_DIR", non_existent)
+        monkeypatch.setenv("MALA_LOCK_DIR", str(non_existent))
 
         # Should not raise, should return 0
         cleaned = release_run_locks(["some-agent"])

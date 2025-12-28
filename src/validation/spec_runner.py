@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..tools.env import LOCK_DIR, SCRIPTS_DIR
+from ..tools.env import SCRIPTS_DIR, get_lock_dir
 from .command_runner import CommandRunner
 from .coverage import CoverageResult, CoverageStatus, parse_and_check_coverage
 from .e2e import E2EConfig as E2ERunnerConfig
@@ -260,7 +260,7 @@ class SpecValidationRunner:
         """Build environment for spec-based validation."""
         return {
             **os.environ,
-            "LOCK_DIR": str(LOCK_DIR),
+            "LOCK_DIR": str(get_lock_dir()),
             "AGENT_ID": f"validator-{context.issue_id or run_id}",
         }
 

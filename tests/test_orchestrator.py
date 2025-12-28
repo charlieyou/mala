@@ -416,7 +416,7 @@ class TestRunOrchestrationLoop:
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=MagicMock()),
             patch("src.orchestrator.release_run_locks"),
         ):
@@ -466,7 +466,7 @@ class TestRunOrchestrationLoop:
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ),
             patch.object(orchestrator, "spawn_agent", side_effect=mock_spawn),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=MagicMock()),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -536,7 +536,7 @@ class TestFailedTaskResetsIssue:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=MagicMock()),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -599,7 +599,7 @@ class TestFailedTaskResetsIssue:
             patch.object(
                 orchestrator.beads, "reset_async", side_effect=mock_reset_async
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=MagicMock()),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -1201,7 +1201,7 @@ class TestOrchestratorQualityGateIntegration:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -1261,7 +1261,7 @@ class TestOrchestratorQualityGateIntegration:
             patch.object(
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -1373,7 +1373,7 @@ class TestAsyncBeadsClientWithTimeout:
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ) as mock_ready,
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=MagicMock()),
             patch("src.orchestrator.release_run_locks"),
         ):
@@ -1727,7 +1727,7 @@ class TestLockDirNestedCreation:
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ),
-            patch("src.orchestrator.LOCK_DIR", nested_lock_dir),
+            patch("src.orchestrator.get_lock_dir", return_value=nested_lock_dir),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
             patch("src.orchestrator.release_run_locks"),
         ):
@@ -1812,7 +1812,7 @@ class TestGateFlowSequencing:
             patch.object(
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -1891,7 +1891,7 @@ class TestGateFlowSequencing:
             patch.object(
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -1968,7 +1968,7 @@ class TestRetryExhaustion:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2032,7 +2032,7 @@ class TestRetryExhaustion:
             patch.object(
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2111,7 +2111,7 @@ class TestRunLevelValidation:
             patch.object(
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2192,7 +2192,7 @@ class TestRunLevelValidation:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2272,7 +2272,7 @@ class TestRunLevelValidation:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2367,7 +2367,7 @@ class TestValidationResultMetadata:
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
             patch.object(ValidationRunner, "run_spec", mock_run_spec),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch(
@@ -2464,7 +2464,7 @@ class TestValidationResultMetadata:
             ),
             patch.object(ValidationRunner, "run_spec", mock_run_spec),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch(
@@ -2561,7 +2561,7 @@ class TestResolutionRecordingInMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2650,7 +2650,7 @@ class TestResolutionRecordingInMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2731,7 +2731,7 @@ class TestResolutionRecordingInMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch(
@@ -2818,7 +2818,7 @@ class TestEpicClosureAfterChildCompletion:
                 side_effect=mock_close_eligible_epics_async,
             ),
             patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2889,7 +2889,7 @@ class TestEpicClosureAfterChildCompletion:
             patch.object(
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2961,7 +2961,7 @@ class TestEpicClosureAfterChildCompletion:
                 side_effect=mock_close_eligible_epics_async,
             ),
             patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -3116,7 +3116,7 @@ class TestFailedRunQualityGateEvidence:
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestrator.LOCK_DIR", MagicMock()),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
             # Mock subprocess to return no commit found

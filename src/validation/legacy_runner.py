@@ -16,7 +16,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..tools.env import LOCK_DIR, SCRIPTS_DIR
+from ..tools.env import SCRIPTS_DIR, get_lock_dir
 from .command_runner import CommandRunner
 from .e2e import E2EConfig as E2ERunnerConfig
 from .e2e import E2ERunner, E2EStatus
@@ -100,7 +100,7 @@ class LegacyValidationRunner:
     ) -> ValidationResult:
         env = {
             **os.environ,
-            "LOCK_DIR": str(LOCK_DIR),
+            "LOCK_DIR": str(get_lock_dir()),
             "AGENT_ID": f"validator-{label}",
         }
 

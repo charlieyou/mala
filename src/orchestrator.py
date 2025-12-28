@@ -48,9 +48,14 @@ from .logging.run_metadata import (
     ValidationResult as MetaValidationResult,
 )
 from .quality_gate import QualityGate, GateResult
-from .tools.env import USER_CONFIG_DIR, SCRIPTS_DIR, get_claude_log_path, get_runs_dir
+from .tools.env import (
+    USER_CONFIG_DIR,
+    SCRIPTS_DIR,
+    get_claude_log_path,
+    get_lock_dir,
+    get_runs_dir,
+)
 from .tools.locking import (
-    LOCK_DIR,
     release_run_locks,
     cleanup_agent_locks,
     make_stop_hook,
@@ -554,7 +559,7 @@ class MalaOrchestrator:
         agent_env = {
             **os.environ,
             "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
-            "LOCK_DIR": str(LOCK_DIR),
+            "LOCK_DIR": str(get_lock_dir()),
             "AGENT_ID": agent_id,
             "REPO_NAMESPACE": str(self.repo_path),
         }
@@ -672,7 +677,7 @@ class MalaOrchestrator:
         prompt = IMPLEMENTER_PROMPT_TEMPLATE.format(
             issue_id=issue_id,
             repo_path=self.repo_path,
-            lock_dir=LOCK_DIR,
+            lock_dir=get_lock_dir(),
             scripts_dir=SCRIPTS_DIR,
             agent_id=agent_id,
         )
@@ -686,7 +691,7 @@ class MalaOrchestrator:
         agent_env = {
             **os.environ,
             "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
-            "LOCK_DIR": str(LOCK_DIR),
+            "LOCK_DIR": str(get_lock_dir()),
             "AGENT_ID": agent_id,
             "REPO_NAMESPACE": str(self.repo_path),
         }
@@ -1114,7 +1119,7 @@ class MalaOrchestrator:
         print()
 
         # Setup directories
-        LOCK_DIR.mkdir(parents=True, exist_ok=True)
+        get_lock_dir().mkdir(parents=True, exist_ok=True)
         get_runs_dir().mkdir(parents=True, exist_ok=True)
 
         # Create run metadata tracker

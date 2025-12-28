@@ -13,6 +13,7 @@ Default: uv run pytest tests/  (excludes slow tests)
 
 import asyncio
 import hashlib
+import os
 import subprocess
 from pathlib import Path
 from types import TracebackType
@@ -455,11 +456,9 @@ class TestStopHookWithSDK:
             },
         )
 
-        # Patch LOCK_DIR for the hook
-        import src.tools.locking
-
-        original_lock_dir = src.tools.locking.LOCK_DIR
-        src.tools.locking.LOCK_DIR = lock_dir
+        # Set MALA_LOCK_DIR env var for the hook (will be picked up by get_lock_dir())
+        original_lock_dir = os.environ.get("MALA_LOCK_DIR")
+        os.environ["MALA_LOCK_DIR"] = str(lock_dir)
 
         try:
             prompt = f"""Run these commands to acquire locks:
@@ -494,7 +493,10 @@ Then respond with "DONE" - do NOT release the locks manually.
             )
 
         finally:
-            src.tools.locking.LOCK_DIR = original_lock_dir
+            if original_lock_dir is not None:
+                os.environ["MALA_LOCK_DIR"] = original_lock_dir
+            else:
+                os.environ.pop("MALA_LOCK_DIR", None)
 
 
 class TestMultiAgentWithSDK:
