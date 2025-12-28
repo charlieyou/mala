@@ -202,8 +202,9 @@ def _parse_content_block(block: dict[str, Any]) -> ContentBlock | None:
         is_error = block.get("is_error", False)
         if not isinstance(tool_use_id, str):
             return None
+        # Reject non-bool is_error to avoid "false" -> True misclassification
         if not isinstance(is_error, bool):
-            is_error = bool(is_error)
+            return None
         return ToolResultBlock(
             tool_use_id=tool_use_id, content=content, is_error=is_error
         )
@@ -370,7 +371,10 @@ def parse_log_entry(data: dict[str, Any]) -> LogEntry | None:
     if not isinstance(message_data, dict):
         return None
 
-    content_data = message_data.get("content", [])
+    # Return None if content field is missing (required field)
+    content_data = message_data.get("content")
+    if content_data is None:
+        return None
     if not isinstance(content_data, list):
         return None
 

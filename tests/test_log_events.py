@@ -454,6 +454,17 @@ class TestEdgeCases:
 
         assert entry is None
 
+    def test_missing_content_field_returns_none(self) -> None:
+        """Missing content field returns None (required field)."""
+        data = {
+            "type": "assistant",
+            "message": {},  # No content field
+        }
+
+        entry = parse_log_entry(data)
+
+        assert entry is None
+
     def test_tool_use_missing_id_uses_empty_string(self) -> None:
         """Missing tool_use id defaults to empty string."""
         data = {
@@ -497,6 +508,28 @@ class TestEdgeCases:
         block = entry.message.content[0]
         assert isinstance(block, ToolResultBlock)
         assert block.is_error is False
+
+    def test_tool_result_non_bool_is_error_skipped(self) -> None:
+        """tool_result with non-bool is_error is skipped in lenient mode."""
+        data = {
+            "type": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_123",
+                        "content": "output",
+                        "is_error": "false",  # String, not bool - would coerce to True
+                    }
+                ]
+            },
+        }
+
+        entry = parse_log_entry(data)
+
+        # Entry parses but the malformed block is skipped
+        assert isinstance(entry, UserLogEntry)
+        assert len(entry.message.content) == 0  # Block was skipped
 
     def test_role_based_message_format(self) -> None:
         """Support alternative format with role in message."""
