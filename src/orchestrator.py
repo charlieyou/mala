@@ -74,6 +74,7 @@ from .validation.spec import (
     build_validation_spec,
 )
 from .validation.spec_runner import SpecValidationRunner
+from .validation.e2e import E2EStatus
 
 if TYPE_CHECKING:
     from .validation.result import ValidationResult
@@ -429,6 +430,16 @@ class MalaOrchestrator:
             if result and result.passed:
                 log("✓", "Gate 4 passed", Colors.GREEN)
                 # Record in metadata
+                # Derive e2e_passed from actual E2E execution result:
+                # - None if E2E was not executed (disabled or skipped)
+                # - True if E2E was executed and passed
+                # - False if E2E was executed and failed
+                e2e_passed: bool | None = None
+                if result.e2e_result is not None:
+                    if result.e2e_result.status == E2EStatus.SKIPPED:
+                        e2e_passed = None
+                    else:
+                        e2e_passed = result.e2e_result.passed
                 meta_result = MetaValidationResult(
                     passed=True,
                     commands_run=[s.name for s in result.steps],
@@ -437,8 +448,7 @@ class MalaOrchestrator:
                     coverage_percent=result.coverage_result.percent
                     if result.coverage_result
                     else None,
-                    # Only set e2e_passed=True if E2E was actually enabled
-                    e2e_passed=True if spec.e2e.enabled else None,
+                    e2e_passed=e2e_passed,
                 )
                 run_metadata.record_run_validation(meta_result)
                 return True
@@ -448,6 +458,13 @@ class MalaOrchestrator:
 
             # Record failure in metadata (will be overwritten on success)
             if result:
+                # Derive e2e_passed from actual E2E execution result
+                e2e_passed_fail: bool | None = None
+                if result.e2e_result is not None:
+                    if result.e2e_result.status == E2EStatus.SKIPPED:
+                        e2e_passed_fail = None
+                    else:
+                        e2e_passed_fail = result.e2e_result.passed
                 meta_result = MetaValidationResult(
                     passed=False,
                     commands_run=[s.name for s in result.steps],
@@ -456,8 +473,7 @@ class MalaOrchestrator:
                     coverage_percent=result.coverage_result.percent
                     if result.coverage_result
                     else None,
-                    # Only set e2e_passed=False if E2E was actually enabled
-                    e2e_passed=False if spec.e2e.enabled else None,
+                    e2e_passed=e2e_passed_fail,
                 )
                 run_metadata.record_run_validation(meta_result)
 

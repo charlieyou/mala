@@ -455,8 +455,10 @@ class SpecValidationRunner:
         # Handle E2E if enabled (only for run-level scope)
         from .spec import ValidationScope
 
+        e2e_result_final: E2EResult | None = None
         if spec.e2e.enabled and spec.scope == ValidationScope.RUN_LEVEL:
             e2e_result = self._run_spec_e2e(spec.e2e, env, cwd, log_dir)
+            e2e_result_final = e2e_result
             if e2e_result.fixture_path:
                 artifacts.e2e_fixture_path = e2e_result.fixture_path
 
@@ -467,6 +469,7 @@ class SpecValidationRunner:
                     failure_reasons=[e2e_result.failure_reason or "E2E failed"],
                     artifacts=artifacts,
                     coverage_result=coverage_result,
+                    e2e_result=e2e_result,
                 )
 
         return ValidationResult(
@@ -474,6 +477,7 @@ class SpecValidationRunner:
             steps=steps,
             artifacts=artifacts,
             coverage_result=coverage_result,
+            e2e_result=e2e_result_final,
         )
 
     def _build_spec_env(

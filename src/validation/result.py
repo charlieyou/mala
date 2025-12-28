@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .coverage import CoverageResult
+    from .e2e import E2EResult
     from .spec import ValidationArtifacts
 
 
@@ -36,6 +37,7 @@ class ValidationResult:
     retriable: bool = True
     artifacts: ValidationArtifacts | None = None
     coverage_result: CoverageResult | None = None
+    e2e_result: E2EResult | None = None  # E2E result if E2E was executed
 
     def short_summary(self) -> str:
         """One-line summary for logs/prompts."""
