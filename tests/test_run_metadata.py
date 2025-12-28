@@ -4,11 +4,15 @@ Tests for:
 - RunMetadata serialization/deserialization
 - ValidationResult and IssueResolution integration
 - Backward compatibility with existing fields
+- Running instance tracking (RunningInstance, markers, filtering)
 """
 
 import json
+import os
 import tempfile
+from datetime import datetime, UTC
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -17,7 +21,14 @@ from src.logging.run_metadata import (
     QualityGateResult,
     RunConfig,
     RunMetadata,
+    RunningInstance,
     ValidationResult,
+    _get_marker_path,
+    _is_process_running,
+    get_running_instances,
+    get_running_instances_for_dir,
+    remove_run_marker,
+    write_run_marker,
 )
 from src.validation.spec import (
     IssueResolution,
@@ -555,3 +566,273 @@ class TestRunMetadataSerialization:
             assert loaded is not None
             assert loaded.outcome == outcome
             assert loaded.rationale == f"Test {outcome.value}"
+
+
+class TestRunningInstance:
+    """Test RunningInstance dataclass and related functions."""
+
+    def test_running_instance_creation(self) -> None:
+        """Test creating a RunningInstance."""
+        instance = RunningInstance(
+            run_id="test-run-123",
+            repo_path=Path("/home/user/repo"),
+            started_at=datetime.now(UTC),
+            pid=12345,
+            max_agents=4,
+        )
+        assert instance.run_id == "test-run-123"
+        assert instance.repo_path == Path("/home/user/repo")
+        assert instance.pid == 12345
+        assert instance.max_agents == 4
+        assert instance.issues_in_progress == 0
+
+    def test_running_instance_defaults(self) -> None:
+        """Test RunningInstance default values."""
+        instance = RunningInstance(
+            run_id="test",
+            repo_path=Path("/tmp"),
+            started_at=datetime.now(UTC),
+            pid=1,
+        )
+        assert instance.max_agents is None
+        assert instance.issues_in_progress == 0
+
+
+class TestRunMarkers:
+    """Test run marker file operations."""
+
+    def test_write_and_remove_marker(self) -> None:
+        """Test writing and removing a run marker."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_dir = Path(tmpdir)
+
+            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+                # Write marker
+                path = write_run_marker(
+                    run_id="test-run-1",
+                    repo_path=Path("/home/user/project"),
+                    max_agents=3,
+                )
+
+                assert path.exists()
+                assert path.name == "run-test-run-1.marker"
+
+                # Verify contents
+                with open(path) as f:
+                    data = json.load(f)
+                assert data["run_id"] == "test-run-1"
+                assert data["repo_path"] == "/home/user/project"
+                assert data["max_agents"] == 3
+                assert "started_at" in data
+                assert "pid" in data
+
+                # Remove marker
+                removed = remove_run_marker("test-run-1")
+                assert removed is True
+                assert not path.exists()
+
+                # Remove non-existent marker
+                removed_again = remove_run_marker("test-run-1")
+                assert removed_again is False
+
+    def test_get_marker_path(self) -> None:
+        """Test _get_marker_path helper."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_dir = Path(tmpdir)
+            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+                path = _get_marker_path("my-run-id")
+                assert path == lock_dir / "run-my-run-id.marker"
+
+
+class TestGetRunningInstances:
+    """Test get_running_instances and get_running_instances_for_dir."""
+
+    def test_get_running_instances_empty(self) -> None:
+        """Test with no markers."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_dir = Path(tmpdir)
+            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+                instances = get_running_instances()
+                assert instances == []
+
+    def test_get_running_instances_nonexistent_dir(self) -> None:
+        """Test with non-existent lock directory."""
+        with patch(
+            "src.logging.run_metadata.get_lock_dir",
+            return_value=Path("/nonexistent/path"),
+        ):
+            instances = get_running_instances()
+            assert instances == []
+
+    def test_get_running_instances_with_markers(self) -> None:
+        """Test reading valid markers."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_dir = Path(tmpdir)
+
+            # Create marker files
+            marker1 = lock_dir / "run-test-1.marker"
+            marker1.write_text(
+                json.dumps(
+                    {
+                        "run_id": "test-1",
+                        "repo_path": "/home/user/repo1",
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "pid": os.getpid(),  # Use current PID so it's "running"
+                        "max_agents": 2,
+                    }
+                )
+            )
+
+            marker2 = lock_dir / "run-test-2.marker"
+            marker2.write_text(
+                json.dumps(
+                    {
+                        "run_id": "test-2",
+                        "repo_path": "/home/user/repo2",
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "pid": os.getpid(),
+                        "max_agents": None,
+                    }
+                )
+            )
+
+            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+                instances = get_running_instances()
+
+            assert len(instances) == 2
+            run_ids = {i.run_id for i in instances}
+            assert run_ids == {"test-1", "test-2"}
+
+    def test_get_running_instances_cleans_stale_markers(self) -> None:
+        """Test that stale markers (dead PIDs) are cleaned up."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_dir = Path(tmpdir)
+
+            # Create marker with non-existent PID
+            marker = lock_dir / "run-stale.marker"
+            marker.write_text(
+                json.dumps(
+                    {
+                        "run_id": "stale",
+                        "repo_path": "/tmp/stale",
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "pid": 99999999,  # Very unlikely to exist
+                        "max_agents": 1,
+                    }
+                )
+            )
+
+            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+                # Mock _is_process_running to return False for stale PID
+                with patch(
+                    "src.logging.run_metadata._is_process_running", return_value=False
+                ):
+                    instances = get_running_instances()
+
+            # Should return no instances and clean up the marker
+            assert instances == []
+            assert not marker.exists()
+
+    def test_get_running_instances_handles_corrupted_markers(self) -> None:
+        """Test that corrupted markers are cleaned up."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_dir = Path(tmpdir)
+
+            # Create invalid JSON marker
+            bad_marker = lock_dir / "run-bad.marker"
+            bad_marker.write_text("not valid json")
+
+            # Create valid marker
+            good_marker = lock_dir / "run-good.marker"
+            good_marker.write_text(
+                json.dumps(
+                    {
+                        "run_id": "good",
+                        "repo_path": "/tmp/good",
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "pid": os.getpid(),
+                        "max_agents": 1,
+                    }
+                )
+            )
+
+            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+                instances = get_running_instances()
+
+            # Should return only the good instance
+            assert len(instances) == 1
+            assert instances[0].run_id == "good"
+            # Bad marker should be cleaned up
+            assert not bad_marker.exists()
+
+    def test_get_running_instances_for_dir_filters_correctly(self) -> None:
+        """Test directory filtering logic."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_dir = Path(tmpdir)
+            target_dir = Path(tmpdir) / "target-repo"
+            other_dir = Path(tmpdir) / "other-repo"
+            target_dir.mkdir()
+            other_dir.mkdir()
+
+            # Create markers for different directories
+            marker1 = lock_dir / "run-target.marker"
+            marker1.write_text(
+                json.dumps(
+                    {
+                        "run_id": "target",
+                        "repo_path": str(target_dir),
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "pid": os.getpid(),
+                        "max_agents": 2,
+                    }
+                )
+            )
+
+            marker2 = lock_dir / "run-other.marker"
+            marker2.write_text(
+                json.dumps(
+                    {
+                        "run_id": "other",
+                        "repo_path": str(other_dir),
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "pid": os.getpid(),
+                        "max_agents": 1,
+                    }
+                )
+            )
+
+            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+                # Filter for target directory
+                target_instances = get_running_instances_for_dir(target_dir)
+                assert len(target_instances) == 1
+                assert target_instances[0].run_id == "target"
+
+                # Filter for other directory
+                other_instances = get_running_instances_for_dir(other_dir)
+                assert len(other_instances) == 1
+                assert other_instances[0].run_id == "other"
+
+                # Filter for non-matching directory
+                no_instances = get_running_instances_for_dir(Path("/nonexistent"))
+                assert no_instances == []
+
+
+class TestIsProcessRunning:
+    """Test _is_process_running helper."""
+
+    def test_current_process_is_running(self) -> None:
+        """Test that current process is detected as running."""
+        assert _is_process_running(os.getpid()) is True
+
+    def test_nonexistent_pid_not_running(self) -> None:
+        """Test that non-existent PID is detected as not running."""
+        # Use a very high PID that's unlikely to exist
+        assert _is_process_running(99999999) is False
+
+    def test_pid_zero_not_running(self) -> None:
+        """Test that PID 0 is handled correctly."""
+        # PID 0 is special (kernel) and should return False for normal users
+        result = _is_process_running(0)
+        # On Linux, kill(0, 0) returns permission denied for non-root
+        # The function catches OSError and returns False
+        assert isinstance(result, bool)

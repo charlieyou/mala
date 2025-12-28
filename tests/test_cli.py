@@ -470,7 +470,7 @@ def test_status_with_running_instance(
 def test_status_all_flag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Test status --all flag shows all instances."""
+    """Test status --all flag shows all instances grouped by directory."""
     cli = _reload_cli(monkeypatch)
     import src.logging.run_metadata
     from datetime import datetime, UTC
@@ -510,8 +510,10 @@ def test_status_all_flag(
 
     output = capsys.readouterr().out
     assert "2 running instance(s)" in output
-    assert "repo1" in output
-    assert "repo2" in output
+    # Check directory headings (grouped by directory with colon suffix)
+    assert "repo1:" in output or str(tmp_path / "repo1") + ":" in output
+    assert "repo2:" in output or str(tmp_path / "repo2") + ":" in output
+    # Check instance details are shown
     assert "pid: 111" in output
     assert "pid: 222" in output
     assert "max-agents: 2" in output

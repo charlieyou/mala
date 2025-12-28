@@ -519,9 +519,19 @@ def status(
         log("●", f"{len(instances)} running instance(s)", Colors.MAGENTA)
         print()
 
-        # Group by repo path for display
+        # Group by repo path for display with directory headings
+        instances_by_repo: dict[Path, list[object]] = {}
         for instance in instances:
-            _display_instance(instance)
+            repo = getattr(instance, "repo_path", Path("."))
+            if repo not in instances_by_repo:
+                instances_by_repo[repo] = []
+            instances_by_repo[repo].append(instance)
+
+        for repo_path, repo_instances in instances_by_repo.items():
+            # Directory heading
+            print(f"{Colors.CYAN}{repo_path}:{Colors.RESET}")
+            for instance in repo_instances:
+                _display_instance(instance, indent=True)
             print()
     else:
         # Single instance for this directory
@@ -581,11 +591,12 @@ def status(
     print()
 
 
-def _display_instance(instance: object) -> None:
+def _display_instance(instance: object, indent: bool = False) -> None:
     """Display a single running instance.
 
     Args:
         instance: RunningInstance object (typed as object to avoid import issues)
+        indent: If True, indent output (for grouped display under directory heading)
     """
     # Access attributes directly (duck typing)
     repo_path = getattr(instance, "repo_path", None)
@@ -593,7 +604,11 @@ def _display_instance(instance: object) -> None:
     max_agents = getattr(instance, "max_agents", None)
     pid = getattr(instance, "pid", None)
 
-    log("◐", f"repo: {repo_path}", Colors.CYAN)
+    prefix = "  " if indent else ""
+
+    # Only show repo path when not indented (when indented, directory is already shown as heading)
+    if not indent:
+        log("◐", f"repo: {repo_path}", Colors.CYAN)
 
     if started_at:
         # Calculate duration
@@ -611,12 +626,24 @@ def _display_instance(instance: object) -> None:
         else:
             seconds = int(duration.total_seconds())
             duration_str = f"{seconds} second(s)"
-        log("◐", f"started: {duration_str} ago", Colors.MUTED)
+        if indent:
+            print(f"{prefix}{Colors.MUTED}started: {duration_str} ago{Colors.RESET}")
+        else:
+            log("◐", f"started: {duration_str} ago", Colors.MUTED)
 
     if max_agents is not None:
-        log("◐", f"max-agents: {max_agents}", Colors.MUTED)
+        if indent:
+            print(f"{prefix}{Colors.MUTED}max-agents: {max_agents}{Colors.RESET}")
+        else:
+            log("◐", f"max-agents: {max_agents}", Colors.MUTED)
     else:
-        log("◐", "max-agents: unlimited", Colors.MUTED)
+        if indent:
+            print(f"{prefix}{Colors.MUTED}max-agents: unlimited{Colors.RESET}")
+        else:
+            log("◐", "max-agents: unlimited", Colors.MUTED)
 
     if pid:
-        log("◐", f"pid: {pid}", Colors.MUTED)
+        if indent:
+            print(f"{prefix}{Colors.MUTED}pid: {pid}{Colors.RESET}")
+        else:
+            log("◐", f"pid: {pid}", Colors.MUTED)
