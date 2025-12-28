@@ -250,8 +250,19 @@ class CommandRunner:
             proc.kill()
 
         # Wait for process to exit and capture any remaining output
-        stdout, stderr = proc.communicate()
-        return stdout or "", stderr or ""
+        # Use a bounded timeout to avoid hanging if children hold pipes open
+        # (can happen when use_process_group=False and children survive)
+        try:
+            stdout, stderr = proc.communicate(timeout=self.kill_grace_seconds)
+            return stdout or "", stderr or ""
+        except subprocess.TimeoutExpired:
+            # Children are holding pipes open; close them and give up on output
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+            proc.wait()
+            return "", ""
 
     async def run_async(
         self,
