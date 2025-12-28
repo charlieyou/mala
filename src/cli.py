@@ -273,12 +273,12 @@ def run(
         ),
     ] = None,
     coverage_threshold: Annotated[
-        float,
+        float | None,
         typer.Option(
             "--coverage-threshold",
-            help="Minimum coverage percentage, 0-100 (default: 85.0)",
+            help="Minimum coverage percentage (0-100). If not set, uses 'no decrease' mode which requires coverage >= previous baseline.",
         ),
-    ] = 85.0,
+    ] = None,
     wip: Annotated[
         bool,
         typer.Option(
@@ -350,7 +350,7 @@ def run(
             raise typer.Exit(1)
 
     # Validate coverage threshold range
-    if not 0 <= coverage_threshold <= 100:
+    if coverage_threshold is not None and not 0 <= coverage_threshold <= 100:
         log(
             "✗",
             f"Invalid --coverage-threshold value: {coverage_threshold}. Must be between 0 and 100.",

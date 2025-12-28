@@ -545,7 +545,7 @@ def test_run_validation_flags_defaults(
 
     assert DummyOrchestrator.last_kwargs is not None
     assert DummyOrchestrator.last_kwargs["disable_validations"] is None
-    assert DummyOrchestrator.last_kwargs["coverage_threshold"] == 85.0
+    assert DummyOrchestrator.last_kwargs["coverage_threshold"] is None
     assert DummyOrchestrator.last_kwargs["prioritize_wip"] is False
     assert DummyOrchestrator.last_kwargs["focus"] is True
 
