@@ -26,6 +26,7 @@ artifacts = ["src/scripts/*.sh"]
 
 [tool.ty.environment]
 root = ["."]
+python = ".venv"
 
 [tool.ty.src]
 exclude = ["tests"]
