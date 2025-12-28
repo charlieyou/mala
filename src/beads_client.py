@@ -297,6 +297,12 @@ class BeadsClient:
 
     # ───────────────────────────────────────────────────────────────────────────
     # Pipeline steps for _fetch_and_filter_issues
+    #
+    # Design: Pipeline has two types of steps:
+    # - I/O steps (_fetch_base_issues, _fetch_wip_issues, _enrich_with_epics):
+    #   Perform async/subprocess calls, testable via mocked subprocess
+    # - Pure transformation steps (_merge_wip_issues, _apply_filters, _sort_issues):
+    #   Static methods with no I/O, directly testable with fixture data
     # ───────────────────────────────────────────────────────────────────────────
 
     async def _fetch_base_issues(self) -> tuple[list[dict[str, object]], bool]:
@@ -458,6 +464,8 @@ class BeadsClient:
             return []
         issues, ok = await self._fetch_base_issues()
         if not ok and not prioritize_wip:
+            # WIP fallback: when prioritize_wip=True, continue even if bd ready fails
+            # so we can still return in-progress issues (intentional design)
             return []
         if prioritize_wip:
             issues = self._merge_wip_issues(issues, await self._fetch_wip_issues())
