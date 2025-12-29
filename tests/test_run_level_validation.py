@@ -1,4 +1,4 @@
-"""Unit tests for run-level validation (Gate 4) in MalaOrchestrator.
+"""Unit tests for run-level validation (Gate 4) in RunCoordinator.
 
 Tests the implementation of Gate 4 validation that runs after all issues complete.
 """
@@ -8,25 +8,33 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.logging.run_metadata import RunMetadata
+from src.logging.run_metadata import RunConfig, RunMetadata
 from src.orchestrator import IssueResult, MalaOrchestrator
+from src.pipeline.run_coordinator import (
+    RunCoordinator,
+    RunCoordinatorConfig,
+    RunLevelValidationInput,
+    RunLevelValidationOutput,
+)
 
 
 class TestRunLevelValidation:
-    """Test Gate 4 (run-level validation) after all issues complete."""
+    """Test Gate 4 (run-level validation) in RunCoordinator."""
 
     @pytest.mark.asyncio
     async def test_run_level_validation_skipped_when_disabled(
         self, tmp_path: Path
     ) -> None:
         """Run-level validation should be skipped when disabled."""
-        orchestrator = MalaOrchestrator(
+        # Create a mock gate_checker
+        mock_gate_checker = MagicMock()
+
+        config = RunCoordinatorConfig(
             repo_path=tmp_path,
-            max_agents=1,
+            timeout_seconds=60,
             disable_validations={"run-level-validate"},
         )
-
-        from src.logging.run_metadata import RunConfig, RunMetadata
+        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
 
         run_config = RunConfig(
             max_agents=1,
@@ -38,10 +46,11 @@ class TestRunLevelValidation:
         )
         run_metadata = RunMetadata(tmp_path, run_config, "test")
 
-        result = await orchestrator._run_run_level_validation(run_metadata)
+        input_data = RunLevelValidationInput(run_metadata=run_metadata)
+        result = await coordinator.run_validation(input_data)
 
-        # Should return True (passed/skipped)
-        assert result is True
+        # Should return passed=True (skipped)
+        assert result.passed is True
         # run_validation should not be set
         assert run_metadata.run_validation is None
 
@@ -50,10 +59,15 @@ class TestRunLevelValidation:
         self, tmp_path: Path
     ) -> None:
         """Run-level validation should pass when validation runner succeeds."""
-        from src.logging.run_metadata import RunConfig, RunMetadata
         from src.validation.result import ValidationResult, ValidationStepResult
 
-        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+        mock_gate_checker = MagicMock()
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+        )
+        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
 
         run_config = RunConfig(
             max_agents=1,
@@ -83,16 +97,20 @@ class TestRunLevelValidation:
         )
 
         with (
-            patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
-            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
+            patch(
+                "src.git_utils.get_git_commit_async",
+                side_effect=mock_get_commit,
+            ),
+            patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            result = await orchestrator._run_run_level_validation(run_metadata)
+            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            result = await coordinator.run_validation(input_data)
 
-        assert result is True
+        assert result.passed is True
         assert run_metadata.run_validation is not None
         assert run_metadata.run_validation.passed is True
 
@@ -101,12 +119,16 @@ class TestRunLevelValidation:
         self, tmp_path: Path
     ) -> None:
         """Run-level validation should spawn fixer agent on failure."""
-        from src.logging.run_metadata import RunConfig, RunMetadata
         from src.validation.result import ValidationResult, ValidationStepResult
 
-        orchestrator = MalaOrchestrator(
-            repo_path=tmp_path, max_agents=1, max_gate_retries=2
+        mock_gate_checker = MagicMock()
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=2,
         )
+        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
 
         run_config = RunConfig(
             max_agents=1,
@@ -143,15 +165,19 @@ class TestRunLevelValidation:
         )
 
         with (
-            patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
-            patch.object(orchestrator, "_run_fixer_agent", side_effect=mock_fixer),
-            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
+            patch(
+                "src.git_utils.get_git_commit_async",
+                side_effect=mock_get_commit,
+            ),
+            patch.object(RunCoordinator, "_run_fixer_agent", side_effect=mock_fixer),
+            patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            result = await orchestrator._run_run_level_validation(run_metadata)
+            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            result = await coordinator.run_validation(input_data)
 
         # Should have called fixer once (max_gate_retries=2, fails on attempt 2)
         assert len(fixer_calls) == 1
@@ -159,19 +185,23 @@ class TestRunLevelValidation:
         assert "pytest failed" in fixer_calls[0][0]
 
         # Should return False after exhausting retries
-        assert result is False
+        assert result.passed is False
 
     @pytest.mark.asyncio
     async def test_run_level_validation_records_to_metadata(
         self, tmp_path: Path
     ) -> None:
         """Run-level validation should record results to run metadata."""
-        from src.logging.run_metadata import RunConfig, RunMetadata
         from src.validation.result import ValidationResult, ValidationStepResult
 
-        orchestrator = MalaOrchestrator(
-            repo_path=tmp_path, max_agents=1, max_gate_retries=1
+        mock_gate_checker = MagicMock()
+
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=1,
         )
+        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
 
         run_config = RunConfig(
             max_agents=1,
@@ -210,14 +240,18 @@ class TestRunLevelValidation:
         )
 
         with (
-            patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
-            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
+            patch(
+                "src.git_utils.get_git_commit_async",
+                side_effect=mock_get_commit,
+            ),
+            patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            await orchestrator._run_run_level_validation(run_metadata)
+            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            await coordinator.run_validation(input_data)
 
         # Check metadata was recorded
         assert run_metadata.run_validation is not None
@@ -229,7 +263,9 @@ class TestRunLevelValidation:
         """_build_validation_failure_output should format failure details."""
         from src.validation.result import ValidationResult, ValidationStepResult
 
-        orchestrator = MalaOrchestrator(repo_path=tmp_path)
+        mock_gate_checker = MagicMock()
+        config = RunCoordinatorConfig(repo_path=tmp_path, timeout_seconds=60)
+        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
 
         result = ValidationResult(
             passed=False,
@@ -246,7 +282,7 @@ class TestRunLevelValidation:
             ],
         )
 
-        output = orchestrator._build_validation_failure_output(result)
+        output = coordinator._build_validation_failure_output(result)
 
         assert "test failed" in output
         assert "coverage too low" in output
@@ -255,22 +291,28 @@ class TestRunLevelValidation:
 
     def test_build_validation_failure_output_with_none(self, tmp_path: Path) -> None:
         """_build_validation_failure_output should handle None result."""
-        orchestrator = MalaOrchestrator(repo_path=tmp_path)
+        mock_gate_checker = MagicMock()
+        config = RunCoordinatorConfig(repo_path=tmp_path, timeout_seconds=60)
+        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
 
-        output = orchestrator._build_validation_failure_output(None)
+        output = coordinator._build_validation_failure_output(None)
 
         assert "crashed" in output.lower()
 
     @pytest.mark.asyncio
     async def test_e2e_passed_none_when_e2e_disabled(self, tmp_path: Path) -> None:
         """e2e_passed should be None when E2E is disabled via disable_validations."""
-        from src.logging.run_metadata import RunConfig, RunMetadata
         from src.validation.result import ValidationResult, ValidationStepResult
 
+        mock_gate_checker = MagicMock()
+
         # Disable E2E via disable_validations
-        orchestrator = MalaOrchestrator(
-            repo_path=tmp_path, max_agents=1, disable_validations={"e2e"}
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            disable_validations={"e2e"},
         )
+        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
 
         run_config = RunConfig(
             max_agents=1,
@@ -302,16 +344,20 @@ class TestRunLevelValidation:
         )
 
         with (
-            patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
-            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
+            patch(
+                "src.git_utils.get_git_commit_async",
+                side_effect=mock_get_commit,
+            ),
+            patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            result = await orchestrator._run_run_level_validation(run_metadata)
+            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            result = await coordinator.run_validation(input_data)
 
-        assert result is True
+        assert result.passed is True
         assert run_metadata.run_validation is not None
         assert run_metadata.run_validation.passed is True
         # E2E was disabled (e2e_result=None), so e2e_passed should be None
@@ -320,11 +366,12 @@ class TestRunLevelValidation:
     @pytest.mark.asyncio
     async def test_e2e_passed_none_when_e2e_skipped(self, tmp_path: Path) -> None:
         """e2e_passed should be None when E2E was skipped (status=SKIPPED)."""
-        from src.logging.run_metadata import RunConfig, RunMetadata
         from src.validation.e2e import E2EResult, E2EStatus
         from src.validation.result import ValidationResult, ValidationStepResult
 
-        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+        mock_gate_checker = MagicMock()
+        config = RunCoordinatorConfig(repo_path=tmp_path, timeout_seconds=60)
+        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
 
         run_config = RunConfig(
             max_agents=1,
@@ -360,16 +407,20 @@ class TestRunLevelValidation:
         )
 
         with (
-            patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
-            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
+            patch(
+                "src.git_utils.get_git_commit_async",
+                side_effect=mock_get_commit,
+            ),
+            patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            result = await orchestrator._run_run_level_validation(run_metadata)
+            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            result = await coordinator.run_validation(input_data)
 
-        assert result is True
+        assert result.passed is True
         assert run_metadata.run_validation is not None
         assert run_metadata.run_validation.passed is True
         # E2E was skipped (status=SKIPPED), so e2e_passed should be None
@@ -380,11 +431,12 @@ class TestRunLevelValidation:
         self, tmp_path: Path
     ) -> None:
         """e2e_passed should be True when E2E is enabled and actually passes."""
-        from src.logging.run_metadata import RunConfig, RunMetadata
         from src.validation.e2e import E2EResult, E2EStatus
         from src.validation.result import ValidationResult, ValidationStepResult
 
-        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+        mock_gate_checker = MagicMock()
+        config = RunCoordinatorConfig(repo_path=tmp_path, timeout_seconds=60)
+        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
 
         run_config = RunConfig(
             max_agents=1,
@@ -419,16 +471,20 @@ class TestRunLevelValidation:
         )
 
         with (
-            patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
-            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
+            patch(
+                "src.git_utils.get_git_commit_async",
+                side_effect=mock_get_commit,
+            ),
+            patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            result = await orchestrator._run_run_level_validation(run_metadata)
+            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            result = await coordinator.run_validation(input_data)
 
-        assert result is True
+        assert result.passed is True
         assert run_metadata.run_validation is not None
         assert run_metadata.run_validation.passed is True
         # E2E was executed and passed, so e2e_passed should be True
@@ -439,14 +495,18 @@ class TestRunLevelValidation:
         self, tmp_path: Path
     ) -> None:
         """e2e_passed should be False when E2E is enabled and actually fails."""
-        from src.logging.run_metadata import RunConfig, RunMetadata
         from src.validation.e2e import E2EResult, E2EStatus
         from src.validation.result import ValidationResult, ValidationStepResult
 
+        mock_gate_checker = MagicMock()
+
         # max_gate_retries=1 to fail immediately
-        orchestrator = MalaOrchestrator(
-            repo_path=tmp_path, max_agents=1, max_gate_retries=1
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=1,
         )
+        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
 
         run_config = RunConfig(
             max_agents=1,
@@ -483,16 +543,20 @@ class TestRunLevelValidation:
         )
 
         with (
-            patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
-            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
+            patch(
+                "src.git_utils.get_git_commit_async",
+                side_effect=mock_get_commit,
+            ),
+            patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            result = await orchestrator._run_run_level_validation(run_metadata)
+            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            result = await coordinator.run_validation(input_data)
 
-        assert result is False
+        assert result.passed is False
         assert run_metadata.run_validation is not None
         assert run_metadata.run_validation.passed is False
         # E2E was executed and failed, so e2e_passed should be False
@@ -503,13 +567,17 @@ class TestRunLevelValidation:
         self, tmp_path: Path
     ) -> None:
         """e2e_passed should be None when validation fails before E2E runs."""
-        from src.logging.run_metadata import RunConfig, RunMetadata
         from src.validation.result import ValidationResult, ValidationStepResult
 
+        mock_gate_checker = MagicMock()
+
         # max_gate_retries=1 to fail immediately
-        orchestrator = MalaOrchestrator(
-            repo_path=tmp_path, max_agents=1, max_gate_retries=1
+        config = RunCoordinatorConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=1,
         )
+        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
 
         run_config = RunConfig(
             max_agents=1,
@@ -542,16 +610,20 @@ class TestRunLevelValidation:
         )
 
         with (
-            patch("src.orchestrator.get_git_commit_async", side_effect=mock_get_commit),
-            patch("src.orchestrator.SpecValidationRunner") as MockRunner,
+            patch(
+                "src.git_utils.get_git_commit_async",
+                side_effect=mock_get_commit,
+            ),
+            patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run_spec = AsyncMock(return_value=mock_result)
             MockRunner.return_value = mock_runner_instance
 
-            result = await orchestrator._run_run_level_validation(run_metadata)
+            input_data = RunLevelValidationInput(run_metadata=run_metadata)
+            result = await coordinator.run_validation(input_data)
 
-        assert result is False
+        assert result.passed is False
         assert run_metadata.run_validation is not None
         assert run_metadata.run_validation.passed is False
         # E2E never ran (earlier step failed), so e2e_passed should be None
@@ -568,10 +640,12 @@ class TestRunLevelValidationIntegration:
 
         gate4_called = False
 
-        async def mock_run_level(run_metadata: RunMetadata) -> bool:
+        async def mock_run_validation(
+            input_data: RunLevelValidationInput,
+        ) -> RunLevelValidationOutput:
             nonlocal gate4_called
             gate4_called = True
-            return True
+            return RunLevelValidationOutput(passed=True)
 
         first_call = True
 
@@ -611,7 +685,9 @@ class TestRunLevelValidationIntegration:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(
-                orchestrator, "_run_run_level_validation", side_effect=mock_run_level
+                orchestrator.run_coordinator,
+                "run_validation",
+                side_effect=mock_run_validation,
             ),
             patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
@@ -653,8 +729,10 @@ class TestRunLevelValidationIntegration:
                 summary="Done",
             )
 
-        async def mock_run_level_fails(run_metadata: RunMetadata) -> bool:
-            return False  # Gate 4 fails
+        async def mock_run_level_fails(
+            input_data: RunLevelValidationInput,
+        ) -> RunLevelValidationOutput:
+            return RunLevelValidationOutput(passed=False)  # Gate 4 fails
 
         with (
             patch.object(
@@ -670,8 +748,8 @@ class TestRunLevelValidationIntegration:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(
-                orchestrator,
-                "_run_run_level_validation",
+                orchestrator.run_coordinator,
+                "run_validation",
                 side_effect=mock_run_level_fails,
             ),
             patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
@@ -692,10 +770,12 @@ class TestRunLevelValidationIntegration:
 
         gate4_called = False
 
-        async def mock_run_level(run_metadata: RunMetadata) -> bool:
+        async def mock_run_validation(
+            input_data: RunLevelValidationInput,
+        ) -> RunLevelValidationOutput:
             nonlocal gate4_called
             gate4_called = True
-            return True
+            return RunLevelValidationOutput(passed=True)
 
         first_call = True
 
@@ -738,7 +818,9 @@ class TestRunLevelValidationIntegration:
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
             patch.object(
-                orchestrator, "_run_run_level_validation", side_effect=mock_run_level
+                orchestrator.run_coordinator,
+                "run_validation",
+                side_effect=mock_run_validation,
             ),
             patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),

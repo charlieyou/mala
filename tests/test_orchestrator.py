@@ -49,9 +49,13 @@ def skip_run_level_validation() -> Generator[None, None, None]:
     Run-level validation spawns a real Claude agent which is too slow for
     unit tests. Tests for run-level validation are in test_run_level_validation.py.
     """
+    # Patch RunCoordinator.run_validation to return passed=True
+    from src.pipeline.run_coordinator import RunLevelValidationOutput
+
+    mock_output = RunLevelValidationOutput(passed=True)
     with patch(
-        "src.orchestrator.MalaOrchestrator._run_run_level_validation",
-        return_value=True,
+        "src.pipeline.run_coordinator.RunCoordinator.run_validation",
+        return_value=mock_output,
     ):
         yield
 

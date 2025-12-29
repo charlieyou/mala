@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import functools
-import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,23 +19,10 @@ from .git_utils import (
     get_git_branch_async,
     get_baseline_for_issue,
 )
-from .hooks import (
-    MORPH_DISALLOWED_TOOLS,
-    block_dangerous_commands,
-    block_morph_replaced_tools,
-    make_lock_enforcement_hook,
-    make_stop_hook,
-    FileReadCache,
-    make_file_read_cache_hook,
-    LintCache,
-    make_lint_cache_hook,
-    _detect_lint_command,
-)
+from .hooks import MORPH_DISALLOWED_TOOLS
 from .logging.console import (
     Colors,
     log,
-    log_tool,
-    log_agent_text,
     truncate_text,
     is_verbose_enabled,
 )
@@ -66,6 +52,11 @@ from .pipeline.review_runner import (
     ReviewRunner,
     ReviewRunnerConfig,
 )
+from .pipeline.run_coordinator import (
+    RunCoordinator,
+    RunCoordinatorConfig,
+    RunLevelValidationInput,
+)
 from .quality_gate import QualityGate
 from .session_log_parser import FileSystemLogProvider
 from .tools.env import (
@@ -84,7 +75,6 @@ from .validation.spec import (
     build_validation_spec,
 )
 from .validation.spec_runner import SpecValidationRunner
-from .validation.e2e import E2EStatus
 
 if TYPE_CHECKING:
     from .codex_review import CodexReviewResult
@@ -93,7 +83,6 @@ if TYPE_CHECKING:
     from .quality_gate import GateResult
     from .telemetry import TelemetryProvider
     from .models import IssueResolution
-    from .validation.result import ValidationResult
     from .validation.spec import ValidationSpec
 
 
@@ -113,6 +102,11 @@ FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
 # This ensures stuck subprocesses (e.g., ripgrep searching from wrong directory)
 # don't hang indefinitely even when cwd is misconfigured.
 DEFAULT_AGENT_TIMEOUT_MINUTES = 60
+
+# Bounded wait for log file (seconds) - used by AgentSessionRunner
+# Re-exported here for backwards compatibility with tests
+LOG_FILE_WAIT_TIMEOUT = 30
+LOG_FILE_POLL_INTERVAL = 0.5
 
 
 @functools.cache
@@ -137,11 +131,6 @@ def _get_review_followup_prompt() -> str:
 def _get_fixer_prompt() -> str:
     """Load fixer prompt (cached on first use)."""
     return FIXER_PROMPT_FILE.read_text()
-
-
-# Bounded wait for log file (seconds)
-LOG_FILE_WAIT_TIMEOUT = 30
-LOG_FILE_POLL_INTERVAL = 0.5
 
 
 class DefaultCodeReviewer:
@@ -213,7 +202,7 @@ def get_mcp_servers(
 
 def _get_disallowed_tools(morph_enabled: bool) -> list[str]:
     """Return disallowed tools list based on Morph enablement."""
-    return MORPH_DISALLOWED_TOOLS if morph_enabled else []
+    return list(MORPH_DISALLOWED_TOOLS) if morph_enabled else []
 
 
 @dataclass
@@ -377,6 +366,21 @@ class MalaOrchestrator:
             gate_checker=self.quality_gate,
         )
 
+        # RunCoordinator: Extracted run-level validation and fixer logic
+        run_coordinator_config = RunCoordinatorConfig(
+            repo_path=self.repo_path,
+            timeout_seconds=self.timeout_seconds,
+            max_gate_retries=self.max_gate_retries,
+            disable_validations=self.disable_validations,
+            coverage_threshold=self.coverage_threshold,
+            morph_enabled=self.morph_enabled,
+            morph_api_key=self._config.morph_api_key,
+        )
+        self.run_coordinator = RunCoordinator(
+            config=run_coordinator_config,
+            gate_checker=self.quality_gate,
+        )
+
     def _cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup)."""
         cleaned = cleanup_agent_locks(agent_id)
@@ -446,345 +450,6 @@ class MalaOrchestrator:
         return await asyncio.to_thread(
             self._run_quality_gate_sync, issue_id, log_path, retry_state
         )
-
-    async def _run_run_level_validation(
-        self,
-        run_metadata: RunMetadata,
-    ) -> bool:
-        """Run Gate 4 validation after all issues complete.
-
-        This runs validation with RUN_LEVEL scope, which includes E2E tests.
-        On failure, spawns a fixer agent and retries up to max_gate_retries times.
-
-        Args:
-            run_metadata: Run metadata tracker to record validation results.
-
-        Returns:
-            True if validation passed (or was skipped), False if failed after retries.
-        """
-        # Check if run-level validation is disabled
-        if "run-level-validate" in (self.disable_validations or set()):
-            log("◐", "Run-level validation disabled", Colors.MUTED)
-            return True
-
-        # Get current HEAD commit
-        commit_hash = await get_git_commit_async(self.repo_path)
-        if not commit_hash:
-            log(
-                "⚠", "Could not get HEAD commit for run-level validation", Colors.YELLOW
-            )
-            return True  # Don't fail the run if we can't get the commit
-
-        log("◐", "Running Gate 4 (run-level validation)...", Colors.CYAN)
-
-        # Build run-level validation spec
-        spec = build_validation_spec(
-            scope=ValidationScope.RUN_LEVEL,
-            disable_validations=self.disable_validations,
-            coverage_threshold=self.coverage_threshold,
-            repo_path=self.repo_path,
-        )
-
-        # Build validation context
-        context = ValidationContext(
-            issue_id=None,  # Run-level, no specific issue
-            repo_path=self.repo_path,
-            commit_hash=commit_hash,
-            changed_files=[],  # Not needed for run-level
-            scope=ValidationScope.RUN_LEVEL,
-        )
-
-        # Create validation runner (uses SpecValidationRunner directly)
-        runner = SpecValidationRunner(self.repo_path)
-
-        # Retry loop with fixer agent
-        for attempt in range(1, self.max_gate_retries + 1):
-            log(
-                "◐",
-                f"Gate 4 attempt {attempt}/{self.max_gate_retries}",
-                Colors.CYAN,
-            )
-
-            # Run validation
-            try:
-                result = await runner.run_spec(spec, context)
-            except Exception as e:
-                log("⚠", f"Validation runner error: {e}", Colors.YELLOW)
-                result = None
-
-            if result and result.passed:
-                log("✓", "Gate 4 passed", Colors.GREEN)
-                # Record in metadata
-                # Derive e2e_passed from actual E2E execution result:
-                # - None if E2E was not executed (disabled or skipped)
-                # - True if E2E was executed and passed
-                # - False if E2E was executed and failed
-                e2e_passed: bool | None = None
-                if result.e2e_result is not None:
-                    if result.e2e_result.status == E2EStatus.SKIPPED:
-                        e2e_passed = None
-                    else:
-                        e2e_passed = result.e2e_result.passed
-                meta_result = MetaValidationResult(
-                    passed=True,
-                    commands_run=[s.name for s in result.steps],
-                    commands_failed=[],
-                    artifacts=result.artifacts,
-                    coverage_percent=result.coverage_result.percent
-                    if result.coverage_result
-                    else None,
-                    e2e_passed=e2e_passed,
-                )
-                run_metadata.record_run_validation(meta_result)
-                return True
-
-            # Validation failed - build failure output for fixer
-            failure_output = self._build_validation_failure_output(result)
-
-            # Record failure in metadata (will be overwritten on success)
-            if result:
-                # Derive e2e_passed from actual E2E execution result
-                e2e_passed_fail: bool | None = None
-                if result.e2e_result is not None:
-                    if result.e2e_result.status == E2EStatus.SKIPPED:
-                        e2e_passed_fail = None
-                    else:
-                        e2e_passed_fail = result.e2e_result.passed
-                meta_result = MetaValidationResult(
-                    passed=False,
-                    commands_run=[s.name for s in result.steps],
-                    commands_failed=[s.name for s in result.steps if not s.ok],
-                    artifacts=result.artifacts,
-                    coverage_percent=result.coverage_result.percent
-                    if result.coverage_result
-                    else None,
-                    e2e_passed=e2e_passed_fail,
-                )
-                run_metadata.record_run_validation(meta_result)
-
-            # Check if we have retries left
-            if attempt >= self.max_gate_retries:
-                log(
-                    "✗",
-                    f"Gate 4 failed after {attempt} attempts",
-                    Colors.RED,
-                )
-                return False
-
-            # Spawn fixer agent
-            log(
-                "↻",
-                f"Spawning fixer agent (attempt {attempt}/{self.max_gate_retries})",
-                Colors.YELLOW,
-            )
-
-            fixer_success = await self._run_fixer_agent(
-                failure_output=failure_output,
-                attempt=attempt,
-            )
-
-            if not fixer_success:
-                log("⚠", "Fixer agent did not complete successfully", Colors.YELLOW)
-                # Continue to retry validation anyway - fixer may have made progress
-
-            # Update commit hash for next validation attempt
-            new_commit = await get_git_commit_async(self.repo_path)
-            if new_commit and new_commit != commit_hash:
-                commit_hash = new_commit
-                context = ValidationContext(
-                    issue_id=None,
-                    repo_path=self.repo_path,
-                    commit_hash=commit_hash,
-                    changed_files=[],
-                    scope=ValidationScope.RUN_LEVEL,
-                )
-
-        return False
-
-    def _build_validation_failure_output(self, result: ValidationResult | None) -> str:
-        """Build failure output string for fixer agent prompt.
-
-        Args:
-            result: Validation result, or None if validation crashed.
-
-        Returns:
-            Human-readable failure output.
-        """
-        if result is None:
-            return "Validation crashed - check logs for details."
-
-        lines: list[str] = []
-        if result.failure_reasons:
-            lines.append("**Failure reasons:**")
-            for reason in result.failure_reasons:
-                lines.append(f"- {reason}")
-            lines.append("")
-
-        # Add step details for failed steps
-        failed_steps = [s for s in result.steps if not s.ok]
-        if failed_steps:
-            lines.append("**Failed validation steps:**")
-            for step in failed_steps:
-                lines.append(f"\n### {step.name} (exit {step.returncode})")
-                if step.stderr_tail:
-                    lines.append("```")
-                    lines.append(step.stderr_tail[:2000])  # Truncate
-                    lines.append("```")
-                elif step.stdout_tail:
-                    lines.append("```")
-                    lines.append(step.stdout_tail[:2000])  # Truncate
-                    lines.append("```")
-
-        return (
-            "\n".join(lines) if lines else "Validation failed (no details available)."
-        )
-
-    async def _run_fixer_agent(
-        self,
-        failure_output: str,
-        attempt: int,
-    ) -> bool:
-        """Spawn a fixer agent to address run-level validation failures.
-
-        Args:
-            failure_output: Human-readable description of what failed.
-            attempt: Current attempt number.
-
-        Returns:
-            True if fixer agent completed successfully, False otherwise.
-        """
-        # Import SDK types at runtime (deferred from module level)
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeAgentOptions,
-            ClaudeSDKClient,
-            ResultMessage,
-            TextBlock,
-            ToolResultBlock,
-            ToolUseBlock,
-        )
-        from claude_agent_sdk.types import HookMatcher
-
-        agent_id = f"fixer-{uuid.uuid4().hex[:8]}"
-
-        prompt = _get_fixer_prompt().format(
-            attempt=attempt,
-            max_attempts=self.max_gate_retries,
-            failure_output=failure_output,
-        )
-
-        # Working directory for fixer agent - use repo_path
-        # (could be a worktree path in future scenarios)
-        fixer_cwd = self.repo_path
-
-        # Set up environment
-        agent_env = {
-            **os.environ,
-            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
-            "LOCK_DIR": str(get_lock_dir()),
-            "AGENT_ID": agent_id,
-            "REPO_NAMESPACE": str(self.repo_path),
-            # MCP server startup timeout (5 minutes) to prevent hung subprocesses
-            "MCP_TIMEOUT": "300000",
-        }
-
-        # Build hooks - same as implementer including lock enforcement
-        # Create per-session file read cache to avoid redundant re-reads
-        file_read_cache = FileReadCache()
-        # Create per-session lint cache to avoid redundant re-lints
-        # Use fixer_cwd (not self.repo_path) so cache monitors correct git state
-        lint_cache = LintCache(repo_path=fixer_cwd)
-        pre_tool_hooks: list = [
-            block_dangerous_commands,
-            make_lock_enforcement_hook(agent_id, str(self.repo_path)),
-            make_file_read_cache_hook(file_read_cache),
-            make_lint_cache_hook(lint_cache),
-        ]
-        if self.morph_enabled:
-            pre_tool_hooks.append(block_morph_replaced_tools)
-
-        options = ClaudeAgentOptions(
-            cwd=str(fixer_cwd),
-            permission_mode="bypassPermissions",
-            model="opus",
-            system_prompt={"type": "preset", "preset": "claude_code"},
-            setting_sources=["project", "user"],
-            mcp_servers=get_mcp_servers(
-                fixer_cwd,
-                morph_api_key=self._config.morph_api_key,
-                morph_enabled=self.morph_enabled,
-            ),
-            disallowed_tools=_get_disallowed_tools(self.morph_enabled),
-            env=agent_env,
-            hooks={
-                "PreToolUse": [
-                    HookMatcher(
-                        matcher=None,
-                        hooks=pre_tool_hooks,  # type: ignore[arg-type]
-                    )
-                ],
-                "Stop": [
-                    HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])  # type: ignore[arg-type]
-                ],
-            },
-        )
-
-        try:
-            async with asyncio.timeout(self.timeout_seconds):
-                async with ClaudeSDKClient(options=options) as client:
-                    await client.query(prompt)
-
-                    # Track pending lint commands for cache success marking
-                    pending_lint_commands: dict[str, tuple[str, str]] = {}
-
-                    async for message in client.receive_response():
-                        # Log progress
-                        if isinstance(message, AssistantMessage):
-                            for block in message.content:
-                                if isinstance(block, TextBlock):
-                                    log_agent_text(block.text, f"fixer-{attempt}")
-                                elif isinstance(block, ToolUseBlock):
-                                    log_tool(
-                                        block.name,
-                                        agent_id=f"fixer-{attempt}",
-                                        arguments=block.input,
-                                    )
-                                    # Track lint commands for cache marking
-                                    if block.name.lower() == "bash":
-                                        cmd = block.input.get("command", "")
-                                        lint_type = _detect_lint_command(cmd)
-                                        if lint_type:
-                                            pending_lint_commands[block.id] = (
-                                                lint_type,
-                                                cmd,
-                                            )
-                                elif isinstance(block, ToolResultBlock):
-                                    # Check for successful lint completion
-                                    tool_use_id = getattr(block, "tool_use_id", None)
-                                    if tool_use_id in pending_lint_commands:
-                                        lint_type, cmd = pending_lint_commands.pop(
-                                            tool_use_id
-                                        )
-                                        # Mark success if not an error
-                                        if not getattr(block, "is_error", False):
-                                            lint_cache.mark_success(lint_type, cmd)
-                        elif isinstance(message, ResultMessage):
-                            log(
-                                "◐",
-                                f"Fixer completed: {truncate_text(message.result or '', 50)}",
-                                Colors.MUTED,
-                            )
-
-            return True
-
-        except TimeoutError:
-            log("⚠", "Fixer agent timed out", Colors.YELLOW)
-            return False
-        except Exception as e:
-            log("⚠", f"Fixer agent error: {e}", Colors.YELLOW)
-            return False
-        finally:
-            self._cleanup_agent_locks(agent_id)
 
     async def _finalize_issue_result(
         self,
@@ -996,74 +661,26 @@ class MalaOrchestrator:
                 )
             await self._finalize_issue_result(issue_id, result, run_metadata)
 
-    async def run_implementer(self, issue_id: str) -> IssueResult:
-        """Run implementer agent for a single issue with gate retry support.
+    def _build_session_callbacks(self, issue_id: str) -> SessionCallbacks:
+        """Build callbacks for session operations.
 
-        Delegates to AgentSessionRunner for SDK-specific session handling.
-        The orchestrator provides callbacks for gate checks, reviews, and
-        other external operations.
+        Args:
+            issue_id: The issue ID for tracking state.
+
+        Returns:
+            SessionCallbacks with gate, review, and logging callbacks.
         """
-        # Generate a temporary agent ID for tracking (the runner will generate its own)
-        temp_agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
-        self.agent_ids[issue_id] = temp_agent_id
-
-        # Fetch issue description for scope verification in codex review
-        issue_description = await self.beads.get_issue_description_async(issue_id)
-
-        # Derive baseline commit for cumulative diff review:
-        # 1. If git history has commits for this issue → use parent of first commit
-        # 2. If no commits yet → capture current HEAD (fresh issue)
-        baseline_commit = await get_baseline_for_issue(self.repo_path, issue_id)
-        if baseline_commit is None:
-            # Fresh issue - no prior commits, use current HEAD as baseline
-            baseline_commit = await get_git_commit_async(self.repo_path)
-
-        # Build prompt
-        prompt = _get_implementer_prompt().format(
-            issue_id=issue_id,
-            repo_path=self.repo_path,
-            lock_dir=get_lock_dir(),
-            scripts_dir=SCRIPTS_DIR,
-            agent_id=temp_agent_id,
-        )
-
-        # Create session config
-        codex_review_enabled = "codex-review" not in (self.disable_validations or set())
-        session_config = AgentSessionConfig(
-            repo_path=self.repo_path,
-            timeout_seconds=self.timeout_seconds,
-            max_gate_retries=self.max_gate_retries,
-            max_review_retries=self.max_review_retries,
-            morph_enabled=self.morph_enabled,
-            morph_api_key=self._config.morph_api_key,
-            codex_review_enabled=codex_review_enabled,
-        )
-
-        # Create session input
-        session_input = AgentSessionInput(
-            issue_id=issue_id,
-            prompt=prompt,
-            baseline_commit=baseline_commit,
-            issue_description=issue_description,
-        )
-
-        # Define callbacks for external operations
 
         async def on_gate_check(
             issue_id: str, log_path: Path, retry_state: RetryState
         ) -> tuple[GateResult, int]:
-            """Run quality gate check via orchestrator."""
             return await self._run_quality_gate_async(issue_id, log_path, retry_state)
 
         async def on_review_check(
             issue_id: str, issue_desc: str | None, baseline: str | None
         ) -> CodexReviewResult:
-            """Run Codex review via ReviewRunner."""
             current_head = await get_git_commit_async(self.repo_path)
-
-            # Update capture_session_log per-issue based on verbose mode
             self.review_runner.config.capture_session_log = is_verbose_enabled()
-
             review_input = ReviewInput(
                 issue_id=issue_id,
                 repo_path=self.repo_path,
@@ -1072,8 +689,6 @@ class MalaOrchestrator:
                 baseline_commit=baseline,
             )
             output = await self.review_runner.run_review(review_input)
-
-            # Store codex review log path if captured
             if output.session_log_path:
                 self.codex_review_log_paths[issue_id] = output.session_log_path
             return output.result
@@ -1084,7 +699,6 @@ class MalaOrchestrator:
             prev_commit: str | None,
             curr_commit: str | None,
         ) -> bool:
-            """Check for no-progress on review retry via ReviewRunner."""
             no_progress_input = NoProgressInput(
                 log_path=log_path,
                 log_offset=log_offset,
@@ -1095,34 +709,65 @@ class MalaOrchestrator:
             return self.review_runner.check_no_progress(no_progress_input)
 
         def get_log_path(session_id: str) -> Path:
-            """Get log path and track it."""
             log_path = self.log_provider.get_log_path(self.repo_path, session_id)
             self.session_log_paths[issue_id] = log_path
             return log_path
 
         def get_log_offset(log_path: Path, start_offset: int) -> int:
-            """Get log end offset."""
             return self.quality_gate.get_log_end_offset(log_path, start_offset)
 
-        def on_abort(reason: str) -> None:
-            """Request run abort on fatal error."""
-            self._request_abort(reason)
-
-        callbacks = SessionCallbacks(
+        return SessionCallbacks(
             on_gate_check=on_gate_check,
             on_review_check=on_review_check,
             on_review_no_progress=on_review_no_progress,
             get_log_path=get_log_path,
             get_log_offset=get_log_offset,
-            on_abort=on_abort,
+            on_abort=self._request_abort,
         )
 
-        # Create runner and tracer
+    async def run_implementer(self, issue_id: str) -> IssueResult:
+        """Run implementer agent for a single issue with gate retry support.
+
+        Delegates to AgentSessionRunner for SDK-specific session handling.
+        """
+        temp_agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
+        self.agent_ids[issue_id] = temp_agent_id
+
+        # Prepare session inputs
+        issue_description = await self.beads.get_issue_description_async(issue_id)
+        baseline_commit = await get_baseline_for_issue(self.repo_path, issue_id)
+        if baseline_commit is None:
+            baseline_commit = await get_git_commit_async(self.repo_path)
+
+        prompt = _get_implementer_prompt().format(
+            issue_id=issue_id,
+            repo_path=self.repo_path,
+            lock_dir=get_lock_dir(),
+            scripts_dir=SCRIPTS_DIR,
+            agent_id=temp_agent_id,
+        )
+
+        codex_review_enabled = "codex-review" not in (self.disable_validations or set())
+        session_config = AgentSessionConfig(
+            repo_path=self.repo_path,
+            timeout_seconds=self.timeout_seconds,
+            max_gate_retries=self.max_gate_retries,
+            max_review_retries=self.max_review_retries,
+            morph_enabled=self.morph_enabled,
+            morph_api_key=self._config.morph_api_key,
+            codex_review_enabled=codex_review_enabled,
+        )
+        session_input = AgentSessionInput(
+            issue_id=issue_id,
+            prompt=prompt,
+            baseline_commit=baseline_commit,
+            issue_description=issue_description,
+        )
+
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
+            callbacks=self._build_session_callbacks(issue_id),
         )
-
         tracer = self.telemetry_provider.create_span(
             issue_id,
             metadata={
@@ -1138,21 +783,13 @@ class MalaOrchestrator:
         try:
             with tracer:
                 tracer.log_input(prompt)
-
-                # Run session via AgentSessionRunner
                 output = await runner.run_session(session_input, tracer=tracer)
-
-                # Update agent_id to the one generated by runner
                 self.agent_ids[issue_id] = output.agent_id
-
-                # Record success/error in tracer
                 if output.success:
                     tracer.set_success(True)
                 else:
                     tracer.set_error(output.summary)
-
         finally:
-            # Ensure locks are cleaned
             agent_id = self.agent_ids.pop(issue_id, temp_agent_id)
             self._cleanup_agent_locks(agent_id)
 
@@ -1180,15 +817,8 @@ class MalaOrchestrator:
         log("▶", "Agent started", Colors.BLUE, agent_id=issue_id)
         return True
 
-    async def run(self) -> tuple[int, int]:
-        """Main orchestration loop. Returns (success_count, total_count).
-
-        This is the async entry point - use this when you're already in an async context
-        (e.g., inside an async function, using asyncio.run(), or in a framework that
-        manages the event loop).
-
-        For sync usage, see run_sync().
-        """
+    def _log_run_status(self) -> None:
+        """Log run configuration and status at startup."""
         print()
         log("●", "mala orchestrator", Colors.MAGENTA)
         log("◐", f"repo: {self.repo_path}", Colors.MUTED)
@@ -1204,51 +834,32 @@ class MalaOrchestrator:
             f"max-agents: {agents_str}, timeout: {timeout_str}, max-issues: {limit_str}",
             Colors.MUTED,
         )
-        log(
-            "◐",
-            f"gate-retries: {self.max_gate_retries}",
-            Colors.MUTED,
-        )
+        log("◐", f"gate-retries: {self.max_gate_retries}", Colors.MUTED)
+
         codex_review_enabled = "codex-review" not in (self.disable_validations or set())
         if codex_review_enabled:
-            thinking_mode_str = (
+            thinking_str = (
                 f", thinking: {self.codex_thinking_mode}"
                 if self.codex_thinking_mode
                 else ""
             )
             log(
                 "◐",
-                f"codex-review: enabled (max-retries: {self.max_review_retries}{thinking_mode_str})",
+                f"codex-review: enabled (max-retries: {self.max_review_retries}{thinking_str})",
                 Colors.CYAN,
             )
 
-        # Report epic filter
         if self.epic_id:
             log("◐", f"epic filter: {self.epic_id}", Colors.CYAN)
-
-        # Report only_ids filter
         if self.only_ids:
             log(
-                "◐",
-                f"only processing: {', '.join(sorted(self.only_ids))}",
-                Colors.CYAN,
+                "◐", f"only processing: {', '.join(sorted(self.only_ids))}", Colors.CYAN
             )
-
-        # Report WIP prioritization
         if self.prioritize_wip:
-            log(
-                "◐",
-                "wip: prioritizing in_progress issues",
-                Colors.CYAN,
-            )
+            log("◐", "wip: prioritizing in_progress issues", Colors.CYAN)
 
-        # Report Braintrust status
         if self.braintrust_enabled:
-            log(
-                "◐",
-                "braintrust: enabled (LLM spans auto-traced)",
-                Colors.CYAN,
-            )
+            log("◐", "braintrust: enabled (LLM spans auto-traced)", Colors.CYAN)
         else:
             log(
                 "◐",
@@ -1256,12 +867,9 @@ class MalaOrchestrator:
                 Colors.MUTED,
             )
 
-        # Report Morph MCP status
         if self.morph_enabled:
             log(
-                "◐",
-                "morph: enabled (edit_file, warpgrep_codebase_search)",
-                Colors.CYAN,
+                "◐", "morph: enabled (edit_file, warpgrep_codebase_search)", Colors.CYAN
             )
             log(
                 "◐",
@@ -1275,13 +883,8 @@ class MalaOrchestrator:
                 reason = "MORPH_API_KEY not set"
             else:
                 reason = "disabled by config"
-            log(
-                "◐",
-                f"morph: disabled ({reason})",
-                Colors.MUTED,
-            )
+            log("◐", f"morph: disabled ({reason})", Colors.MUTED)
 
-        # Log CLI args that affect run behavior
         if self.cli_args:
             cli_parts = []
             if self.cli_args.get("disable_validations"):
@@ -1308,14 +911,10 @@ class MalaOrchestrator:
                 cli_parts.append("--braintrust")
             if cli_parts:
                 log("◐", f"cli: {' '.join(cli_parts)}", Colors.MUTED)
-
         print()
 
-        # Setup directories
-        get_lock_dir().mkdir(parents=True, exist_ok=True)
-        get_runs_dir().mkdir(parents=True, exist_ok=True)
-
-        # Create run metadata tracker
+    def _create_run_metadata(self) -> RunMetadata:
+        """Create run metadata tracker with current configuration."""
         run_config = RunConfig(
             max_agents=self.max_agents,
             timeout_minutes=self.timeout_seconds // 60
@@ -1330,155 +929,116 @@ class MalaOrchestrator:
             codex_review="codex-review" not in (self.disable_validations or set()),
             cli_args=self.cli_args,
         )
-        run_metadata = RunMetadata(self.repo_path, run_config, __version__)
+        return RunMetadata(self.repo_path, run_config, __version__)
 
-        # Build per-issue validation spec once (reused throughout the run)
-        self.per_issue_spec = build_validation_spec(
-            scope=ValidationScope.PER_ISSUE,
-            disable_validations=self.disable_validations,
-            coverage_threshold=self.coverage_threshold,
-            repo_path=self.repo_path,
-        )
+    async def _run_main_loop(self, run_metadata: RunMetadata) -> int:
+        """Run the main agent spawning and completion loop.
 
-        # Write run marker to indicate this instance is running
-        # This is used by `mala status` to detect running instances
-        write_run_marker(
-            run_id=run_metadata.run_id,
-            repo_path=self.repo_path,
-            max_agents=self.max_agents,
-        )
-
+        Returns the number of issues spawned.
+        """
         issues_spawned = 0
+        while True:
+            if self.abort_run:
+                await self._abort_active_tasks(run_metadata)
+                break
 
-        try:
-            while True:
-                if self.abort_run:
-                    await self._abort_active_tasks(run_metadata)
-                    break
+            limit_reached = (
+                self.max_issues is not None and issues_spawned >= self.max_issues
+            )
 
-                # Check if we've reached the issue limit
-                limit_reached = (
-                    self.max_issues is not None and issues_spawned >= self.max_issues
+            suppress_warn_ids = None
+            if self.only_ids:
+                suppress_warn_ids = (
+                    self.failed_issues
+                    | set(self.active_tasks.keys())
+                    | {result.issue_id for result in self.completed}
                 )
-
-                # Fill up to max_agents (unless limit reached)
-                suppress_warn_ids = None
-                if self.only_ids:
-                    suppress_warn_ids = (
-                        self.failed_issues
-                        | set(self.active_tasks.keys())
-                        | {result.issue_id for result in self.completed}
-                    )
-                ready = (
-                    await self.beads.get_ready_async(
-                        self.failed_issues,
-                        epic_id=self.epic_id,
-                        only_ids=self.only_ids,
-                        suppress_warn_ids=suppress_warn_ids,
-                        prioritize_wip=self.prioritize_wip,
-                        focus=self.focus,
-                    )
-                    if not limit_reached
-                    else []
+            ready = (
+                await self.beads.get_ready_async(
+                    self.failed_issues,
+                    epic_id=self.epic_id,
+                    only_ids=self.only_ids,
+                    suppress_warn_ids=suppress_warn_ids,
+                    prioritize_wip=self.prioritize_wip,
+                    focus=self.focus,
                 )
+                if not limit_reached
+                else []
+            )
 
-                if ready:
-                    log("◌", f"Ready issues: {', '.join(ready)}", Colors.MUTED)
+            if ready:
+                log("◌", f"Ready issues: {', '.join(ready)}", Colors.MUTED)
 
-                while (
-                    self.max_agents is None or len(self.active_tasks) < self.max_agents
-                ) and ready:
-                    issue_id = ready.pop(0)
-                    if issue_id not in self.active_tasks:
-                        if await self.spawn_agent(issue_id):
-                            issues_spawned += 1
-                            # Check limit after each spawn
-                            if (
-                                self.max_issues is not None
-                                and issues_spawned >= self.max_issues
-                            ):
-                                break
-
-                if not self.active_tasks:
-                    if limit_reached:
-                        log(
-                            "○", f"Issue limit reached ({self.max_issues})", Colors.GRAY
-                        )
-                    elif not ready:
-                        log("○", "No more issues to process", Colors.GRAY)
-                    break
-
-                # Wait for ANY task to complete
-                log(
-                    "◌",
-                    f"Waiting for {len(self.active_tasks)} agent(s)...",
-                    Colors.MUTED,
-                )
-
-                done, _ = await asyncio.wait(
-                    self.active_tasks.values(),
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
-                # Handle completed tasks - process ALL done tasks before checking abort
-                # This prevents misclassifying completed tasks as aborted when
-                # multiple tasks finish in the same polling cycle
-                for task in done:
-                    for issue_id, t in list(self.active_tasks.items()):
-                        if t is task:
-                            try:
-                                result = task.result()
-                            except asyncio.CancelledError:
-                                result = IssueResult(
-                                    issue_id=issue_id,
-                                    agent_id=self.agent_ids.get(issue_id, "unknown"),
-                                    success=False,
-                                    summary=(
-                                        f"Aborted due to unrecoverable error: {self.abort_reason}"
-                                        if self.abort_reason
-                                        else "Aborted due to unrecoverable error"
-                                    ),
-                                )
-                            except Exception as e:
-                                result = IssueResult(
-                                    issue_id=issue_id,
-                                    agent_id=self.agent_ids.get(issue_id, "unknown"),
-                                    success=False,
-                                    summary=str(e),
-                                )
-
-                            await self._finalize_issue_result(
-                                issue_id, result, run_metadata
-                            )
+            while (
+                self.max_agents is None or len(self.active_tasks) < self.max_agents
+            ) and ready:
+                issue_id = ready.pop(0)
+                if issue_id not in self.active_tasks:
+                    if await self.spawn_agent(issue_id):
+                        issues_spawned += 1
+                        if (
+                            self.max_issues is not None
+                            and issues_spawned >= self.max_issues
+                        ):
                             break
 
-                # Check abort flag after draining all done tasks
-                if self.abort_run:
-                    await self._abort_active_tasks(run_metadata)
-                    break
+            if not self.active_tasks:
+                if limit_reached:
+                    log("○", f"Issue limit reached ({self.max_issues})", Colors.GRAY)
+                elif not ready:
+                    log("○", "No more issues to process", Colors.GRAY)
+                break
 
-        finally:
-            # Final cleanup - only release locks owned by this run's agents
-            released = release_run_locks(list(self.agent_ids.values()))
-            if released:
-                log("🧹", f"Released {released} remaining locks", Colors.MUTED)
+            log("◌", f"Waiting for {len(self.active_tasks)} agent(s)...", Colors.MUTED)
+            done, _ = await asyncio.wait(
+                self.active_tasks.values(),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
 
-            # Remove run marker to indicate this instance is no longer running
-            remove_run_marker(run_metadata.run_id)
+            for task in done:
+                for issue_id, t in list(self.active_tasks.items()):
+                    if t is task:
+                        try:
+                            result = task.result()
+                        except asyncio.CancelledError:
+                            result = IssueResult(
+                                issue_id=issue_id,
+                                agent_id=self.agent_ids.get(issue_id, "unknown"),
+                                success=False,
+                                summary=(
+                                    f"Aborted due to unrecoverable error: {self.abort_reason}"
+                                    if self.abort_reason
+                                    else "Aborted due to unrecoverable error"
+                                ),
+                            )
+                        except Exception as e:
+                            result = IssueResult(
+                                issue_id=issue_id,
+                                agent_id=self.agent_ids.get(issue_id, "unknown"),
+                                success=False,
+                                summary=str(e),
+                            )
+                        await self._finalize_issue_result(
+                            issue_id, result, run_metadata
+                        )
+                        break
 
-        # Calculate success_count before Gate 4
+            if self.abort_run:
+                await self._abort_active_tasks(run_metadata)
+                break
+
+        return issues_spawned
+
+    async def _finalize_run(
+        self,
+        run_metadata: RunMetadata,
+        run_validation_passed: bool,
+    ) -> tuple[int, int]:
+        """Log summary and return final results."""
         success_count = sum(1 for r in self.completed if r.success)
         total = len(self.completed)
 
-        # Run Gate 4 (run-level validation) after all issues complete
-        # Only run if there were successful issues (something to validate)
-        run_validation_passed = True
-        if success_count > 0 and not self.abort_run:
-            run_validation_passed = await self._run_run_level_validation(run_metadata)
-
-        # Summary
         print()
-
         if self.abort_run:
             log(
                 "○",
@@ -1501,26 +1061,59 @@ class MalaOrchestrator:
         else:
             log("○", f"Completed: {success_count}/{total} issues", Colors.RED)
 
-        # Commit .beads/issues.jsonl if there were successes
         if success_count > 0:
             if await self.beads.commit_issues_async():
                 log("◐", "Committed .beads/issues.jsonl", Colors.MUTED)
 
-        # Save run metadata
         if total > 0:
             metadata_path = run_metadata.save()
             log("◐", f"Run metadata: {metadata_path}", Colors.MUTED)
 
         print()
-        # Return success count for CLI exit code logic
-        # Run-level validation failure should cause non-zero exit
-        # Also indicate if no issues were processed (total == 0 is a no-op, not failure)
         if self.abort_run:
             return (0, total)
         if not run_validation_passed:
-            # Gate 4 failed - return 0 successes to trigger non-zero exit
             return (0, total)
         return (success_count, total)
+
+    async def run(self) -> tuple[int, int]:
+        """Main orchestration loop. Returns (success_count, total_count)."""
+        self._log_run_status()
+
+        get_lock_dir().mkdir(parents=True, exist_ok=True)
+        get_runs_dir().mkdir(parents=True, exist_ok=True)
+
+        run_metadata = self._create_run_metadata()
+        self.per_issue_spec = build_validation_spec(
+            scope=ValidationScope.PER_ISSUE,
+            disable_validations=self.disable_validations,
+            coverage_threshold=self.coverage_threshold,
+            repo_path=self.repo_path,
+        )
+        write_run_marker(
+            run_id=run_metadata.run_id,
+            repo_path=self.repo_path,
+            max_agents=self.max_agents,
+        )
+
+        try:
+            await self._run_main_loop(run_metadata)
+        finally:
+            released = release_run_locks(list(self.agent_ids.values()))
+            if released:
+                log("🧹", f"Released {released} remaining locks", Colors.MUTED)
+            remove_run_marker(run_metadata.run_id)
+
+        success_count = sum(1 for r in self.completed if r.success)
+        run_validation_passed = True
+        if success_count > 0 and not self.abort_run:
+            validation_input = RunLevelValidationInput(run_metadata=run_metadata)
+            validation_output = await self.run_coordinator.run_validation(
+                validation_input
+            )
+            run_validation_passed = validation_output.passed
+
+        return await self._finalize_run(run_metadata, run_validation_passed)
 
     def run_sync(self) -> tuple[int, int]:
         """Synchronous wrapper for run(). Returns (success_count, total_count).
