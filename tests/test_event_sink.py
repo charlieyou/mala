@@ -1,14 +1,17 @@
 """Tests for event_sink module."""
 
-from src.event_sink import MalaEventSink, NullEventSink, RunConfig
+from unittest.mock import MagicMock, patch
+
+from src.event_sink import MalaEventSink, NullEventSink, EventRunConfig
+from src.event_sink_console import ConsoleEventSink
 
 
-class TestRunConfig:
-    """Tests for RunConfig dataclass."""
+class TestEventRunConfig:
+    """Tests for EventRunConfig dataclass."""
 
     def test_minimal_config(self) -> None:
-        """RunConfig can be created with required fields only."""
-        config = RunConfig(
+        """EventRunConfig can be created with required fields only."""
+        config = EventRunConfig(
             repo_path="/tmp/repo",
             max_agents=2,
             timeout_minutes=30,
@@ -34,8 +37,8 @@ class TestRunConfig:
         assert config.cli_args is None
 
     def test_full_config(self) -> None:
-        """RunConfig can be created with all optional fields."""
-        config = RunConfig(
+        """EventRunConfig can be created with all optional fields."""
+        config = EventRunConfig(
             repo_path="/tmp/repo",
             max_agents=4,
             timeout_minutes=60,
@@ -63,8 +66,8 @@ class TestRunConfig:
         assert config.cli_args == {"verbose": True}
 
     def test_none_values_allowed(self) -> None:
-        """RunConfig accepts None for optional int fields."""
-        config = RunConfig(
+        """EventRunConfig accepts None for optional int fields."""
+        config = EventRunConfig(
             repo_path="/tmp/repo",
             max_agents=None,
             timeout_minutes=None,
@@ -90,7 +93,7 @@ class TestNullEventSink:
     def test_all_methods_are_no_ops(self) -> None:
         """All NullEventSink methods execute without side effects."""
         sink = NullEventSink()
-        config = RunConfig(
+        config = EventRunConfig(
             repo_path="/tmp/repo",
             max_agents=2,
             timeout_minutes=30,
@@ -168,7 +171,7 @@ class TestNullEventSink:
         sink = NullEventSink()
 
         # Simulate a typical orchestrator flow
-        config = RunConfig(
+        config = EventRunConfig(
             repo_path="/tmp/repo",
             max_agents=2,
             timeout_minutes=30,
@@ -215,3 +218,127 @@ class TestNullEventSink:
         # All protocol methods should be in the sink
         missing = protocol_methods - sink_methods
         assert not missing, f"NullEventSink missing protocol methods: {missing}"
+
+
+class TestConsoleEventSink:
+    """Tests for ConsoleEventSink implementation."""
+
+    def test_implements_protocol(self) -> None:
+        """ConsoleEventSink implements MalaEventSink protocol."""
+        sink = ConsoleEventSink()
+        # Protocol structural subtyping
+        assert isinstance(sink, MalaEventSink)
+
+    def test_protocol_coverage(self) -> None:
+        """Verify all protocol methods are implemented in ConsoleEventSink."""
+        # Get all public methods from the protocol (excluding dunder methods)
+        protocol_methods = {
+            name
+            for name in dir(MalaEventSink)
+            if not name.startswith("_") and callable(getattr(MalaEventSink, name, None))
+        }
+
+        # Get all public methods from ConsoleEventSink
+        sink_methods = {
+            name
+            for name in dir(ConsoleEventSink)
+            if not name.startswith("_")
+            and callable(getattr(ConsoleEventSink, name, None))
+        }
+
+        # All protocol methods should be in the sink
+        missing = protocol_methods - sink_methods
+        assert not missing, f"ConsoleEventSink missing protocol methods: {missing}"
+
+    @patch("src.event_sink_console.log")
+    @patch("src.event_sink_console.log_verbose")
+    def test_on_run_started_logs(
+        self, mock_log_verbose: MagicMock, mock_log: MagicMock
+    ) -> None:
+        """on_run_started calls log with run configuration."""
+        sink = ConsoleEventSink()
+        config = EventRunConfig(
+            repo_path="/tmp/repo",
+            max_agents=2,
+            timeout_minutes=30,
+            max_issues=10,
+            max_gate_retries=3,
+            max_review_retries=2,
+        )
+        sink.on_run_started(config)
+        assert mock_log.called
+        # Verify the message contains the repo path
+        call_args = mock_log.call_args
+        assert "/tmp/repo" in call_args[0][1]
+
+    @patch("src.event_sink_console.log_tool")
+    def test_on_tool_use_delegates_to_log_tool(self, mock_log_tool: MagicMock) -> None:
+        """on_tool_use delegates to log_tool helper."""
+        sink = ConsoleEventSink()
+        sink.on_tool_use("agent-1", "Read", "file.py", {"path": "file.py"})
+        mock_log_tool.assert_called_once_with(
+            "Read", "file.py", agent_id="agent-1", arguments={"path": "file.py"}
+        )
+
+    @patch("src.event_sink_console.log_agent_text")
+    def test_on_agent_text_delegates_to_log_agent_text(
+        self, mock_log_agent_text: MagicMock
+    ) -> None:
+        """on_agent_text delegates to log_agent_text helper."""
+        sink = ConsoleEventSink()
+        sink.on_agent_text("agent-1", "Processing...")
+        mock_log_agent_text.assert_called_once_with("Processing...", "agent-1")
+
+    @patch("src.event_sink_console.log")
+    def test_representative_methods_execute(self, mock_log: MagicMock) -> None:
+        """Representative methods from each category execute without error."""
+        sink = ConsoleEventSink()
+        config = EventRunConfig(
+            repo_path="/tmp/repo",
+            max_agents=2,
+            timeout_minutes=30,
+            max_issues=10,
+            max_gate_retries=3,
+            max_review_retries=2,
+        )
+
+        # Run lifecycle
+        sink.on_run_started(config)
+        sink.on_run_completed(5, 10, True)
+        sink.on_ready_issues(["issue-1"])
+        sink.on_no_more_issues("none_ready")
+
+        # Agent lifecycle
+        sink.on_agent_started("agent-1", "issue-1")
+        sink.on_agent_completed("agent-1", "issue-1", True, 60.0, "Done")
+        sink.on_claim_failed("agent-1", "issue-1")
+
+        # Quality gate events
+        sink.on_gate_passed("agent-1")
+        sink.on_gate_passed(None)  # run-level
+        sink.on_gate_failed("agent-1", 3, 3)
+        sink.on_gate_retry("agent-1", 2, 3)
+        sink.on_gate_result("agent-1", False, ["lint failed"])
+
+        # Codex review events
+        sink.on_review_passed("agent-1")
+        sink.on_review_retry("agent-1", 2, 2, error_count=5)
+        sink.on_review_retry("agent-1", 2, 2, parse_error="Invalid JSON")
+
+        # Fixer agent events
+        sink.on_fixer_started(1, 3)
+        sink.on_fixer_completed("Fixed lint errors")
+        sink.on_fixer_failed("timeout")
+
+        # Issue lifecycle
+        sink.on_issue_closed("agent-1", "issue-1")
+        sink.on_issue_completed("agent-1", "issue-1", True, 120.5, "Done")
+        sink.on_epic_closed("agent-1")
+
+        # Warnings and diagnostics
+        sink.on_warning("Something went wrong")
+        sink.on_warning("Agent issue", agent_id="agent-1")
+        sink.on_log_timeout("agent-1", "/tmp/log.jsonl")
+
+        # All should have executed without raising exceptions
+        assert mock_log.called

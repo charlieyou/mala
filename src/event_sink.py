@@ -15,7 +15,7 @@ from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass
-class RunConfig:
+class EventRunConfig:
     """Configuration snapshot for a run, passed to on_run_started.
 
     Mirrors the relevant fields from MalaOrchestrator for event reporting.
@@ -54,7 +54,7 @@ class MalaEventSink(Protocol):
     # Run lifecycle
     # -------------------------------------------------------------------------
 
-    def on_run_started(self, config: RunConfig) -> None:
+    def on_run_started(self, config: EventRunConfig) -> None:
         """Called when the orchestrator run begins.
 
         Args:
@@ -450,7 +450,7 @@ class NullEventSink:
         await orchestrator.run()  # No console output
     """
 
-    def on_run_started(self, config: RunConfig) -> None:
+    def on_run_started(self, config: EventRunConfig) -> None:
         pass
 
     def on_run_completed(
