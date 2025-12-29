@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .env import get_lock_dir
 
-__all__ = ["get_lock_dir"]
+__all__ = ["get_lock_dir", "lock_path"]
 
 
 def _get_lock_dir() -> Path:
@@ -110,7 +110,7 @@ def _lock_key(filepath: str, repo_namespace: str | None = None) -> str:
     return canonical_path
 
 
-def _lock_path(filepath: str, repo_namespace: str | None = None) -> Path:
+def lock_path(filepath: str, repo_namespace: str | None = None) -> Path:
     """Convert a file path to its lock file path.
 
     Uses SHA-256 hash of the canonical key to avoid collisions
@@ -176,12 +176,12 @@ def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) ->
     Returns:
         True if lock was acquired, False if already locked.
     """
-    lock_path = _lock_path(filepath, repo_namespace)
+    lp = lock_path(filepath, repo_namespace)
     lock_dir = _get_lock_dir()
     lock_dir.mkdir(parents=True, exist_ok=True)
 
     # Fast-path if already locked
-    if lock_path.exists():
+    if lp.exists():
         return False
 
     # Atomic lock creation using temp file + rename
@@ -196,7 +196,7 @@ def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) ->
 
         # Atomic hardlink attempt
         try:
-            os.link(tmp_path, lock_path)
+            os.link(tmp_path, lp)
             os.unlink(tmp_path)
             return True
         except OSError:
@@ -252,7 +252,7 @@ def is_locked(filepath: str, repo_namespace: str | None = None) -> bool:
     Returns:
         True if the file is locked, False otherwise.
     """
-    return _lock_path(filepath, repo_namespace).exists()
+    return lock_path(filepath, repo_namespace).exists()
 
 
 def get_lock_holder(filepath: str, repo_namespace: str | None = None) -> str | None:
@@ -265,10 +265,10 @@ def get_lock_holder(filepath: str, repo_namespace: str | None = None) -> str | N
     Returns:
         The agent ID of the lock holder, or None if not locked.
     """
-    lock_path = _lock_path(filepath, repo_namespace)
-    if lock_path.exists():
+    lp = lock_path(filepath, repo_namespace)
+    if lp.exists():
         try:
-            return lock_path.read_text().strip()
+            return lp.read_text().strip()
         except OSError:
             return None
     return None
@@ -403,8 +403,8 @@ def _cli_main() -> int:
         # Only release if we hold the lock
         holder = get_lock_holder(filepath, repo_namespace)
         if holder == agent_id:
-            lock_path = _lock_path(filepath, repo_namespace)
-            lock_path.unlink(missing_ok=True)
+            lp = lock_path(filepath, repo_namespace)
+            lp.unlink(missing_ok=True)
         return 0
 
     elif command == "release-all":

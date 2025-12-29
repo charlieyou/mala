@@ -22,11 +22,89 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from .codex_review import CodexReviewResult
     from .quality_gate import CommitResult, GateResult, ValidationEvidence
+    from .session_log_parser import JsonlEntry
     from .validation.spec import ValidationSpec
+
+
+@runtime_checkable
+class LogProvider(Protocol):
+    """Protocol for abstracting SDK log storage and schema.
+
+    Provides methods for accessing session logs without hardcoding filesystem
+    paths or Claude SDK's internal log format. This enables:
+    - Testing with mock log providers that return synthetic events
+    - Future support for remote log storage or SDK API access
+    - Isolation from SDK log format changes
+
+    The canonical implementation is FileSystemLogProvider, which reads JSONL
+    logs from the Claude SDK's ~/.claude/projects/{encoded-path}/ directory.
+    Test implementations can return in-memory events for isolation.
+
+    Methods:
+        get_log_path: Get the filesystem path for a session log.
+        iter_events: Iterate over typed log entries from a session.
+        get_end_offset: Get the byte offset at the end of a log file.
+    """
+
+    def get_log_path(self, repo_path: Path, session_id: str) -> Path:
+        """Get the filesystem path for a session's log file.
+
+        This method computes the expected log file path based on the repo
+        and session. The path may or may not exist yet.
+
+        Args:
+            repo_path: Path to the repository the session was run in.
+            session_id: Claude SDK session ID (UUID from ResultMessage).
+
+        Returns:
+            Path to the JSONL log file.
+        """
+        ...
+
+    def iter_events(self, log_path: Path, offset: int = 0) -> Iterator[JsonlEntry]:
+        """Iterate over parsed JSONL entries from a log file.
+
+        Reads the file starting from the given byte offset and yields
+        structured entries. This enables incremental parsing across
+        retry attempts.
+
+        Args:
+            log_path: Path to the JSONL log file.
+            offset: Byte offset to start reading from (default 0).
+
+        Yields:
+            JsonlEntry objects for each successfully parsed JSON line.
+            The entry field contains the typed LogEntry if parsing succeeded.
+
+        Note:
+            - Lines that fail UTF-8 decoding are silently skipped
+            - Empty lines are silently skipped
+            - Lines that fail JSON parsing are silently skipped
+            - If file doesn't exist, yields nothing
+        """
+        ...
+
+    def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
+        """Get the byte offset at the end of a log file.
+
+        This is a lightweight method for getting the current file position.
+        Use this when you only need the offset for retry scoping, not the
+        parsed entries themselves.
+
+        Args:
+            log_path: Path to the JSONL log file.
+            start_offset: Byte offset to start from (default 0).
+
+        Returns:
+            The byte offset at the end of the file, or start_offset if file
+            doesn't exist or can't be read.
+        """
+        ...
 
 
 @runtime_checkable

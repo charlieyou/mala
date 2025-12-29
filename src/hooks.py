@@ -593,7 +593,7 @@ class LintCacheEntry:
 
 
 class LintCache:
-    """Cache for tracking successful lint runs and detecting redundant re-runs.
+    """In-memory cache for tracking successful lint runs during agent sessions.
 
     This cache tracks the git state when lint commands pass. It uses a two-phase
     approach:
@@ -605,6 +605,12 @@ class LintCache:
     - If git state is unchanged and agent tries to lint again, previous lint passed
 
     The cache uses commit SHA + working tree diff hash to detect any file changes.
+
+    Note:
+        This is an IN-MEMORY cache designed for use with Claude agent hooks
+        (see make_lint_cache_hook). For a disk-persisted cache used in batch
+        validation, see src/validation/lint_cache.py which has a different API
+        (should_skip/mark_passed) suited for SpecValidationRunner.
 
     Attributes:
         _cache: Mapping of lint command type to cached entry.

@@ -28,4 +28,8 @@ if ! is_literal_key "$filepath"; then
     fi
 fi
 
-exec uv run python -m src.tools.locking holder "$filepath"
+if command -v uv >/dev/null 2>&1; then
+    exec uv run python -m src.tools.locking holder "$filepath"
+else
+    exec python -m src.tools.locking holder "$filepath"
+fi

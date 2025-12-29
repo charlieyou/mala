@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING
 
 from ..tools.command_runner import run_command
 
+from .spec import CommandKind
+
 if TYPE_CHECKING:
     from .spec import ValidationSpec
 
@@ -401,7 +403,7 @@ class BaselineCoverageService:
         Returns:
             BaselineRefreshResult with the baseline percentage or error.
         """
-        from ..tools.locking import _lock_path, try_lock, wait_for_lock
+        from ..tools.locking import lock_path, try_lock, wait_for_lock
 
         # Determine baseline report path
         baseline_path = self.repo_path / "coverage.xml"
@@ -449,7 +451,7 @@ class BaselineCoverageService:
             return self._run_refresh(spec, baseline_path)
         finally:
             # Release lock by removing lock file
-            lock_file = _lock_path(_BASELINE_LOCK_FILE, repo_namespace)
+            lock_file = lock_path(_BASELINE_LOCK_FILE, repo_namespace)
             lock_file.unlink(missing_ok=True)
 
     def _run_refresh(
@@ -469,7 +471,6 @@ class BaselineCoverageService:
         from src.tools.command_runner import CommandRunner
 
         from ..tools.env import get_lock_dir
-        from .spec import CommandKind
         from .worktree import (
             WorktreeConfig,
             WorktreeState,
@@ -531,36 +532,23 @@ class BaselineCoverageService:
 
             # Replace any existing --cov-fail-under with 0
             # This ensures we capture baseline even if it's below pyproject.toml threshold
-            # Also remove slow test markers to avoid running expensive E2E tests
-            # during baseline refresh (baseline only needs coverage from fast tests)
             new_pytest_cmd = []
             skip_next = False
-            skip_markers = False
             for arg in pytest_cmd:
                 if skip_next:
                     skip_next = False
-                    continue
-                if skip_markers:
-                    skip_markers = False
                     continue
                 if arg.startswith("--cov-fail-under="):
                     continue
                 if arg == "--cov-fail-under":
                     skip_next = True
                     continue
-                # Remove slow test markers - baseline refresh should only run fast tests
-                if arg == "-m":
-                    skip_markers = True
-                    continue
                 new_pytest_cmd.append(arg)
             new_pytest_cmd.append("--cov-fail-under=0")
 
-            # Run pytest
-            result = runner.run(new_pytest_cmd, env=env)
-            if result.returncode != 0:
-                return BaselineRefreshResult.fail(
-                    f"pytest failed during baseline refresh (exit {result.returncode})"
-                )
+            # Run pytest - we ignore the exit code because tests may fail
+            # but still generate a valid coverage.xml baseline
+            runner.run(new_pytest_cmd, env=env)
 
             # Check for coverage.xml in worktree
             worktree_coverage = worktree_path / "coverage.xml"

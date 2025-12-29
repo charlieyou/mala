@@ -1,13 +1,20 @@
-"""Lint cache to skip redundant linting when no files have changed.
+"""Disk-persisted lint cache for SpecValidationRunner.
 
 This module provides LintCache which tracks the last successful run for each
-lint command and skips the command if no files have changed since.
+lint command and skips the command if no files have changed since. The cache
+is persisted to disk (lint_cache.json) so it survives across validation runs.
 
 The cache is based on:
 1. The current git HEAD commit SHA
 2. Whether there are uncommitted changes (git status)
+3. Hash of uncommitted changes (if any)
 
-If both match the cached state, the lint command can be skipped.
+If all match the cached state, the lint command can be skipped.
+
+Note:
+    This module is distinct from the in-memory LintCache in src/hooks.py,
+    which is designed for Claude agent hooks (make_lint_cache_hook). The two
+    have different APIs and persistence models suited to their use cases.
 """
 
 from __future__ import annotations
@@ -106,7 +113,7 @@ class LintCacheEntry:
 
 
 class LintCache:
-    """Cache to track lint command runs and skip redundant executions.
+    """Disk-persisted cache for SpecValidationRunner to skip redundant lint runs.
 
     The cache stores the git state when each lint command last passed:
     - HEAD commit SHA
@@ -115,6 +122,13 @@ class LintCache:
 
     If the current state matches the cached state, the lint command can be
     skipped since it would produce the same result.
+
+    Note:
+        This is a DISK-PERSISTED cache designed for batch validation runs
+        in SpecValidationRunner. For an in-memory cache used with Claude
+        agent hooks, see src/hooks.py LintCache which has a different API
+        (check_and_update with two-phase pending/confirmed) suited for
+        make_lint_cache_hook.
 
     Example:
         cache = LintCache(Path("/tmp/lint-cache"), repo_path)

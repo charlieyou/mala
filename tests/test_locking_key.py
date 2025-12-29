@@ -1,6 +1,6 @@
 """Unit tests for canonical lock key generation.
 
-Tests path normalization and repo namespace behavior in _lock_key/_lock_path.
+Tests path normalization and repo namespace behavior in _lock_key/lock_path.
 Ensures equivalent paths (absolute/relative, symlinks) produce identical keys.
 """
 
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from src.tools.locking import _lock_key, _lock_path
+from src.tools.locking import _lock_key, lock_path
 
 
 class TestLockKeyNormalization:
@@ -141,7 +141,7 @@ class TestLockKeyNormalization:
 
 
 class TestLockPathNormalization:
-    """Test that _lock_path produces correct paths with normalized keys."""
+    """Test that lock_path produces correct paths with normalized keys."""
 
     def test_absolute_and_relative_same_lock_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -161,8 +161,8 @@ class TestLockPathNormalization:
         try:
             os.chdir(repo)
 
-            lock_abs = _lock_path(str(target.resolve()), repo_namespace=str(repo))
-            lock_rel = _lock_path("src/module.py", repo_namespace=str(repo))
+            lock_abs = lock_path(str(target.resolve()), repo_namespace=str(repo))
+            lock_rel = lock_path("src/module.py", repo_namespace=str(repo))
 
             assert lock_abs == lock_rel, (
                 f"Same file should produce same lock path: {lock_abs} vs {lock_rel}"
@@ -181,7 +181,7 @@ class TestLockPathNormalization:
         filepath = "src/main.py"
         namespace = str(tmp_path)
 
-        lock_p = _lock_path(filepath, repo_namespace=namespace)
+        lock_p = lock_path(filepath, repo_namespace=namespace)
         key = _lock_key(filepath, repo_namespace=namespace)
         expected_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
 

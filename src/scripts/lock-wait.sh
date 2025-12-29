@@ -30,4 +30,8 @@ if ! is_literal_key "$filepath"; then
     fi
 fi
 
-exec uv run python -m src.tools.locking wait "$filepath" "$timeout" "$poll_ms"
+if command -v uv >/dev/null 2>&1; then
+    exec uv run python -m src.tools.locking wait "$filepath" "$timeout" "$poll_ms"
+else
+    exec python -m src.tools.locking wait "$filepath" "$timeout" "$poll_ms"
+fi
