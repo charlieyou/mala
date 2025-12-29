@@ -387,6 +387,23 @@ class TestReviewResult:
         assert lifecycle.state == LifecycleState.FAILED
         assert "Invalid JSON response" in ctx.final_result
 
+    def test_review_failed_with_fatal_error_fails_immediately(self) -> None:
+        """Fatal review errors should fail immediately without retries."""
+        config = LifecycleConfig(max_review_retries=3)
+        lifecycle, ctx = self._setup_for_review()
+
+        review_result = CodexReviewResult(
+            passed=False,
+            parse_error="Invalid schema for response_format 'codex_output_schema'",
+            fatal_error=True,
+        )
+
+        result = lifecycle.on_review_result(ctx, review_result, new_log_offset=200)
+
+        assert lifecycle.state == LifecycleState.FAILED
+        assert result.effect == Effect.COMPLETE_FAILURE
+        assert "Invalid schema" in ctx.final_result
+
     def test_review_failed_no_progress_fails_immediately(self) -> None:
         """Review failed with no_progress=True fails without retry.
 

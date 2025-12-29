@@ -409,6 +409,28 @@ class TestRunCodexReview:
         assert "exited with code 2" in result.parse_error
 
     @pytest.mark.asyncio
+    async def test_nonzero_exit_invalid_schema_marks_fatal(
+        self, tmp_path: Path, mock_codex_script: tuple[Path, Path]
+    ) -> None:
+        """Invalid schema errors should be marked as fatal."""
+        script_path, _ = mock_codex_script
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+
+        env = {
+            **os.environ,
+            "PATH": f"{script_path.parent}:{os.environ.get('PATH', '')}",
+            "MOCK_CODEX_EXIT_CODE": "1",
+            "MOCK_CODEX_STDERR": "Invalid schema for response_format 'codex_output_schema'",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            result = await run_codex_review(repo_path, "abc1234")
+
+        assert result.passed is False
+        assert result.fatal_error is True
+
+    @pytest.mark.asyncio
     async def test_retries_on_parse_failure(self, tmp_path: Path) -> None:
         """Should retry when JSON parsing fails."""
         repo_path = tmp_path / "repo"

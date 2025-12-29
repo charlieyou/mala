@@ -135,6 +135,11 @@ class ReviewOutcome(Protocol):
         ...
 
     @property
+    def fatal_error(self) -> bool:
+        """Whether the review failure is unrecoverable."""
+        ...
+
+    @property
     def issues(self) -> list[ReviewIssue]:
         """List of issues found during review."""
         ...
@@ -449,6 +454,16 @@ class ImplementerLifecycle:
                 state=self._state,
                 effect=Effect.COMPLETE_SUCCESS,
                 message="Review passed",
+            )
+
+        if review_result.parse_error and review_result.fatal_error:
+            ctx.final_result = f"Codex review failed: {review_result.parse_error}"
+            ctx.success = False
+            self._state = LifecycleState.FAILED
+            return TransitionResult(
+                state=self._state,
+                effect=Effect.COMPLETE_FAILURE,
+                message="Review failed, unrecoverable error",
             )
 
         # Review failed - can we retry?

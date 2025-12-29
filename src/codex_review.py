@@ -37,6 +37,7 @@ class CodexReviewResult:
     issues: list[ReviewIssue] = field(default_factory=list)
     raw_output: str = ""
     parse_error: str | None = None
+    fatal_error: bool = False
     attempt: int = 1
     session_log_path: str | None = None
 
@@ -74,7 +75,13 @@ REVIEW_OUTPUT_SCHEMA = {
                         "required": ["absolute_file_path", "line_range"],
                     },
                 },
-                "required": ["title", "body", "confidence_score", "code_location"],
+                "required": [
+                    "title",
+                    "body",
+                    "confidence_score",
+                    "priority",
+                    "code_location",
+                ],
             },
         },
         "overall_correctness": {
@@ -165,6 +172,15 @@ Line ranges must be as short as possible for interpreting the issue (avoid range
 The code_location should overlap with the diff.
 Do not generate a PR fix.
 """
+
+
+def _is_unrecoverable_codex_error(stderr: str) -> bool:
+    """Return True when Codex reports a non-retryable error."""
+    lowered = stderr.lower()
+    return (
+        "invalid schema for response_format" in lowered
+        or "invalid_json_schema" in lowered
+    )
 
 
 def _extract_json(text: str) -> str | None:
@@ -424,11 +440,13 @@ async def run_codex_review(
                 session_log_path = _parse_session_log_path(result.stderr)
 
             if result.returncode != 0:
+                stderr = result.stderr.strip()
                 return CodexReviewResult(
                     passed=False,
                     issues=[],
                     raw_output=result.stdout,
-                    parse_error=f"codex exited with code {result.returncode}: {result.stderr.strip()}",
+                    parse_error=f"codex exited with code {result.returncode}: {stderr}",
+                    fatal_error=_is_unrecoverable_codex_error(result.stderr),
                     attempt=attempt,
                     session_log_path=session_log_path,
                 )
