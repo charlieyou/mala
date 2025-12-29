@@ -91,18 +91,28 @@ class ReviewIssue(Protocol):
         ...
 
     @property
-    def line(self) -> int | None:
-        """Line number, or None for file-level issues."""
+    def line_start(self) -> int:
+        """Starting line number of the issue."""
         ...
 
     @property
-    def severity(self) -> str:
-        """Severity level: 'error', 'warning', or 'info'."""
+    def line_end(self) -> int:
+        """Ending line number of the issue."""
         ...
 
     @property
-    def message(self) -> str:
-        """Description of the issue."""
+    def priority(self) -> int | None:
+        """Priority level: 0=P0, 1=P1, 2=P2, 3=P3, or None if unknown."""
+        ...
+
+    @property
+    def title(self) -> str:
+        """Short title of the issue."""
+        ...
+
+    @property
+    def body(self) -> str:
+        """Detailed description of the issue."""
         ...
 
 
@@ -468,12 +478,23 @@ class ImplementerLifecycle:
             ctx.final_result = f"Codex review failed: {review_result.parse_error}"
             failure_message = "Review failed, no retries left"
         else:
-            error_msgs = [
-                f"{i.file}:{i.line or 0}: {i.message}"
+            # Format issues with priority P0/P1 as the most critical
+            critical_msgs = [
+                f"{i.file}:{i.line_start}: {i.title}"
                 for i in review_result.issues
-                if i.severity == "error"
+                if i.priority is not None and i.priority <= 1  # P0 and P1 are critical
             ]
-            ctx.final_result = f"Codex review failed: {'; '.join(error_msgs[:3])}"
+            if critical_msgs:
+                ctx.final_result = f"Codex review failed: {'; '.join(critical_msgs[:3])}"
+            elif review_result.issues:
+                # Only lower-priority issues found - include them in the summary
+                other_msgs = [
+                    f"{i.file}:{i.line_start}: {i.title}"
+                    for i in review_result.issues[:3]
+                ]
+                ctx.final_result = f"Codex review failed: {'; '.join(other_msgs)}"
+            else:
+                ctx.final_result = "Codex review failed: Unknown reason"
             failure_message = "Review failed, no retries left"
         ctx.success = False
         self._state = LifecycleState.FAILED

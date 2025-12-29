@@ -27,21 +27,60 @@ from src.codex_review import (
 from src.tools.command_runner import CommandResult
 
 
+def _make_valid_response(
+    passed: bool = True, findings: list[dict] | None = None
+) -> str:
+    """Helper to create a valid codex review response JSON."""
+    return json.dumps(
+        {
+            "findings": findings or [],
+            "overall_correctness": "patch is correct"
+            if passed
+            else "patch is incorrect",
+            "overall_explanation": "Test explanation",
+            "overall_confidence_score": 0.9,
+        }
+    )
+
+
+def _make_finding(
+    title: str = "Test finding",
+    body: str = "Test body",
+    file: str = "src/test.py",
+    line_start: int = 10,
+    line_end: int = 12,
+    priority: int | None = 1,
+    confidence: float = 0.8,
+) -> dict:
+    """Helper to create a valid finding dict."""
+    return {
+        "title": title,
+        "body": body,
+        "confidence_score": confidence,
+        "priority": priority,
+        "code_location": {
+            "absolute_file_path": file,
+            "line_range": {"start": line_start, "end": line_end},
+        },
+    }
+
+
 class TestExtractJson:
     """Tests for JSON extraction from mixed text."""
 
     def test_extracts_clean_json(self) -> None:
-        text = '{"passed": true, "issues": []}'
+        text = _make_valid_response()
         result = _extract_json(text)
-        assert result == '{"passed": true, "issues": []}'
+        assert result == text
 
     def test_extracts_json_with_surrounding_text(self) -> None:
-        text = 'Here is the review:\n{"passed": false, "issues": []}\nDone.'
+        inner = _make_valid_response(passed=False)
+        text = f"Here is the review:\n{inner}\nDone."
         result = _extract_json(text)
-        assert result == '{"passed": false, "issues": []}'
+        assert result == inner
 
     def test_extracts_nested_json(self) -> None:
-        text = '{"passed": true, "issues": [{"file": "a.py", "line": 1}]}'
+        text = _make_valid_response(findings=[_make_finding()])
         result = _extract_json(text)
         assert result == text
 
@@ -51,62 +90,51 @@ class TestExtractJson:
         assert result is None
 
     def test_handles_strings_with_braces(self) -> None:
-        text = '{"passed": true, "message": "use {foo} syntax"}'
+        text = '{"overall_correctness": "patch is correct", "findings": [], "overall_explanation": "use {foo} syntax", "overall_confidence_score": 0.9}'
         result = _extract_json(text)
         assert result is not None
         parsed = json.loads(result)
-        assert parsed["message"] == "use {foo} syntax"
+        assert parsed["overall_explanation"] == "use {foo} syntax"
 
 
 class TestParseReviewJson:
     """Tests for parsing Codex review JSON output."""
 
     def test_parses_valid_passed_review(self) -> None:
-        output = '{"passed": true, "issues": []}'
+        output = _make_valid_response(passed=True)
         passed, issues, error = _parse_review_json(output)
         assert passed is True
         assert issues == []
         assert error is None
 
     def test_parses_valid_failed_review_with_issues(self) -> None:
-        output = json.dumps(
-            {
-                "passed": False,
-                "issues": [
-                    {
-                        "file": "src/main.py",
-                        "line": 42,
-                        "severity": "error",
-                        "message": "Missing type annotation",
-                    }
-                ],
-            }
+        finding = _make_finding(
+            title="[P1] Missing type annotation",
+            body="The function lacks type hints",
+            file="src/main.py",
+            line_start=42,
+            line_end=45,
+            priority=1,
+            confidence=0.9,
         )
+        output = _make_valid_response(passed=False, findings=[finding])
         passed, issues, error = _parse_review_json(output)
         assert passed is False
         assert len(issues) == 1
         assert issues[0].file == "src/main.py"
-        assert issues[0].line == 42
-        assert issues[0].severity == "error"
-        assert issues[0].message == "Missing type annotation"
+        assert issues[0].line_start == 42
+        assert issues[0].line_end == 45
+        assert issues[0].title == "[P1] Missing type annotation"
+        assert issues[0].body == "The function lacks type hints"
+        assert issues[0].priority == 1
+        assert issues[0].confidence_score == 0.9
         assert error is None
 
-    def test_parses_issue_with_null_line(self) -> None:
-        output = json.dumps(
-            {
-                "passed": False,
-                "issues": [
-                    {
-                        "file": "README.md",
-                        "line": None,
-                        "severity": "warning",
-                        "message": "File-level issue",
-                    }
-                ],
-            }
-        )
+    def test_parses_issue_with_null_priority(self) -> None:
+        finding = _make_finding(priority=None)
+        output = _make_valid_response(passed=False, findings=[finding])
         _passed, issues, _error = _parse_review_json(output)
-        assert issues[0].line is None
+        assert issues[0].priority is None
 
     def test_returns_error_for_invalid_json(self) -> None:
         output = "not valid json"
@@ -116,25 +144,25 @@ class TestParseReviewJson:
         assert error is not None
         assert "No JSON object found" in error
 
-    def test_returns_error_for_missing_passed_field(self) -> None:
-        output = '{"issues": []}'
+    def test_returns_error_for_missing_overall_correctness(self) -> None:
+        output = '{"findings": [], "overall_explanation": "test", "overall_confidence_score": 0.9}'
         passed, _issues, error = _parse_review_json(output)
         assert passed is False
         assert error is not None
-        assert "'passed' field must be a boolean" in error
+        assert "'overall_correctness'" in error
 
-    def test_returns_error_for_invalid_severity(self) -> None:
+    def test_returns_error_for_invalid_overall_correctness(self) -> None:
         output = json.dumps(
             {
-                "passed": False,
-                "issues": [
-                    {"file": "a.py", "line": 1, "severity": "critical", "message": "x"}
-                ],
+                "findings": [],
+                "overall_correctness": "maybe correct",
+                "overall_explanation": "test",
+                "overall_confidence_score": 0.9,
             }
         )
         _passed, _issues, error = _parse_review_json(output)
         assert error is not None
-        assert "invalid severity" in error
+        assert "'overall_correctness'" in error
 
 
 class TestFormatReviewIssues:
@@ -147,27 +175,64 @@ class TestFormatReviewIssues:
     def test_formats_single_issue(self) -> None:
         issues = [
             ReviewIssue(
-                file="src/main.py", line=10, severity="error", message="Missing import"
+                title="[P1] Missing import",
+                body="The os module is not imported",
+                confidence_score=0.9,
+                priority=1,
+                file="src/main.py",
+                line_start=10,
+                line_end=10,
             )
         ]
         result = format_review_issues(issues)
         assert "File: src/main.py" in result
-        assert "[ERROR] L10: Missing import" in result
+        assert "L10: [P1] Missing import" in result
+        assert "The os module is not imported" in result
 
-    def test_formats_file_level_issue(self) -> None:
+    def test_formats_multiline_issue(self) -> None:
         issues = [
             ReviewIssue(
-                file="README.md", line=None, severity="warning", message="Outdated docs"
+                title="[P2] Complex function",
+                body="Consider refactoring",
+                confidence_score=0.7,
+                priority=2,
+                file="src/utils.py",
+                line_start=5,
+                line_end=15,
             )
         ]
         result = format_review_issues(issues)
-        assert "[WARNING] file-level: Outdated docs" in result
+        assert "L5-15:" in result
 
     def test_groups_by_file(self) -> None:
         issues = [
-            ReviewIssue(file="b.py", line=1, severity="error", message="Issue 1"),
-            ReviewIssue(file="a.py", line=5, severity="error", message="Issue 2"),
-            ReviewIssue(file="a.py", line=10, severity="warning", message="Issue 3"),
+            ReviewIssue(
+                title="Issue 1",
+                body="",
+                confidence_score=0.8,
+                priority=1,
+                file="b.py",
+                line_start=1,
+                line_end=1,
+            ),
+            ReviewIssue(
+                title="Issue 2",
+                body="",
+                confidence_score=0.8,
+                priority=1,
+                file="a.py",
+                line_start=5,
+                line_end=5,
+            ),
+            ReviewIssue(
+                title="Issue 3",
+                body="",
+                confidence_score=0.8,
+                priority=2,
+                file="a.py",
+                line_start=10,
+                line_end=10,
+            ),
         ]
         result = format_review_issues(issues)
         # Should be sorted by file, then by line
@@ -182,6 +247,16 @@ def mock_codex_script(tmp_path: Path) -> tuple[Path, Path]:
     """Create a mock codex script that captures invocations and writes to output file."""
     script_path = tmp_path / "codex"
     invocation_log = tmp_path / "codex_invocations.jsonl"
+
+    # Default valid response in the new format
+    default_response = json.dumps(
+        {
+            "findings": [],
+            "overall_correctness": "patch is correct",
+            "overall_explanation": "No issues found",
+            "overall_confidence_score": 0.95,
+        }
+    )
 
     # Create a script that:
     # 1. Logs invocations to a file
@@ -199,7 +274,7 @@ with open("{invocation_log}", "a") as f:
 
 # Check for test-controlled behavior
 exit_code = int(os.environ.get("MOCK_CODEX_EXIT_CODE", "0"))
-response = os.environ.get("MOCK_CODEX_STDOUT", '{{"passed": true, "issues": []}}')
+response = os.environ.get("MOCK_CODEX_STDOUT", '''{default_response}''')
 stderr = os.environ.get("MOCK_CODEX_STDERR", "")
 
 # Find -o flag and write response to that file
@@ -237,7 +312,7 @@ class TestRunCodexReview:
         env = {
             **os.environ,
             "PATH": f"{script_path.parent}:{os.environ.get('PATH', '')}",
-            "MOCK_CODEX_STDOUT": '{"passed": true, "issues": []}',
+            "MOCK_CODEX_STDOUT": _make_valid_response(),
         }
 
         with patch.dict(os.environ, env, clear=True):
@@ -269,7 +344,7 @@ class TestRunCodexReview:
         env = {
             **os.environ,
             "PATH": f"{script_path.parent}:{os.environ.get('PATH', '')}",
-            "MOCK_CODEX_STDOUT": '{"passed": true, "issues": []}',
+            "MOCK_CODEX_STDOUT": _make_valid_response(),
         }
 
         with patch.dict(os.environ, env, clear=True):
@@ -288,19 +363,14 @@ class TestRunCodexReview:
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
 
-        review_output = json.dumps(
-            {
-                "passed": False,
-                "issues": [
-                    {
-                        "file": "src/bug.py",
-                        "line": 5,
-                        "severity": "error",
-                        "message": "Potential null pointer",
-                    }
-                ],
-            }
+        finding = _make_finding(
+            title="[P1] Potential null pointer",
+            body="Variable may be None",
+            file="src/bug.py",
+            line_start=5,
+            line_end=7,
         )
+        review_output = _make_valid_response(passed=False, findings=[finding])
 
         env = {
             **os.environ,
@@ -313,7 +383,7 @@ class TestRunCodexReview:
 
         assert result.passed is False
         assert len(result.issues) == 1
-        assert result.issues[0].message == "Potential null pointer"
+        assert result.issues[0].title == "[P1] Potential null pointer"
 
     @pytest.mark.asyncio
     async def test_handles_codex_nonzero_exit(
@@ -360,7 +430,7 @@ class TestRunCodexReview:
                     if call_count == 1:
                         Path(output_path).write_text("Invalid JSON response")
                     else:
-                        Path(output_path).write_text('{"passed": true, "issues": []}')
+                        Path(output_path).write_text(_make_valid_response())
                     break
 
             return CommandResult(
@@ -438,7 +508,7 @@ class TestCodexExecApproach:
         env = {
             **os.environ,
             "PATH": f"{script_path.parent}:{os.environ.get('PATH', '')}",
-            "MOCK_CODEX_STDOUT": '{"passed": true, "issues": []}',
+            "MOCK_CODEX_STDOUT": _make_valid_response(),
         }
 
         with patch.dict(os.environ, env, clear=True):
@@ -481,7 +551,7 @@ class TestBaselineCommitParameter:
         env = {
             **os.environ,
             "PATH": f"{script_path.parent}:{os.environ.get('PATH', '')}",
-            "MOCK_CODEX_STDOUT": '{"passed": true, "issues": []}',
+            "MOCK_CODEX_STDOUT": _make_valid_response(),
         }
 
         with patch.dict(os.environ, env, clear=True):
@@ -514,7 +584,7 @@ class TestBaselineCommitParameter:
         env = {
             **os.environ,
             "PATH": f"{script_path.parent}:{os.environ.get('PATH', '')}",
-            "MOCK_CODEX_STDOUT": '{"passed": true, "issues": []}',
+            "MOCK_CODEX_STDOUT": _make_valid_response(),
         }
 
         with patch.dict(os.environ, env, clear=True):
@@ -545,7 +615,7 @@ class TestBaselineCommitParameter:
         env = {
             **os.environ,
             "PATH": f"{script_path.parent}:{os.environ.get('PATH', '')}",
-            "MOCK_CODEX_STDOUT": '{"passed": true, "issues": []}',
+            "MOCK_CODEX_STDOUT": _make_valid_response(),
         }
 
         with patch.dict(os.environ, env, clear=True):

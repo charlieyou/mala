@@ -242,11 +242,13 @@ class LintCache:
                     if filepath:
                         # Include the path in the hash
                         hasher.update(f"\n--- untracked: {filepath}\n".encode())
-                        # Include the file content
+                        # Include the file content using chunked reading
+                        # to avoid OOM on large files
                         full_path = self.repo_path / filepath
                         try:
-                            content = full_path.read_bytes()
-                            hasher.update(content)
+                            with open(full_path, "rb") as f:
+                                for chunk in iter(lambda: f.read(65536), b""):
+                                    hasher.update(chunk)
                         except OSError:
                             # File may have been deleted or be unreadable
                             hasher.update(b"<unreadable>")

@@ -96,76 +96,74 @@ REVIEW_OUTPUT_SCHEMA = {
 CODEX_REVIEW_PROMPT = """\
 Review the diff {diff_description}.
 
-## Pipeline Context
-
-You are the **Code Review** stage in a multi-stage validation pipeline. Before this review runs, the following has ALREADY been validated:
-
-1. **Quality Gate (already passed):**
-   - `ruff check` - linting passed
-   - `ruff format` - formatting passed
-   - `ty check` - type checking passed
-   - `pytest` - all tests passed
-   - Coverage threshold met
-
-Your job is to review **scope completeness and code correctness** - things that automated tools cannot catch.
-
 ## Issue Requirements
 
 {issue_description}
 
-## Your Review Focus
+## Review Guidelines
 
-### 1. Scope Completeness (PRIMARY)
-Compare the diff against the issue's scope:
-- **"In:" items**: Flag as ERROR if any "In:" scope item is NOT addressed
-- **"Out:" items**: These are EXPLICITLY EXCLUDED from scope. Do NOT flag violations that match "Out:" items - they are intentionally not being changed.
+You are acting as a reviewer for a proposed code change made by another engineer.
 
-Example: If scope says "In: Make helper functions pure" and "Out: Change subprocess calls", do NOT flag that subprocess-calling functions are not pure - they are out of scope.
+Below are some default guidelines for determining whether the original author would appreciate the issue being flagged.
 
-### 2. Scope Contradiction Detection
-If "In:" and "Out:" items contradict each other (e.g., "In: pure functions" + "Out: don't change I/O" when existing functions do I/O), report this as:
-- severity: "warning"
-- message: "Scope contradiction: [describe the contradiction]. Consider revising issue scope."
+These are not the final word in determining whether an issue is a bug. In many cases, you will encounter other, more specific guidelines. These may be present elsewhere in a developer message, a user message, a file, or even elsewhere in this system message.
+Those guidelines should be considered to override these general instructions.
 
-Do NOT fail the review for scope contradictions - they are issue definition problems, not code problems.
+Here are the general guidelines for determining whether something is a bug and should be flagged.
 
-### 3. Pre-existing Code
-Only flag **changes introduced by this diff**:
-- Do NOT flag "behavior changes" for code that existed before this diff
-- If behavior X existed before the diff and still exists after, it's not a regression
-- Use context from the diff hunks to determine what was added vs what existed
+1. It meaningfully impacts the accuracy, performance, security, or maintainability of the code.
+2. The bug is discrete and actionable (i.e. not a general issue with the codebase or a combination of multiple issues).
+3. Fixing the bug does not demand a level of rigor that is not present in the rest of the codebase (e.g. one doesn't need very detailed comments and input validation in a repository of one-off scripts in personal projects)
+4. The bug was introduced in the commit (pre-existing bugs should not be flagged).
+5. The author of the original PR would likely fix the issue if they were made aware of it.
+6. The bug does not rely on unstated assumptions about the codebase or author's intent.
+7. It is not enough to speculate that a change may disrupt another part of the codebase, to be considered a bug, one must identify the other parts of the code that are provably affected.
+8. The bug is clearly not just an intentional change by the original author.
 
-### 4. Code Correctness (SECONDARY)
-- Bugs, logic errors, security issues, data integrity problems
-- Ignore: style, formatting, test coverage, type errors (already validated)
+When flagging a bug, you will also provide an accompanying comment. Once again, these guidelines are not the final word on how to construct a comment -- defer to any subsequent guidelines that you encounter.
 
-## What NOT to Check
+1. The comment should be clear about why the issue is a bug.
+2. The comment should appropriately communicate the severity of the issue. It should not claim that an issue is more severe than it actually is.
+3. The comment should be brief. The body should be at most 1 paragraph. It should not introduce line breaks within the natural language flow unless it is necessary for the code fragment.
+4. The comment should not include any chunks of code longer than 3 lines. Any code chunks should be wrapped in markdown inline code tags or a code block.
+5. The comment should clearly and explicitly communicate the scenarios, environments, or inputs that are necessary for the bug to arise. The comment should immediately indicate that the issue's severity depends on these factors.
+6. The comment's tone should be matter-of-fact and not accusatory or overly positive. It should read as a helpful AI assistant suggestion without sounding too much like a human reviewer.
+7. The comment should be written such that the original author can immediately grasp the idea without close reading.
+8. The comment should avoid excessive flattery and comments that are not helpful to the original author. The comment should avoid phrasing like "Great job ...", "Thanks for ...".
 
-Do NOT flag issues for:
-- Tests passing (quality gate verified this)
-- Linting/formatting (ruff verified this)
-- Type errors (ty verified this)
-- Coverage (quality gate verified this)
-- Acceptance criteria like "All existing tests pass" - these are runtime validations
-- Pre-existing code that hasn't changed
-- Things explicitly listed in "Out:" scope
+## How Many Findings to Return
 
-## Severity
+Output all findings that the original author would fix if they knew about it. If there is no finding that a person would definitely love to see and fix, prefer outputting no findings. Do not stop at the first qualifying finding. Continue until you've listed every qualifying finding.
 
-- error: MISSING SCOPE ITEM (from "In:" list only), bug, security issue, data loss
-- warning: scope contradiction, partial implementation, risk, edge case
-- info: minor suggestion
+## Guidelines
 
-## Output
+- Ignore trivial style unless it obscures meaning or violates documented standards.
+- Use one comment per distinct issue (or a multi-line range if necessary).
+- Always keep the line range as short as possible for interpreting the issue. Avoid ranges longer than 5-10 lines; instead, choose the most suitable subrange that pinpoints the problem.
 
-JSON with: file (repo-relative path or "N/A"), line (int or null), severity, message.
+## Priority Tagging
 
-## Rules
+At the beginning of the finding title, tag the bug with priority level. For example "[P1] Un-padding slices along wrong tensor dimensions".
+- [P0] - Drop everything to fix. Blocking release, operations, or major usage. Only use for universal issues that do not depend on any assumptions about the inputs.
+- [P1] - Urgent. Should be addressed in the next cycle.
+- [P2] - Normal. To be fixed eventually.
+- [P3] - Low. Nice to have.
 
-- passed=false if ANY "In:" scope item is missing OR any severity="error" issue
-- passed=true if all "In:" scope items addressed and no errors (warnings/info OK)
-- Scope contradictions are warnings, not errors - passed can still be true
-- Output only valid JSON matching the schema
+Additionally, include a numeric priority field in the JSON output for each finding: set "priority" to 0 for P0, 1 for P1, 2 for P2, or 3 for P3. If a priority cannot be determined, omit the field or use null.
+
+## Overall Correctness Verdict
+
+At the end of your findings, output an "overall correctness" verdict of whether or not the patch should be considered "correct".
+Correct implies that existing code and tests will not break, and the patch is free of bugs and other blocking issues.
+Ignore non-blocking issues such as style, formatting, typos, documentation, and other nits.
+
+## Output Format
+
+Output valid JSON matching the schema. Do not wrap the JSON in markdown fences or extra prose.
+The code_location field is required and must include absolute_file_path and line_range.
+Line ranges must be as short as possible for interpreting the issue (avoid ranges over 5-10 lines; pick the most suitable subrange).
+The code_location should overlap with the diff.
+Do not generate a PR fix.
 """
 
 
@@ -233,41 +231,71 @@ def _parse_review_json(output: str) -> tuple[bool, list[ReviewIssue], str | None
     if not isinstance(data, dict):
         return False, [], "Root element is not an object"
 
-    passed = data.get("passed")
-    if not isinstance(passed, bool):
-        return False, [], "'passed' field must be a boolean"
+    overall_correctness = data.get("overall_correctness")
+    if overall_correctness not in ("patch is correct", "patch is incorrect"):
+        return (
+            False,
+            [],
+            "'overall_correctness' must be 'patch is correct' or 'patch is incorrect'",
+        )
 
-    raw_issues = data.get("issues", [])
-    if not isinstance(raw_issues, list):
-        return False, [], "'issues' field must be an array"
+    passed = overall_correctness == "patch is correct"
+
+    raw_findings = data.get("findings", [])
+    if not isinstance(raw_findings, list):
+        return False, [], "'findings' field must be an array"
 
     issues: list[ReviewIssue] = []
-    for i, item in enumerate(raw_issues):
+    for i, item in enumerate(raw_findings):
         if not isinstance(item, dict):
-            return False, [], f"Issue {i} is not an object"
+            return False, [], f"Finding {i} is not an object"
 
-        file = item.get("file")
+        title = item.get("title")
+        if not isinstance(title, str):
+            return False, [], f"Finding {i}: 'title' must be a string"
+
+        body = item.get("body", "")
+        if not isinstance(body, str):
+            return False, [], f"Finding {i}: 'body' must be a string"
+
+        confidence_score = item.get("confidence_score", 0.0)
+        if not isinstance(confidence_score, (int, float)):
+            return False, [], f"Finding {i}: 'confidence_score' must be a number"
+
+        priority = item.get("priority")
+        if priority is not None and not isinstance(priority, int):
+            return False, [], f"Finding {i}: 'priority' must be an integer or null"
+
+        code_location = item.get("code_location", {})
+        if not isinstance(code_location, dict):
+            return False, [], f"Finding {i}: 'code_location' must be an object"
+
+        file = code_location.get("absolute_file_path", "")
         if not isinstance(file, str):
-            return False, [], f"Issue {i}: 'file' must be a string"
+            return False, [], f"Finding {i}: 'absolute_file_path' must be a string"
 
-        line = item.get("line")
-        if line is not None and not isinstance(line, int):
-            return False, [], f"Issue {i}: 'line' must be an integer or null"
+        line_range = code_location.get("line_range", {})
+        if not isinstance(line_range, dict):
+            return False, [], f"Finding {i}: 'line_range' must be an object"
 
-        severity = item.get("severity", "info")
-        if severity not in ("error", "warning", "info"):
-            return False, [], f"Issue {i}: invalid severity '{severity}'"
-
-        message = item.get("message", "")
-        if not isinstance(message, str):
-            return False, [], f"Issue {i}: 'message' must be a string"
+        line_start = line_range.get("start", 0)
+        line_end = line_range.get("end", 0)
+        if not isinstance(line_start, int) or not isinstance(line_end, int):
+            return (
+                False,
+                [],
+                f"Finding {i}: line_range 'start' and 'end' must be integers",
+            )
 
         issues.append(
             ReviewIssue(
+                title=title,
+                body=body,
+                confidence_score=float(confidence_score),
+                priority=priority,
                 file=file,
-                line=line,
-                severity=severity,
-                message=message,
+                line_start=line_start,
+                line_end=line_end,
             )
         )
 
@@ -461,6 +489,35 @@ async def run_codex_review(
     )
 
 
+def _to_relative_path(file_path: str) -> str:
+    """Convert an absolute file path to a relative path for display.
+
+    Strips the home directory prefix or common path prefixes to avoid
+    leaking system information in logs and output.
+
+    Args:
+        file_path: Absolute or relative file path.
+
+    Returns:
+        Relative path suitable for display.
+    """
+    # If already relative, return as-is
+    if not file_path.startswith("/"):
+        return file_path
+
+    # Try to make it relative to cwd
+    cwd = Path.cwd()
+    try:
+        abs_path = Path(file_path)
+        if abs_path.is_relative_to(cwd):
+            return str(abs_path.relative_to(cwd))
+    except (ValueError, OSError):
+        pass
+
+    # Fall back to just the filename if all else fails
+    return Path(file_path).name
+
+
 def format_review_issues(issues: list[ReviewIssue]) -> str:
     """Format review issues as a human-readable string for follow-up prompts.
 
@@ -476,17 +533,34 @@ def format_review_issues(issues: list[ReviewIssue]) -> str:
     lines = []
     current_file = None
 
-    # Sort by file, then by line
-    sorted_issues = sorted(issues, key=lambda x: (x.file, x.line or 0))
+    # Sort by file, then by line, then by priority (lower = more important)
+    # Use explicit None check since priority 0 (P0) is falsy but valid
+    sorted_issues = sorted(
+        issues,
+        key=lambda x: (
+            x.file,
+            x.line_start,
+            x.priority if x.priority is not None else 4,
+        ),
+    )
 
     for issue in sorted_issues:
-        if issue.file != current_file:
+        # Convert absolute paths to relative for cleaner display
+        display_file = _to_relative_path(issue.file)
+        if display_file != current_file:
             if current_file is not None:
                 lines.append("")  # Blank line between files
-            current_file = issue.file
-            lines.append(f"File: {issue.file}")
+            current_file = display_file
+            lines.append(f"File: {display_file}")
 
-        loc = f"L{issue.line}" if issue.line else "file-level"
-        lines.append(f"  [{issue.severity.upper()}] {loc}: {issue.message}")
+        loc = (
+            f"L{issue.line_start}-{issue.line_end}"
+            if issue.line_start != issue.line_end
+            else f"L{issue.line_start}"
+        )
+        # Don't add priority tag here - the title already contains it (e.g., "[P1] Title")
+        lines.append(f"  {loc}: {issue.title}")
+        if issue.body:
+            lines.append(f"    {issue.body}")
 
     return "\n".join(lines)

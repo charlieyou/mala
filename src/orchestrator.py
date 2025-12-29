@@ -31,6 +31,7 @@ from .hooks import (
     make_file_read_cache_hook,
     LintCache,
     make_lint_cache_hook,
+    _detect_lint_command,
 )
 from .lifecycle import (
     Effect,
@@ -643,6 +644,7 @@ class MalaOrchestrator:
             ClaudeSDKClient,
             ResultMessage,
             TextBlock,
+            ToolResultBlock,
             ToolUseBlock,
         )
         from claude_agent_sdk.types import HookMatcher
@@ -716,6 +718,9 @@ class MalaOrchestrator:
                 async with ClaudeSDKClient(options=options) as client:
                     await client.query(prompt)
 
+                    # Track pending lint commands for cache success marking
+                    pending_lint_commands: dict[str, tuple[str, str]] = {}
+
                     async for message in client.receive_response():
                         # Log progress
                         if isinstance(message, AssistantMessage):
@@ -728,6 +733,25 @@ class MalaOrchestrator:
                                         agent_id=f"fixer-{attempt}",
                                         arguments=block.input,
                                     )
+                                    # Track lint commands for cache marking
+                                    if block.name.lower() == "bash":
+                                        cmd = block.input.get("command", "")
+                                        lint_type = _detect_lint_command(cmd)
+                                        if lint_type:
+                                            pending_lint_commands[block.id] = (
+                                                lint_type,
+                                                cmd,
+                                            )
+                                elif isinstance(block, ToolResultBlock):
+                                    # Check for successful lint completion
+                                    tool_use_id = getattr(block, "tool_use_id", None)
+                                    if tool_use_id in pending_lint_commands:
+                                        lint_type, cmd = pending_lint_commands.pop(
+                                            tool_use_id
+                                        )
+                                        # Mark success if not an error
+                                        if not getattr(block, "is_error", False):
+                                            lint_cache.mark_success(lint_type, cmd)
                         elif isinstance(message, ResultMessage):
                             log(
                                 "◐",
@@ -759,6 +783,7 @@ class MalaOrchestrator:
             ClaudeSDKClient,
             ResultMessage,
             TextBlock,
+            ToolResultBlock,
             ToolUseBlock,
         )
         from claude_agent_sdk.types import HookMatcher
@@ -893,6 +918,10 @@ class MalaOrchestrator:
                             # Initial query
                             await client.query(prompt)
 
+                            # Track pending lint commands for cache success marking
+                            # Maps tool_use_id -> (lint_type, command)
+                            pending_lint_commands: dict[str, tuple[str, str]] = {}
+
                             # Main loop - driven by lifecycle transitions
                             while not lifecycle.is_terminal:
                                 # Process messages from SDK
@@ -911,6 +940,37 @@ class MalaOrchestrator:
                                                     agent_id=issue_id,
                                                     arguments=block.input,
                                                 )
+                                                # Track lint commands for cache marking
+                                                if block.name.lower() == "bash":
+                                                    cmd = block.input.get("command", "")
+                                                    lint_type = _detect_lint_command(
+                                                        cmd
+                                                    )
+                                                    if lint_type:
+                                                        pending_lint_commands[
+                                                            block.id
+                                                        ] = (
+                                                            lint_type,
+                                                            cmd,
+                                                        )
+                                            elif isinstance(block, ToolResultBlock):
+                                                # Check for successful lint completion
+                                                tool_use_id = getattr(
+                                                    block, "tool_use_id", None
+                                                )
+                                                if tool_use_id in pending_lint_commands:
+                                                    lint_type, cmd = (
+                                                        pending_lint_commands.pop(
+                                                            tool_use_id
+                                                        )
+                                                    )
+                                                    # Mark success if not an error
+                                                    if not getattr(
+                                                        block, "is_error", False
+                                                    ):
+                                                        lint_cache.mark_success(
+                                                            lint_type, cmd
+                                                        )
 
                                     elif isinstance(message, ResultMessage):
                                         claude_session_id = message.session_id
@@ -1171,10 +1231,12 @@ class MalaOrchestrator:
                                                 agent_id=issue_id,
                                             )
                                         else:
+                                            # Count critical issues (P0 and P1)
                                             error_count = sum(
                                                 1
                                                 for i in review_result.issues
-                                                if i.severity == "error"
+                                                if i.priority is not None
+                                                and i.priority <= 1
                                             )
                                             log(
                                                 "↻",

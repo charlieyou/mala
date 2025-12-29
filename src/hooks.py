@@ -378,10 +378,12 @@ class FileReadCache:
                 return (False, "")
 
             # mtime/size match - verify with content hash
-            # Only compute hash now since we need it to detect content changes
+            # Always recompute hash to detect rare cases where content changes
+            # without affecting mtime/size (e.g., coarse timestamp resolution)
             content_hash = self._compute_hash(path)
             if cached.content_hash is None or content_hash != cached.content_hash:
                 # Content changed despite same mtime/size (rare but possible)
+                # Or no cached hash yet - update cache
                 self._cache[str(path)] = CachedFileInfo(
                     mtime_ns=mtime_ns,
                     size=size,
@@ -390,7 +392,7 @@ class FileReadCache:
                 )
                 return (False, "")
 
-            # File unchanged - block the redundant read
+            # Hash matches - file truly unchanged, block the redundant read
             cached.read_count += 1
             self._blocked_count += 1
             return (
