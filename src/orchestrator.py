@@ -60,6 +60,12 @@ from .pipeline.gate_runner import (
     GateRunnerConfig,
     PerIssueGateInput,
 )
+from .pipeline.review_runner import (
+    NoProgressInput,
+    ReviewInput,
+    ReviewRunner,
+    ReviewRunnerConfig,
+)
 from .quality_gate import QualityGate
 from .session_log_parser import FileSystemLogProvider
 from .tools.env import (
@@ -356,6 +362,19 @@ class MalaOrchestrator:
             gate_checker=self.quality_gate,
             repo_path=self.repo_path,
             config=gate_runner_config,
+        )
+
+        # ReviewRunner: Extracted review orchestration logic
+        # Note: capture_session_log depends on verbose mode, set per-issue
+        review_runner_config = ReviewRunnerConfig(
+            max_review_retries=self.max_review_retries,
+            thinking_mode=self.codex_thinking_mode,
+            capture_session_log=False,  # Set per-issue based on verbose
+        )
+        self.review_runner = ReviewRunner(
+            code_reviewer=self.code_reviewer,
+            config=review_runner_config,
+            gate_checker=self.quality_gate,
         )
 
     def _cleanup_agent_locks(self, agent_id: str) -> None:
@@ -1039,21 +1058,25 @@ class MalaOrchestrator:
         async def on_review_check(
             issue_id: str, issue_desc: str | None, baseline: str | None
         ) -> CodexReviewResult:
-            """Run Codex review via orchestrator."""
+            """Run Codex review via ReviewRunner."""
             current_head = await get_git_commit_async(self.repo_path)
-            result = await self.code_reviewer(
-                self.repo_path,
-                current_head,
-                max_retries=2,
+
+            # Update capture_session_log per-issue based on verbose mode
+            self.review_runner.config.capture_session_log = is_verbose_enabled()
+
+            review_input = ReviewInput(
+                issue_id=issue_id,
+                repo_path=self.repo_path,
+                commit_sha=current_head,
                 issue_description=issue_desc,
                 baseline_commit=baseline,
-                capture_session_log=is_verbose_enabled(),
-                thinking_mode=self.codex_thinking_mode,
             )
+            output = await self.review_runner.run_review(review_input)
+
             # Store codex review log path if captured
-            if result.session_log_path:
-                self.codex_review_log_paths[issue_id] = result.session_log_path
-            return result
+            if output.session_log_path:
+                self.codex_review_log_paths[issue_id] = output.session_log_path
+            return output.result
 
         def on_review_no_progress(
             log_path: Path,
@@ -1061,15 +1084,15 @@ class MalaOrchestrator:
             prev_commit: str | None,
             curr_commit: str | None,
         ) -> bool:
-            """Check for no-progress on review retry."""
-            return self.quality_gate.check_no_progress(
-                log_path,
-                log_offset,
-                prev_commit,
-                curr_commit,
+            """Check for no-progress on review retry via ReviewRunner."""
+            no_progress_input = NoProgressInput(
+                log_path=log_path,
+                log_offset=log_offset,
+                previous_commit_hash=prev_commit,
+                current_commit_hash=curr_commit,
                 spec=self.per_issue_spec,
-                check_validation_evidence=False,
             )
+            return self.review_runner.check_no_progress(no_progress_input)
 
         def get_log_path(session_id: str) -> Path:
             """Get log path and track it."""
