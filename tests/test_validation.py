@@ -6,6 +6,7 @@ without actually running commands or creating git worktrees.
 
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,6 +32,9 @@ from src.validation import (
 from src.validation.spec_runner import CommandFailure, SpecValidationRunner
 from src.validation.coverage import BaselineCoverageService
 from src.validation.worktree import WorktreeContext, WorktreeState
+
+if TYPE_CHECKING:
+    from src.validation.spec_executor import ExecutorConfig
 
 
 def mock_popen_success(
@@ -2010,3 +2014,372 @@ class TestBaselineCaptureOrder:
             # Failure message should mention both percentages
             assert "70.0%" in (result.coverage_result.failure_reason or "")
             assert "90.0%" in (result.coverage_result.failure_reason or "")
+
+
+class TestSpecCommandExecutor:
+    """Tests for SpecCommandExecutor class.
+
+    These tests verify the executor handles:
+    - Command execution via CommandRunner
+    - Lint cache skipping for cacheable commands
+    - Failure detection and early exit
+    - Step logging
+    """
+
+    @pytest.fixture
+    def tmp_path_with_logs(self, tmp_path: Path) -> Path:
+        """Create a tmp_path with a log directory."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        return log_dir
+
+    @pytest.fixture
+    def basic_config(self, tmp_path: Path) -> "ExecutorConfig":
+        """Create a basic executor config with lint cache disabled."""
+        from src.validation.spec_executor import ExecutorConfig
+
+        return ExecutorConfig(
+            enable_lint_cache=False,
+            repo_path=tmp_path,
+            step_timeout_seconds=None,
+        )
+
+    def test_executor_single_passing_command(
+        self, basic_config: "ExecutorConfig", tmp_path: Path, tmp_path_with_logs: Path
+    ) -> None:
+        """Test executor with a single passing command."""
+        from src.validation.spec_executor import (
+            ExecutorInput,
+            SpecCommandExecutor,
+        )
+
+        executor = SpecCommandExecutor(basic_config)
+
+        cmd = ValidationCommand(
+            name="echo test",
+            command=["echo", "hello"],
+            kind=CommandKind.TEST,
+        )
+
+        input = ExecutorInput(
+            commands=[cmd],
+            cwd=tmp_path,
+            env={},
+            log_dir=tmp_path_with_logs,
+        )
+
+        mock_proc = mock_popen_success(stdout="hello\n", stderr="", returncode=0)
+        with patch("src.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+            output = executor.execute(input)
+
+        assert not output.failed
+        assert len(output.steps) == 1
+        assert output.steps[0].name == "echo test"
+        assert output.steps[0].ok is True
+
+    def test_executor_failing_command_sets_failure_info(
+        self, basic_config: "ExecutorConfig", tmp_path: Path, tmp_path_with_logs: Path
+    ) -> None:
+        """Test executor sets failure info when command fails."""
+        from src.validation.spec_executor import (
+            ExecutorInput,
+            SpecCommandExecutor,
+        )
+
+        executor = SpecCommandExecutor(basic_config)
+
+        cmd = ValidationCommand(
+            name="failing cmd",
+            command=["false"],
+            kind=CommandKind.LINT,
+        )
+
+        input = ExecutorInput(
+            commands=[cmd],
+            cwd=tmp_path,
+            env={},
+            log_dir=tmp_path_with_logs,
+        )
+
+        mock_proc = mock_popen_success(stdout="", stderr="error occurred", returncode=1)
+        with patch("src.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+            output = executor.execute(input)
+
+        assert output.failed is True
+        assert len(output.steps) == 1
+        assert output.steps[0].ok is False
+        assert output.failure_reason is not None
+        assert "failing cmd failed" in output.failure_reason
+
+    def test_executor_allow_fail_continues(
+        self, basic_config: "ExecutorConfig", tmp_path: Path, tmp_path_with_logs: Path
+    ) -> None:
+        """Test executor continues execution when allow_fail=True."""
+        from src.validation.spec_executor import (
+            ExecutorInput,
+            SpecCommandExecutor,
+        )
+
+        executor = SpecCommandExecutor(basic_config)
+
+        commands = [
+            ValidationCommand(
+                name="pass1",
+                command=["echo", "1"],
+                kind=CommandKind.FORMAT,
+            ),
+            ValidationCommand(
+                name="fail2",
+                command=["false"],
+                kind=CommandKind.LINT,
+                allow_fail=True,  # Allow this to fail
+            ),
+            ValidationCommand(
+                name="pass3",
+                command=["echo", "3"],
+                kind=CommandKind.TEST,
+            ),
+        ]
+
+        input = ExecutorInput(
+            commands=commands,
+            cwd=tmp_path,
+            env={},
+            log_dir=tmp_path_with_logs,
+        )
+
+        call_count = 0
+
+        def mock_popen_calls(cmd: list[str], **kwargs: object) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            mock_proc = MagicMock()
+            mock_proc.pid = 12345
+            if call_count == 2:
+                mock_proc.communicate.return_value = ("", "lint warning")
+                mock_proc.returncode = 1
+            else:
+                mock_proc.communicate.return_value = ("ok", "")
+                mock_proc.returncode = 0
+            return mock_proc
+
+        with patch(
+            "src.tools.command_runner.subprocess.Popen",
+            side_effect=mock_popen_calls,
+        ):
+            output = executor.execute(input)
+
+        # Should not be marked as failed since allow_fail=True
+        assert not output.failed
+        assert len(output.steps) == 3
+        assert output.steps[1].ok is False  # But step 2 did fail
+
+    def test_executor_stops_on_failure_without_allow_fail(
+        self, basic_config: "ExecutorConfig", tmp_path: Path, tmp_path_with_logs: Path
+    ) -> None:
+        """Test executor stops on first failure when allow_fail=False."""
+        from src.validation.spec_executor import (
+            ExecutorInput,
+            SpecCommandExecutor,
+        )
+
+        executor = SpecCommandExecutor(basic_config)
+
+        commands = [
+            ValidationCommand(
+                name="pass1",
+                command=["echo", "1"],
+                kind=CommandKind.FORMAT,
+            ),
+            ValidationCommand(
+                name="fail2",
+                command=["false"],
+                kind=CommandKind.LINT,
+                allow_fail=False,
+            ),
+            ValidationCommand(
+                name="pass3",
+                command=["echo", "3"],
+                kind=CommandKind.TEST,
+            ),
+        ]
+
+        input = ExecutorInput(
+            commands=commands,
+            cwd=tmp_path,
+            env={},
+            log_dir=tmp_path_with_logs,
+        )
+
+        call_count = 0
+
+        def mock_popen_calls(cmd: list[str], **kwargs: object) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            mock_proc = MagicMock()
+            mock_proc.pid = 12345
+            if call_count == 2:
+                mock_proc.communicate.return_value = ("", "error")
+                mock_proc.returncode = 1
+            else:
+                mock_proc.communicate.return_value = ("ok", "")
+                mock_proc.returncode = 0
+            return mock_proc
+
+        with patch(
+            "src.tools.command_runner.subprocess.Popen",
+            side_effect=mock_popen_calls,
+        ):
+            output = executor.execute(input)
+
+        assert output.failed is True
+        assert len(output.steps) == 2  # Stopped after fail2
+        assert output.failure_reason is not None
+        assert "fail2 failed" in output.failure_reason
+
+    def test_executor_writes_step_logs(
+        self, basic_config: "ExecutorConfig", tmp_path: Path, tmp_path_with_logs: Path
+    ) -> None:
+        """Test executor writes stdout/stderr to log files."""
+        from src.validation.spec_executor import (
+            ExecutorInput,
+            SpecCommandExecutor,
+        )
+
+        executor = SpecCommandExecutor(basic_config)
+
+        cmd = ValidationCommand(
+            name="test cmd",
+            command=["echo", "test"],
+            kind=CommandKind.TEST,
+        )
+
+        input = ExecutorInput(
+            commands=[cmd],
+            cwd=tmp_path,
+            env={},
+            log_dir=tmp_path_with_logs,
+        )
+
+        mock_proc = mock_popen_success(
+            stdout="stdout content\n", stderr="stderr content\n", returncode=0
+        )
+        with patch("src.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+            executor.execute(input)
+
+        # Check log files were created
+        stdout_log = tmp_path_with_logs / "test_cmd.stdout.log"
+        stderr_log = tmp_path_with_logs / "test_cmd.stderr.log"
+        assert stdout_log.exists()
+        assert stderr_log.exists()
+        assert "stdout content" in stdout_log.read_text()
+        assert "stderr content" in stderr_log.read_text()
+
+    def test_executor_lint_cache_skips_cached_commands(
+        self, tmp_path: Path, tmp_path_with_logs: Path
+    ) -> None:
+        """Test executor skips lint commands that are cached.
+
+        This test verifies that when lint cache is enabled and the cache
+        indicates a command should be skipped, the executor creates a
+        synthetic skipped step result instead of running the command.
+
+        We mock LintCache.should_skip to control the skip behavior directly,
+        since the actual git-based cache logic is tested separately in
+        test_lint_cache.py.
+        """
+        from src.validation.spec_executor import (
+            ExecutorConfig,
+            ExecutorInput,
+            SpecCommandExecutor,
+        )
+
+        config = ExecutorConfig(
+            enable_lint_cache=True,
+            repo_path=tmp_path,
+            step_timeout_seconds=None,
+        )
+
+        executor = SpecCommandExecutor(config)
+
+        cmd = ValidationCommand(
+            name="ruff check",
+            command=["ruff", "check", "."],
+            kind=CommandKind.LINT,
+        )
+
+        input = ExecutorInput(
+            commands=[cmd],
+            cwd=tmp_path,
+            env={},
+            log_dir=tmp_path_with_logs,
+        )
+
+        # Mock should_skip to return True (simulating cache hit)
+        popen_called = False
+
+        def mock_popen_track(*args: object, **kwargs: object) -> MagicMock:
+            nonlocal popen_called
+            popen_called = True
+            return mock_popen_success(stdout="ok", stderr="", returncode=0)
+
+        with (
+            patch(
+                "src.validation.spec_executor.LintCache.should_skip", return_value=True
+            ),
+            patch(
+                "src.tools.command_runner.subprocess.Popen",
+                side_effect=mock_popen_track,
+            ),
+        ):
+            output = executor.execute(input)
+
+        # Should have skipped via cache
+        assert len(output.steps) == 1
+        assert output.steps[0].ok is True
+        assert "Skipped" in output.steps[0].stdout_tail
+        # Popen should NOT have been called since command was skipped
+        assert not popen_called
+
+    def test_executor_wraps_commands_with_mutex(
+        self, basic_config: "ExecutorConfig", tmp_path: Path, tmp_path_with_logs: Path
+    ) -> None:
+        """Test executor wraps commands with test mutex when requested."""
+        from src.validation.spec_executor import (
+            ExecutorInput,
+            SpecCommandExecutor,
+        )
+
+        executor = SpecCommandExecutor(basic_config)
+
+        cmd = ValidationCommand(
+            name="pytest",
+            command=["pytest", "-v"],
+            kind=CommandKind.TEST,
+            use_test_mutex=True,
+        )
+
+        input = ExecutorInput(
+            commands=[cmd],
+            cwd=tmp_path,
+            env={},
+            log_dir=tmp_path_with_logs,
+        )
+
+        captured_cmd: list[str] = []
+
+        def capture_popen(cmd: list[str], **kwargs: object) -> MagicMock:
+            captured_cmd.extend(cmd)
+            mock_proc = MagicMock()
+            mock_proc.communicate.return_value = ("ok", "")
+            mock_proc.returncode = 0
+            mock_proc.pid = 12345
+            return mock_proc
+
+        with patch(
+            "src.tools.command_runner.subprocess.Popen", side_effect=capture_popen
+        ):
+            executor.execute(input)
+
+        assert "test-mutex.sh" in captured_cmd[0]
+        assert "pytest" in captured_cmd

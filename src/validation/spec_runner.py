@@ -11,9 +11,7 @@ import json
 import os
 from typing import TYPE_CHECKING
 
-from ..logging.console import Colors, log
-from ..tools.env import SCRIPTS_DIR, get_lock_dir
-from src.tools.command_runner import CommandRunner
+from ..tools.env import get_lock_dir
 from .coverage import (
     CoverageResult,
     CoverageStatus,
@@ -21,9 +19,12 @@ from .coverage import (
 )
 from .e2e import E2EConfig as E2ERunnerConfig
 from .e2e import E2ERunner, E2EStatus
-from .helpers import format_step_output
-from .lint_cache import LintCache
-from .spec import CommandKind, ValidationArtifacts
+from .spec import ValidationArtifacts
+from .spec_executor import (
+    ExecutorConfig,
+    ExecutorInput,
+    SpecCommandExecutor,
+)
 from .spec_workspace import (
     SetupError,
     cleanup_workspace,
@@ -34,15 +35,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from .e2e import E2EResult
+    from .result import ValidationStepResult
     from .spec import (
         CoverageConfig,
         E2EConfig,
-        ValidationCommand,
         ValidationContext,
         ValidationSpec,
     )
 
-from .result import ValidationResult, ValidationStepResult
+from .result import ValidationResult
 
 
 class CommandFailure(Exception):
@@ -255,6 +256,9 @@ class SpecValidationRunner:
     ) -> list[ValidationStepResult]:
         """Execute all commands in the spec.
 
+        Delegates to SpecCommandExecutor for command execution and lint-cache
+        handling. The executor encapsulates all execution logic.
+
         Args:
             spec: Validation spec with commands.
             cwd: Working directory for commands.
@@ -267,93 +271,32 @@ class SpecValidationRunner:
         Raises:
             CommandFailure: If a command fails (and allow_fail is False).
         """
-        steps: list[ValidationStepResult] = []
+        # Configure executor
+        executor_config = ExecutorConfig(
+            enable_lint_cache=self.enable_lint_cache,
+            repo_path=self.repo_path,
+            step_timeout_seconds=self.step_timeout_seconds,
+        )
+        executor = SpecCommandExecutor(executor_config)
 
-        # Initialize lint cache for cacheable commands (only if enabled)
-        lint_cache: LintCache | None = None
-        cacheable_kinds = {CommandKind.LINT, CommandKind.FORMAT, CommandKind.TYPECHECK}
-        if self.enable_lint_cache:
-            lint_cache = LintCache(
-                cache_dir=self.repo_path / ".mala-cache", repo_path=cwd
+        # Build executor input
+        executor_input = ExecutorInput(
+            commands=spec.commands,
+            cwd=cwd,
+            env=env,
+            log_dir=log_dir,
+        )
+
+        # Execute commands
+        output = executor.execute(executor_input)
+
+        # Raise CommandFailure if execution failed
+        if output.failed:
+            raise CommandFailure(
+                output.steps, output.failure_reason or "Command failed"
             )
 
-        for i, cmd in enumerate(spec.commands):
-            # Check if this command can be skipped via cache
-            if (
-                lint_cache is not None
-                and cmd.kind in cacheable_kinds
-                and lint_cache.should_skip(cmd.name)
-            ):
-                log(
-                    "○",
-                    f"Skipping {cmd.name} (no changes since last check)",
-                    Colors.CYAN,
-                )
-                # Create a synthetic step result for skipped commands
-                step = ValidationStepResult(
-                    name=cmd.name,
-                    command=cmd.command,
-                    ok=True,
-                    returncode=0,
-                    stdout_tail="Skipped: no changes since last check",
-                    stderr_tail="",
-                    duration_seconds=0.0,
-                )
-                steps.append(step)
-                continue
-
-            # Log command start for debugging
-            start_marker = log_dir / f"{i:02d}_{cmd.name.replace(' ', '_')}.started"
-            start_marker.write_text(f"command: {cmd.command}\ncwd: {cwd}\n")
-
-            # Log validation step start to terminal
-            log(
-                "▸",
-                f"Running {cmd.name}...",
-                Colors.CYAN,
-            )
-
-            try:
-                step = self._run_spec_command(cmd, cwd, env, log_dir)
-            except Exception as e:
-                # Log unexpected exceptions during command execution
-                error_path = log_dir / f"{i:02d}_{cmd.name.replace(' ', '_')}.error"
-                error_path.write_text(f"Exception: {type(e).__name__}: {e}\n")
-                raise
-
-            steps.append(step)
-
-            # Log output to files
-            self._write_step_logs(step, log_dir)
-
-            # Log step result to terminal
-            if step.ok:
-                duration_str = (
-                    f" ({step.duration_seconds:.1f}s)" if step.duration_seconds else ""
-                )
-                log(
-                    "✓",
-                    f"{cmd.name} passed{duration_str}",
-                    Colors.GREEN,
-                )
-                # Mark command as passed in cache for cacheable commands
-                if lint_cache is not None and cmd.kind in cacheable_kinds:
-                    lint_cache.mark_passed(cmd.name)
-            else:
-                log(
-                    "✗",
-                    f"{cmd.name} failed (exit {step.returncode})",
-                    Colors.RED,
-                )
-
-            if not step.ok and not cmd.allow_fail:
-                reason = f"{cmd.name} failed (exit {step.returncode})"
-                details = format_step_output(step.stdout_tail, step.stderr_tail)
-                if details:
-                    reason = f"{reason}: {details}"
-                raise CommandFailure(steps, reason)
-
-        return steps
+        return output.steps
 
     def _check_coverage_if_enabled(
         self,
@@ -463,63 +406,6 @@ class SpecValidationRunner:
             "LOCK_DIR": str(get_lock_dir()),
             "AGENT_ID": f"validator-{context.issue_id or run_id}",
         }
-
-    def _run_spec_command(
-        self,
-        cmd: ValidationCommand,
-        cwd: Path,
-        env: dict[str, str],
-        log_dir: Path,
-    ) -> ValidationStepResult:
-        """Run a single ValidationCommand.
-
-        Args:
-            cmd: The command to run.
-            cwd: Working directory.
-            env: Environment variables.
-            log_dir: Directory for logs.
-
-        Returns:
-            ValidationStepResult with execution details.
-        """
-        # Wrap with mutex if requested
-        full_cmd = (
-            self._wrap_with_mutex(cmd.command) if cmd.use_test_mutex else cmd.command
-        )
-
-        runner = CommandRunner(cwd=cwd, timeout_seconds=self.step_timeout_seconds)
-        result = runner.run(full_cmd, env=env)
-        return ValidationStepResult(
-            name=cmd.name,
-            command=cmd.command,
-            ok=result.ok,
-            returncode=result.returncode,
-            stdout_tail=result.stdout_tail(),
-            stderr_tail=result.stderr_tail(),
-            duration_seconds=result.duration_seconds,
-        )
-
-    def _wrap_with_mutex(self, cmd: list[str]) -> list[str]:
-        """Wrap a command with the test mutex script."""
-        return [str(SCRIPTS_DIR / "test-mutex.sh"), *cmd]
-
-    def _write_step_logs(self, step: ValidationStepResult, log_dir: Path) -> None:
-        """Write step stdout/stderr to log files.
-
-        Args:
-            step: The step result to log.
-            log_dir: Directory to write logs to.
-        """
-        # Sanitize step name for filename
-        safe_name = step.name.replace(" ", "_").replace("/", "_")
-
-        if step.stdout_tail:
-            stdout_path = log_dir / f"{safe_name}.stdout.log"
-            stdout_path.write_text(step.stdout_tail)
-
-        if step.stderr_tail:
-            stderr_path = log_dir / f"{safe_name}.stderr.log"
-            stderr_path.write_text(step.stderr_tail)
 
     def _check_coverage(
         self,
