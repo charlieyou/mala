@@ -1007,7 +1007,8 @@ class MalaOrchestrator:
                                 # Handle RUN_REVIEW effect
                                 if result.effect == Effect.RUN_REVIEW:
                                     # Check for no-progress on review retries BEFORE running review
-                                    # (same commit, no working tree changes, no new validation evidence)
+                                    # For review retries, only check commit and working tree changes
+                                    # (not validation evidence - that's for gate retries)
                                     # This prevents burning a review attempt when agent made no progress
                                     no_progress = False
                                     if lifecycle_ctx.retry_state.review_attempt > 1:
@@ -1023,20 +1024,17 @@ class MalaOrchestrator:
                                             lifecycle_ctx.retry_state.previous_commit_hash,
                                             current_commit,
                                             spec=self.per_issue_spec,
+                                            check_validation_evidence=False,
                                         )
                                         if no_progress:
                                             # Fail fast without running review
                                             log(
                                                 "✗",
-                                                "Review skipped: No progress (commit unchanged, no working tree changes, no new validation evidence)",
+                                                "Review skipped: No progress (commit unchanged, no working tree changes)",
                                                 Colors.RED,
                                                 agent_id=issue_id,
                                             )
                                             # Create a synthetic failed review result
-                                            from src.codex_review import (
-                                                CodexReviewResult,
-                                            )
-
                                             synthetic_result = CodexReviewResult(
                                                 passed=False,
                                                 issues=[],

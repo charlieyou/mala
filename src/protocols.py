@@ -275,12 +275,14 @@ class GateChecker(Protocol):
         previous_commit_hash: str | None,
         current_commit_hash: str | None,
         spec: ValidationSpec | None = None,
+        check_validation_evidence: bool = True,
     ) -> bool:
         """Check if no progress was made since the last attempt.
 
-        No progress is detected when:
+        No progress is detected when ALL of these are true:
         - The commit hash hasn't changed (or both are None)
-        - No new validation evidence was found after the log offset
+        - No uncommitted changes in the working tree
+        - (Optionally) No new validation evidence was found after the log offset
 
         Args:
             log_path: Path to the JSONL log file from agent session.
@@ -288,6 +290,9 @@ class GateChecker(Protocol):
             previous_commit_hash: Commit hash from the previous attempt.
             current_commit_hash: Commit hash from this attempt.
             spec: Optional ValidationSpec for spec-driven evidence detection.
+            check_validation_evidence: If True (default), also check for new validation
+                evidence. Set to False for review retries where only commit/working-tree
+                changes should gate progress.
 
         Returns:
             True if no progress was made, False if progress was detected.

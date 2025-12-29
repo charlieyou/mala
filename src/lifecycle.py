@@ -462,7 +462,7 @@ class ImplementerLifecycle:
 
         # No retries left - fail with review error details
         if no_progress:
-            ctx.final_result = "Codex review failed: No progress (commit unchanged, no new validation evidence)"
+            ctx.final_result = "Codex review failed: No progress (commit unchanged, no working tree changes)"
             failure_message = "Review failed, no progress detected"
         elif review_result.parse_error:
             ctx.final_result = f"Codex review failed: {review_result.parse_error}"

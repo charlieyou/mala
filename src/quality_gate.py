@@ -400,13 +400,14 @@ class QualityGate:
         previous_commit_hash: str | None,
         current_commit_hash: str | None,
         spec: ValidationSpec | None = None,
+        check_validation_evidence: bool = True,
     ) -> bool:
         """Check if no progress was made since the last attempt.
 
         No progress is detected when ALL of these are true:
         - The commit hash hasn't changed (or both are None)
-        - No new validation evidence was found after the log offset
         - No uncommitted changes in the working tree
+        - (Optionally) No new validation evidence was found after the log offset
 
         Args:
             log_path: Path to the JSONL log file from agent session.
@@ -415,6 +416,9 @@ class QualityGate:
             current_commit_hash: Commit hash from this attempt (None if no commit).
             spec: Optional ValidationSpec for spec-driven evidence detection.
                 If not provided, builds a default per-issue spec.
+            check_validation_evidence: If True (default), also check for new validation
+                evidence. Set to False for review retries where only commit/working-tree
+                changes should gate progress.
 
         Returns:
             True if no progress was made, False if progress was detected.
@@ -433,6 +437,11 @@ class QualityGate:
         # Check for uncommitted working tree changes
         if self._has_working_tree_changes():
             return False
+
+        # Skip validation evidence check if not requested (for review retries)
+        if not check_validation_evidence:
+            # No commit change and no working tree changes = no progress
+            return True
 
         # Build default spec if not provided
         # Note: We don't pass repo_path here to ensure Python validation commands
