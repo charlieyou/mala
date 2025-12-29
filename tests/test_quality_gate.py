@@ -7,7 +7,7 @@ Tests for:
 
 import json
 from pathlib import Path
-from src.validation.command_runner import CommandResult
+from src.tools.command_runner import CommandResult
 from src.validation.spec import ValidationScope, build_validation_spec
 from unittest.mock import patch
 

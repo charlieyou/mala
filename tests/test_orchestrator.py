@@ -28,7 +28,7 @@ from src.orchestrator import (
     _get_implementer_prompt,
     _get_review_followup_prompt,
 )
-from src.validation.command_runner import CommandResult
+from src.tools.command_runner import CommandResult
 
 
 @pytest.fixture

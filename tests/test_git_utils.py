@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from src import git_utils
-from src.validation.command_runner import CommandResult
+from src.tools.command_runner import CommandResult
 
 
 @pytest.mark.asyncio

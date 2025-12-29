@@ -24,7 +24,7 @@ from src.codex_review import (
     format_review_issues,
     run_codex_review,
 )
-from src.validation.command_runner import CommandResult
+from src.tools.command_runner import CommandResult
 
 
 class TestExtractJson:
