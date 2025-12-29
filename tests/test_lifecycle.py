@@ -389,7 +389,6 @@ class TestReviewResult:
 
     def test_review_failed_with_fatal_error_fails_immediately(self) -> None:
         """Fatal review errors should fail immediately without retries."""
-        config = LifecycleConfig(max_review_retries=3)
         lifecycle, ctx = self._setup_for_review()
 
         review_result = CodexReviewResult(

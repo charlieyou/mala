@@ -329,11 +329,14 @@ class QualityGate:
         return last_match
 
     # Map CommandKind to human-readable names for failure reporting
+    # All CommandKind values must be mapped to ensure failure tracking works
     KIND_TO_NAME: ClassVar[dict[CommandKind, str]] = {
+        CommandKind.SETUP: "uv sync",
         CommandKind.TEST: "pytest",
         CommandKind.LINT: "ruff check",
         CommandKind.FORMAT: "ruff format",
         CommandKind.TYPECHECK: "ty check",
+        CommandKind.E2E: "e2e",
     }
 
     def _build_spec_patterns(
