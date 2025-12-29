@@ -11,6 +11,10 @@ which is critical for proper Braintrust integration setup.
 
 import subprocess
 import sys
+from pathlib import Path
+
+# Compute repo root dynamically (tests/ is one level below repo root)
+REPO_ROOT = Path(__file__).parent.parent
 
 
 def test_import_src_does_not_load_sdk() -> None:
@@ -33,7 +37,7 @@ print('PASS')
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        cwd="/home/cyou/mala",
+        cwd=str(REPO_ROOT),
     )
     assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
     assert "PASS" in result.stdout
@@ -58,7 +62,7 @@ print('PASS')
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        cwd="/home/cyou/mala",
+        cwd=str(REPO_ROOT),
     )
     assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
     assert "PASS" in result.stdout
@@ -83,7 +87,7 @@ print('PASS')
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        cwd="/home/cyou/mala",
+        cwd=str(REPO_ROOT),
     )
     assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
     assert "PASS" in result.stdout
@@ -108,7 +112,7 @@ print('PASS')
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        cwd="/home/cyou/mala",
+        cwd=str(REPO_ROOT),
     )
     assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
     assert "PASS" in result.stdout
@@ -146,7 +150,7 @@ print('PASS')
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        cwd="/home/cyou/mala",
+        cwd=str(REPO_ROOT),
     )
     assert result.returncode == 0, f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
     assert "PASS" in result.stdout
