@@ -26,7 +26,7 @@ uv run pytest --reruns 2                   # Auto-retry flaky tests (2 retries)
 uv run pytest -m integration -n auto --reruns 2   # Parallel + auto-retry
 ```
 
-- **Coverage threshold**: 85% (enforced via `--cov-fail-under=85`)
+- **Coverage threshold**: 85% (enforced at quality gate)
 - **Parallel execution**: Use `-n auto` for parallel test runs (pytest-xdist)
 - **Flaky test retries**: Use `--reruns N` to auto-retry failed tests (pytest-rerunfailures)
 - **Unit/Integration/E2E**: Use markers `unit`, `integration`, `e2e` to select categories
