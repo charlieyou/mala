@@ -136,10 +136,27 @@ class TestMakeLockEnforcementHook:
         assert result == {}  # Allowed
 
     @pytest.mark.asyncio
+    async def test_handles_edit_tool(self, tmp_path: Path) -> None:
+        """Edit tool should check lock ownership when Morph is disabled."""
+        test_file = str(tmp_path / "test.py")
+        hook_input = make_hook_input(
+            "Edit",
+            {"file_path": test_file, "old_string": "a", "new_string": "b"},
+        )
+        agent_id = "edit-agent"
+        hook = make_lock_enforcement_hook(agent_id)
+        context = make_context(agent_id)
+
+        with patch("src.hooks.get_lock_holder", return_value=agent_id):
+            result = await hook(hook_input, None, context)
+
+        assert result == {}  # Allowed
+
+    @pytest.mark.asyncio
     async def test_file_write_tools_constant_contains_expected_tools(self) -> None:
         """FILE_WRITE_TOOLS should contain expected write tools."""
         # These are the tools we expect to be file-write tools
-        expected_tools = {"Write", "NotebookEdit", "mcp__morphllm__edit_file"}
+        expected_tools = {"Write", "Edit", "NotebookEdit", "mcp__morphllm__edit_file"}
         assert expected_tools.issubset(FILE_WRITE_TOOLS)
 
     @pytest.mark.asyncio

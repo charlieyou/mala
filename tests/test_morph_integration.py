@@ -366,8 +366,8 @@ class TestMorphEnabledGating:
         assert "morphllm" in config
 
     def test_edit_blocked_when_morph_disabled(self) -> None:
-        """Edit should remain blocked when morph_enabled=False for lock safety."""
-        from src.orchestrator import MalaOrchestrator
+        """Edit and Grep should be allowed when morph_enabled=False."""
+        from src.orchestrator import MalaOrchestrator, _get_disallowed_tools
 
         # Create orchestrator with morph disabled
         orchestrator = MalaOrchestrator(
@@ -375,11 +375,9 @@ class TestMorphEnabledGating:
             morph_enabled=False,
         )
 
-        # Edit should still be blocked even when morph is disabled
-        # because lock enforcement doesn't cover the Edit tool
         assert orchestrator.morph_enabled is False
-        # The disallowed_tools will be set when run_implementer creates options,
-        # but we can verify the morph_enabled flag is stored correctly
+        # When morph is disabled, built-in tools should be allowed
+        assert _get_disallowed_tools(orchestrator.morph_enabled) == []
 
     def test_edit_blocked_when_morph_enabled(self) -> None:
         """Edit should be blocked when morph_enabled=True (normal case)."""

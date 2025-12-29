@@ -209,6 +209,11 @@ def get_mcp_servers(
     }
 
 
+def _get_disallowed_tools(morph_enabled: bool) -> list[str]:
+    """Return disallowed tools list based on Morph enablement."""
+    return MORPH_DISALLOWED_TOOLS if morph_enabled else []
+
+
 @dataclass
 class IssueResult:
     """Result from a single issue implementation."""
@@ -296,6 +301,8 @@ class MalaOrchestrator:
         self.agent_ids: dict[str, str] = {}
         self.completed: list[IssueResult] = []
         self.failed_issues: set[str] = set()
+        self.abort_run: bool = False
+        self.abort_reason: str | None = None
 
         # Track session log paths for quality gate (issue_id -> log_path)
         self.session_log_paths: dict[str, Path] = {}
@@ -364,6 +371,14 @@ class MalaOrchestrator:
                 f"Cleaned {cleaned} locks for {agent_id[:8]}",
                 Colors.MUTED,
             )
+
+    def _request_abort(self, reason: str) -> None:
+        """Signal that the current run should stop due to a fatal error."""
+        if self.abort_run:
+            return
+        self.abort_run = True
+        self.abort_reason = reason
+        log("✗", f"Fatal error: {reason}. Aborting run.", Colors.RED)
 
     def _run_quality_gate_sync(
         self,
@@ -684,7 +699,7 @@ class MalaOrchestrator:
                 morph_api_key=self._config.morph_api_key,
                 morph_enabled=self.morph_enabled,
             ),
-            disallowed_tools=MORPH_DISALLOWED_TOOLS if self.morph_enabled else ["Edit"],
+            disallowed_tools=_get_disallowed_tools(self.morph_enabled),
             env=agent_env,
             hooks={
                 "PreToolUse": [
@@ -755,6 +770,195 @@ class MalaOrchestrator:
             return False
         finally:
             self._cleanup_agent_locks(agent_id)
+
+    async def _finalize_issue_result(
+        self,
+        issue_id: str,
+        result: IssueResult,
+        run_metadata: RunMetadata,
+    ) -> None:
+        """Record an issue result, update metadata, and emit logs."""
+        quality_gate_result: QualityGateResult | None = None
+        validation_result: MetaValidationResult | None = None
+        log_path = self.session_log_paths.get(issue_id)
+
+        if result.success and log_path and log_path.exists():
+            # Use cached per-issue validation spec
+            assert self.per_issue_spec is not None
+            spec = self.per_issue_spec
+            # Parse final evidence for metadata (full session) using spec-driven parsing
+            evidence = self.quality_gate.parse_validation_evidence_with_spec(
+                log_path, spec
+            )
+            commit_result = self.quality_gate.check_commit_exists(issue_id)
+            quality_gate_result = QualityGateResult(
+                passed=True,
+                evidence={
+                    "pytest_ran": evidence.pytest_ran,
+                    "ruff_check_ran": evidence.ruff_check_ran,
+                    "ruff_format_ran": evidence.ruff_format_ran,
+                    "ty_check_ran": evidence.ty_check_ran,
+                    "commit_found": commit_result.exists,
+                },
+                failure_reasons=[],
+            )
+
+            # Run SpecValidationRunner.run_spec after commit detection
+            if commit_result.exists and commit_result.commit_hash:
+                try:
+                    # Reuse spec built above
+                    context = ValidationContext(
+                        issue_id=issue_id,
+                        repo_path=self.repo_path,
+                        commit_hash=commit_result.commit_hash,
+                        changed_files=[],  # Not needed for per-issue
+                        scope=ValidationScope.PER_ISSUE,
+                        log_path=log_path,
+                    )
+                    runner = SpecValidationRunner(self.repo_path)
+                    runner_result = await runner.run_spec(spec, context)
+                    # Convert runner result to metadata result
+                    validation_result = MetaValidationResult(
+                        passed=runner_result.passed,
+                        commands_run=[s.name for s in runner_result.steps],
+                        commands_failed=[
+                            s.name for s in runner_result.steps if not s.ok
+                        ],
+                        artifacts=runner_result.artifacts,
+                        coverage_percent=runner_result.coverage_result.percent
+                        if runner_result.coverage_result
+                        else None,
+                    )
+                    log(
+                        "◐",
+                        f"Validation: {validation_result.passed}",
+                        Colors.CYAN if validation_result.passed else Colors.YELLOW,
+                        agent_id=issue_id,
+                    )
+                except Exception as e:
+                    log(
+                        "⚠",
+                        f"Validation runner error: {e}",
+                        Colors.YELLOW,
+                        agent_id=issue_id,
+                    )
+                    # Still populate a failed validation result
+                    validation_result = MetaValidationResult(
+                        passed=False,
+                        commands_run=[],
+                        commands_failed=[],
+                    )
+
+            # Gate passed - close the issue
+            if await self.beads.close_async(issue_id):
+                log(
+                    "◐",
+                    "Closed issue",
+                    Colors.MUTED,
+                    agent_id=issue_id,
+                )
+                # Check if this closes any parent epics
+                if await self.beads.close_eligible_epics_async():
+                    log(
+                        "◐",
+                        "Auto-closed completed epic(s)",
+                        Colors.MUTED,
+                        agent_id=issue_id,
+                    )
+
+        elif not result.success and log_path and log_path.exists():
+            # Failed run - record evidence for metadata using cached spec
+            assert self.per_issue_spec is not None
+            spec = self.per_issue_spec
+            evidence = self.quality_gate.parse_validation_evidence_with_spec(
+                log_path, spec
+            )
+            commit_result = self.quality_gate.check_commit_exists(issue_id)
+            # Extract failure reasons from result summary
+            failure_reasons = []
+            if "Quality gate failed:" in result.summary:
+                reasons_part = result.summary.replace("Quality gate failed: ", "")
+                failure_reasons = [r.strip() for r in reasons_part.split(";")]
+            quality_gate_result = QualityGateResult(
+                passed=False,
+                evidence={
+                    "pytest_ran": evidence.pytest_ran,
+                    "ruff_check_ran": evidence.ruff_check_ran,
+                    "ruff_format_ran": evidence.ruff_format_ran,
+                    "ty_check_ran": evidence.ty_check_ran,
+                    "commit_found": commit_result.exists,
+                },
+                failure_reasons=failure_reasons,
+            )
+
+        self.completed.append(result)
+        self.active_tasks.pop(issue_id, None)
+
+        # Record to run metadata
+        issue_run = IssueRun(
+            issue_id=result.issue_id,
+            agent_id=result.agent_id,
+            status="success" if result.success else "failed",
+            duration_seconds=result.duration_seconds,
+            session_id=result.session_id,
+            log_path=str(log_path) if log_path else None,
+            quality_gate=quality_gate_result,
+            error=result.summary if not result.success else None,
+            gate_attempts=result.gate_attempts,
+            review_attempts=result.review_attempts,
+            validation=validation_result,
+            resolution=result.resolution,
+            codex_review_log_path=self.codex_review_log_paths.get(issue_id),
+        )
+        run_metadata.record_issue(issue_run)
+
+        # Pop log paths after recording
+        self.session_log_paths.pop(issue_id, None)
+        self.codex_review_log_paths.pop(issue_id, None)
+
+        duration_str = f"{result.duration_seconds:.0f}s"
+        if result.success:
+            summary = truncate_text(result.summary, 50)
+            log(
+                "✓",
+                f"({duration_str}): {summary}",
+                Colors.GREEN,
+                agent_id=issue_id,
+            )
+        else:
+            log(
+                "✗",
+                f"({duration_str}): {result.summary}",
+                Colors.RED,
+                agent_id=issue_id,
+            )
+            self.failed_issues.add(issue_id)
+            # Mark needs-followup with log path
+            await self.beads.mark_needs_followup_async(
+                issue_id, result.summary, log_path=log_path
+            )
+
+    async def _abort_active_tasks(self, run_metadata: RunMetadata) -> None:
+        """Cancel active tasks and mark them as failed."""
+        if not self.active_tasks:
+            return
+        reason = self.abort_reason or "Unrecoverable error"
+        log(
+            "✗",
+            f"Aborting {len(self.active_tasks)} active task(s): {reason}",
+            Colors.RED,
+        )
+        for task in self.active_tasks.values():
+            task.cancel()
+        # Record each remaining issue as aborted
+        for issue_id in list(self.active_tasks.keys()):
+            result = IssueResult(
+                issue_id=issue_id,
+                agent_id=self.agent_ids.get(issue_id, "unknown"),
+                success=False,
+                summary=f"Aborted due to unrecoverable error: {reason}",
+            )
+            await self._finalize_issue_result(issue_id, result, run_metadata)
 
     async def run_implementer(self, issue_id: str) -> IssueResult:
         """Run implementer agent for a single issue with gate retry support.
@@ -858,9 +1062,9 @@ class MalaOrchestrator:
                 morph_api_key=self._config.morph_api_key,
                 morph_enabled=self.morph_enabled,
             ),
-            # Always block Edit since lock enforcement doesn't cover it.
-            # When morph enabled, also block Grep (replaced by warpgrep).
-            disallowed_tools=MORPH_DISALLOWED_TOOLS if self.morph_enabled else ["Edit"],
+            # When Morph is enabled, block legacy tools replaced by MCP (Edit, Grep).
+            # When disabled, allow built-in tools.
+            disallowed_tools=_get_disallowed_tools(self.morph_enabled),
             env=agent_env,
             hooks={
                 "PreToolUse": [
@@ -1173,6 +1377,12 @@ class MalaOrchestrator:
                                         thinking_mode=self.codex_thinking_mode,
                                     )
 
+                                    if review_result.fatal_error:
+                                        self._request_abort(
+                                            review_result.parse_error
+                                            or "Unrecoverable Codex review error"
+                                        )
+
                                     # Store codex review log path if captured
                                     if review_result.session_log_path:
                                         self.codex_review_log_paths[issue_id] = (
@@ -1390,9 +1600,15 @@ class MalaOrchestrator:
                 Colors.MUTED,
             )
         else:
+            if self.cli_args and self.cli_args.get("no_morph"):
+                reason = "--no-morph"
+            elif not self._config.morph_api_key:
+                reason = "MORPH_API_KEY not set"
+            else:
+                reason = "disabled by config"
             log(
                 "◐",
-                "morph: disabled (MORPH_API_KEY not set)",
+                f"morph: disabled ({reason})",
                 Colors.MUTED,
             )
 
@@ -1467,6 +1683,10 @@ class MalaOrchestrator:
 
         try:
             while True:
+                if self.abort_run:
+                    await self._abort_active_tasks(run_metadata)
+                    break
+
                 # Check if we've reached the issue limit
                 limit_reached = (
                     self.max_issues is not None and issues_spawned >= self.max_issues
@@ -1532,11 +1752,23 @@ class MalaOrchestrator:
                 )
 
                 # Handle completed tasks
+                abort_now = False
                 for task in done:
                     for issue_id, t in list(self.active_tasks.items()):
                         if t is task:
                             try:
                                 result = task.result()
+                            except asyncio.CancelledError:
+                                result = IssueResult(
+                                    issue_id=issue_id,
+                                    agent_id=self.agent_ids.get(issue_id, "unknown"),
+                                    success=False,
+                                    summary=(
+                                        f"Aborted due to unrecoverable error: {self.abort_reason}"
+                                        if self.abort_reason
+                                        else "Aborted due to unrecoverable error"
+                                    ),
+                                )
                             except Exception as e:
                                 result = IssueResult(
                                     issue_id=issue_id,
@@ -1545,186 +1777,18 @@ class MalaOrchestrator:
                                     summary=str(e),
                                 )
 
-                            # Quality gate already run in run_implementer for retry support
-                            # Just handle the final result here
-                            quality_gate_result: QualityGateResult | None = None
-                            validation_result: MetaValidationResult | None = None
-                            log_path = self.session_log_paths.get(issue_id)
-
-                            if result.success and log_path and log_path.exists():
-                                # Use cached per-issue validation spec
-                                assert self.per_issue_spec is not None
-                                spec = self.per_issue_spec
-                                # Parse final evidence for metadata (full session) using spec-driven parsing
-                                evidence = self.quality_gate.parse_validation_evidence_with_spec(
-                                    log_path, spec
-                                )
-                                commit_result = self.quality_gate.check_commit_exists(
-                                    issue_id
-                                )
-                                quality_gate_result = QualityGateResult(
-                                    passed=True,
-                                    evidence={
-                                        "pytest_ran": evidence.pytest_ran,
-                                        "ruff_check_ran": evidence.ruff_check_ran,
-                                        "ruff_format_ran": evidence.ruff_format_ran,
-                                        "ty_check_ran": evidence.ty_check_ran,
-                                        "commit_found": commit_result.exists,
-                                    },
-                                    failure_reasons=[],
-                                )
-
-                                # Run SpecValidationRunner.run_spec after commit detection
-                                if commit_result.exists and commit_result.commit_hash:
-                                    try:
-                                        # Reuse spec built above
-                                        context = ValidationContext(
-                                            issue_id=issue_id,
-                                            repo_path=self.repo_path,
-                                            commit_hash=commit_result.commit_hash,
-                                            changed_files=[],  # Not needed for per-issue
-                                            scope=ValidationScope.PER_ISSUE,
-                                            log_path=log_path,
-                                        )
-                                        runner = SpecValidationRunner(self.repo_path)
-                                        runner_result = await runner.run_spec(
-                                            spec, context
-                                        )
-                                        # Convert runner result to metadata result
-                                        validation_result = MetaValidationResult(
-                                            passed=runner_result.passed,
-                                            commands_run=[
-                                                s.name for s in runner_result.steps
-                                            ],
-                                            commands_failed=[
-                                                s.name
-                                                for s in runner_result.steps
-                                                if not s.ok
-                                            ],
-                                            artifacts=runner_result.artifacts,
-                                            coverage_percent=runner_result.coverage_result.percent
-                                            if runner_result.coverage_result
-                                            else None,
-                                        )
-                                        log(
-                                            "◐",
-                                            f"Validation: {validation_result.passed}",
-                                            Colors.CYAN
-                                            if validation_result.passed
-                                            else Colors.YELLOW,
-                                            agent_id=issue_id,
-                                        )
-                                    except Exception as e:
-                                        log(
-                                            "⚠",
-                                            f"Validation runner error: {e}",
-                                            Colors.YELLOW,
-                                            agent_id=issue_id,
-                                        )
-                                        # Still populate a failed validation result
-                                        validation_result = MetaValidationResult(
-                                            passed=False,
-                                            commands_run=[],
-                                            commands_failed=[],
-                                        )
-
-                                # Gate passed - close the issue
-                                if await self.beads.close_async(issue_id):
-                                    log(
-                                        "◐",
-                                        "Closed issue",
-                                        Colors.MUTED,
-                                        agent_id=issue_id,
-                                    )
-                                    # Check if this closes any parent epics
-                                    if await self.beads.close_eligible_epics_async():
-                                        log(
-                                            "◐",
-                                            "Auto-closed completed epic(s)",
-                                            Colors.MUTED,
-                                            agent_id=issue_id,
-                                        )
-
-                            elif not result.success and log_path and log_path.exists():
-                                # Failed run - record evidence for metadata using cached spec
-                                assert self.per_issue_spec is not None
-                                spec = self.per_issue_spec
-                                evidence = self.quality_gate.parse_validation_evidence_with_spec(
-                                    log_path, spec
-                                )
-                                commit_result = self.quality_gate.check_commit_exists(
-                                    issue_id
-                                )
-                                # Extract failure reasons from result summary
-                                failure_reasons = []
-                                if "Quality gate failed:" in result.summary:
-                                    reasons_part = result.summary.replace(
-                                        "Quality gate failed: ", ""
-                                    )
-                                    failure_reasons = [
-                                        r.strip() for r in reasons_part.split(";")
-                                    ]
-                                quality_gate_result = QualityGateResult(
-                                    passed=False,
-                                    evidence={
-                                        "pytest_ran": evidence.pytest_ran,
-                                        "ruff_check_ran": evidence.ruff_check_ran,
-                                        "ruff_format_ran": evidence.ruff_format_ran,
-                                        "ty_check_ran": evidence.ty_check_ran,
-                                        "commit_found": commit_result.exists,
-                                    },
-                                    failure_reasons=failure_reasons,
-                                )
-
-                            self.completed.append(result)
-                            del self.active_tasks[issue_id]
-
-                            # Record to run metadata
-                            issue_run = IssueRun(
-                                issue_id=result.issue_id,
-                                agent_id=result.agent_id,
-                                status="success" if result.success else "failed",
-                                duration_seconds=result.duration_seconds,
-                                session_id=result.session_id,
-                                log_path=str(log_path) if log_path else None,
-                                quality_gate=quality_gate_result,
-                                error=result.summary if not result.success else None,
-                                gate_attempts=result.gate_attempts,
-                                review_attempts=result.review_attempts,
-                                validation=validation_result,
-                                resolution=result.resolution,
-                                codex_review_log_path=self.codex_review_log_paths.get(
-                                    issue_id
-                                ),
+                            await self._finalize_issue_result(
+                                issue_id, result, run_metadata
                             )
-                            run_metadata.record_issue(issue_run)
-
-                            # Pop log paths after recording
-                            self.session_log_paths.pop(issue_id, None)
-                            self.codex_review_log_paths.pop(issue_id, None)
-
-                            duration_str = f"{result.duration_seconds:.0f}s"
-                            if result.success:
-                                summary = truncate_text(result.summary, 50)
-                                log(
-                                    "✓",
-                                    f"({duration_str}): {summary}",
-                                    Colors.GREEN,
-                                    agent_id=issue_id,
-                                )
-                            else:
-                                log(
-                                    "✗",
-                                    f"({duration_str}): {result.summary}",
-                                    Colors.RED,
-                                    agent_id=issue_id,
-                                )
-                                self.failed_issues.add(issue_id)
-                                # Mark needs-followup with log path
-                                await self.beads.mark_needs_followup_async(
-                                    issue_id, result.summary, log_path=log_path
-                                )
+                            if self.abort_run:
+                                abort_now = True
                             break
+                    if abort_now:
+                        break
+
+                if abort_now:
+                    await self._abort_active_tasks(run_metadata)
+                    break
 
         finally:
             # Final cleanup - only release locks owned by this run's agents
@@ -1742,13 +1806,19 @@ class MalaOrchestrator:
         # Run Gate 4 (run-level validation) after all issues complete
         # Only run if there were successful issues (something to validate)
         run_validation_passed = True
-        if success_count > 0:
+        if success_count > 0 and not self.abort_run:
             run_validation_passed = await self._run_run_level_validation(run_metadata)
 
         # Summary
         print()
 
-        if success_count == total and total > 0 and run_validation_passed:
+        if self.abort_run:
+            log(
+                "○",
+                f"Run aborted: {self.abort_reason or 'Unrecoverable error'}",
+                Colors.RED,
+            )
+        elif success_count == total and total > 0 and run_validation_passed:
             log("●", f"Completed: {success_count}/{total} issues", Colors.GREEN)
         elif success_count > 0:
             if not run_validation_passed:
@@ -1778,6 +1848,8 @@ class MalaOrchestrator:
         # Return success count for CLI exit code logic
         # Run-level validation failure should cause non-zero exit
         # Also indicate if no issues were processed (total == 0 is a no-op, not failure)
+        if self.abort_run:
+            return (0, total)
         if not run_validation_passed:
             # Gate 4 failed - return 0 successes to trigger non-zero exit
             return (0, total)
