@@ -23,6 +23,16 @@ def _get_lock_dir() -> Path:
     return get_lock_dir()
 
 
+def _is_literal_key(filepath: str) -> bool:
+    """Check if a filepath is a literal key (not a real path).
+
+    Literal keys are special identifiers like __test_mutex__ that should
+    not be normalized as file paths. They are used for global locks that
+    are not tied to specific files.
+    """
+    return filepath.startswith("__") and filepath.endswith("__")
+
+
 def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
     """Canonicalize a file path for consistent lock key generation.
 
@@ -30,6 +40,8 @@ def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
     - Resolving symlinks (if the path exists)
     - Making paths absolute
     - Normalizing . and .. segments
+
+    Literal keys (like __test_mutex__) are returned as-is without normalization.
 
     This matches the shell script behavior (realpath -m), which always produces
     absolute paths. The repo_namespace is used by _lock_key to build the final
@@ -42,8 +54,12 @@ def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
             relative to the namespace directory (mimicking cwd=repo behavior).
 
     Returns:
-        A canonicalized absolute path string.
+        A canonicalized absolute path string, or the literal key as-is.
     """
+    # Skip normalization for literal keys (non-path identifiers like __test_mutex__)
+    if _is_literal_key(filepath):
+        return filepath
+
     path = Path(filepath)
 
     # When we have a namespace and a relative path, resolve relative to the namespace

@@ -12,12 +12,20 @@ if [[ $# -ne 1 ]]; then
     exit 2
 fi
 
-# Normalize path to absolute (mimics realpath -m behavior)
 filepath="$1"
-if command -v realpath >/dev/null 2>&1; then
-    filepath=$(realpath -m "$filepath" 2>/dev/null || echo "$filepath")
-elif [[ "$filepath" != /* ]]; then
-    filepath="$(pwd)/$filepath"
+
+# Skip normalization for literal keys (non-path identifiers like __test_mutex__)
+is_literal_key() {
+    [[ "$1" == __*__ ]]
+}
+
+if ! is_literal_key "$filepath"; then
+    # Normalize path to absolute (mimics realpath -m behavior)
+    if command -v realpath >/dev/null 2>&1; then
+        filepath=$(realpath -m "$filepath" 2>/dev/null || echo "$filepath")
+    elif [[ "$filepath" != /* ]]; then
+        filepath="$(pwd)/$filepath"
+    fi
 fi
 
 exec uv run python -c "

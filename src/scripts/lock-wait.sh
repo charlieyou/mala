@@ -16,11 +16,18 @@ filepath="$1"
 timeout="${2:-30}"
 poll_ms="${3:-100}"
 
-# Normalize path to absolute (mimics realpath -m behavior)
-if command -v realpath >/dev/null 2>&1; then
-    filepath=$(realpath -m "$filepath" 2>/dev/null || echo "$filepath")
-elif [[ "$filepath" != /* ]]; then
-    filepath="$(pwd)/$filepath"
+# Skip normalization for literal keys (non-path identifiers like __test_mutex__)
+is_literal_key() {
+    [[ "$1" == __*__ ]]
+}
+
+if ! is_literal_key "$filepath"; then
+    # Normalize path to absolute (mimics realpath -m behavior)
+    if command -v realpath >/dev/null 2>&1; then
+        filepath=$(realpath -m "$filepath" 2>/dev/null || echo "$filepath")
+    elif [[ "$filepath" != /* ]]; then
+        filepath="$(pwd)/$filepath"
+    fi
 fi
 
 exec uv run python -c "

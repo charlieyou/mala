@@ -424,6 +424,7 @@ class TestReviewResult:
         assert result.effect == Effect.COMPLETE_FAILURE
         assert lifecycle.state == LifecycleState.FAILED
         assert "No progress" in ctx.final_result
+        assert result.message is not None
         assert "no progress detected" in result.message.lower()
 
 
