@@ -939,7 +939,11 @@ class MalaOrchestrator:
             )
 
     async def _abort_active_tasks(self, run_metadata: RunMetadata) -> None:
-        """Cancel active tasks and mark them as failed."""
+        """Cancel active tasks and mark them as failed.
+
+        Tasks that have already completed are finalized with their real results
+        rather than being marked as aborted.
+        """
         if not self.active_tasks:
             return
         reason = self.abort_reason or "Unrecoverable error"
@@ -948,16 +952,39 @@ class MalaOrchestrator:
             f"Aborting {len(self.active_tasks)} active task(s): {reason}",
             Colors.RED,
         )
+        # Cancel tasks that are still running
         for task in self.active_tasks.values():
-            task.cancel()
-        # Record each remaining issue as aborted
-        for issue_id in list(self.active_tasks.keys()):
-            result = IssueResult(
-                issue_id=issue_id,
-                agent_id=self.agent_ids.get(issue_id, "unknown"),
-                success=False,
-                summary=f"Aborted due to unrecoverable error: {reason}",
-            )
+            if not task.done():
+                task.cancel()
+
+        # Finalize each remaining issue - use real result if already done
+        for issue_id, task in list(self.active_tasks.items()):
+            if task.done():
+                # Task completed before we could cancel - use real result
+                try:
+                    result = task.result()
+                except asyncio.CancelledError:
+                    result = IssueResult(
+                        issue_id=issue_id,
+                        agent_id=self.agent_ids.get(issue_id, "unknown"),
+                        success=False,
+                        summary=f"Aborted due to unrecoverable error: {reason}",
+                    )
+                except Exception as e:
+                    result = IssueResult(
+                        issue_id=issue_id,
+                        agent_id=self.agent_ids.get(issue_id, "unknown"),
+                        success=False,
+                        summary=str(e),
+                    )
+            else:
+                # Task was still running - mark as aborted
+                result = IssueResult(
+                    issue_id=issue_id,
+                    agent_id=self.agent_ids.get(issue_id, "unknown"),
+                    success=False,
+                    summary=f"Aborted due to unrecoverable error: {reason}",
+                )
             await self._finalize_issue_result(issue_id, result, run_metadata)
 
     async def run_implementer(self, issue_id: str) -> IssueResult:
@@ -1751,8 +1778,9 @@ class MalaOrchestrator:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
-                # Handle completed tasks
-                abort_now = False
+                # Handle completed tasks - process ALL done tasks before checking abort
+                # This prevents misclassifying completed tasks as aborted when
+                # multiple tasks finish in the same polling cycle
                 for task in done:
                     for issue_id, t in list(self.active_tasks.items()):
                         if t is task:
@@ -1780,13 +1808,10 @@ class MalaOrchestrator:
                             await self._finalize_issue_result(
                                 issue_id, result, run_metadata
                             )
-                            if self.abort_run:
-                                abort_now = True
                             break
-                    if abort_now:
-                        break
 
-                if abort_now:
+                # Check abort flag after draining all done tasks
+                if self.abort_run:
                     await self._abort_active_tasks(run_metadata)
                     break
 
