@@ -786,11 +786,11 @@ class TestSpecValidationRunner:
 
         with (
             patch(
-                "src.validation.spec_runner.create_worktree",
+                "src.validation.spec_workspace.create_worktree",
                 return_value=mock_worktree_ctx,
             ),
             patch(
-                "src.validation.spec_runner.remove_worktree",
+                "src.validation.spec_workspace.remove_worktree",
                 return_value=mock_worktree_ctx,
             ),
             patch(
@@ -828,7 +828,8 @@ class TestSpecValidationRunner:
         )
 
         with patch(
-            "src.validation.spec_runner.create_worktree", return_value=mock_worktree_ctx
+            "src.validation.spec_workspace.create_worktree",
+            return_value=mock_worktree_ctx,
         ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is False
@@ -906,11 +907,11 @@ class TestSpecValidationRunner:
 
         with (
             patch(
-                "src.validation.spec_runner.create_worktree",
+                "src.validation.spec_workspace.create_worktree",
                 return_value=mock_worktree_created,
             ),
             patch(
-                "src.validation.spec_runner.remove_worktree", side_effect=mock_remove
+                "src.validation.spec_workspace.remove_worktree", side_effect=mock_remove
             ),
             patch(
                 "src.tools.command_runner.subprocess.Popen",
@@ -974,11 +975,11 @@ class TestSpecValidationRunner:
 
         with (
             patch(
-                "src.validation.spec_runner.create_worktree",
+                "src.validation.spec_workspace.create_worktree",
                 return_value=mock_worktree_created,
             ),
             patch(
-                "src.validation.spec_runner.remove_worktree", side_effect=mock_remove
+                "src.validation.spec_workspace.remove_worktree", side_effect=mock_remove
             ),
             patch(
                 "src.tools.command_runner.subprocess.Popen",
@@ -1553,6 +1554,7 @@ class TestSpecRunnerBaselineRefresh:
             if "status" in args and "--porcelain" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
+                # Commit time is 2023 (much newer than stale baseline from 2000)
                 return CommandResult(
                     command=args, returncode=0, stdout="1700000000\n", stderr=""
                 )
@@ -1866,11 +1868,11 @@ class TestBaselineCaptureOrder:
 
         with (
             patch(
-                "src.validation.spec_runner.create_worktree",
+                "src.validation.spec_workspace.create_worktree",
                 side_effect=mock_create_worktree,
             ),
             patch(
-                "src.validation.spec_runner.remove_worktree",
+                "src.validation.spec_workspace.remove_worktree",
                 return_value=mock_worktree,
             ),
             patch(
@@ -1968,11 +1970,11 @@ class TestBaselineCaptureOrder:
 
         with (
             patch(
-                "src.validation.spec_runner.create_worktree",
+                "src.validation.spec_workspace.create_worktree",
                 return_value=mock_worktree,
             ),
             patch(
-                "src.validation.spec_runner.remove_worktree",
+                "src.validation.spec_workspace.remove_worktree",
                 return_value=mock_worktree,
             ),
             patch(

@@ -9,16 +9,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import tempfile
-import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..logging.console import Colors, log
 from ..tools.env import SCRIPTS_DIR, get_lock_dir
 from src.tools.command_runner import CommandRunner
 from .coverage import (
-    BaselineCoverageService,
     CoverageResult,
     CoverageStatus,
     parse_and_check_coverage,
@@ -28,14 +24,15 @@ from .e2e import E2ERunner, E2EStatus
 from .helpers import format_step_output
 from .lint_cache import LintCache
 from .spec import CommandKind, ValidationArtifacts
-from .worktree import (
-    WorktreeConfig,
-    WorktreeState,
-    create_worktree,
-    remove_worktree,
+from .spec_workspace import (
+    SetupError,
+    cleanup_workspace,
+    setup_workspace,
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .e2e import E2EResult
     from .spec import (
         CoverageConfig,
@@ -44,7 +41,6 @@ if TYPE_CHECKING:
         ValidationContext,
         ValidationSpec,
     )
-    from .worktree import WorktreeContext
 
 from .result import ValidationResult, ValidationStepResult
 
@@ -118,71 +114,26 @@ class SpecValidationRunner:
     ) -> ValidationResult:
         """Synchronous implementation of run_spec.
 
-        Uses a pipeline pattern: run_commands -> check_coverage -> run_e2e -> build_result.
+        Uses a pipeline pattern: setup_workspace -> run_commands -> check_coverage -> run_e2e -> build_result.
+        Delegates workspace/baseline/worktree setup to spec_workspace module.
         """
-        # Set up log directory
-        if log_dir is None:
-            log_dir = Path(tempfile.mkdtemp(prefix="mala-validation-logs-"))
-
-        log_dir.mkdir(parents=True, exist_ok=True)
-
-        # Generate unique run ID
-        run_id = f"run-{uuid.uuid4().hex[:8]}"
-        issue_id = context.issue_id or "run-level"
-
-        # Initialize artifacts
-        artifacts = ValidationArtifacts(log_dir=log_dir)
-
-        # Check/refresh baseline coverage BEFORE worktree creation
-        # This captures baseline from main repo state
-        baseline_percent: float | None = None
-        if spec.coverage.enabled and spec.coverage.min_percent is None:
-            # "No decrease" mode - need to get baseline via service
-            baseline_service = BaselineCoverageService(
-                context.repo_path,
+        # Delegate workspace setup to spec_workspace module
+        try:
+            workspace = setup_workspace(
+                spec=spec,
+                context=context,
+                log_dir=log_dir,
                 step_timeout_seconds=self.step_timeout_seconds,
             )
-            result = baseline_service.refresh_if_stale(spec)
-            if not result.success:
-                return ValidationResult(
-                    passed=False,
-                    failure_reasons=[result.error or "Baseline refresh failed"],
-                    retriable=False,
-                    artifacts=artifacts,
-                )
-            baseline_percent = result.percent
-
-        # Set up worktree if we have a commit to validate
-        worktree_ctx: WorktreeContext | None = None
-        validation_cwd: Path
-
-        if context.commit_hash:
-            worktree_config = WorktreeConfig(
-                base_dir=log_dir / "worktrees",
-                keep_on_failure=True,  # Keep for debugging
+        except SetupError as e:
+            # Return early failure for setup errors
+            artifacts = ValidationArtifacts(log_dir=log_dir) if log_dir else None
+            return ValidationResult(
+                passed=False,
+                failure_reasons=[e.reason],
+                retriable=e.retriable,
+                artifacts=artifacts,
             )
-            worktree_ctx = create_worktree(
-                repo_path=context.repo_path,
-                commit_sha=context.commit_hash,
-                config=worktree_config,
-                run_id=run_id,
-                issue_id=issue_id,
-                attempt=1,
-            )
-
-            if worktree_ctx.state == WorktreeState.FAILED:
-                return ValidationResult(
-                    passed=False,
-                    failure_reasons=[f"Worktree creation failed: {worktree_ctx.error}"],
-                    retriable=False,
-                    artifacts=artifacts,
-                )
-
-            validation_cwd = worktree_ctx.path
-            artifacts.worktree_path = worktree_ctx.path
-        else:
-            # No commit specified, validate in place
-            validation_cwd = context.repo_path
 
         # Execute pipeline and capture result, ensuring worktree cleanup
         result: ValidationResult | None = None
@@ -190,25 +141,18 @@ class SpecValidationRunner:
             result = self._run_validation_pipeline(
                 spec,
                 context,
-                validation_cwd,
-                artifacts,
-                log_dir,
-                run_id,
-                baseline_percent,
+                workspace.validation_cwd,
+                workspace.artifacts,
+                workspace.log_dir,
+                workspace.run_id,
+                workspace.baseline_percent,
             )
             return result
         finally:
-            # Clean up worktree with correct pass/fail status
+            # Clean up workspace with correct pass/fail status
             # On exception, result is None so we treat as failed (validation_passed=False)
-            if worktree_ctx is not None:
-                validation_passed = result.passed if result is not None else False
-                worktree_ctx = remove_worktree(
-                    worktree_ctx, validation_passed=validation_passed
-                )
-                if worktree_ctx.state == WorktreeState.KEPT:
-                    artifacts.worktree_state = "kept"
-                elif worktree_ctx.state == WorktreeState.REMOVED:
-                    artifacts.worktree_state = "removed"
+            validation_passed = result.passed if result is not None else False
+            cleanup_workspace(workspace, validation_passed)
 
     def _run_validation_pipeline(
         self,
