@@ -314,7 +314,15 @@ class TestReviewResult:
         review_result = CodexReviewResult(
             passed=False,
             issues=[
-                ReviewIssue(file="test.py", line=10, severity="error", message="Bug")
+                ReviewIssue(
+                    title="Bug",
+                    body="",
+                    confidence_score=0.9,
+                    priority=1,
+                    file="test.py",
+                    line_start=10,
+                    line_end=10,
+                )
             ],
         )
 
@@ -341,7 +349,13 @@ class TestReviewResult:
             passed=False,
             issues=[
                 ReviewIssue(
-                    file="test.py", line=10, severity="error", message="Bug found"
+                    title="Bug found",
+                    body="",
+                    confidence_score=0.9,
+                    priority=1,
+                    file="test.py",
+                    line_start=10,
+                    line_end=10,
                 )
             ],
         )
@@ -393,7 +407,15 @@ class TestReviewResult:
         review_result = CodexReviewResult(
             passed=False,
             issues=[
-                ReviewIssue(file="test.py", line=10, severity="error", message="Bug")
+                ReviewIssue(
+                    title="Bug",
+                    body="",
+                    confidence_score=0.9,
+                    priority=1,
+                    file="test.py",
+                    line_start=10,
+                    line_end=10,
+                )
             ],
         )
         result = lifecycle.on_review_result(ctx, review_result, new_log_offset=200)
@@ -413,7 +435,15 @@ class TestReviewResult:
         review_result = CodexReviewResult(
             passed=False,
             issues=[
-                ReviewIssue(file="test.py", line=10, severity="error", message="Bug")
+                ReviewIssue(
+                    title="Bug",
+                    body="",
+                    confidence_score=0.9,
+                    priority=1,
+                    file="test.py",
+                    line_start=10,
+                    line_end=10,
+                )
             ],
         )
         result = lifecycle.on_review_result(
@@ -594,7 +624,17 @@ class TestFullLifecycleScenarios:
         # First review fails
         review_result = CodexReviewResult(
             passed=False,
-            issues=[ReviewIssue(file="a.py", line=1, severity="error", message="Bug")],
+            issues=[
+                ReviewIssue(
+                    title="Bug",
+                    body="",
+                    confidence_score=0.9,
+                    priority=1,
+                    file="a.py",
+                    line_start=1,
+                    line_end=1,
+                )
+            ],
         )
         result = lifecycle.on_review_result(ctx, review_result, new_log_offset=200)
         assert result.effect == Effect.SEND_REVIEW_RETRY
@@ -639,7 +679,17 @@ class TestFullLifecycleScenarios:
         assert ctx.retry_state.review_attempt == 1
         review_result = CodexReviewResult(
             passed=False,
-            issues=[ReviewIssue(file="a.py", line=1, severity="error", message="Bug")],
+            issues=[
+                ReviewIssue(
+                    title="Bug",
+                    body="",
+                    confidence_score=0.9,
+                    priority=1,
+                    file="a.py",
+                    line_start=1,
+                    line_end=1,
+                )
+            ],
         )
         result = lifecycle.on_review_result(ctx, review_result, new_log_offset=200)
         assert result.effect == Effect.SEND_REVIEW_RETRY
@@ -661,7 +711,13 @@ class TestFullLifecycleScenarios:
             passed=False,
             issues=[
                 ReviewIssue(
-                    file="a.py", line=5, severity="error", message="Another bug"
+                    title="Another bug",
+                    body="",
+                    confidence_score=0.9,
+                    priority=1,
+                    file="a.py",
+                    line_start=5,
+                    line_end=5,
                 )
             ],
         )
