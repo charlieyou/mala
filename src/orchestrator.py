@@ -11,20 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from claude_agent_sdk import (
-        AssistantMessage,
-        ClaudeAgentOptions,
-        ClaudeSDKClient,
-        ResultMessage,
-        TextBlock,
-        ToolUseBlock,
-    )
-    from claude_agent_sdk.types import HookMatcher
 
 from .beads_client import BeadsClient
 from .config import MalaConfig
-from .telemetry import BraintrustProvider, NullTelemetryProvider, TelemetryProvider
+from .telemetry import BraintrustProvider, NullTelemetryProvider
 from .codex_review import run_codex_review, format_review_issues, CodexReviewResult
 from .git_utils import (
     get_git_commit_async,
@@ -46,7 +36,6 @@ from .lifecycle import (
     LifecycleConfig,
     LifecycleContext,
     LifecycleState,
-    RetryState,
 )
 from .logging.console import (
     Colors,
@@ -66,7 +55,6 @@ from .logging.run_metadata import (
     remove_run_marker,
     write_run_marker,
 )
-from .protocols import CodeReviewer, GateChecker, IssueProvider
 from .quality_gate import QualityGate, GateResult
 from .tools.env import (
     USER_CONFIG_DIR,
@@ -79,7 +67,6 @@ from .tools.locking import (
     release_run_locks,
     cleanup_agent_locks,
 )
-from .models import IssueResolution
 from .validation.spec import (
     ValidationContext,
     ValidationScope,
@@ -89,6 +76,12 @@ from .validation.spec_runner import SpecValidationRunner
 from .validation.e2e import E2EStatus
 
 if TYPE_CHECKING:
+    from .lifecycle import (
+        RetryState,
+    )
+    from .protocols import CodeReviewer, GateChecker, IssueProvider
+    from .telemetry import TelemetryProvider
+    from .models import IssueResolution
     from .validation.result import ValidationResult
     from .validation.spec import ValidationSpec
 
@@ -580,9 +573,7 @@ class MalaOrchestrator:
 
         return False
 
-    def _build_validation_failure_output(
-        self, result: "ValidationResult | None"
-    ) -> str:
+    def _build_validation_failure_output(self, result: ValidationResult | None) -> str:
         """Build failure output string for fixer agent prompt.
 
         Args:
