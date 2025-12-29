@@ -532,9 +532,10 @@ class BaselineCoverageService:
 
             # Replace any existing --cov-fail-under with 0
             # This ensures we capture baseline even if it's below pyproject.toml threshold
-            # Also replace any existing -m marker with "not slow" to exclude slow tests
-            # (slow tests require special env/fixtures and increase refresh runtime)
+            # Also replace any existing -m marker with "unit or integration" to
+            # avoid end-to-end tests during baseline refresh.
             new_pytest_cmd = []
+            marker_expr: str | None = None
             skip_next = False
             for arg in pytest_cmd:
                 if skip_next:
@@ -545,15 +546,35 @@ class BaselineCoverageService:
                 if arg == "--cov-fail-under":
                     skip_next = True
                     continue
-                # Strip any existing -m marker (we'll add "not slow" at the end)
-                if arg.startswith("-m=") or arg.startswith("-m "):
+                # Strip any existing -m marker (we'll re-add a safe marker at the end)
+                if arg.startswith("-m="):
+                    marker_expr = arg.split("=", 1)[1]
                     continue
                 if arg == "-m":
                     skip_next = True
+                    marker_expr = None  # will be captured via skip_next branch
                     continue
                 new_pytest_cmd.append(arg)
+
+            # If we skipped "-m <expr>", capture the expression from the next arg
+            if skip_next:
+                # Defensive: skip_next should always be paired with an arg
+                skip_next = False
+
+            # If we stripped a marker via "-m", it was the immediate next arg
+            if marker_expr is None:
+                for i, arg in enumerate(pytest_cmd[:-1]):
+                    if arg == "-m":
+                        marker_expr = pytest_cmd[i + 1]
+                        break
+
+            # Normalize marker expression: never include e2e in baseline refresh
+            marker_expr = (marker_expr or "unit or integration").strip()
+            if "e2e" in marker_expr:
+                marker_expr = "unit or integration"
+
             new_pytest_cmd.append("--cov-fail-under=0")
-            new_pytest_cmd.extend(["-m", "not slow"])
+            new_pytest_cmd.extend(["-m", marker_expr])
 
             # Run pytest - we ignore the exit code because tests may fail
             # but still generate a valid coverage.xml baseline

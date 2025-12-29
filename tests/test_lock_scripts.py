@@ -11,6 +11,9 @@ import pytest
 SCRIPTS_DIR = Path(__file__).parent.parent / "src" / "scripts"
 
 
+pytestmark = pytest.mark.integration
+
+
 def _clean_os_environ() -> dict[str, str]:
     """Get os.environ without REPO_NAMESPACE for test isolation.
 

@@ -298,12 +298,12 @@ After all issues complete, the orchestrator runs a final validation pass. This c
 
 | Flag | Default | Effect |
 |------|---------|--------|
-| `slow-tests` | excluded | Pytest tests marked `@pytest.mark.slow` are skipped unless this flag is NOT in disable list |
+| `integration-tests` | included | Pytest tests marked `@pytest.mark.integration` are skipped when this flag is in the disable list |
 | `e2e` | enabled (run-level only) | E2E fixture test runs only during run-level validation |
 
 **Disable flags:**
 - `--disable-validations=run-level-validate`: Skip run-level validation entirely
-- `--disable-validations=slow-tests`: Exclude slow-marked pytest tests
+- `--disable-validations=integration-tests`: Exclude integration-marked pytest tests
 - `--disable-validations=e2e`: Disable E2E fixture test (only affects run-level)
 - `--disable-validations=followup-on-run-validate-fail`: Don't mark issues on run-level validation failure
 
@@ -339,7 +339,7 @@ Each blocked operation includes a safe alternative in the error message.
 Agents run validation commands in parallel using **isolated cache directories** to prevent conflicts:
 
 ```bash
-pytest --cache-dir=/tmp/pytest-$AGENT_ID         # Isolated pytest cache
+pytest -o cache_dir=/tmp/pytest-$AGENT_ID        # Isolated pytest cache
 ruff check . --cache-dir=/tmp/ruff-$AGENT_ID     # Isolated ruff cache
 ruff format .                                     # No cache conflicts
 ty check                                          # Type check (read-only)
@@ -374,14 +374,14 @@ from src.validation import build_validation_spec, ValidationScope
 
 spec = build_validation_spec(
     scope=ValidationScope.PER_ISSUE,
-    disable_validations={"slow-tests"},  # Optional disable flags
+    disable_validations={"integration-tests"},  # Optional disable flags
     coverage_threshold=85.0,
 )
 ```
 
 **Disable flags:**
 - `post-validate`: Skip test commands entirely
-- `slow-tests`: Exclude slow tests from pytest
+- `integration-tests`: Exclude integration tests from pytest
 - `coverage`: Disable coverage checking
 - `e2e`: Disable E2E fixture repo test
 - `codex-review`: Disable Codex review
@@ -455,7 +455,7 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 |------|-------------|
 | `post-validate` | Skip all per-issue validation (tests, lint, typecheck) |
 | `run-level-validate` | Skip run-level validation |
-| `slow-tests` | Exclude slow tests from pytest |
+| `integration-tests` | Exclude integration tests from pytest |
 | `coverage` | Disable coverage checking |
 | `e2e` | Disable E2E fixture repo test |
 | `codex-review` | Disable Codex review |
@@ -563,14 +563,16 @@ All ty rules are set to `error` level in `pyproject.toml` for maximum strictness
 Tests require 85% minimum coverage:
 
 ```bash
-uv run pytest                              # Unit tests only (default, excludes slow)
-uv run pytest -m slow -n auto              # Slow/integration tests in parallel
-uv run pytest -m "slow or not slow"        # All tests
+uv run pytest                              # Unit + integration tests (default, excludes e2e)
+uv run pytest -m unit                      # Unit tests only
+uv run pytest -m integration -n auto       # Integration tests in parallel
+uv run pytest -m e2e                       # End-to-end tests (requires CLI auth)
+uv run pytest -m "unit or integration or e2e"  # All tests
 uv run pytest --reruns 2                   # Auto-retry flaky tests (2 retries)
-uv run pytest -m slow -n auto --reruns 2   # Parallel + auto-retry
+uv run pytest -m integration -n auto --reruns 2   # Parallel + auto-retry
 uv run pytest --cov-fail-under=90          # Override coverage threshold
 ```
 
 - **Parallel execution**: Use `-n auto` for parallel test runs (pytest-xdist)
 - **Flaky test retries**: Use `--reruns N` to auto-retry failed tests (pytest-rerunfailures)
-- **Slow tests**: Marked with `@pytest.mark.slow`, excluded by default
+- **Unit/Integration/E2E**: Use markers `unit`, `integration`, `e2e` to select categories

@@ -1,4 +1,4 @@
-"""Unit tests for CommandRunner - standardized subprocess execution.
+"""Integration tests for CommandRunner - standardized subprocess execution.
 
 Tests cover:
 - Basic command execution (sync and async)
@@ -25,6 +25,9 @@ from src.tools.command_runner import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+pytestmark = pytest.mark.integration
 
 
 class TestCommandResult:

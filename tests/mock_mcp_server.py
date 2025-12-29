@@ -15,38 +15,61 @@ from pathlib import Path
 def send_response(response: dict) -> None:
     """Send a JSON-RPC response to stdout."""
     msg = json.dumps(response)
-    # MCP uses Content-Length header framing
-    sys.stdout.write(f"Content-Length: {len(msg)}\r\n\r\n{msg}")
+    # Use newline-delimited JSON (stdio transport)
+    sys.stdout.write(msg + "\n")
     sys.stdout.flush()
 
 
 def read_message() -> dict | None:
-    """Read a JSON-RPC message from stdin."""
-    # Read Content-Length header
+    """Read a JSON-RPC message from stdin.
+
+    Supports both Content-Length framing (LSP-style) and newline-delimited JSON.
+    """
+    # Read first non-empty line
     line = sys.stdin.readline()
     if not line:
         return None
 
-    # Skip empty lines
     while line.strip() == "":
         line = sys.stdin.readline()
         if not line:
             return None
 
-    # Parse Content-Length
-    if line.startswith("Content-Length:"):
-        length = int(line.split(":")[1].strip())
-        # Read empty line after header
-        sys.stdin.readline()
-        # Read content
-        content = sys.stdin.read(length)
-        return json.loads(content)
+    stripped = line.lstrip()
+    # If line looks like JSON, parse directly (newline-delimited JSON)
+    if stripped.startswith("{") or stripped.startswith("["):
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            # Fall through to header parsing if JSON is incomplete
+            pass
 
-    # Try parsing as raw JSON (some clients don't use framing)
-    try:
-        return json.loads(line)
-    except json.JSONDecodeError:
+    # Parse headers until blank line
+    headers: dict[str, str] = {}
+    while True:
+        header_line = line.strip("\r\n")
+        if header_line == "":
+            break
+        if ":" in header_line:
+            key, value = header_line.split(":", 1)
+            headers[key.strip().lower()] = value.strip()
+        line = sys.stdin.readline()
+        if not line:
+            return None
+
+    content_length = headers.get("content-length")
+    if not content_length:
         return None
+
+    try:
+        length = int(content_length)
+    except ValueError:
+        return None
+
+    content = sys.stdin.read(length)
+    if not content:
+        return None
+    return json.loads(content)
 
 
 def handle_initialize(request_id: int) -> dict:

@@ -270,7 +270,7 @@ def build_validation_spec(
     Disable values:
     - "post-validate": Skip test commands entirely
     - "run-level-validate": (handled elsewhere, not here)
-    - "slow-tests": Exclude slow tests from pytest
+    - "integration-tests": Exclude integration tests from pytest
     - "coverage": Disable coverage checking
     - "e2e": Disable E2E fixture repo test
     - "codex-review": (handled elsewhere, not here)
@@ -380,9 +380,11 @@ def build_validation_spec(
             else:
                 pytest_cmd.append(f"--cov-fail-under={coverage_threshold}")
 
-        # Add slow tests unless disabled
-        if "slow-tests" not in disable:
-            pytest_cmd.extend(["-m", "slow or not slow"])
+        # Select test categories (unit by default, add integration unless disabled)
+        marker_expr = "unit"
+        if "integration-tests" not in disable:
+            marker_expr = "unit or integration"
+        pytest_cmd.extend(["-m", marker_expr])
 
         commands.append(
             ValidationCommand(

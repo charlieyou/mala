@@ -31,3 +31,13 @@ def pytest_configure(config: pytest.Config) -> None:
     real_credentials = Path.home() / ".claude" / ".credentials.json"
     if real_credentials.exists():
         shutil.copy2(real_credentials, test_claude_dir / ".credentials.json")
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Default unmarked tests to unit category."""
+    for item in items:
+        if any(marker in item.keywords for marker in ("unit", "integration", "e2e")):
+            continue
+        item.add_marker(pytest.mark.unit)

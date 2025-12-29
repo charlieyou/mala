@@ -484,7 +484,7 @@ class TestCheckE2EPrereqsLegacy:
             assert "mala CLI" in result
 
 
-@pytest.mark.slow
+@pytest.mark.integration
 class TestE2EIntegration:
     """Integration tests for E2E runner (requires real tools)."""
 

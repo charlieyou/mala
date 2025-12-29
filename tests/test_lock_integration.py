@@ -25,6 +25,9 @@ if TYPE_CHECKING:
     from claude_agent_sdk.types import HookContext, StopHookInput
 
 
+pytestmark = pytest.mark.integration
+
+
 def _canonicalize_path(filepath: str, cwd: str) -> str:
     """Canonicalize a file path for consistent lock key generation.
 

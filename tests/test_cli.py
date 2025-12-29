@@ -508,14 +508,14 @@ def test_run_disable_validations_valid(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations="coverage,slow-tests,e2e",
+            disable_validations="coverage,integration-tests,e2e",
         )
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_kwargs is not None
     assert DummyOrchestrator.last_kwargs["disable_validations"] == {
         "coverage",
-        "slow-tests",
+        "integration-tests",
         "e2e",
     }
 

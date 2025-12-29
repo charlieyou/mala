@@ -209,7 +209,7 @@ def _print_task_line(
 # Each value controls a specific validation phase:
 #   post-validate: Skip all validation commands (pytest, ruff, ty) after agent commits
 #   run-level-validate: Skip run-level validation at end of batch (reserved for future use)
-#   slow-tests: Exclude @pytest.mark.slow tests from test runs
+#   integration-tests: Exclude @pytest.mark.integration tests from pytest runs
 #   coverage: Disable code coverage enforcement (threshold check)
 #   e2e: Disable end-to-end fixture repo tests (run-level only)
 #   codex-review: Disable automated LLM code review after quality gate passes
@@ -218,7 +218,7 @@ VALID_DISABLE_VALUES = frozenset(
     {
         "post-validate",
         "run-level-validate",
-        "slow-tests",
+        "integration-tests",
         "coverage",
         "e2e",
         "codex-review",
@@ -295,7 +295,7 @@ def run(
             help=(
                 "Comma-separated validations to skip. Options: "
                 "post-validate (skip pytest/ruff/ty after commits), "
-                "slow-tests (exclude @pytest.mark.slow tests), "
+                "integration-tests (exclude @pytest.mark.integration tests), "
                 "coverage (disable coverage threshold check), "
                 "e2e (skip end-to-end fixture tests), "
                 "codex-review (skip LLM code review)"

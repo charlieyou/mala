@@ -385,17 +385,19 @@ class TestBuildValidationSpec:
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         assert spec.e2e.enabled is False
 
-    def test_disable_slow_tests(self) -> None:
-        """--disable-validations=slow-tests removes slow test marker."""
+    def test_disable_integration_tests(self) -> None:
+        """--disable-validations=integration-tests keeps pytest to unit tests only."""
         spec = build_validation_spec(
             scope=ValidationScope.PER_ISSUE,
-            disable_validations={"slow-tests"},
+            disable_validations={"integration-tests"},
         )
 
         pytest_cmd = next((cmd for cmd in spec.commands if cmd.name == "pytest"), None)
         assert pytest_cmd is not None
-        # Should not include -m "slow or not slow"
-        assert "-m" not in pytest_cmd.command or "slow" not in str(pytest_cmd.command)
+        # Should explicitly select unit tests only
+        assert "-m" in pytest_cmd.command
+        m_idx = pytest_cmd.command.index("-m")
+        assert pytest_cmd.command[m_idx + 1] == "unit"
 
     def test_disable_coverage(self) -> None:
         """--disable-validations=coverage disables coverage."""
@@ -439,7 +441,7 @@ class TestBuildValidationSpec:
         """Multiple comma-separated disable values work."""
         spec = build_validation_spec(
             scope=ValidationScope.RUN_LEVEL,
-            disable_validations={"coverage", "e2e", "slow-tests"},
+            disable_validations={"coverage", "e2e", "integration-tests"},
         )
         assert spec.coverage.enabled is False
         assert spec.e2e.enabled is False

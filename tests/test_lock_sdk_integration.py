@@ -7,8 +7,8 @@ Requirements:
 - Claude Code CLI must be authenticated (run `claude` to verify)
 - Tests use OAuth via CLI, not API key
 
-Run with: ENABLE_SDK_TESTS=true uv run pytest tests/ -m slow -v
-Default: uv run pytest tests/  (excludes slow tests)
+Run with: uv run pytest tests/ -m e2e -v
+Default: uv run pytest tests/  (unit tests only)
 """
 
 import asyncio
@@ -31,16 +31,8 @@ from claude_agent_sdk.types import HookMatcher
 from src.hooks import make_stop_hook
 from src.tools.env import SCRIPTS_DIR
 
-# All SDK tests are slow (require API calls)
-# Skip by default unless explicitly enabled with ENABLE_SDK_TESTS=true
-SKIP_SDK_TESTS = os.environ.get("ENABLE_SDK_TESTS", "").lower() != "true"
-pytestmark = [
-    pytest.mark.slow,
-    pytest.mark.skipif(
-        SKIP_SDK_TESTS,
-        reason="Claude SDK E2E tests disabled - set ENABLE_SDK_TESTS=true",
-    ),
-]
+# All SDK tests are end-to-end (require CLI auth and API calls)
+pytestmark = [pytest.mark.e2e]
 
 
 def _is_claude_cli_available() -> bool:

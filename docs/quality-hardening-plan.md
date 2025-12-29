@@ -190,7 +190,7 @@ Related modules:
 - Expected evidence is derived from ValidationSpec by scope:
   - Per-issue EvidenceGate expects per-issue commands only (no E2E).
   - Run-level E2E evidence is only required at run-level validation.
-- Honors CLI opt-outs (e.g., `--disable-validations=slow-tests`).
+- Honors CLI opt-outs (e.g., `--disable-validations=integration-tests`).
 - No-op / obsolete issue path (no commit required):
   - Agent logs an explicit marker: `ISSUE_NO_CHANGE` or `ISSUE_OBSOLETE`.
   - Include a short rationale in the log line.
@@ -225,7 +225,7 @@ Related modules:
 Defaults (all ON):
 - post-commit validation: ON
 - run-level validation: ON
-- slow tests: ON
+- integration tests: ON
 - coverage: ON (min 85%)
 - E2E fixture repo: ON (run-level only)
 - codex review: ON
@@ -233,7 +233,7 @@ Defaults (all ON):
 Disable list (comma-separated via `--disable-validations <csv>`):
 - `post-validate`: Skip test commands entirely
 - `run-level-validate`: Skip run-level validation
-- `slow-tests`: Exclude slow tests from pytest
+- `integration-tests`: Exclude integration tests from pytest
 - `coverage`: Disable coverage checking
 - `e2e`: Disable E2E fixture repo test
 - `codex-review`: Disable Codex review
@@ -298,7 +298,7 @@ Doc extensions: `.md`, `.rst`, `.txt`
 
 ### EvidenceGate opt-out mapping
 - `--disable-validations=post-validate` => No pytest evidence required.
-- `--disable-validations=slow-tests` => EvidenceGate expects non-slow pytest only.
+- `--disable-validations=integration-tests` => EvidenceGate expects unit-only pytest.
 - `--disable-validations=coverage` => Coverage evidence not required.
 - `--disable-validations=e2e` => E2E evidence not required.
 
