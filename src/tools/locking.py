@@ -54,13 +54,20 @@ def _resolve_with_parents(path: Path) -> Path:
     missing_parts: list[str] = []
     current = path
 
-    while not current.exists():
+    max_iterations = 100
+    iterations = 0
+    while not current.exists() and iterations < max_iterations:
+        iterations += 1
         missing_parts.append(current.name)
         parent = current.parent
         if parent == current:
             # Reached root without finding existing path
             break
         current = parent
+
+    if iterations >= max_iterations:
+        # Fallback to original path if loop doesn't terminate normally
+        return path
 
     # Resolve the existing ancestor (resolves symlinks)
     resolved_base = current.resolve()

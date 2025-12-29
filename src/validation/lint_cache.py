@@ -193,12 +193,11 @@ class LintCache:
 
         # Check for uncommitted changes
         try:
-            has_uncommitted = bool(
-                _run_git_command(["status", "--porcelain"], self.repo_path)
-            )
-            if has_uncommitted is None:
+            status_output = _run_git_command(["status", "--porcelain"], self.repo_path)
+            if status_output is None:
                 # Can't determine state - don't cache
                 return None
+            has_uncommitted = bool(status_output)
         except Exception:
             # Can't determine state - don't cache
             return None

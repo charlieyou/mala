@@ -96,17 +96,17 @@ class TestNegateTimestamp:
         expected = "".join(chr(255 - ord(c)) for c in ts)
         assert result == expected
 
-    def test_empty_string_returns_tilde(self) -> None:
-        """Empty string should return ~ (sorts last)."""
-        assert IssueManager.negate_timestamp("") == "~"
+    def test_empty_string_returns_xff(self) -> None:
+        """Empty string should return \\xff (sorts last)."""
+        assert IssueManager.negate_timestamp("") == "\xff"
 
-    def test_none_returns_tilde(self) -> None:
-        """None should return ~ (sorts last)."""
-        assert IssueManager.negate_timestamp(None) == "~"
+    def test_none_returns_xff(self) -> None:
+        """None should return \\xff (sorts last)."""
+        assert IssueManager.negate_timestamp(None) == "\xff"
 
-    def test_non_string_returns_tilde(self) -> None:
-        """Non-string should return ~ (sorts last)."""
-        assert IssueManager.negate_timestamp(12345) == "~"
+    def test_non_string_returns_xff(self) -> None:
+        """Non-string should return \\xff (sorts last)."""
+        assert IssueManager.negate_timestamp(12345) == "\xff"
 
     def test_later_timestamps_sort_earlier(self) -> None:
         """Later timestamps should sort earlier after negation."""
@@ -246,13 +246,13 @@ class TestSortByEpicGroups:
         ]
         result = IssueManager.sort_by_epic_groups(issues)
         # Both have same priority, so order is by negated updated_at (ascending)
-        # "a" has no updated_at -> negate returns "~" (chr 126)
+        # "a" has no updated_at -> negate returns "\xff" (chr 255)
         # "b" has "2025-01-01" -> negate returns chr(255-ord(c)) for each char
         # First char '2' -> chr(255-50) = chr(205)
-        # Since 126 < 205, "~" sorts before negated timestamp
-        # So "a" (missing updated_at) sorts BEFORE "b" (has updated_at)
-        assert result[0]["id"] == "a"
-        assert result[1]["id"] == "b"
+        # Since 255 > 205, "\xff" sorts AFTER negated timestamp
+        # So "b" (has updated_at) sorts BEFORE "a" (missing updated_at)
+        assert result[0]["id"] == "b"
+        assert result[1]["id"] == "a"
 
 
 class TestSortIssues:

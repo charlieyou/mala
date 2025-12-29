@@ -597,16 +597,9 @@ class LintCacheEntry:
 class LintCache:
     """In-memory cache for tracking successful lint runs during agent sessions.
 
-    This cache tracks the git state when lint commands pass. It uses a two-phase
-    approach:
-    1. On first lint attempt, record the state as "pending"
-    2. On subsequent attempt with same state, assume previous lint passed and skip
-
-    This works because:
-    - If lint failed, the agent would fix the code, changing the git state
-    - If git state is unchanged and agent tries to lint again, previous lint passed
-
-    The cache uses commit SHA + working tree diff hash to detect any file changes.
+    This cache tracks the git state when lint commands pass. A lint is only
+    cached after an explicit success via `mark_success()`. The cache uses
+    commit SHA + working tree diff hash to detect any file changes.
 
     Note:
         This is an IN-MEMORY cache designed for use with Claude agent hooks
@@ -616,7 +609,6 @@ class LintCache:
 
     Attributes:
         _cache: Mapping of lint command type to cached entry.
-        _pending: Mapping of lint type to state at time of last attempt.
         _skipped_count: Total count of lints skipped due to cache hits.
         _repo_path: Path to the repository for git operations.
     """
@@ -628,7 +620,6 @@ class LintCache:
             repo_path: Path to the repository. If None, uses current directory.
         """
         self._cache: dict[str, LintCacheEntry] = {}
-        self._pending: dict[str, str] = {}  # lint_type -> git_state at attempt
         self._skipped_count: int = 0
         self._repo_path = repo_path
 
@@ -650,14 +641,10 @@ class LintCache:
         return f"{lint_type}:{command_hash}"
 
     def check_and_update(self, lint_type: str, command: str = "") -> tuple[bool, str]:
-        """Check if a lint run is redundant and update the cache.
+        """Check if a lint run is redundant based on cached success.
 
-        Uses two-phase caching:
-        1. First attempt: record state as pending, allow lint to run
-        2. Second attempt with same state: previous lint must have passed, skip
-
-        This ensures we only cache after lint success (inferred from unchanged
-        state on re-attempt).
+        Only skips if there is a confirmed successful lint at the current git
+        state (via prior `mark_success()` call).
 
         Args:
             lint_type: Type of lint command (e.g., "ruff_check").
@@ -688,33 +675,14 @@ class LintCache:
                 "Git state unchanged - lint would produce same results.",
             )
 
-        # Check if we have a pending lint at this state
-        pending_state = self._pending.get(cache_key)
-        if pending_state == current_state:
-            # Same state as pending attempt - lint must have passed
-            # Promote to confirmed cache entry
-            self._cache[cache_key] = LintCacheEntry(
-                git_state=current_state,
-                timestamp=time.time(),
-                skipped_count=1,
-            )
-            self._skipped_count += 1
-            lint_name = lint_type.replace("_", " ")
-            return (
-                True,
-                f"No changes since last {lint_name} (skipped 1x). "
-                "Git state unchanged - lint would produce same results.",
-            )
-
-        # State is different or first attempt - record as pending and allow
-        self._pending[cache_key] = current_state
+        # No cached success at current state - allow lint to run
         return (False, "")
 
     def mark_success(self, lint_type: str, command: str = "") -> None:
         """Explicitly mark a lint as successful at current state.
 
-        Call this after a lint command completes successfully to immediately
-        cache the result without waiting for a second attempt.
+        Call this after a lint command completes successfully to cache
+        the result.
 
         Args:
             lint_type: Type of lint command that succeeded.
@@ -728,8 +696,6 @@ class LintCache:
                 timestamp=time.time(),
                 skipped_count=0,
             )
-            # Clear pending since it's now confirmed
-            self._pending.pop(cache_key, None)
 
     def invalidate(self, lint_type: str | None = None) -> None:
         """Invalidate cache entries.
@@ -742,7 +708,6 @@ class LintCache:
         """
         if lint_type is None:
             self._cache.clear()
-            self._pending.clear()
         else:
             # Cache keys are in format "lint_type:command_hash"
             # Remove all entries matching the lint type prefix
@@ -750,9 +715,6 @@ class LintCache:
             keys_to_remove = [k for k in self._cache if k.startswith(prefix)]
             for key in keys_to_remove:
                 del self._cache[key]
-            pending_to_remove = [k for k in self._pending if k.startswith(prefix)]
-            for key in pending_to_remove:
-                del self._pending[key]
 
     @property
     def skipped_count(self) -> int:

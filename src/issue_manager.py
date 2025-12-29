@@ -86,7 +86,8 @@ class IssueManager:
         """
         if not timestamp or not isinstance(timestamp, str):
             # Empty/missing timestamps sort last (after all real timestamps)
-            return "~"  # ~ sorts after alphanumeric
+            # Use \xff (ordinal 255) since negated timestamp chars are in [198, 207]
+            return "\xff"
         # Negate each character: higher chars become lower
         # This works for ISO timestamps like "2025-01-15T10:30:00Z"
         return "".join(chr(255 - ord(c)) for c in timestamp)

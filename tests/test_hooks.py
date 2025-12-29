@@ -813,17 +813,20 @@ class TestLintCache:
 
         cache = LintCache(repo_path=tmp_path)
 
-        # First lint - allowed (pending)
-        cache.check_and_update("ruff_check")
+        # First lint - allowed
+        is_redundant_first, _ = cache.check_and_update("ruff_check")
+        assert is_redundant_first is False
 
-        # Second lint - blocked (pending promoted to confirmed)
+        # Mark success after lint passes
+        cache.mark_success("ruff_check")
+        assert cache.cache_size == 1
+
+        # Second lint - blocked (cached success)
         is_redundant, message = cache.check_and_update("ruff_check")
 
         assert is_redundant is True
         assert "no changes" in message.lower()
         assert "skipped 1x" in message
-        # Now we have 1 confirmed cache entry
-        assert cache.cache_size == 1
         assert cache.skipped_count == 1
 
     def test_lint_after_file_change_is_allowed(self, tmp_path: Path) -> None:
@@ -902,15 +905,18 @@ class TestLintCache:
 
         cache = LintCache(repo_path=tmp_path)
 
-        # Run different lint types (first calls - all pending)
+        # Run different lint types and mark each as successful
         cache.check_and_update("ruff_check")
+        cache.mark_success("ruff_check")
         cache.check_and_update("ruff_format")
+        cache.mark_success("ruff_format")
         cache.check_and_update("ty_check")
+        cache.mark_success("ty_check")
 
-        # First calls only create pending state, not confirmed cache
-        assert cache.cache_size == 0
+        # All 3 are cached after mark_success
+        assert cache.cache_size == 3
 
-        # Second run of each - promotes pending to confirmed and blocks
+        # Second run of each - blocked due to cached success
         is_redundant_1, _ = cache.check_and_update("ruff_check")
         is_redundant_2, _ = cache.check_and_update("ruff_format")
         is_redundant_3, _ = cache.check_and_update("ty_check")
@@ -918,8 +924,6 @@ class TestLintCache:
         assert is_redundant_1 is True
         assert is_redundant_2 is True
         assert is_redundant_3 is True
-        # Now all 3 are confirmed
-        assert cache.cache_size == 3
         assert cache.skipped_count == 3
 
     def test_invalidate_clears_specific_type(self, tmp_path: Path) -> None:
@@ -952,19 +956,19 @@ class TestLintCache:
         )
 
         cache = LintCache(repo_path=tmp_path)
-        # Run twice each to promote from pending to confirmed
+        # Mark each lint type as successful
         cache.check_and_update("ruff_check")
-        cache.check_and_update("ruff_check")  # Promotes to confirmed
+        cache.mark_success("ruff_check")
         cache.check_and_update("ruff_format")
-        cache.check_and_update("ruff_format")  # Promotes to confirmed
+        cache.mark_success("ruff_format")
         cache.check_and_update("ty_check")
-        cache.check_and_update("ty_check")  # Promotes to confirmed
+        cache.mark_success("ty_check")
         assert cache.cache_size == 3
 
         cache.invalidate("ruff_check")
         assert cache.cache_size == 2
 
-        # ruff_check should be allowed again (goes back to pending)
+        # ruff_check should be allowed again (cache cleared)
         is_redundant, _ = cache.check_and_update("ruff_check")
         assert is_redundant is False
 
@@ -998,13 +1002,13 @@ class TestLintCache:
         )
 
         cache = LintCache(repo_path=tmp_path)
-        # Run twice each to promote from pending to confirmed
+        # Mark each lint type as successful
         cache.check_and_update("ruff_check")
-        cache.check_and_update("ruff_check")
+        cache.mark_success("ruff_check")
         cache.check_and_update("ruff_format")
-        cache.check_and_update("ruff_format")
+        cache.mark_success("ruff_format")
         cache.check_and_update("ty_check")
-        cache.check_and_update("ty_check")
+        cache.mark_success("ty_check")
         assert cache.cache_size == 3
 
         cache.invalidate()
@@ -1106,10 +1110,14 @@ class TestMakeLintCacheHook:
         hook_input = make_hook_input("Bash", {"command": "uvx ruff check ."})
         context = make_context()
 
-        # First lint
-        await hook(hook_input, None, context)
+        # First lint - allowed
+        result = await hook(hook_input, None, context)
+        assert result == {}  # Allow
 
-        # Second lint
+        # Simulate successful lint completion
+        cache.mark_success("ruff_check", "uvx ruff check .")
+
+        # Second lint - blocked due to cached success
         result = await hook(hook_input, None, context)
 
         assert result["decision"] == "block"
@@ -1179,11 +1187,11 @@ class TestMakeLintCacheHook:
         hook = make_lint_cache_hook(cache)
         context = make_context()
 
-        # First lint - records as pending (not yet confirmed)
+        # First lint - allowed
         lint_input = make_hook_input("Bash", {"command": "uvx ruff check ."})
         await hook(lint_input, None, context)
-        # Second lint promotes to confirmed
-        await hook(lint_input, None, context)
+        # Simulate successful lint completion
+        cache.mark_success("ruff_check", "uvx ruff check .")
         assert cache.cache_size == 1
 
         # Write tool - should invalidate cache
@@ -1225,11 +1233,11 @@ class TestMakeLintCacheHook:
         hook = make_lint_cache_hook(cache)
         context = make_context()
 
-        # First lint - pending
+        # First lint - allowed
         lint_input = make_hook_input("Bash", {"command": "uvx ruff check ."})
         await hook(lint_input, None, context)
-        # Second lint - promotes to confirmed
-        await hook(lint_input, None, context)
+        # Simulate successful lint completion
+        cache.mark_success("ruff_check", "uvx ruff check .")
         assert cache.cache_size == 1
 
         # Edit file - should invalidate

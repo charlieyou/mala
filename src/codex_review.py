@@ -20,10 +20,13 @@ from src.tools.command_runner import CommandRunner
 class ReviewIssue:
     """A single issue found during code review."""
 
+    title: str
+    body: str
+    confidence_score: float
+    priority: int | None  # 0=P0, 1=P1, 2=P2, 3=P3
     file: str
-    line: int | None
-    severity: str  # "error", "warning", "info"
-    message: str
+    line_start: int
+    line_end: int
 
 
 @dataclass
@@ -43,26 +46,50 @@ REVIEW_OUTPUT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "passed": {"type": "boolean"},
-        "issues": {
+        "findings": {
             "type": "array",
             "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "file": {"type": "string"},
-                    "line": {"type": ["integer", "null"]},
-                    "severity": {
-                        "type": "string",
-                        "enum": ["error", "warning", "info"],
+                    "title": {"type": "string"},
+                    "body": {"type": "string"},
+                    "confidence_score": {"type": "number"},
+                    "priority": {"type": ["integer", "null"]},
+                    "code_location": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "absolute_file_path": {"type": "string"},
+                            "line_range": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "properties": {
+                                    "start": {"type": "integer"},
+                                    "end": {"type": "integer"},
+                                },
+                                "required": ["start", "end"],
+                            },
+                        },
+                        "required": ["absolute_file_path", "line_range"],
                     },
-                    "message": {"type": "string"},
                 },
-                "required": ["file", "line", "severity", "message"],
+                "required": ["title", "body", "confidence_score", "code_location"],
             },
         },
+        "overall_correctness": {
+            "type": "string",
+            "enum": ["patch is correct", "patch is incorrect"],
+        },
+        "overall_explanation": {"type": "string"},
+        "overall_confidence_score": {"type": "number"},
     },
-    "required": ["passed", "issues"],
+    "required": [
+        "findings",
+        "overall_correctness",
+        "overall_explanation",
+        "overall_confidence_score",
+    ],
 }
 
 # Prompt template for code review

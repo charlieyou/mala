@@ -655,6 +655,10 @@ class MalaOrchestrator:
             failure_output=failure_output,
         )
 
+        # Working directory for fixer agent - use repo_path
+        # (could be a worktree path in future scenarios)
+        fixer_cwd = self.repo_path
+
         # Set up environment
         agent_env = {
             **os.environ,
@@ -670,7 +674,8 @@ class MalaOrchestrator:
         # Create per-session file read cache to avoid redundant re-reads
         file_read_cache = FileReadCache()
         # Create per-session lint cache to avoid redundant re-lints
-        lint_cache = LintCache(repo_path=self.repo_path)
+        # Use fixer_cwd (not self.repo_path) so cache monitors correct git state
+        lint_cache = LintCache(repo_path=fixer_cwd)
         pre_tool_hooks: list = [
             block_dangerous_commands,
             make_lock_enforcement_hook(agent_id, str(self.repo_path)),
@@ -681,13 +686,13 @@ class MalaOrchestrator:
             pre_tool_hooks.append(block_morph_replaced_tools)
 
         options = ClaudeAgentOptions(
-            cwd=str(self.repo_path),
+            cwd=str(fixer_cwd),
             permission_mode="bypassPermissions",
             model="opus",
             system_prompt={"type": "preset", "preset": "claude_code"},
             setting_sources=["project", "user"],
             mcp_servers=get_mcp_servers(
-                self.repo_path,
+                fixer_cwd,
                 morph_api_key=self._config.morph_api_key,
                 morph_enabled=self.morph_enabled,
             ),
