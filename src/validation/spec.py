@@ -4,8 +4,8 @@ This module provides:
 - ValidationSpec: defines what validations to run for a given scope
 - ValidationCommand: a single command in the validation pipeline
 - ValidationContext: immutable context for a validation run
-- ValidationArtifacts: record of validation outputs
-- IssueResolution: how an issue was resolved
+- ValidationArtifacts: record of validation outputs (re-exported from models)
+- IssueResolution: how an issue was resolved (re-exported from models)
 - Code vs docs classification helper
 - Disable list handling for spec omissions
 - Repo type detection for conditional validation
@@ -18,6 +18,13 @@ from enum import Enum
 from pathlib import Path
 import re
 from typing import TYPE_CHECKING, Literal
+
+# Re-export shared types from models for backward compatibility
+from src.models import (
+    IssueResolution as IssueResolution,
+    ResolutionOutcome as ResolutionOutcome,
+    ValidationArtifacts as ValidationArtifacts,
+)
 
 if TYPE_CHECKING:
     from re import Pattern
@@ -46,15 +53,6 @@ class CommandKind(Enum):
     TYPECHECK = "typecheck"
     TEST = "test"
     E2E = "e2e"
-
-
-class ResolutionOutcome(Enum):
-    """Outcome of issue resolution."""
-
-    SUCCESS = "success"
-    NO_CHANGE = "no_change"
-    OBSOLETE = "obsolete"
-    ALREADY_COMPLETE = "already_complete"
 
 
 @dataclass(frozen=True)
@@ -113,38 +111,6 @@ class E2EConfig:
     fixture_root: Path | None = None
     command: list[str] = field(default_factory=list)
     required_env: list[str] = field(default_factory=list)
-
-
-@dataclass
-class ValidationArtifacts:
-    """Record of validation outputs for observability.
-
-    Attributes:
-        log_dir: Directory containing validation logs.
-        worktree_path: Path to the worktree (if any).
-        worktree_state: State of the worktree ("kept" or "removed").
-        coverage_report: Path to coverage report.
-        e2e_fixture_path: Path to E2E fixture directory.
-    """
-
-    log_dir: Path
-    worktree_path: Path | None = None
-    worktree_state: Literal["kept", "removed"] | None = None
-    coverage_report: Path | None = None
-    e2e_fixture_path: Path | None = None
-
-
-@dataclass(frozen=True)
-class IssueResolution:
-    """Records how an issue was resolved.
-
-    Attributes:
-        outcome: The resolution outcome (success, no_change, obsolete).
-        rationale: Explanation for the resolution.
-    """
-
-    outcome: ResolutionOutcome
-    rationale: str
 
 
 @dataclass(frozen=True)

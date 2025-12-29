@@ -12,12 +12,12 @@ from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any, Literal
 
-from ..tools.env import get_lock_dir, get_repo_runs_dir
-from ..validation.spec import (
+from ..models import (
     IssueResolution,
     ResolutionOutcome,
     ValidationArtifacts,
 )
+from ..tools.env import get_lock_dir, get_repo_runs_dir
 
 
 @dataclass
