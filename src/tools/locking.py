@@ -5,6 +5,7 @@ Consolidates locking behavior from shell scripts.
 
 import hashlib
 import os
+import sys
 from pathlib import Path
 
 from .env import get_lock_dir
@@ -87,9 +88,9 @@ def _lock_key(filepath: str, repo_namespace: str | None = None) -> str:
     canonical_path = _canonicalize_path(filepath, repo_namespace)
 
     if repo_namespace:
-        # Normalize namespace too for consistency
-        namespace_key = str(Path(repo_namespace).resolve())
-        return f"{namespace_key}:{canonical_path}"
+        # Use namespace as-is to match shell script behavior
+        # Shell scripts pass REPO_NAMESPACE directly without normalizing
+        return f"{repo_namespace}:{canonical_path}"
     return canonical_path
 
 
@@ -279,3 +280,131 @@ def cleanup_agent_locks(agent_id: str) -> int:
             pass
 
     return cleaned
+
+
+def _cli_main() -> int:
+    """CLI entry point for shell script delegation.
+
+    Usage:
+        python -m src.tools.locking try <filepath>
+        python -m src.tools.locking wait <filepath> [timeout_seconds] [poll_interval_ms]
+        python -m src.tools.locking check <filepath>
+        python -m src.tools.locking holder <filepath>
+        python -m src.tools.locking release <filepath>
+        python -m src.tools.locking release-all
+
+    Environment variables:
+        LOCK_DIR: Directory for lock files (required for most commands)
+        AGENT_ID: Agent identifier (required for most commands)
+        REPO_NAMESPACE: Optional repo namespace for cross-repo disambiguation
+
+    Exit codes:
+        0: Success (lock acquired, held, released, etc.)
+        1: Failure (lock blocked, timeout, not held, etc.)
+        2: Usage error (missing env vars, invalid arguments)
+    """
+    if len(sys.argv) < 2:
+        print("Usage: python -m src.tools.locking <command> [args...]", file=sys.stderr)
+        print(
+            "Commands: try, wait, check, holder, release, release-all", file=sys.stderr
+        )
+        return 2
+
+    command = sys.argv[1]
+    lock_dir = os.environ.get("LOCK_DIR")
+    agent_id = os.environ.get("AGENT_ID")
+    repo_namespace = os.environ.get("REPO_NAMESPACE") or None
+
+    # Commands that require LOCK_DIR
+    if command in ("try", "wait", "check", "holder", "release", "release-all"):
+        if not lock_dir:
+            print("Error: LOCK_DIR must be set", file=sys.stderr)
+            return 2
+
+    # Commands that require AGENT_ID
+    if command in ("try", "wait", "check", "release", "release-all"):
+        if not agent_id:
+            print("Error: AGENT_ID must be set", file=sys.stderr)
+            return 2
+
+    # Set MALA_LOCK_DIR so our functions use the shell script's LOCK_DIR
+    os.environ["MALA_LOCK_DIR"] = lock_dir or ""
+
+    if command == "try":
+        if len(sys.argv) != 3:
+            print("Usage: python -m src.tools.locking try <filepath>", file=sys.stderr)
+            return 2
+        filepath = sys.argv[2]
+        if try_lock(filepath, agent_id, repo_namespace):  # type: ignore[arg-type]
+            return 0
+        return 1
+
+    elif command == "wait":
+        if len(sys.argv) < 3:
+            print(
+                "Usage: python -m src.tools.locking wait <filepath> [timeout_seconds] [poll_interval_ms]",
+                file=sys.stderr,
+            )
+            return 2
+        filepath = sys.argv[2]
+        timeout = float(sys.argv[3]) if len(sys.argv) > 3 else 30.0
+        poll_ms = int(sys.argv[4]) if len(sys.argv) > 4 else 100
+        if wait_for_lock(filepath, agent_id, repo_namespace, timeout, poll_ms):  # type: ignore[arg-type]
+            return 0
+        return 1
+
+    elif command == "check":
+        if len(sys.argv) != 3:
+            print(
+                "Usage: python -m src.tools.locking check <filepath>", file=sys.stderr
+            )
+            return 2
+        filepath = sys.argv[2]
+        holder = get_lock_holder(filepath, repo_namespace)
+        if holder == agent_id:
+            return 0
+        return 1
+
+    elif command == "holder":
+        if len(sys.argv) != 3:
+            print(
+                "Usage: python -m src.tools.locking holder <filepath>", file=sys.stderr
+            )
+            return 2
+        filepath = sys.argv[2]
+        holder = get_lock_holder(filepath, repo_namespace)
+        if holder:
+            print(holder)
+        return 0
+
+    elif command == "release":
+        if len(sys.argv) != 3:
+            print(
+                "Usage: python -m src.tools.locking release <filepath>", file=sys.stderr
+            )
+            return 2
+        filepath = sys.argv[2]
+        # Only release if we hold the lock
+        holder = get_lock_holder(filepath, repo_namespace)
+        if holder == agent_id:
+            lock_path = _lock_path(filepath, repo_namespace)
+            lock_path.unlink(missing_ok=True)
+        return 0
+
+    elif command == "release-all":
+        if len(sys.argv) != 2:
+            print("Usage: python -m src.tools.locking release-all", file=sys.stderr)
+            return 2
+        cleanup_agent_locks(agent_id)  # type: ignore[arg-type]
+        return 0
+
+    else:
+        print(f"Unknown command: {command}", file=sys.stderr)
+        print(
+            "Commands: try, wait, check, holder, release, release-all", file=sys.stderr
+        )
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(_cli_main())

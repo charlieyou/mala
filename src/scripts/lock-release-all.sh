@@ -5,15 +5,9 @@
 
 set -euo pipefail
 
-if [[ -z "${LOCK_DIR:-}" ]] || [[ -z "${AGENT_ID:-}" ]]; then
-    echo "Error: LOCK_DIR and AGENT_ID must be set" >&2
-    exit 2
-fi
-
-for lock in "$LOCK_DIR"/*.lock; do
-    if [[ -f "$lock" ]] && [[ "$(cat "$lock" 2>/dev/null)" = "$AGENT_ID" ]]; then
-        rm -f "$lock"
-    fi
-done
-
-exit 0
+exec uv run python -c "
+import sys
+sys.argv = ['locking', 'release-all']
+from src.tools.locking import _cli_main
+sys.exit(_cli_main())
+"

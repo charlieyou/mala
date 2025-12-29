@@ -835,3 +835,235 @@ class TestReleaseRunLocks:
         # Should not raise, should return 0
         cleaned = release_run_locks(["some-agent"])
         assert cleaned == 0
+
+
+class TestCLIEntryPoint:
+    """Test the Python CLI entry point used by shell script wrappers."""
+
+    def test_cli_try_acquires_lock(
+        self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI try command should acquire lock and return 0."""
+        from src.tools.locking import _cli_main, get_lock_holder
+        import sys
+
+        monkeypatch.setenv("LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("AGENT_ID", "cli-test-agent")
+        monkeypatch.delenv("REPO_NAMESPACE", raising=False)
+
+        # Use absolute path (as shell scripts do after normalization)
+        test_file = str(tmp_path / "cli_test.py")
+
+        original_argv = sys.argv
+        try:
+            sys.argv = ["locking", "try", test_file]
+            result = _cli_main()
+            assert result == 0
+
+            # Verify lock was acquired
+            holder = get_lock_holder(test_file)
+            assert holder == "cli-test-agent"
+        finally:
+            sys.argv = original_argv
+
+    def test_cli_try_fails_when_locked(
+        self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI try command should return 1 when lock is held."""
+        from src.tools.locking import _cli_main, try_lock
+        import sys
+
+        monkeypatch.setenv("LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("AGENT_ID", "second-agent")
+        monkeypatch.delenv("REPO_NAMESPACE", raising=False)
+
+        test_file = str(tmp_path / "contested.py")
+
+        # First agent acquires lock
+        assert try_lock(test_file, "first-agent")
+
+        original_argv = sys.argv
+        try:
+            sys.argv = ["locking", "try", test_file]
+            result = _cli_main()
+            assert result == 1
+        finally:
+            sys.argv = original_argv
+
+    def test_cli_holder_returns_agent_id(
+        self,
+        lock_env: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """CLI holder command should print agent ID to stdout."""
+        from src.tools.locking import _cli_main, try_lock
+        import sys
+
+        monkeypatch.setenv("LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+        monkeypatch.delenv("REPO_NAMESPACE", raising=False)
+
+        test_file = str(tmp_path / "holder_test.py")
+
+        # Create a lock
+        assert try_lock(test_file, "holder-agent")
+
+        original_argv = sys.argv
+        try:
+            sys.argv = ["locking", "holder", test_file]
+            result = _cli_main()
+            assert result == 0
+
+            captured = capsys.readouterr()
+            assert "holder-agent" in captured.out
+        finally:
+            sys.argv = original_argv
+
+    def test_cli_check_returns_0_for_owner(
+        self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI check command should return 0 when agent holds lock."""
+        from src.tools.locking import _cli_main, try_lock
+        import sys
+
+        monkeypatch.setenv("LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("AGENT_ID", "check-agent")
+        monkeypatch.delenv("REPO_NAMESPACE", raising=False)
+
+        test_file = str(tmp_path / "check_test.py")
+
+        # Agent acquires lock
+        assert try_lock(test_file, "check-agent")
+
+        original_argv = sys.argv
+        try:
+            sys.argv = ["locking", "check", test_file]
+            result = _cli_main()
+            assert result == 0
+        finally:
+            sys.argv = original_argv
+
+    def test_cli_check_returns_1_for_non_owner(
+        self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI check command should return 1 when agent doesn't hold lock."""
+        from src.tools.locking import _cli_main, try_lock
+        import sys
+
+        monkeypatch.setenv("LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("AGENT_ID", "other-agent")
+        monkeypatch.delenv("REPO_NAMESPACE", raising=False)
+
+        test_file = str(tmp_path / "check_test2.py")
+
+        # Different agent holds lock
+        assert try_lock(test_file, "owner-agent")
+
+        original_argv = sys.argv
+        try:
+            sys.argv = ["locking", "check", test_file]
+            result = _cli_main()
+            assert result == 1
+        finally:
+            sys.argv = original_argv
+
+    def test_cli_release_removes_own_lock(
+        self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI release command should remove lock held by agent."""
+        from src.tools.locking import _cli_main, try_lock, get_lock_holder
+        import sys
+
+        monkeypatch.setenv("LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("AGENT_ID", "release-agent")
+        monkeypatch.delenv("REPO_NAMESPACE", raising=False)
+
+        test_file = str(tmp_path / "release_test.py")
+
+        # Agent acquires and releases lock
+        assert try_lock(test_file, "release-agent")
+        assert get_lock_holder(test_file) == "release-agent"
+
+        original_argv = sys.argv
+        try:
+            sys.argv = ["locking", "release", test_file]
+            result = _cli_main()
+            assert result == 0
+
+            # Lock should be gone
+            assert get_lock_holder(test_file) is None
+        finally:
+            sys.argv = original_argv
+
+    def test_cli_release_all_removes_all_own_locks(
+        self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI release-all command should remove all locks held by agent."""
+        from src.tools.locking import _cli_main, try_lock
+        import sys
+
+        monkeypatch.setenv("LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("AGENT_ID", "batch-agent")
+        monkeypatch.delenv("REPO_NAMESPACE", raising=False)
+
+        # Agent acquires multiple locks (using absolute paths)
+        for i in range(3):
+            test_file = str(tmp_path / f"batch{i}.py")
+            assert try_lock(test_file, "batch-agent")
+
+        assert len(list(lock_env.glob("*.lock"))) == 3
+
+        original_argv = sys.argv
+        try:
+            sys.argv = ["locking", "release-all"]
+            result = _cli_main()
+            assert result == 0
+
+            # All locks should be gone
+            assert len(list(lock_env.glob("*.lock"))) == 0
+        finally:
+            sys.argv = original_argv
+
+    def test_cli_errors_without_lock_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """CLI should return 2 when LOCK_DIR is not set."""
+        from src.tools.locking import _cli_main
+        import sys
+
+        monkeypatch.delenv("LOCK_DIR", raising=False)
+        monkeypatch.setenv("AGENT_ID", "test-agent")
+        monkeypatch.delenv("REPO_NAMESPACE", raising=False)
+
+        original_argv = sys.argv
+        try:
+            sys.argv = ["locking", "try", "test.py"]
+            result = _cli_main()
+            assert result == 2
+        finally:
+            sys.argv = original_argv
+
+    def test_cli_errors_without_agent_id(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI should return 2 when AGENT_ID is not set (for commands that require it)."""
+        from src.tools.locking import _cli_main
+        import sys
+
+        monkeypatch.setenv("LOCK_DIR", str(lock_env))
+        monkeypatch.delenv("AGENT_ID", raising=False)
+        monkeypatch.delenv("REPO_NAMESPACE", raising=False)
+
+        original_argv = sys.argv
+        try:
+            sys.argv = ["locking", "try", "test.py"]
+            result = _cli_main()
+            assert result == 2
+        finally:
+            sys.argv = original_argv
