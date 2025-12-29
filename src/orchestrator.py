@@ -79,8 +79,8 @@ from .tools.locking import (
     release_run_locks,
     cleanup_agent_locks,
 )
+from .models import IssueResolution
 from .validation.spec import (
-    IssueResolution,
     ValidationContext,
     ValidationScope,
     build_validation_spec,
