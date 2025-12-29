@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 from typing import TYPE_CHECKING
+
+from ..tools.command_runner import run_command
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -154,13 +155,8 @@ def init_fixture_repo(repo_path: Path) -> str | None:
         ["bd", "init"],
         ["bd", "create", "Fix failing add() test", "-p", "1"],
     ):
-        result = subprocess.run(
-            cmd,
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
+        result = run_command(cmd, cwd=repo_path)
+        if not result.ok:
             stderr = result.stderr.strip()
             reason = (
                 f"E2E fixture setup failed: {' '.join(cmd)} (exit {result.returncode})"
@@ -180,13 +176,8 @@ def get_ready_issue_id(repo_path: Path) -> str | None:
     Returns:
         Issue ID if found, None otherwise.
     """
-    result = subprocess.run(
-        ["bd", "ready", "--json"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
+    result = run_command(["bd", "ready", "--json"], cwd=repo_path)
+    if not result.ok:
         return None
     try:
         issues = json.loads(result.stdout)
@@ -219,9 +210,7 @@ def annotate_issue(repo_path: Path, issue_id: str) -> None:
             "- uv run pytest",
         ]
     )
-    subprocess.run(
+    run_command(
         ["bd", "update", issue_id, "--notes", notes],
         cwd=repo_path,
-        capture_output=True,
-        text=True,
     )

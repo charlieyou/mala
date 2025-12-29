@@ -8,9 +8,7 @@ and managing tool restrictions.
 from __future__ import annotations
 
 import hashlib
-import os
 import re
-import subprocess
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -25,6 +23,7 @@ if TYPE_CHECKING:
         SyncHookJSONOutput,
     )
 
+from .tools.command_runner import run_command
 from .tools.env import SCRIPTS_DIR, get_lock_dir
 from .tools.locking import get_lock_holder
 
@@ -280,15 +279,13 @@ def make_stop_hook(agent_id: str) -> StopHook:
         """Stop hook to release all locks held by this agent."""
         script = SCRIPTS_DIR / "lock-release-all.sh"
         try:
-            subprocess.run(
+            run_command(
                 [str(script)],
+                cwd=Path.cwd(),
                 env={
-                    **os.environ,
                     "LOCK_DIR": str(get_lock_dir()),
                     "AGENT_ID": agent_id,
                 },
-                check=False,
-                capture_output=True,
             )
         except Exception:
             pass  # Best effort cleanup, orchestrator has fallback
@@ -528,35 +525,26 @@ def _get_git_state(repo_path: Path | None = None) -> str | None:
         cwd = repo_path or Path.cwd()
 
         # Get current HEAD commit SHA
-        head_result = subprocess.run(
+        head_result = run_command(
             ["git", "rev-parse", "HEAD"],
             cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=False,
         )
-        if head_result.returncode != 0:
+        if not head_result.ok:
             return None
         head_sha = head_result.stdout.strip()
 
         # Get hash of working tree state (staged + unstaged changes)
-        diff_result = subprocess.run(
+        diff_result = run_command(
             ["git", "diff", "HEAD"],
             cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=False,
         )
-        if diff_result.returncode != 0:
+        if not diff_result.ok:
             return None
 
         # Also include untracked files in the hash
-        untracked = subprocess.run(
+        untracked = run_command(
             ["git", "ls-files", "--others", "--exclude-standard"],
             cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=False,
         )
 
         # Combine HEAD SHA, diff, and untracked files for complete state
@@ -565,7 +553,7 @@ def _get_git_state(repo_path: Path | None = None) -> str | None:
             + "\n"
             + diff_result.stdout
             + "\n"
-            + (untracked.stdout if untracked.returncode == 0 else "")
+            + (untracked.stdout if untracked.ok else "")
         )
         return hashlib.sha256(combined.encode()).hexdigest()[:16]
     except Exception:
