@@ -12,12 +12,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from src.validation.command_runner import run_command
+from src.tools.command_runner import run_command
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.validation.command_runner import CommandResult
+    from src.tools.command_runner import CommandResult
 
 
 # Pattern for valid path components (alphanumeric, dash, underscore, dot)

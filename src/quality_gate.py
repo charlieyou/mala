@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
 from src.session_log_parser import JsonlEntry, SessionLogParser
-from src.validation.command_runner import run_command
+from src.tools.command_runner import run_command
 from src.validation.spec import (
     CommandKind,
     IssueResolution,

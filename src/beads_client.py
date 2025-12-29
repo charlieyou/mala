@@ -15,7 +15,7 @@ import asyncio
 import json
 from typing import TYPE_CHECKING
 
-from src.validation.command_runner import CommandResult, CommandRunner
+from src.tools.command_runner import CommandResult, CommandRunner
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -269,9 +269,7 @@ class TestSpecValidationRunner:
     ) -> None:
         """Test run_spec with a single passing command."""
         mock_proc = mock_popen_success(stdout="hello\n", stderr="", returncode=0)
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
+        with patch("src.tools.command_runner.subprocess.Popen", return_value=mock_proc):
             result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
             assert result.passed is True
             assert len(result.steps) == 1
@@ -289,9 +287,7 @@ class TestSpecValidationRunner:
     ) -> None:
         """Test run_spec with a single failing command."""
         mock_proc = mock_popen_success(stdout="", stderr="error occurred", returncode=1)
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
+        with patch("src.tools.command_runner.subprocess.Popen", return_value=mock_proc):
             result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
             assert result.passed is False
             assert len(result.steps) == 1
@@ -325,9 +321,7 @@ class TestSpecValidationRunner:
         )
 
         mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
+        with patch("src.tools.command_runner.subprocess.Popen", return_value=mock_proc):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is True
             assert len(result.steps) == 3
@@ -375,7 +369,7 @@ class TestSpecValidationRunner:
             return mock_proc
 
         with patch(
-            "src.validation.command_runner.subprocess.Popen",
+            "src.tools.command_runner.subprocess.Popen",
             side_effect=mock_popen_calls,
         ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
@@ -426,7 +420,7 @@ class TestSpecValidationRunner:
             return mock_proc
 
         with patch(
-            "src.validation.command_runner.subprocess.Popen",
+            "src.tools.command_runner.subprocess.Popen",
             side_effect=mock_popen_calls,
         ):
             env = runner._build_spec_env(context, "test-run")
@@ -483,7 +477,7 @@ class TestSpecValidationRunner:
             return mock_proc
 
         with patch(
-            "src.validation.command_runner.subprocess.Popen",
+            "src.tools.command_runner.subprocess.Popen",
             side_effect=mock_popen_calls,
         ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
@@ -519,7 +513,7 @@ class TestSpecValidationRunner:
             return mock_proc
 
         with patch(
-            "src.validation.command_runner.subprocess.Popen", side_effect=capture_popen
+            "src.tools.command_runner.subprocess.Popen", side_effect=capture_popen
         ):
             runner._run_spec_sync(spec, context, log_dir=tmp_path)
 
@@ -537,9 +531,7 @@ class TestSpecValidationRunner:
         mock_proc = mock_popen_success(
             stdout="stdout content\n", stderr="stderr content\n", returncode=0
         )
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
+        with patch("src.tools.command_runner.subprocess.Popen", return_value=mock_proc):
             result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
             assert result.passed is True
 
@@ -579,9 +571,7 @@ class TestSpecValidationRunner:
         )
 
         mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
+        with patch("src.tools.command_runner.subprocess.Popen", return_value=mock_proc):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is True
             assert result.coverage_result is not None
@@ -616,9 +606,7 @@ class TestSpecValidationRunner:
         )
 
         mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
+        with patch("src.tools.command_runner.subprocess.Popen", return_value=mock_proc):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is False
             assert result.coverage_result is not None
@@ -648,9 +636,7 @@ class TestSpecValidationRunner:
         )
 
         mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
+        with patch("src.tools.command_runner.subprocess.Popen", return_value=mock_proc):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is False
             assert result.coverage_result is not None
@@ -731,9 +717,7 @@ class TestSpecValidationRunner:
     ) -> None:
         """Test run_spec async wrapper."""
         mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
+        with patch("src.tools.command_runner.subprocess.Popen", return_value=mock_proc):
             result = await runner.run_spec(basic_spec, context, log_dir=tmp_path)
             assert result.passed is True
 
@@ -753,9 +737,7 @@ class TestSpecValidationRunner:
         mock_proc.pid = 12345
         mock_proc.returncode = None
 
-        with patch(
-            "src.validation.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
+        with patch("src.tools.command_runner.subprocess.Popen", return_value=mock_proc):
             result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
             assert result.passed is False
             assert result.steps[0].returncode == 124
@@ -810,7 +792,7 @@ class TestSpecValidationRunner:
                 return_value=mock_worktree_ctx,
             ),
             patch(
-                "src.validation.command_runner.subprocess.Popen",
+                "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
         ):
@@ -931,7 +913,7 @@ class TestSpecValidationRunner:
                 "src.validation.spec_runner.remove_worktree", side_effect=mock_remove
             ),
             patch(
-                "src.validation.command_runner.subprocess.Popen",
+                "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
         ):
@@ -1000,7 +982,7 @@ class TestSpecValidationRunner:
                 "src.validation.spec_runner.remove_worktree", side_effect=mock_remove
             ),
             patch(
-                "src.validation.command_runner.subprocess.Popen",
+                "src.tools.command_runner.subprocess.Popen",
                 side_effect=mock_popen_raises,
             ),
         ):
@@ -1082,7 +1064,7 @@ class TestSpecRunnerNoDecreaseMode:
 
         with (
             patch(
-                "src.validation.command_runner.subprocess.Popen",
+                "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
             patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
@@ -1160,7 +1142,7 @@ class TestSpecRunnerNoDecreaseMode:
 
         with (
             patch(
-                "src.validation.command_runner.subprocess.Popen",
+                "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
             patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
@@ -1252,7 +1234,7 @@ class TestSpecRunnerNoDecreaseMode:
 
         with (
             patch(
-                "src.validation.command_runner.subprocess.Popen",
+                "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
             patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
@@ -1310,7 +1292,7 @@ class TestSpecRunnerNoDecreaseMode:
         mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
 
         with patch(
-            "src.validation.command_runner.subprocess.Popen",
+            "src.tools.command_runner.subprocess.Popen",
             return_value=mock_proc,
         ):
             result = runner._run_validation_pipeline(
@@ -1368,7 +1350,7 @@ class TestSpecRunnerNoDecreaseMode:
         mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
 
         with patch(
-            "src.validation.command_runner.subprocess.Popen",
+            "src.tools.command_runner.subprocess.Popen",
             return_value=mock_proc,
         ):
             result = runner._run_validation_pipeline(
@@ -1457,7 +1439,7 @@ class TestSpecRunnerBaselineRefresh:
                 return_value=mock_worktree,
             ),
             patch(
-                "src.validation.command_runner.subprocess.Popen",
+                "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
             patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
@@ -1679,7 +1661,7 @@ class TestSpecRunnerBaselineRefresh:
                 return_value=mock_worktree,
             ),
             patch(
-                "src.validation.command_runner.subprocess.Popen",
+                "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
             patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
@@ -1775,7 +1757,7 @@ class TestSpecRunnerBaselineRefresh:
                 return_value=mock_worktree,
             ),
             patch(
-                "src.validation.command_runner.subprocess.Popen",
+                "src.tools.command_runner.subprocess.Popen",
                 side_effect=mock_popen_capture,
             ),
             patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
@@ -1911,7 +1893,7 @@ class TestBaselineCaptureOrder:
                 return_value=mock_worktree,
             ),
             patch(
-                "src.validation.command_runner.subprocess.Popen",
+                "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
             patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),
@@ -2016,7 +1998,7 @@ class TestBaselineCaptureOrder:
                 return_value=mock_worktree,
             ),
             patch(
-                "src.validation.command_runner.subprocess.Popen",
+                "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
             patch("src.validation.coverage.subprocess.run", side_effect=mock_git_run),

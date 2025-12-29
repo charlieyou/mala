@@ -6,7 +6,7 @@ Provides helpers for getting git repository information.
 import re
 from pathlib import Path
 
-from src.validation.command_runner import CommandRunner, run_command_async
+from src.tools.command_runner import CommandRunner, run_command_async
 
 # Default timeout for git commands (seconds)
 DEFAULT_GIT_TIMEOUT = 5.0

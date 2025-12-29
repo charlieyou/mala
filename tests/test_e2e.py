@@ -371,12 +371,10 @@ class TestE2ERunnerRun:
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
             patch("subprocess.run", side_effect=mock_run),
-            patch(
-                "src.validation.command_runner.subprocess.Popen", side_effect=mock_popen
-            ),
+            patch("src.tools.command_runner.subprocess.Popen", side_effect=mock_popen),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
-            patch("src.validation.command_runner.os.killpg"),  # Mock process group kill
+            patch("src.tools.command_runner.os.killpg"),  # Mock process group kill
         ):
             (tmp_path / "fixture").mkdir()
             (tmp_path / "fixture" / "tests").mkdir()

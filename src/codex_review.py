@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from src.validation.command_runner import CommandRunner
+from src.tools.command_runner import CommandRunner
 
 
 @dataclass
