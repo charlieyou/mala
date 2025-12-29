@@ -373,6 +373,59 @@ class TestReviewResult:
         assert lifecycle.state == LifecycleState.FAILED
         assert "Invalid JSON response" in ctx.final_result
 
+    def test_review_failed_no_progress_fails_immediately(self) -> None:
+        """Review failed with no_progress=True fails without retry.
+
+        This tests the progress gate: if the agent made no progress since
+        the last review attempt (same commit, no new validation evidence),
+        fail fast instead of burning more retries.
+        """
+        config = LifecycleConfig(max_review_retries=3)  # Plenty of retries left
+        lifecycle = ImplementerLifecycle(config)
+        lifecycle.start()
+        ctx = LifecycleContext()
+        lifecycle.on_messages_complete(ctx, has_session_id=True)
+        lifecycle.on_log_ready(ctx)
+        gate_result = GateResult(passed=True, commit_hash="abc123")
+        lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
+
+        # First review fails (attempt 1)
+        review_result = CodexReviewResult(
+            passed=False,
+            issues=[
+                ReviewIssue(file="test.py", line=10, severity="error", message="Bug")
+            ],
+        )
+        result = lifecycle.on_review_result(ctx, review_result, new_log_offset=200)
+        assert result.effect == Effect.SEND_REVIEW_RETRY
+        assert ctx.retry_state.review_attempt == 2
+
+        # Agent "works" but makes no progress, messages complete
+        lifecycle.on_messages_complete(ctx, has_session_id=True)
+        lifecycle.on_log_ready(ctx)
+
+        # Gate passes again
+        gate_result = GateResult(passed=True, commit_hash="abc123")  # Same commit!
+        lifecycle.on_gate_result(ctx, gate_result, new_log_offset=300)
+
+        # Second review also fails, but no_progress=True
+        # (orchestrator detected same commit, no new validation evidence)
+        review_result = CodexReviewResult(
+            passed=False,
+            issues=[
+                ReviewIssue(file="test.py", line=10, severity="error", message="Bug")
+            ],
+        )
+        result = lifecycle.on_review_result(
+            ctx, review_result, new_log_offset=400, no_progress=True
+        )
+
+        # Should fail immediately even though retries remain (2 < 3)
+        assert result.effect == Effect.COMPLETE_FAILURE
+        assert lifecycle.state == LifecycleState.FAILED
+        assert "No progress" in ctx.final_result
+        assert "no progress detected" in result.message.lower()
+
 
 class TestTimeoutAndError:
     """Tests for timeout and error handling."""

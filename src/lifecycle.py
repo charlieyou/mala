@@ -411,13 +411,21 @@ class ImplementerLifecycle:
         ctx: LifecycleContext,
         review_result: ReviewOutcome,
         new_log_offset: int,
+        no_progress: bool = False,
     ) -> TransitionResult:
         """Handle Codex review result.
 
         Decides whether to:
         - Complete with success (if review passed)
-        - Retry review (if failed but retries remain)
-        - Fail (if no retries left)
+        - Retry review (if failed but retries remain and progress made)
+        - Fail (if no retries left or no progress)
+
+        Args:
+            ctx: Lifecycle context with retry state.
+            review_result: The review outcome to process.
+            new_log_offset: Updated log offset for next attempt.
+            no_progress: If True, the agent made no progress since last attempt
+                (same commit, no new validation evidence). Triggers fail-fast.
         """
         if self._state != LifecycleState.RUNNING_REVIEW:
             raise ValueError(f"Unexpected state for review_result: {self._state}")
@@ -434,7 +442,10 @@ class ImplementerLifecycle:
             )
 
         # Review failed - can we retry?
-        can_retry = ctx.retry_state.review_attempt < self.config.max_review_retries
+        can_retry = (
+            ctx.retry_state.review_attempt < self.config.max_review_retries
+            and not no_progress
+        )
 
         if can_retry:
             # Prepare for retry - update offset and increment counter
@@ -450,8 +461,12 @@ class ImplementerLifecycle:
             )
 
         # No retries left - fail with review error details
-        if review_result.parse_error:
+        if no_progress:
+            ctx.final_result = "Codex review failed: No progress (commit unchanged, no new validation evidence)"
+            failure_message = "Review failed, no progress detected"
+        elif review_result.parse_error:
             ctx.final_result = f"Codex review failed: {review_result.parse_error}"
+            failure_message = "Review failed, no retries left"
         else:
             error_msgs = [
                 f"{i.file}:{i.line or 0}: {i.message}"
@@ -459,12 +474,13 @@ class ImplementerLifecycle:
                 if i.severity == "error"
             ]
             ctx.final_result = f"Codex review failed: {'; '.join(error_msgs[:3])}"
+            failure_message = "Review failed, no retries left"
         ctx.success = False
         self._state = LifecycleState.FAILED
         return TransitionResult(
             state=self._state,
             effect=Effect.COMPLETE_FAILURE,
-            message="Review failed, no retries left",
+            message=failure_message,
         )
 
     def on_timeout(

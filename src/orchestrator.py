@@ -1043,9 +1043,29 @@ class MalaOrchestrator:
                                         start_offset=lifecycle_ctx.retry_state.log_offset,
                                     )
 
+                                    # Check for no-progress on review retries
+                                    # (same commit, no new validation evidence since last attempt)
+                                    no_progress = False
+                                    if lifecycle_ctx.retry_state.review_attempt > 1:
+                                        current_commit = (
+                                            lifecycle_ctx.last_gate_result.commit_hash
+                                            if lifecycle_ctx.last_gate_result
+                                            else None
+                                        )
+                                        no_progress = self.quality_gate.check_no_progress(
+                                            log_path,
+                                            lifecycle_ctx.retry_state.log_offset,
+                                            lifecycle_ctx.retry_state.previous_commit_hash,
+                                            current_commit,
+                                            spec=self.per_issue_spec,
+                                        )
+
                                     # Transition based on review result
                                     result = lifecycle.on_review_result(
-                                        lifecycle_ctx, review_result, new_offset
+                                        lifecycle_ctx,
+                                        review_result,
+                                        new_offset,
+                                        no_progress,
                                     )
 
                                     if result.effect == Effect.COMPLETE_SUCCESS:
@@ -1060,6 +1080,14 @@ class MalaOrchestrator:
                                         break
 
                                     if result.effect == Effect.COMPLETE_FAILURE:
+                                        # Log specific reason for review failure
+                                        if no_progress:
+                                            log(
+                                                "✗",
+                                                "Review failed: No progress (commit unchanged, no new validation evidence)",
+                                                Colors.RED,
+                                                agent_id=issue_id,
+                                            )
                                         final_result = lifecycle_ctx.final_result
                                         break
 
