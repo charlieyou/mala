@@ -12,19 +12,13 @@ import os
 from typing import TYPE_CHECKING
 
 from ..tools.env import get_lock_dir
-from .coverage import (
-    CoverageResult,
-    CoverageStatus,
-    parse_and_check_coverage,
-)
-from .e2e import E2EConfig as E2ERunnerConfig
-from .e2e import E2ERunner, E2EStatus
 from .spec import ValidationArtifacts
 from .spec_executor import (
     ExecutorConfig,
     ExecutorInput,
     SpecCommandExecutor,
 )
+from .spec_result_builder import ResultBuilderInput, SpecResultBuilder
 from .spec_workspace import (
     SetupError,
     cleanup_workspace,
@@ -34,11 +28,8 @@ from .spec_workspace import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from .e2e import E2EResult
     from .result import ValidationStepResult
     from .spec import (
-        CoverageConfig,
-        E2EConfig,
         ValidationContext,
         ValidationSpec,
     )
@@ -175,53 +166,32 @@ class SpecValidationRunner:
             steps = self._run_commands(spec, cwd, env, log_dir)
         except CommandFailure as e:
             self._write_completion_manifest(log_dir, expected, e.steps, e.reason)
-            return self._build_failure_result(e.steps, e.reason, artifacts)
-
-        # Step 2: Check coverage
-        cov = self._check_coverage_if_enabled(
-            spec, cwd, log_dir, artifacts, baseline_percent
-        )
-        if cov is not None and not cov.passed:
-            reason = cov.failure_reason or "Coverage check failed"
-            self._write_completion_manifest(log_dir, expected, steps, reason)
-            return self._build_failure_result(
-                steps, reason, artifacts, coverage_result=cov
+            return ValidationResult(
+                passed=False,
+                steps=e.steps,
+                failure_reasons=[e.reason],
+                artifacts=artifacts,
             )
 
-        # Step 3: Run E2E
-        e2e = self._run_e2e_if_enabled(spec, env, cwd, log_dir, artifacts)
-        if e2e is not None and not e2e.passed and e2e.status != E2EStatus.SKIPPED:
-            reason = e2e.failure_reason or "E2E failed"
-            self._write_completion_manifest(log_dir, expected, steps, reason)
-            return self._build_failure_result(steps, reason, artifacts, cov, e2e)
-
-        # Step 4: Success
-        self._write_completion_manifest(log_dir, expected, steps, None)
-        return ValidationResult(
-            passed=True,
+        # Step 2: Build result (coverage check, E2E, result assembly)
+        builder = SpecResultBuilder()
+        builder_input = ResultBuilderInput(
+            spec=spec,
+            context=context,
             steps=steps,
             artifacts=artifacts,
-            coverage_result=cov,
-            e2e_result=e2e,
+            cwd=cwd,
+            log_dir=log_dir,
+            env=env,
+            baseline_percent=baseline_percent,
         )
+        result = builder.build(builder_input)
 
-    def _build_failure_result(
-        self,
-        steps: list[ValidationStepResult],
-        reason: str,
-        artifacts: ValidationArtifacts,
-        coverage_result: CoverageResult | None = None,
-        e2e_result: E2EResult | None = None,
-    ) -> ValidationResult:
-        """Build a failed ValidationResult."""
-        return ValidationResult(
-            passed=False,
-            steps=steps,
-            failure_reasons=[reason],
-            artifacts=artifacts,
-            coverage_result=coverage_result,
-            e2e_result=e2e_result,
-        )
+        # Write completion manifest
+        failure_reason = result.failure_reasons[0] if result.failure_reasons else None
+        self._write_completion_manifest(log_dir, expected, steps, failure_reason)
+
+        return result
 
     def _write_initial_manifest(
         self,
@@ -298,68 +268,6 @@ class SpecValidationRunner:
 
         return output.steps
 
-    def _check_coverage_if_enabled(
-        self,
-        spec: ValidationSpec,
-        cwd: Path,
-        log_dir: Path,
-        artifacts: ValidationArtifacts,
-        baseline_percent: float | None,
-    ) -> CoverageResult | None:
-        """Run coverage check if enabled.
-
-        Args:
-            spec: Validation spec with coverage config.
-            cwd: Working directory where coverage.xml should be.
-            log_dir: Directory for logs.
-            artifacts: Artifacts to update with coverage report path.
-            baseline_percent: Baseline coverage for "no decrease" mode.
-
-        Returns:
-            CoverageResult if coverage is enabled, None otherwise.
-        """
-        if not spec.coverage.enabled:
-            return None
-
-        coverage_result = self._check_coverage(
-            spec.coverage, cwd, log_dir, baseline_percent
-        )
-        if coverage_result.report_path:
-            artifacts.coverage_report = coverage_result.report_path
-
-        return coverage_result
-
-    def _run_e2e_if_enabled(
-        self,
-        spec: ValidationSpec,
-        env: dict[str, str],
-        cwd: Path,
-        log_dir: Path,
-        artifacts: ValidationArtifacts,
-    ) -> E2EResult | None:
-        """Run E2E validation if enabled (only for run-level scope).
-
-        Args:
-            spec: Validation spec with E2E config.
-            env: Environment variables.
-            cwd: Working directory.
-            log_dir: Directory for logs.
-            artifacts: Artifacts to update with fixture path.
-
-        Returns:
-            E2EResult if E2E is enabled and scope is run-level, None otherwise.
-        """
-        from .spec import ValidationScope
-
-        if not spec.e2e.enabled or spec.scope != ValidationScope.RUN_LEVEL:
-            return None
-
-        e2e_result = self._run_spec_e2e(spec.e2e, env, cwd, log_dir)
-        if e2e_result.fixture_path:
-            artifacts.e2e_fixture_path = e2e_result.fixture_path
-
-        return e2e_result
-
     def _write_completion_manifest(
         self,
         log_dir: Path,
@@ -406,74 +314,3 @@ class SpecValidationRunner:
             "LOCK_DIR": str(get_lock_dir()),
             "AGENT_ID": f"validator-{context.issue_id or run_id}",
         }
-
-    def _check_coverage(
-        self,
-        config: CoverageConfig,
-        cwd: Path,
-        log_dir: Path,
-        baseline_percent: float | None = None,
-    ) -> CoverageResult:
-        """Check coverage against threshold.
-
-        Args:
-            config: Coverage configuration.
-            cwd: Working directory where coverage.xml should be.
-            log_dir: Directory for logs.
-            baseline_percent: Baseline coverage percentage for "no decrease" mode.
-                Used when config.min_percent is None.
-
-        Returns:
-            CoverageResult with pass/fail status.
-        """
-        # Look for coverage.xml in cwd
-        # Resolve relative paths against cwd to ensure correct file lookup
-        if config.report_path is not None:
-            report_path = config.report_path
-            if not report_path.is_absolute():
-                report_path = cwd / report_path
-        else:
-            report_path = cwd / "coverage.xml"
-
-        if not report_path.exists():
-            # Coverage report not found - this is only an error if coverage was expected
-            return CoverageResult(
-                percent=None,
-                passed=False,
-                status=CoverageStatus.ERROR,
-                report_path=report_path,
-                failure_reason=f"Coverage report not found: {report_path}",
-            )
-
-        # Determine threshold: use config.min_percent if set, else baseline_percent
-        threshold = (
-            config.min_percent if config.min_percent is not None else baseline_percent
-        )
-
-        return parse_and_check_coverage(report_path, threshold)
-
-    def _run_spec_e2e(
-        self,
-        config: E2EConfig,
-        env: dict[str, str],
-        cwd: Path,
-        log_dir: Path,
-    ) -> E2EResult:
-        """Run E2E validation using the E2ERunner.
-
-        Args:
-            config: E2E configuration from spec.
-            env: Environment variables.
-            cwd: Working directory.
-            log_dir: Directory for logs.
-
-        Returns:
-            E2EResult with pass/fail status.
-        """
-        runner_config = E2ERunnerConfig(
-            enabled=config.enabled,
-            skip_if_no_keys=True,  # Don't fail if API key missing
-            keep_fixture=True,  # Keep for debugging
-        )
-        runner = E2ERunner(runner_config)
-        return runner.run(env=env, cwd=cwd)

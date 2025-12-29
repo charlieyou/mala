@@ -35,6 +35,7 @@ from src.validation.worktree import WorktreeContext, WorktreeState
 
 if TYPE_CHECKING:
     from src.validation.spec_executor import ExecutorConfig
+    from src.validation.spec_result_builder import SpecResultBuilder
 
 
 def mock_popen_success(
@@ -654,6 +655,8 @@ class TestSpecValidationRunner:
         self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
         """Test that E2E only runs for per-issue scope."""
+        from src.validation.spec_result_builder import SpecResultBuilder
+
         # Per-issue context - E2E should not run
         per_issue_context = ValidationContext(
             issue_id="test-123",
@@ -678,7 +681,7 @@ class TestSpecValidationRunner:
             e2e_run_called = True
             return MagicMock(passed=True, fixture_path=None)
 
-        with patch.object(runner, "_run_spec_e2e", side_effect=mock_e2e_run):
+        with patch.object(SpecResultBuilder, "_run_e2e", side_effect=mock_e2e_run):
             result = runner._run_spec_sync(spec, per_issue_context, log_dir=tmp_path)
             assert result.passed is True
             assert not e2e_run_called
@@ -687,6 +690,9 @@ class TestSpecValidationRunner:
         self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """Test that E2E runs for run-level scope."""
+        from src.validation.e2e import E2EResult, E2EStatus
+        from src.validation.spec_result_builder import SpecResultBuilder
+
         run_level_context = ValidationContext(
             issue_id=None,
             repo_path=tmp_path,
@@ -702,15 +708,13 @@ class TestSpecValidationRunner:
             e2e=E2EConfig(enabled=True),
         )
 
-        from src.validation.e2e import E2EResult, E2EStatus
-
         mock_e2e_result = E2EResult(
             passed=True,
             status=E2EStatus.PASSED,
             fixture_path=tmp_path / "fixture",
         )
 
-        with patch.object(runner, "_run_spec_e2e", return_value=mock_e2e_result):
+        with patch.object(SpecResultBuilder, "_run_e2e", return_value=mock_e2e_result):
             result = runner._run_spec_sync(spec, run_level_context, log_dir=tmp_path)
             assert result.passed is True
 
@@ -2383,3 +2387,482 @@ class TestSpecCommandExecutor:
 
         assert "test-mutex.sh" in captured_cmd[0]
         assert "pytest" in captured_cmd
+
+
+class TestSpecResultBuilder:
+    """Tests for SpecResultBuilder class.
+
+    These tests verify the result builder handles:
+    - Coverage checking when enabled
+    - E2E execution when enabled and run-level
+    - Failure result assembly with correct reasons
+    - Success result assembly
+    """
+
+    @pytest.fixture
+    def builder(self) -> "SpecResultBuilder":
+        """Create a SpecResultBuilder instance."""
+        from src.validation.spec_result_builder import SpecResultBuilder
+
+        return SpecResultBuilder()
+
+    @pytest.fixture
+    def basic_artifacts(self, tmp_path: Path) -> ValidationArtifacts:
+        """Create basic artifacts for testing."""
+        return ValidationArtifacts(log_dir=tmp_path)
+
+    @pytest.fixture
+    def basic_context(self, tmp_path: Path) -> ValidationContext:
+        """Create a basic validation context."""
+        return ValidationContext(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_hash="",
+            changed_files=[],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+    @pytest.fixture
+    def basic_steps(self) -> list[ValidationStepResult]:
+        """Create basic steps for testing."""
+        return [
+            ValidationStepResult(
+                name="test",
+                command=["echo", "test"],
+                ok=True,
+                returncode=0,
+            )
+        ]
+
+    def test_build_success_no_coverage_no_e2e(
+        self,
+        builder: "SpecResultBuilder",
+        basic_artifacts: ValidationArtifacts,
+        basic_context: ValidationContext,
+        basic_steps: list[ValidationStepResult],
+        tmp_path: Path,
+    ) -> None:
+        """Test build() returns success when coverage and E2E are disabled."""
+        from src.validation.spec_result_builder import ResultBuilderInput
+
+        spec = ValidationSpec(
+            commands=[],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=False),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        input = ResultBuilderInput(
+            spec=spec,
+            context=basic_context,
+            steps=basic_steps,
+            artifacts=basic_artifacts,
+            cwd=tmp_path,
+            log_dir=tmp_path,
+            env={},
+            baseline_percent=None,
+        )
+
+        result = builder.build(input)
+
+        assert result.passed is True
+        assert result.steps == basic_steps
+        assert result.artifacts is basic_artifacts
+        assert result.coverage_result is None
+        assert result.e2e_result is None
+
+    def test_build_coverage_passes(
+        self,
+        builder: "SpecResultBuilder",
+        basic_artifacts: ValidationArtifacts,
+        basic_context: ValidationContext,
+        basic_steps: list[ValidationStepResult],
+        tmp_path: Path,
+    ) -> None:
+        """Test build() passes when coverage meets threshold."""
+        from src.validation.spec_result_builder import ResultBuilderInput
+
+        # Create coverage.xml that passes threshold
+        coverage_xml = tmp_path / "coverage.xml"
+        coverage_xml.write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.90" branch-rate="0.85" />'
+        )
+
+        spec = ValidationSpec(
+            commands=[],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=85.0),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        input = ResultBuilderInput(
+            spec=spec,
+            context=basic_context,
+            steps=basic_steps,
+            artifacts=basic_artifacts,
+            cwd=tmp_path,
+            log_dir=tmp_path,
+            env={},
+            baseline_percent=None,
+        )
+
+        result = builder.build(input)
+
+        assert result.passed is True
+        assert result.coverage_result is not None
+        assert result.coverage_result.passed is True
+        assert result.coverage_result.percent == 90.0
+
+    def test_build_coverage_fails(
+        self,
+        builder: "SpecResultBuilder",
+        basic_artifacts: ValidationArtifacts,
+        basic_context: ValidationContext,
+        basic_steps: list[ValidationStepResult],
+        tmp_path: Path,
+    ) -> None:
+        """Test build() fails when coverage is below threshold."""
+        from src.validation.spec_result_builder import ResultBuilderInput
+
+        # Create coverage.xml that fails threshold
+        coverage_xml = tmp_path / "coverage.xml"
+        coverage_xml.write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.70" branch-rate="0.60" />'
+        )
+
+        spec = ValidationSpec(
+            commands=[],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=85.0),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        input = ResultBuilderInput(
+            spec=spec,
+            context=basic_context,
+            steps=basic_steps,
+            artifacts=basic_artifacts,
+            cwd=tmp_path,
+            log_dir=tmp_path,
+            env={},
+            baseline_percent=None,
+        )
+
+        result = builder.build(input)
+
+        assert result.passed is False
+        assert result.coverage_result is not None
+        assert result.coverage_result.passed is False
+        assert "70.0%" in (result.coverage_result.failure_reason or "")
+
+    def test_build_coverage_uses_baseline(
+        self,
+        builder: "SpecResultBuilder",
+        basic_artifacts: ValidationArtifacts,
+        basic_context: ValidationContext,
+        basic_steps: list[ValidationStepResult],
+        tmp_path: Path,
+    ) -> None:
+        """Test build() uses baseline_percent when min_percent is None."""
+        from src.validation.spec_result_builder import ResultBuilderInput
+
+        # Create coverage.xml at 80%
+        coverage_xml = tmp_path / "coverage.xml"
+        coverage_xml.write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.80" branch-rate="0.75" />'
+        )
+
+        spec = ValidationSpec(
+            commands=[],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        input = ResultBuilderInput(
+            spec=spec,
+            context=basic_context,
+            steps=basic_steps,
+            artifacts=basic_artifacts,
+            cwd=tmp_path,
+            log_dir=tmp_path,
+            env={},
+            baseline_percent=90.0,  # Higher than current
+        )
+
+        result = builder.build(input)
+
+        # Should fail because 80% < 90% baseline
+        assert result.passed is False
+        assert result.coverage_result is not None
+        assert result.coverage_result.passed is False
+        assert "80.0%" in (result.coverage_result.failure_reason or "")
+        assert "90.0%" in (result.coverage_result.failure_reason or "")
+
+    def test_build_coverage_missing_report_fails(
+        self,
+        builder: "SpecResultBuilder",
+        basic_artifacts: ValidationArtifacts,
+        basic_context: ValidationContext,
+        basic_steps: list[ValidationStepResult],
+        tmp_path: Path,
+    ) -> None:
+        """Test build() fails when coverage report is missing."""
+        from src.validation.spec_result_builder import ResultBuilderInput
+
+        spec = ValidationSpec(
+            commands=[],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=85.0),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        input = ResultBuilderInput(
+            spec=spec,
+            context=basic_context,
+            steps=basic_steps,
+            artifacts=basic_artifacts,
+            cwd=tmp_path,
+            log_dir=tmp_path,
+            env={},
+            baseline_percent=None,
+        )
+
+        result = builder.build(input)
+
+        assert result.passed is False
+        assert result.coverage_result is not None
+        assert "not found" in (result.coverage_result.failure_reason or "")
+
+    def test_build_e2e_skipped_for_per_issue(
+        self,
+        builder: "SpecResultBuilder",
+        basic_artifacts: ValidationArtifacts,
+        basic_context: ValidationContext,
+        basic_steps: list[ValidationStepResult],
+        tmp_path: Path,
+    ) -> None:
+        """Test build() skips E2E for per-issue scope."""
+        from src.validation.spec_result_builder import ResultBuilderInput
+
+        spec = ValidationSpec(
+            commands=[],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=False),
+            e2e=E2EConfig(enabled=True),
+        )
+
+        input = ResultBuilderInput(
+            spec=spec,
+            context=basic_context,
+            steps=basic_steps,
+            artifacts=basic_artifacts,
+            cwd=tmp_path,
+            log_dir=tmp_path,
+            env={},
+            baseline_percent=None,
+        )
+
+        e2e_called = False
+
+        def mock_run(*args: object, **kwargs: object) -> MagicMock:
+            nonlocal e2e_called
+            e2e_called = True
+            return MagicMock(passed=True)
+
+        with patch.object(builder, "_run_e2e", side_effect=mock_run):
+            result = builder.build(input)
+
+        assert result.passed is True
+        assert result.e2e_result is None
+        assert not e2e_called
+
+    def test_build_e2e_runs_for_run_level(
+        self,
+        builder: "SpecResultBuilder",
+        basic_artifacts: ValidationArtifacts,
+        basic_steps: list[ValidationStepResult],
+        tmp_path: Path,
+    ) -> None:
+        """Test build() runs E2E for run-level scope."""
+        from src.validation.e2e import E2EResult, E2EStatus
+        from src.validation.spec_result_builder import ResultBuilderInput
+
+        run_level_context = ValidationContext(
+            issue_id=None,
+            repo_path=tmp_path,
+            commit_hash="",
+            changed_files=[],
+            scope=ValidationScope.RUN_LEVEL,
+        )
+
+        spec = ValidationSpec(
+            commands=[],
+            scope=ValidationScope.RUN_LEVEL,
+            coverage=CoverageConfig(enabled=False),
+            e2e=E2EConfig(enabled=True),
+        )
+
+        mock_e2e_result = E2EResult(
+            passed=True,
+            status=E2EStatus.PASSED,
+            fixture_path=tmp_path / "fixture",
+        )
+
+        input = ResultBuilderInput(
+            spec=spec,
+            context=run_level_context,
+            steps=basic_steps,
+            artifacts=basic_artifacts,
+            cwd=tmp_path,
+            log_dir=tmp_path,
+            env={},
+            baseline_percent=None,
+        )
+
+        with patch.object(builder, "_run_e2e", return_value=mock_e2e_result):
+            result = builder.build(input)
+
+        assert result.passed is True
+        assert result.e2e_result is mock_e2e_result
+
+    def test_build_e2e_failure_fails_build(
+        self,
+        builder: "SpecResultBuilder",
+        basic_artifacts: ValidationArtifacts,
+        basic_steps: list[ValidationStepResult],
+        tmp_path: Path,
+    ) -> None:
+        """Test build() fails when E2E fails."""
+        from src.validation.e2e import E2EResult, E2EStatus
+        from src.validation.spec_result_builder import ResultBuilderInput
+
+        run_level_context = ValidationContext(
+            issue_id=None,
+            repo_path=tmp_path,
+            commit_hash="",
+            changed_files=[],
+            scope=ValidationScope.RUN_LEVEL,
+        )
+
+        spec = ValidationSpec(
+            commands=[],
+            scope=ValidationScope.RUN_LEVEL,
+            coverage=CoverageConfig(enabled=False),
+            e2e=E2EConfig(enabled=True),
+        )
+
+        mock_e2e_result = E2EResult(
+            passed=False,
+            status=E2EStatus.FAILED,
+            failure_reason="E2E test failed",
+        )
+
+        input = ResultBuilderInput(
+            spec=spec,
+            context=run_level_context,
+            steps=basic_steps,
+            artifacts=basic_artifacts,
+            cwd=tmp_path,
+            log_dir=tmp_path,
+            env={},
+            baseline_percent=None,
+        )
+
+        with patch.object(builder, "_run_e2e", return_value=mock_e2e_result):
+            result = builder.build(input)
+
+        assert result.passed is False
+        assert "E2E test failed" in result.failure_reasons[0]
+        assert result.e2e_result is mock_e2e_result
+
+    def test_build_e2e_skipped_does_not_fail(
+        self,
+        builder: "SpecResultBuilder",
+        basic_artifacts: ValidationArtifacts,
+        basic_steps: list[ValidationStepResult],
+        tmp_path: Path,
+    ) -> None:
+        """Test build() passes when E2E is skipped (status=SKIPPED)."""
+        from src.validation.e2e import E2EResult, E2EStatus
+        from src.validation.spec_result_builder import ResultBuilderInput
+
+        run_level_context = ValidationContext(
+            issue_id=None,
+            repo_path=tmp_path,
+            commit_hash="",
+            changed_files=[],
+            scope=ValidationScope.RUN_LEVEL,
+        )
+
+        spec = ValidationSpec(
+            commands=[],
+            scope=ValidationScope.RUN_LEVEL,
+            coverage=CoverageConfig(enabled=False),
+            e2e=E2EConfig(enabled=True),
+        )
+
+        # E2E skipped due to missing prereqs - should not cause failure
+        mock_e2e_result = E2EResult(
+            passed=False,  # Note: passed=False but status=SKIPPED
+            status=E2EStatus.SKIPPED,
+            failure_reason="E2E prerequisites not met",
+        )
+
+        input = ResultBuilderInput(
+            spec=spec,
+            context=run_level_context,
+            steps=basic_steps,
+            artifacts=basic_artifacts,
+            cwd=tmp_path,
+            log_dir=tmp_path,
+            env={},
+            baseline_percent=None,
+        )
+
+        with patch.object(builder, "_run_e2e", return_value=mock_e2e_result):
+            result = builder.build(input)
+
+        # Should pass because SKIPPED is not considered a failure
+        assert result.passed is True
+        assert result.e2e_result is mock_e2e_result
+
+    def test_build_coverage_updates_artifacts(
+        self,
+        builder: "SpecResultBuilder",
+        basic_context: ValidationContext,
+        basic_steps: list[ValidationStepResult],
+        tmp_path: Path,
+    ) -> None:
+        """Test build() updates artifacts with coverage report path."""
+        from src.validation.spec_result_builder import ResultBuilderInput
+
+        artifacts = ValidationArtifacts(log_dir=tmp_path)
+
+        # Create coverage.xml
+        coverage_xml = tmp_path / "coverage.xml"
+        coverage_xml.write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.90" branch-rate="0.85" />'
+        )
+
+        spec = ValidationSpec(
+            commands=[],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=85.0),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        input = ResultBuilderInput(
+            spec=spec,
+            context=basic_context,
+            steps=basic_steps,
+            artifacts=artifacts,
+            cwd=tmp_path,
+            log_dir=tmp_path,
+            env={},
+            baseline_percent=None,
+        )
+
+        builder.build(input)
+
+        assert artifacts.coverage_report == coverage_xml
