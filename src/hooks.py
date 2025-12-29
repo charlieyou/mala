@@ -7,9 +7,12 @@ and managing tool restrictions.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -290,3 +293,201 @@ def make_stop_hook(agent_id: str) -> StopHook:
         return {}
 
     return cleanup_locks_on_stop
+
+
+@dataclass
+class CachedFileInfo:
+    """Cached information about a previously-read file.
+
+    Attributes:
+        mtime_ns: File modification time in nanoseconds at time of read.
+        size: File size in bytes at time of read.
+        content_hash: SHA-256 hash of the file content.
+        read_count: Number of times this file was read.
+    """
+
+    mtime_ns: int
+    size: int
+    content_hash: str
+    read_count: int = 1
+
+
+class FileReadCache:
+    """Cache for tracking file reads and detecting redundant re-reads.
+
+    This cache tracks files that have been read during an agent session.
+    When a file is re-read without modification, the cache blocks the read
+    and informs the agent that the file hasn't changed, saving tokens.
+
+    The cache uses file mtime and size as fast change detection, falling back
+    to content hash comparison only when mtime/size match.
+
+    Attributes:
+        _cache: Mapping of absolute file paths to cached file info.
+        _blocked_count: Count of reads that were blocked due to cache hits.
+    """
+
+    def __init__(self) -> None:
+        """Initialize an empty file read cache."""
+        self._cache: dict[str, CachedFileInfo] = {}
+        self._blocked_count: int = 0
+
+    def check_and_update(self, file_path: str) -> tuple[bool, str]:
+        """Check if a file read is redundant and update the cache.
+
+        Args:
+            file_path: Path to the file being read.
+
+        Returns:
+            Tuple of (is_redundant, message). If is_redundant is True,
+            the message explains why the read is blocked.
+        """
+        try:
+            path = Path(file_path).resolve()
+            if not path.is_file():
+                # File doesn't exist or is not a file, allow the read
+                return (False, "")
+
+            stat = path.stat()
+            mtime_ns = stat.st_mtime_ns
+            size = stat.st_size
+
+            # Check if we have a cached entry for this file
+            cached = self._cache.get(str(path))
+            if cached is None:
+                # First read - cache it
+                content_hash = self._compute_hash(path)
+                self._cache[str(path)] = CachedFileInfo(
+                    mtime_ns=mtime_ns,
+                    size=size,
+                    content_hash=content_hash,
+                    read_count=1,
+                )
+                return (False, "")
+
+            # Check if file has changed
+            if mtime_ns != cached.mtime_ns or size != cached.size:
+                # File modified - update cache and allow read
+                content_hash = self._compute_hash(path)
+                self._cache[str(path)] = CachedFileInfo(
+                    mtime_ns=mtime_ns,
+                    size=size,
+                    content_hash=content_hash,
+                    read_count=cached.read_count + 1,
+                )
+                return (False, "")
+
+            # mtime/size match - verify with content hash
+            content_hash = self._compute_hash(path)
+            if content_hash != cached.content_hash:
+                # Content changed despite same mtime/size (rare but possible)
+                self._cache[str(path)] = CachedFileInfo(
+                    mtime_ns=mtime_ns,
+                    size=size,
+                    content_hash=content_hash,
+                    read_count=cached.read_count + 1,
+                )
+                return (False, "")
+
+            # File unchanged - block the redundant read
+            cached.read_count += 1
+            self._blocked_count += 1
+            return (
+                True,
+                f"File unchanged since last read (read {cached.read_count}x). "
+                "Content already in context - use what you have.",
+            )
+
+        except OSError:
+            # File access error - allow the read (tool will report the error)
+            return (False, "")
+
+    def _compute_hash(self, path: Path) -> str:
+        """Compute SHA-256 hash of file content.
+
+        Args:
+            path: Path to the file.
+
+        Returns:
+            Hex-encoded SHA-256 hash of the file content.
+        """
+        hasher = hashlib.sha256()
+        with open(path, "rb") as f:
+            # Read in 64KB chunks for memory efficiency with large files
+            for chunk in iter(lambda: f.read(65536), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def invalidate(self, file_path: str) -> None:
+        """Invalidate the cache entry for a file.
+
+        Call this when a file is modified (e.g., after a Write or edit).
+
+        Args:
+            file_path: Path to the file to invalidate.
+        """
+        try:
+            path = str(Path(file_path).resolve())
+            self._cache.pop(path, None)
+        except OSError:
+            pass
+
+    @property
+    def blocked_count(self) -> int:
+        """Return the number of reads blocked due to cache hits."""
+        return self._blocked_count
+
+    @property
+    def cache_size(self) -> int:
+        """Return the number of files currently cached."""
+        return len(self._cache)
+
+
+def make_file_read_cache_hook(cache: FileReadCache) -> PreToolUseHook:
+    """Create a PreToolUse hook that blocks redundant file reads.
+
+    This hook checks Read tool invocations against the cache. If the file
+    hasn't changed since the last read, the hook blocks the read and
+    informs the agent to use the content already in context.
+
+    The hook also invalidates cache entries when files are written to,
+    ensuring subsequent reads see the updated content.
+
+    Args:
+        cache: The FileReadCache instance to use for tracking reads.
+
+    Returns:
+        An async hook function that can be passed to ClaudeAgentOptions.hooks["PreToolUse"].
+    """
+
+    async def file_read_cache_hook(
+        hook_input: PreToolUseHookInput,
+        stderr: str | None,
+        context: HookContext,
+    ) -> SyncHookJSONOutput:
+        """PreToolUse hook to block redundant file reads."""
+        tool_name = hook_input["tool_name"]
+        tool_input = hook_input["tool_input"]
+
+        # Check for Read tool
+        if tool_name == "Read":
+            file_path = tool_input.get("file_path")
+            if file_path:
+                is_redundant, message = cache.check_and_update(file_path)
+                if is_redundant:
+                    return {
+                        "decision": "block",
+                        "reason": message,
+                    }
+
+        # Invalidate cache on file writes
+        if tool_name in FILE_WRITE_TOOLS:
+            path_key = FILE_PATH_KEYS.get(tool_name)
+            if path_key:
+                file_path = tool_input.get(path_key)
+                if file_path:
+                    cache.invalidate(file_path)
+
+        return {}
+
+    return file_read_cache_hook

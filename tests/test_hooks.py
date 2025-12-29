@@ -1,5 +1,6 @@
 """Unit tests for PreToolUse hooks in src/hooks.py."""
 
+import time
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -14,6 +15,9 @@ from src.hooks import (
     DESTRUCTIVE_GIT_PATTERNS,
     SAFE_GIT_ALTERNATIVES,
     FILE_WRITE_TOOLS,
+    FileReadCache,
+    CachedFileInfo,
+    make_file_read_cache_hook,
 )
 
 
@@ -393,3 +397,280 @@ class TestSafeGitAlternatives:
                 f"Alternative for {pattern} is not a string"
             )
             assert len(alternative) > 0, f"Alternative for {pattern} is empty"
+
+
+class TestFileReadCache:
+    """Tests for the FileReadCache class."""
+
+    def test_first_read_is_allowed(self, tmp_path: Path) -> None:
+        """First read of a file should be allowed and cached."""
+        cache = FileReadCache()
+        test_file = tmp_path / "test.py"
+        test_file.write_text("print('hello')")
+
+        is_redundant, message = cache.check_and_update(str(test_file))
+
+        assert is_redundant is False
+        assert message == ""
+        assert cache.cache_size == 1
+        assert cache.blocked_count == 0
+
+    def test_second_read_unchanged_file_is_blocked(self, tmp_path: Path) -> None:
+        """Second read of unchanged file should be blocked."""
+        cache = FileReadCache()
+        test_file = tmp_path / "test.py"
+        test_file.write_text("print('hello')")
+
+        # First read - should be allowed
+        cache.check_and_update(str(test_file))
+
+        # Second read - should be blocked
+        is_redundant, message = cache.check_and_update(str(test_file))
+
+        assert is_redundant is True
+        assert "unchanged" in message.lower()
+        assert "read 2x" in message
+        assert cache.blocked_count == 1
+
+    def test_third_read_shows_correct_count(self, tmp_path: Path) -> None:
+        """Third read should show read 3x in message."""
+        cache = FileReadCache()
+        test_file = tmp_path / "test.py"
+        test_file.write_text("print('hello')")
+
+        cache.check_and_update(str(test_file))  # 1st
+        cache.check_and_update(str(test_file))  # 2nd (blocked)
+        is_redundant, message = cache.check_and_update(str(test_file))  # 3rd (blocked)
+
+        assert is_redundant is True
+        assert "read 3x" in message
+        assert cache.blocked_count == 2
+
+    def test_read_after_file_modification_is_allowed(self, tmp_path: Path) -> None:
+        """Read after file modification should be allowed."""
+        cache = FileReadCache()
+        test_file = tmp_path / "test.py"
+        test_file.write_text("print('hello')")
+
+        # First read
+        cache.check_and_update(str(test_file))
+
+        # Modify the file (change content and mtime)
+        time.sleep(0.01)  # Ensure mtime changes
+        test_file.write_text("print('world')")
+
+        # Second read after modification - should be allowed
+        is_redundant, message = cache.check_and_update(str(test_file))
+
+        assert is_redundant is False
+        assert message == ""
+        assert cache.blocked_count == 0
+
+    def test_read_after_size_change_is_allowed(self, tmp_path: Path) -> None:
+        """Read after file size change should be allowed."""
+        cache = FileReadCache()
+        test_file = tmp_path / "test.py"
+        test_file.write_text("short")
+
+        cache.check_and_update(str(test_file))
+
+        # Change size
+        time.sleep(0.01)
+        test_file.write_text("much longer content now")
+
+        is_redundant, _ = cache.check_and_update(str(test_file))
+        assert is_redundant is False
+
+    def test_nonexistent_file_is_allowed(self, tmp_path: Path) -> None:
+        """Read of nonexistent file should be allowed (tool will report error)."""
+        cache = FileReadCache()
+        nonexistent = tmp_path / "does_not_exist.py"
+
+        is_redundant, message = cache.check_and_update(str(nonexistent))
+
+        assert is_redundant is False
+        assert message == ""
+        assert cache.cache_size == 0
+
+    def test_invalidate_removes_cache_entry(self, tmp_path: Path) -> None:
+        """Invalidating a file should remove it from cache."""
+        cache = FileReadCache()
+        test_file = tmp_path / "test.py"
+        test_file.write_text("content")
+
+        cache.check_and_update(str(test_file))
+        assert cache.cache_size == 1
+
+        cache.invalidate(str(test_file))
+        assert cache.cache_size == 0
+
+        # Next read should be allowed (first read after invalidation)
+        is_redundant, _ = cache.check_and_update(str(test_file))
+        assert is_redundant is False
+
+    def test_invalidate_nonexistent_entry_is_safe(self) -> None:
+        """Invalidating a file not in cache should not raise."""
+        cache = FileReadCache()
+        cache.invalidate("/path/to/nonexistent/file.py")
+        # Should not raise
+
+    def test_different_files_cached_separately(self, tmp_path: Path) -> None:
+        """Different files should be cached independently."""
+        cache = FileReadCache()
+        file1 = tmp_path / "file1.py"
+        file2 = tmp_path / "file2.py"
+        file1.write_text("content1")
+        file2.write_text("content2")
+
+        # Read both files
+        cache.check_and_update(str(file1))
+        cache.check_and_update(str(file2))
+
+        assert cache.cache_size == 2
+
+        # Second read of file1 blocked, file2 still allowed on first re-read
+        is_redundant_1, _ = cache.check_and_update(str(file1))
+        is_redundant_2, _ = cache.check_and_update(str(file2))
+
+        assert is_redundant_1 is True
+        assert is_redundant_2 is True
+        assert cache.blocked_count == 2
+
+    def test_cached_file_info_dataclass(self) -> None:
+        """CachedFileInfo dataclass should work correctly."""
+        info = CachedFileInfo(
+            mtime_ns=1234567890,
+            size=100,
+            content_hash="abc123",
+            read_count=1,
+        )
+        assert info.mtime_ns == 1234567890
+        assert info.size == 100
+        assert info.content_hash == "abc123"
+        assert info.read_count == 1
+
+
+class TestMakeFileReadCacheHook:
+    """Tests for the make_file_read_cache_hook factory function."""
+
+    @pytest.mark.asyncio
+    async def test_allows_first_read(self, tmp_path: Path) -> None:
+        """First read through hook should be allowed."""
+        cache = FileReadCache()
+        hook = make_file_read_cache_hook(cache)
+        test_file = tmp_path / "test.py"
+        test_file.write_text("content")
+
+        hook_input = make_hook_input("Read", {"file_path": str(test_file)})
+        context = make_context()
+
+        result = await hook(hook_input, None, context)
+
+        assert result == {}  # Empty dict means allow
+
+    @pytest.mark.asyncio
+    async def test_blocks_second_read_unchanged(self, tmp_path: Path) -> None:
+        """Second read through hook should be blocked."""
+        cache = FileReadCache()
+        hook = make_file_read_cache_hook(cache)
+        test_file = tmp_path / "test.py"
+        test_file.write_text("content")
+
+        hook_input = make_hook_input("Read", {"file_path": str(test_file)})
+        context = make_context()
+
+        # First read
+        await hook(hook_input, None, context)
+
+        # Second read
+        result = await hook(hook_input, None, context)
+
+        assert result["decision"] == "block"
+        assert "unchanged" in result["reason"].lower()
+
+    @pytest.mark.asyncio
+    async def test_allows_non_read_tools(self, tmp_path: Path) -> None:
+        """Non-Read tools should be allowed without cache check."""
+        cache = FileReadCache()
+        hook = make_file_read_cache_hook(cache)
+
+        hook_input = make_hook_input("Bash", {"command": "ls -la"})
+        context = make_context()
+
+        result = await hook(hook_input, None, context)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_invalidates_cache_on_write(self, tmp_path: Path) -> None:
+        """Write tool should invalidate cache for that file."""
+        cache = FileReadCache()
+        hook = make_file_read_cache_hook(cache)
+        test_file = tmp_path / "test.py"
+        test_file.write_text("content")
+
+        # First read - caches the file
+        read_input = make_hook_input("Read", {"file_path": str(test_file)})
+        context = make_context()
+        await hook(read_input, None, context)
+        assert cache.cache_size == 1
+
+        # Write tool - should invalidate cache
+        write_input = make_hook_input("Write", {"file_path": str(test_file)})
+        await hook(write_input, None, context)
+        assert cache.cache_size == 0
+
+    @pytest.mark.asyncio
+    async def test_invalidates_cache_on_edit_file(self, tmp_path: Path) -> None:
+        """MCP edit_file tool should invalidate cache."""
+        cache = FileReadCache()
+        hook = make_file_read_cache_hook(cache)
+        test_file = tmp_path / "test.py"
+        test_file.write_text("content")
+
+        # Read to cache
+        read_input = make_hook_input("Read", {"file_path": str(test_file)})
+        context = make_context()
+        await hook(read_input, None, context)
+
+        # Edit file - should invalidate
+        edit_input = make_hook_input(
+            "mcp__morphllm__edit_file",
+            {"path": str(test_file), "code_edit": "new content"},
+        )
+        await hook(edit_input, None, context)
+        assert cache.cache_size == 0
+
+    @pytest.mark.asyncio
+    async def test_invalidates_cache_on_notebook_edit(self, tmp_path: Path) -> None:
+        """NotebookEdit tool should invalidate cache."""
+        cache = FileReadCache()
+        hook = make_file_read_cache_hook(cache)
+        notebook = tmp_path / "notebook.ipynb"
+        notebook.write_text("{}")
+
+        # Read to cache
+        read_input = make_hook_input("Read", {"file_path": str(notebook)})
+        context = make_context()
+        await hook(read_input, None, context)
+
+        # NotebookEdit - should invalidate
+        edit_input = make_hook_input(
+            "NotebookEdit",
+            {"notebook_path": str(notebook), "new_source": "cell content"},
+        )
+        await hook(edit_input, None, context)
+        assert cache.cache_size == 0
+
+    @pytest.mark.asyncio
+    async def test_read_missing_file_path_allowed(self) -> None:
+        """Read with missing file_path should be allowed (will fail later)."""
+        cache = FileReadCache()
+        hook = make_file_read_cache_hook(cache)
+
+        hook_input = make_hook_input("Read", {})  # Missing file_path
+        context = make_context()
+
+        result = await hook(hook_input, None, context)
+
+        assert result == {}  # Allowed (tool will fail anyway)

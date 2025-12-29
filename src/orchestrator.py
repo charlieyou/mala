@@ -37,6 +37,8 @@ from .hooks import (
     block_morph_replaced_tools,
     make_lock_enforcement_hook,
     make_stop_hook,
+    FileReadCache,
+    make_file_read_cache_hook,
 )
 from .lifecycle import (
     Effect,
@@ -663,7 +665,12 @@ class MalaOrchestrator:
         }
 
         # Build hooks - similar to implementer but without lock enforcement
-        pre_tool_hooks: list = [block_dangerous_commands]
+        # Create per-session file read cache to avoid redundant re-reads
+        file_read_cache = FileReadCache()
+        pre_tool_hooks: list = [
+            block_dangerous_commands,
+            make_file_read_cache_hook(file_read_cache),
+        ]
         if self.morph_enabled:
             pre_tool_hooks.append(block_morph_replaced_tools)
 
@@ -804,9 +811,12 @@ class MalaOrchestrator:
         }
 
         # Build hooks list - always include dangerous commands and lock enforcement
+        # Create per-session file read cache to avoid redundant re-reads
+        file_read_cache = FileReadCache()
         pre_tool_hooks: list = [
             block_dangerous_commands,
             make_lock_enforcement_hook(agent_id, str(self.repo_path)),
+            make_file_read_cache_hook(file_read_cache),
         ]
         # Add Morph-related hook only when Morph is enabled
         if self.morph_enabled:
