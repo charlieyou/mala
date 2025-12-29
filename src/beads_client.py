@@ -191,7 +191,7 @@ class BeadsClient:
             return [], False
 
     async def fetch_wip_issues_async(self) -> list[dict[str, object]]:
-        """Fetch unblocked in_progress issues from bd CLI (raw I/O, no processing)."""
+        """Fetch in_progress issues from bd CLI (raw I/O, no processing)."""
         result = await self._run_subprocess_async(
             ["bd", "list", "--status", "in_progress", "--json"]
         )
@@ -201,14 +201,14 @@ class BeadsClient:
             wip = json.loads(result.stdout)
             if not isinstance(wip, list):
                 return []
-            return [w for w in wip if w.get("blocked_by") is None]
+            return list(wip)
         except json.JSONDecodeError:
             return []
 
     async def enrich_with_epics_async(
         self, issues: list[dict[str, object]]
     ) -> list[dict[str, object]]:
-        """Add parent_epic info and filter blocked epics (I/O step).
+        """Add parent_epic info (I/O step).
 
         Returns a new list with enriched copies; does not mutate input.
         """
@@ -216,12 +216,7 @@ class BeadsClient:
             return issues
         ids = [str(i["id"]) for i in issues]
         epics = await self.get_parent_epics_async(ids)
-        blocked = await self._get_blocked_epics_async({e for e in epics.values() if e})
-        return [
-            {**i, "parent_epic": epics.get(str(i["id"]))}
-            for i in issues
-            if epics.get(str(i["id"])) not in blocked
-        ]
+        return [{**i, "parent_epic": epics.get(str(i["id"]))} for i in issues]
 
     # ───────────────────────────────────────────────────────────────────────────
     # Legacy pipeline methods (delegate to public methods or IssueManager)
@@ -262,9 +257,14 @@ class BeadsClient:
     ) -> list[dict[str, object]]:
         """Add parent_epic info and filter blocked epics (pipeline step 4).
 
-        Returns a new list with enriched copies; does not mutate input.
+        Delegates I/O to enrich_with_epics_async and filtering to IssueManager.
         """
-        return await self.enrich_with_epics_async(issues)
+        enriched = await self.enrich_with_epics_async(issues)
+        if not enriched:
+            return enriched
+        epic_ids = {str(i["parent_epic"]) for i in enriched if i.get("parent_epic")}
+        blocked = await self._get_blocked_epics_async(epic_ids)
+        return IssueManager.filter_blocked_epics(enriched, blocked)
 
     def _sort_issues(
         self, issues: list[dict[str, object]], focus: bool, prioritize_wip: bool
@@ -285,7 +285,7 @@ class BeadsClient:
         return IssueManager.sort_by_epic_groups(issues)
 
     async def _fetch_wip_issues(self) -> list[dict[str, object]]:
-        """Fetch unblocked in_progress issues from bd CLI."""
+        """Fetch in_progress issues from bd CLI."""
         return await self.fetch_wip_issues_async()
 
     def _warn_missing_ids(
@@ -331,7 +331,9 @@ class BeadsClient:
             # so we can still return in-progress issues (intentional design)
             return []
         if prioritize_wip:
-            issues = self._merge_wip_issues(issues, await self._fetch_wip_issues())
+            wip = await self._fetch_wip_issues()
+            wip = IssueManager.filter_blocked_wip(wip)
+            issues = self._merge_wip_issues(issues, wip)
         self._warn_missing_ids(only_ids, issues, suppress_warn_ids or set())
         filtered = self._apply_filters(issues, exclude_ids, epic_children, only_ids)
         enriched = await self._enrich_with_epics(filtered)

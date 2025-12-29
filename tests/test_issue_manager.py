@@ -85,6 +85,47 @@ class TestApplyFilters:
         assert result == []
 
 
+class TestFilterBlockedWip:
+    """Tests for IssueManager.filter_blocked_wip."""
+
+    def test_keeps_open_issues(self) -> None:
+        issues = [
+            {"id": "open-1", "status": "open"},
+            {"id": "open-2", "status": "open", "blocked_by": ["x"]},
+        ]
+        result = IssueManager.filter_blocked_wip(issues)
+        assert [i["id"] for i in result] == ["open-1", "open-2"]
+
+    def test_excludes_blocked_in_progress(self) -> None:
+        issues = [
+            {"id": "wip-ok", "status": "in_progress", "blocked_by": None},
+            {"id": "wip-blocked", "status": "in_progress", "blocked_by": ["x"]},
+        ]
+        result = IssueManager.filter_blocked_wip(issues)
+        assert [i["id"] for i in result] == ["wip-ok"]
+
+
+class TestFilterBlockedEpics:
+    """Tests for IssueManager.filter_blocked_epics."""
+
+    def test_no_blocked_epics_returns_all(self) -> None:
+        issues = [
+            {"id": "a", "parent_epic": "epic-1"},
+            {"id": "b", "parent_epic": None},
+        ]
+        result = IssueManager.filter_blocked_epics(issues, set())
+        assert result == issues
+
+    def test_excludes_issues_under_blocked_epics(self) -> None:
+        issues = [
+            {"id": "a", "parent_epic": "epic-1"},
+            {"id": "b", "parent_epic": "epic-2"},
+            {"id": "c", "parent_epic": None},
+        ]
+        result = IssueManager.filter_blocked_epics(issues, {"epic-2"})
+        assert [i["id"] for i in result] == ["a", "c"]
+
+
 class TestNegateTimestamp:
     """Tests for IssueManager.negate_timestamp."""
 

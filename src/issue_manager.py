@@ -39,6 +39,45 @@ class IssueManager:
         return base_issues + [w for w in wip_issues if str(w["id"]) not in ready_ids]
 
     @staticmethod
+    def filter_blocked_wip(issues: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Filter out blocked in_progress issues.
+
+        A WIP issue is considered blocked when it has a truthy blocked_by value.
+
+        Args:
+            issues: List of issue dicts (may include open + in_progress).
+
+        Returns:
+            List with blocked in_progress issues removed.
+        """
+        return [
+            issue
+            for issue in issues
+            if not (issue.get("status") == "in_progress" and issue.get("blocked_by"))
+        ]
+
+    @staticmethod
+    def filter_blocked_epics(
+        issues: list[dict[str, object]], blocked_epics: set[str]
+    ) -> list[dict[str, object]]:
+        """Filter out issues whose parent epic is blocked.
+
+        Args:
+            issues: List of issue dicts with parent_epic field populated.
+            blocked_epics: Set of blocked epic IDs.
+
+        Returns:
+            List with issues under blocked epics removed.
+        """
+        if not blocked_epics:
+            return issues
+        return [
+            issue
+            for issue in issues
+            if str(issue.get("parent_epic")) not in blocked_epics
+        ]
+
+    @staticmethod
     def apply_filters(
         issues: list[dict[str, object]],
         exclude_ids: set[str],

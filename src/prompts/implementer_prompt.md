@@ -105,8 +105,8 @@ uvx ruff format $CHANGED_FILES
 # Type check only your changed files
 uvx ty check $CHANGED_FILES
 
-# Run tests (use isolated cache)
-uv run pytest --cache-dir=/tmp/pytest-$AGENT_ID
+# Run tests (use isolated cache; disable global coverage threshold for scoped runs)
+uv run pytest -o cache_dir=/tmp/pytest-$AGENT_ID --cov-fail-under=0
 ```
 
 **Note:** The orchestrator runs the FULL validation suite in an isolated worktree after your commit. You only need to validate your own changes here.
