@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import os
-import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +14,7 @@ from typing import TYPE_CHECKING
 from .beads_client import BeadsClient
 from .config import MalaConfig
 from .telemetry import BraintrustProvider, NullTelemetryProvider
-from .codex_review import run_codex_review, format_review_issues, CodexReviewResult
+from .codex_review import run_codex_review
 from .git_utils import (
     get_git_commit_async,
     get_git_branch_async,
@@ -33,19 +32,11 @@ from .hooks import (
     make_lint_cache_hook,
     _detect_lint_command,
 )
-from .lifecycle import (
-    Effect,
-    ImplementerLifecycle,
-    LifecycleConfig,
-    LifecycleContext,
-    LifecycleState,
-)
 from .logging.console import (
     Colors,
     log,
     log_tool,
     log_agent_text,
-    log_verbose,
     truncate_text,
     is_verbose_enabled,
 )
@@ -57,6 +48,12 @@ from .logging.run_metadata import (
     ValidationResult as MetaValidationResult,
     remove_run_marker,
     write_run_marker,
+)
+from .pipeline.agent_session_runner import (
+    AgentSessionConfig,
+    AgentSessionInput,
+    AgentSessionRunner,
+    SessionCallbacks,
 )
 from .pipeline.gate_runner import (
     GateRunner,
@@ -84,9 +81,8 @@ from .validation.spec_runner import SpecValidationRunner
 from .validation.e2e import E2EStatus
 
 if TYPE_CHECKING:
-    from .lifecycle import (
-        RetryState,
-    )
+    from .codex_review import CodexReviewResult
+    from .lifecycle import RetryState
     from .protocols import CodeReviewer, GateChecker, IssueProvider, LogProvider
     from .quality_gate import GateResult
     from .telemetry import TelemetryProvider
@@ -984,23 +980,13 @@ class MalaOrchestrator:
     async def run_implementer(self, issue_id: str) -> IssueResult:
         """Run implementer agent for a single issue with gate retry support.
 
-        Uses ImplementerLifecycle to drive policy decisions. The orchestrator
-        handles I/O (SDK calls, logs, hooks) based on Effect returns.
+        Delegates to AgentSessionRunner for SDK-specific session handling.
+        The orchestrator provides callbacks for gate checks, reviews, and
+        other external operations.
         """
-        # Import SDK types at runtime (deferred from module level)
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeAgentOptions,
-            ClaudeSDKClient,
-            ResultMessage,
-            TextBlock,
-            ToolResultBlock,
-            ToolUseBlock,
-        )
-        from claude_agent_sdk.types import HookMatcher
-
-        agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
-        self.agent_ids[issue_id] = agent_id
+        # Generate a temporary agent ID for tracking (the runner will generate its own)
+        temp_agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
+        self.agent_ids[issue_id] = temp_agent_id
 
         # Fetch issue description for scope verification in codex review
         issue_description = await self.beads.get_issue_description_async(issue_id)
@@ -1013,96 +999,111 @@ class MalaOrchestrator:
             # Fresh issue - no prior commits, use current HEAD as baseline
             baseline_commit = await get_git_commit_async(self.repo_path)
 
-        # Initialize lifecycle with config derived from orchestrator settings
-        codex_review_enabled = "codex-review" not in (self.disable_validations or set())
-        lifecycle_config = LifecycleConfig(
-            max_gate_retries=self.max_gate_retries,
-            max_review_retries=self.max_review_retries,
-            codex_review_enabled=codex_review_enabled,
-        )
-        lifecycle = ImplementerLifecycle(lifecycle_config)
-        lifecycle_ctx = LifecycleContext()
-
-        # Set baseline timestamp in lifecycle context
-        lifecycle_ctx.retry_state.baseline_timestamp = int(time.time())
-
-        # Track baseline_commit_hash separately (not in lifecycle's RetryState)
-        # This is used for cumulative diff review in Codex
-        baseline_commit_hash = baseline_commit
-
-        # Claude session ID will be captured from ResultMessage
-        claude_session_id: str | None = None
-
+        # Build prompt
         prompt = _get_implementer_prompt().format(
             issue_id=issue_id,
             repo_path=self.repo_path,
             lock_dir=get_lock_dir(),
             scripts_dir=SCRIPTS_DIR,
-            agent_id=agent_id,
+            agent_id=temp_agent_id,
         )
 
-        final_result = ""
-        start_time = asyncio.get_event_loop().time()
-        success = False
-        gate_result: GateResult | None = None
+        # Create session config
+        codex_review_enabled = "codex-review" not in (self.disable_validations or set())
+        session_config = AgentSessionConfig(
+            repo_path=self.repo_path,
+            timeout_seconds=self.timeout_seconds,
+            max_gate_retries=self.max_gate_retries,
+            max_review_retries=self.max_review_retries,
+            morph_enabled=self.morph_enabled,
+            morph_api_key=self._config.morph_api_key,
+            codex_review_enabled=codex_review_enabled,
+        )
 
-        # Set up environment: inherit os.environ, then override with lock scripts/vars
-        agent_env = {
-            **os.environ,
-            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
-            "LOCK_DIR": str(get_lock_dir()),
-            "AGENT_ID": agent_id,
-            "REPO_NAMESPACE": str(self.repo_path),
-            # MCP server startup timeout (5 minutes) to prevent hung subprocesses
-            "MCP_TIMEOUT": "300000",
-        }
+        # Create session input
+        session_input = AgentSessionInput(
+            issue_id=issue_id,
+            prompt=prompt,
+            baseline_commit=baseline_commit,
+            issue_description=issue_description,
+        )
 
-        # Build hooks list - always include dangerous commands and lock enforcement
-        # Create per-session file read cache to avoid redundant re-reads
-        file_read_cache = FileReadCache()
-        # Create per-session lint cache to avoid redundant re-lints
-        lint_cache = LintCache(repo_path=self.repo_path)
-        pre_tool_hooks: list = [
-            block_dangerous_commands,
-            make_lock_enforcement_hook(agent_id, str(self.repo_path)),
-            make_file_read_cache_hook(file_read_cache),
-            make_lint_cache_hook(lint_cache),
-        ]
-        # Add Morph-related hook only when Morph is enabled
-        if self.morph_enabled:
-            pre_tool_hooks.insert(1, block_morph_replaced_tools)
+        # Define callbacks for external operations
 
-        options = ClaudeAgentOptions(
-            cwd=str(self.repo_path),
-            permission_mode="bypassPermissions",
-            model="opus",
-            system_prompt={"type": "preset", "preset": "claude_code"},
-            setting_sources=["project", "user"],
-            mcp_servers=get_mcp_servers(
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            """Run quality gate check via orchestrator."""
+            return await self._run_quality_gate_async(issue_id, log_path, retry_state)
+
+        async def on_review_check(
+            issue_id: str, issue_desc: str | None, baseline: str | None
+        ) -> CodexReviewResult:
+            """Run Codex review via orchestrator."""
+            current_head = await get_git_commit_async(self.repo_path)
+            result = await self.code_reviewer(
                 self.repo_path,
-                morph_api_key=self._config.morph_api_key,
-                morph_enabled=self.morph_enabled,
-            ),
-            # When Morph is enabled, block legacy tools replaced by MCP (Edit, Grep).
-            # When disabled, allow built-in tools.
-            disallowed_tools=_get_disallowed_tools(self.morph_enabled),
-            env=agent_env,
-            hooks={
-                "PreToolUse": [
-                    HookMatcher(
-                        matcher=None,
-                        hooks=pre_tool_hooks,  # type: ignore[arg-type]
-                    )
-                ],
-                "Stop": [HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])],  # type: ignore[arg-type]
-            },
+                current_head,
+                max_retries=2,
+                issue_description=issue_desc,
+                baseline_commit=baseline,
+                capture_session_log=is_verbose_enabled(),
+                thinking_mode=self.codex_thinking_mode,
+            )
+            # Store codex review log path if captured
+            if result.session_log_path:
+                self.codex_review_log_paths[issue_id] = result.session_log_path
+            return result
+
+        def on_review_no_progress(
+            log_path: Path,
+            log_offset: int,
+            prev_commit: str | None,
+            curr_commit: str | None,
+        ) -> bool:
+            """Check for no-progress on review retry."""
+            return self.quality_gate.check_no_progress(
+                log_path,
+                log_offset,
+                prev_commit,
+                curr_commit,
+                spec=self.per_issue_spec,
+                check_validation_evidence=False,
+            )
+
+        def get_log_path(session_id: str) -> Path:
+            """Get log path and track it."""
+            log_path = self.log_provider.get_log_path(self.repo_path, session_id)
+            self.session_log_paths[issue_id] = log_path
+            return log_path
+
+        def get_log_offset(log_path: Path, start_offset: int) -> int:
+            """Get log end offset."""
+            return self.quality_gate.get_log_end_offset(log_path, start_offset)
+
+        def on_abort(reason: str) -> None:
+            """Request run abort on fatal error."""
+            self._request_abort(reason)
+
+        callbacks = SessionCallbacks(
+            on_gate_check=on_gate_check,
+            on_review_check=on_review_check,
+            on_review_no_progress=on_review_no_progress,
+            get_log_path=get_log_path,
+            get_log_offset=get_log_offset,
+            on_abort=on_abort,
         )
 
-        # Telemetry tracing context (uses injected provider)
+        # Create runner and tracer
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+        )
+
         tracer = self.telemetry_provider.create_span(
             issue_id,
             metadata={
-                "agent_id": agent_id,
+                "agent_id": temp_agent_id,
                 "mala_version": __version__,
                 "project_dir": self.repo_path.name,
                 "git_branch": await get_git_branch_async(self.repo_path),
@@ -1115,409 +1116,33 @@ class MalaOrchestrator:
             with tracer:
                 tracer.log_input(prompt)
 
-                try:
-                    async with asyncio.timeout(self.timeout_seconds):
-                        async with ClaudeSDKClient(options=options) as client:
-                            # Start lifecycle
-                            lifecycle.start()
-                            log_verbose(
-                                "→",
-                                f"State: {lifecycle.state.name}",
-                                agent_id=issue_id,
-                            )
+                # Run session via AgentSessionRunner
+                output = await runner.run_session(session_input, tracer=tracer)
 
-                            # Initial query
-                            await client.query(prompt)
+                # Update agent_id to the one generated by runner
+                self.agent_ids[issue_id] = output.agent_id
 
-                            # Track pending lint commands for cache success marking
-                            # Maps tool_use_id -> (lint_type, command)
-                            pending_lint_commands: dict[str, tuple[str, str]] = {}
-
-                            # Main loop - driven by lifecycle transitions
-                            while not lifecycle.is_terminal:
-                                # Process messages from SDK
-                                async for message in client.receive_response():
-                                    # Log to Braintrust
-                                    tracer.log_message(message)
-
-                                    # Console output
-                                    if isinstance(message, AssistantMessage):
-                                        for block in message.content:
-                                            if isinstance(block, TextBlock):
-                                                log_agent_text(block.text, issue_id)
-                                            elif isinstance(block, ToolUseBlock):
-                                                log_tool(
-                                                    block.name,
-                                                    agent_id=issue_id,
-                                                    arguments=block.input,
-                                                )
-                                                # Track lint commands for cache marking
-                                                if block.name.lower() == "bash":
-                                                    cmd = block.input.get("command", "")
-                                                    lint_type = _detect_lint_command(
-                                                        cmd
-                                                    )
-                                                    if lint_type:
-                                                        pending_lint_commands[
-                                                            block.id
-                                                        ] = (
-                                                            lint_type,
-                                                            cmd,
-                                                        )
-                                            elif isinstance(block, ToolResultBlock):
-                                                # Check for successful lint completion
-                                                tool_use_id = getattr(
-                                                    block, "tool_use_id", None
-                                                )
-                                                if tool_use_id in pending_lint_commands:
-                                                    lint_type, cmd = (
-                                                        pending_lint_commands.pop(
-                                                            tool_use_id
-                                                        )
-                                                    )
-                                                    # Mark success if not an error
-                                                    if not getattr(
-                                                        block, "is_error", False
-                                                    ):
-                                                        lint_cache.mark_success(
-                                                            lint_type, cmd
-                                                        )
-
-                                    elif isinstance(message, ResultMessage):
-                                        claude_session_id = message.session_id
-                                        lifecycle_ctx.session_id = claude_session_id
-                                        lifecycle_ctx.final_result = (
-                                            message.result or ""
-                                        )
-
-                                # Messages complete - transition lifecycle
-                                result = lifecycle.on_messages_complete(
-                                    lifecycle_ctx,
-                                    has_session_id=bool(claude_session_id),
-                                )
-                                log_verbose(
-                                    "→",
-                                    f"State: {lifecycle.state.name}",
-                                    agent_id=issue_id,
-                                )
-
-                                if result.effect == Effect.COMPLETE_FAILURE:
-                                    final_result = lifecycle_ctx.final_result
-                                    break
-
-                                # Handle WAIT_FOR_LOG effect
-                                if result.effect == Effect.WAIT_FOR_LOG:
-                                    log_path = self.log_provider.get_log_path(
-                                        self.repo_path,
-                                        claude_session_id,  # type: ignore[arg-type]
-                                    )
-                                    self.session_log_paths[issue_id] = log_path
-
-                                    log(
-                                        "◌",
-                                        "Waiting for session log...",
-                                        Colors.MUTED,
-                                        agent_id=issue_id,
-                                    )
-
-                                    # Wait for log file with bounded timeout
-                                    wait_elapsed = 0.0
-                                    while not log_path.exists():
-                                        if wait_elapsed >= LOG_FILE_WAIT_TIMEOUT:
-                                            result = lifecycle.on_log_timeout(
-                                                lifecycle_ctx, str(log_path)
-                                            )
-                                            log(
-                                                "⚠",
-                                                f"Log file not found: {log_path.name}",
-                                                Colors.YELLOW,
-                                                agent_id=issue_id,
-                                            )
-                                            break
-                                        await asyncio.sleep(LOG_FILE_POLL_INTERVAL)
-                                        wait_elapsed += LOG_FILE_POLL_INTERVAL
-
-                                    if lifecycle.state == LifecycleState.FAILED:
-                                        final_result = lifecycle_ctx.final_result
-                                        break
-
-                                    # Log file found - transition to running gate
-                                    if log_path.exists():
-                                        log(
-                                            "✓",
-                                            "Log file ready",
-                                            Colors.GREEN,
-                                            agent_id=issue_id,
-                                        )
-                                    result = lifecycle.on_log_ready(lifecycle_ctx)
-
-                                # Handle RUN_GATE effect
-                                if result.effect == Effect.RUN_GATE:
-                                    log(
-                                        "◐",
-                                        "Running quality gate...",
-                                        Colors.CYAN,
-                                        agent_id=issue_id,
-                                    )
-
-                                    log_path = self.session_log_paths[issue_id]
-                                    (
-                                        gate_result,
-                                        new_offset,
-                                    ) = await self._run_quality_gate_async(
-                                        issue_id, log_path, lifecycle_ctx.retry_state
-                                    )
-
-                                    # Transition based on gate result
-                                    result = lifecycle.on_gate_result(
-                                        lifecycle_ctx, gate_result, new_offset
-                                    )
-
-                                    if result.effect == Effect.COMPLETE_SUCCESS:
-                                        log(
-                                            "✓",
-                                            "Quality gate passed",
-                                            Colors.GREEN,
-                                            agent_id=issue_id,
-                                        )
-                                        success = True
-                                        final_result = lifecycle_ctx.final_result
-                                        break
-
-                                    if result.effect == Effect.COMPLETE_FAILURE:
-                                        reasons = "; ".join(gate_result.failure_reasons)
-                                        log(
-                                            "✗",
-                                            f"Quality gate failed: {reasons}",
-                                            Colors.RED,
-                                            agent_id=issue_id,
-                                        )
-                                        final_result = lifecycle_ctx.final_result
-                                        break
-
-                                    if result.effect == Effect.SEND_GATE_RETRY:
-                                        # Log retry attempt
-                                        log(
-                                            "↻",
-                                            f"Gate retry {lifecycle_ctx.retry_state.gate_attempt}/{self.max_gate_retries}",
-                                            Colors.YELLOW,
-                                            agent_id=issue_id,
-                                        )
-
-                                        # Build follow-up prompt with failure context
-                                        failure_text = "\n".join(
-                                            f"- {r}"
-                                            for r in gate_result.failure_reasons
-                                        )
-                                        followup = _get_gate_followup_prompt().format(
-                                            attempt=lifecycle_ctx.retry_state.gate_attempt,
-                                            max_attempts=self.max_gate_retries,
-                                            failure_reasons=failure_text,
-                                            issue_id=issue_id,
-                                        )
-
-                                        # Resume session with follow-up prompt
-                                        assert claude_session_id is not None
-                                        await client.query(
-                                            followup,
-                                            session_id=claude_session_id,
-                                        )
-                                        continue
-
-                                # Handle RUN_REVIEW effect
-                                if result.effect == Effect.RUN_REVIEW:
-                                    # Check for no-progress on review retries BEFORE running review
-                                    # For review retries, only check commit and working tree changes
-                                    # (not validation evidence - that's for gate retries)
-                                    # This prevents burning a review attempt when agent made no progress
-                                    no_progress = False
-                                    if lifecycle_ctx.retry_state.review_attempt > 1:
-                                        log_path = self.session_log_paths[issue_id]
-                                        current_commit = (
-                                            lifecycle_ctx.last_gate_result.commit_hash
-                                            if lifecycle_ctx.last_gate_result
-                                            else None
-                                        )
-                                        no_progress = self.quality_gate.check_no_progress(
-                                            log_path,
-                                            lifecycle_ctx.retry_state.log_offset,
-                                            lifecycle_ctx.retry_state.previous_commit_hash,
-                                            current_commit,
-                                            spec=self.per_issue_spec,
-                                            check_validation_evidence=False,
-                                        )
-                                        if no_progress:
-                                            # Fail fast without running review
-                                            log(
-                                                "✗",
-                                                "Review skipped: No progress (commit unchanged, no working tree changes)",
-                                                Colors.RED,
-                                                agent_id=issue_id,
-                                            )
-                                            # Create a synthetic failed review result
-                                            synthetic_result = CodexReviewResult(
-                                                passed=False,
-                                                issues=[],
-                                                parse_error=None,
-                                            )
-                                            new_offset = self.quality_gate.get_log_end_offset(
-                                                log_path,
-                                                start_offset=lifecycle_ctx.retry_state.log_offset,
-                                            )
-                                            result = lifecycle.on_review_result(
-                                                lifecycle_ctx,
-                                                synthetic_result,
-                                                new_offset,
-                                                no_progress=True,
-                                            )
-                                            final_result = lifecycle_ctx.final_result
-                                            break
-
-                                    log(
-                                        "◐",
-                                        f"Running Codex review (attempt {lifecycle_ctx.retry_state.review_attempt}/{self.max_review_retries})",
-                                        Colors.CYAN,
-                                        agent_id=issue_id,
-                                    )
-
-                                    # Use current HEAD for review instead of the agent's specific commit.
-                                    # This ensures that if another agent made a subsequent commit that
-                                    # fixes issues from this agent's commit, Codex reviews the clean
-                                    # cumulative diff (baseline..HEAD) rather than the stale diff
-                                    # (baseline..agent_commit) which would still show the old issues.
-                                    current_head = await get_git_commit_async(
-                                        self.repo_path
-                                    )
-                                    review_result = await self.code_reviewer(
-                                        self.repo_path,
-                                        current_head,
-                                        max_retries=2,  # JSON parse retries
-                                        issue_description=issue_description,
-                                        baseline_commit=baseline_commit_hash,
-                                        capture_session_log=is_verbose_enabled(),
-                                        thinking_mode=self.codex_thinking_mode,
-                                    )
-
-                                    if review_result.fatal_error:
-                                        self._request_abort(
-                                            review_result.parse_error
-                                            or "Unrecoverable Codex review error"
-                                        )
-
-                                    # Store codex review log path if captured
-                                    if review_result.session_log_path:
-                                        self.codex_review_log_paths[issue_id] = (
-                                            review_result.session_log_path
-                                        )
-
-                                    log_path = self.session_log_paths[issue_id]
-                                    new_offset = self.quality_gate.get_log_end_offset(
-                                        log_path,
-                                        start_offset=lifecycle_ctx.retry_state.log_offset,
-                                    )
-
-                                    # Transition based on review result
-                                    result = lifecycle.on_review_result(
-                                        lifecycle_ctx,
-                                        review_result,
-                                        new_offset,
-                                    )
-
-                                    if result.effect == Effect.COMPLETE_SUCCESS:
-                                        log(
-                                            "✓",
-                                            "Codex review passed",
-                                            Colors.GREEN,
-                                            agent_id=issue_id,
-                                        )
-                                        success = True
-                                        final_result = lifecycle_ctx.final_result
-                                        break
-
-                                    if result.effect == Effect.COMPLETE_FAILURE:
-                                        final_result = lifecycle_ctx.final_result
-                                        break
-
-                                    if result.effect == Effect.SEND_REVIEW_RETRY:
-                                        # Log review failure
-                                        if review_result.parse_error:
-                                            log(
-                                                "⚠",
-                                                f"Codex review parse error: {review_result.parse_error}",
-                                                Colors.YELLOW,
-                                                agent_id=issue_id,
-                                            )
-                                        else:
-                                            # Count critical issues (P0 and P1)
-                                            error_count = sum(
-                                                1
-                                                for i in review_result.issues
-                                                if i.priority is not None
-                                                and i.priority <= 1
-                                            )
-                                            log(
-                                                "↻",
-                                                f"Review retry {lifecycle_ctx.retry_state.review_attempt}/{self.max_review_retries} ({error_count} errors)",
-                                                Colors.YELLOW,
-                                                agent_id=issue_id,
-                                            )
-
-                                        # Build follow-up prompt with review issues
-                                        review_issues_text = (
-                                            format_review_issues(review_result.issues)
-                                            if review_result.issues
-                                            else review_result.parse_error
-                                            or "Unknown review failure"
-                                        )
-                                        followup = _get_review_followup_prompt().format(
-                                            attempt=lifecycle_ctx.retry_state.review_attempt,
-                                            max_attempts=self.max_review_retries,
-                                            review_issues=review_issues_text,
-                                            issue_id=issue_id,
-                                        )
-
-                                        # Resume session with follow-up prompt
-                                        assert claude_session_id is not None
-                                        await client.query(
-                                            followup,
-                                            session_id=claude_session_id,
-                                        )
-                                        continue
-
-                    tracer.set_success(success)
-
-                except TimeoutError:
-                    timeout_mins = (
-                        self.timeout_seconds // 60 if self.timeout_seconds else 0
-                    )
-                    lifecycle.on_timeout(lifecycle_ctx, timeout_mins)
-                    final_result = lifecycle_ctx.final_result
-                    tracer.set_error(final_result)
-                    self._cleanup_agent_locks(agent_id)
-
-                except Exception as e:
-                    lifecycle.on_error(lifecycle_ctx, e)
-                    final_result = lifecycle_ctx.final_result
-                    tracer.set_error(final_result)
-                    self._cleanup_agent_locks(agent_id)
+                # Record success/error in tracer
+                if output.success:
+                    tracer.set_success(True)
+                else:
+                    tracer.set_error(output.summary)
 
         finally:
-            duration = asyncio.get_event_loop().time() - start_time
-
             # Ensure locks are cleaned
+            agent_id = self.agent_ids.pop(issue_id, temp_agent_id)
             self._cleanup_agent_locks(agent_id)
-            self.agent_ids.pop(issue_id, None)
 
         return IssueResult(
             issue_id=issue_id,
-            agent_id=agent_id,
-            success=lifecycle_ctx.success,
-            summary=final_result,
-            duration_seconds=duration,
-            session_id=claude_session_id,
-            gate_attempts=lifecycle_ctx.retry_state.gate_attempt,
-            review_attempts=lifecycle_ctx.retry_state.review_attempt,
-            resolution=lifecycle_ctx.resolution,
+            agent_id=output.agent_id,
+            success=output.success,
+            summary=output.summary,
+            duration_seconds=output.duration_seconds,
+            session_id=output.session_id,
+            gate_attempts=output.gate_attempts,
+            review_attempts=output.review_attempts,
+            resolution=output.resolution,
         )
 
     async def spawn_agent(self, issue_id: str) -> bool:
