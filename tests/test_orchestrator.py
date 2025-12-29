@@ -3324,8 +3324,11 @@ class TestFailedRunQualityGateEvidence:
             "quality_gate should be populated for failed runs with logs"
         )
         assert issue_run.quality_gate.passed is False
-        # Evidence should be parsed from the log
-        assert "pytest_ran" in issue_run.quality_gate.evidence
+        # Evidence should be parsed from the log using spec-driven keys (CommandKind.value)
+        # Note: empty evidence is valid if no validation commands were detected
+        assert isinstance(issue_run.quality_gate.evidence, dict)
+        # commit_found should always be present (added by orchestrator)
+        assert "commit_found" in issue_run.quality_gate.evidence
         # Failure reasons should be extracted from summary
         assert len(issue_run.quality_gate.failure_reasons) > 0
 

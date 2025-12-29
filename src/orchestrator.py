@@ -791,15 +791,12 @@ class MalaOrchestrator:
                 log_path, spec
             )
             commit_result = self.quality_gate.check_commit_exists(issue_id)
+            # Build spec-driven evidence dict
+            evidence_dict = evidence.to_evidence_dict()
+            evidence_dict["commit_found"] = commit_result.exists
             quality_gate_result = QualityGateResult(
                 passed=True,
-                evidence={
-                    "pytest_ran": evidence.pytest_ran,
-                    "ruff_check_ran": evidence.ruff_check_ran,
-                    "ruff_format_ran": evidence.ruff_format_ran,
-                    "ty_check_ran": evidence.ty_check_ran,
-                    "commit_found": commit_result.exists,
-                },
+                evidence=evidence_dict,
                 failure_reasons=[],
             )
 
@@ -879,15 +876,12 @@ class MalaOrchestrator:
             if "Quality gate failed:" in result.summary:
                 reasons_part = result.summary.replace("Quality gate failed: ", "")
                 failure_reasons = [r.strip() for r in reasons_part.split(";")]
+            # Build spec-driven evidence dict
+            evidence_dict = evidence.to_evidence_dict()
+            evidence_dict["commit_found"] = commit_result.exists
             quality_gate_result = QualityGateResult(
                 passed=False,
-                evidence={
-                    "pytest_ran": evidence.pytest_ran,
-                    "ruff_check_ran": evidence.ruff_check_ran,
-                    "ruff_format_ran": evidence.ruff_format_ran,
-                    "ty_check_ran": evidence.ty_check_ran,
-                    "commit_found": commit_result.exists,
-                },
+                evidence=evidence_dict,
                 failure_reasons=failure_reasons,
             )
 

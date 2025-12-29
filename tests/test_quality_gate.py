@@ -546,6 +546,60 @@ class TestMissingCommands:
         assert len(missing) == 0
 
 
+class TestToEvidenceDict:
+    """Test to_evidence_dict() spec-driven serialization method."""
+
+    def test_returns_empty_dict_when_no_commands_ran(self) -> None:
+        """Should return empty dict for fresh evidence."""
+        evidence = ValidationEvidence()
+        result = evidence.to_evidence_dict()
+        assert result == {}
+
+    def test_returns_dict_keyed_by_command_kind_value(self) -> None:
+        """Should return dict with CommandKind.value as keys."""
+        evidence = make_evidence(
+            pytest_ran=True,
+            ruff_check_ran=True,
+            ruff_format_ran=False,
+            ty_check_ran=True,
+        )
+        result = evidence.to_evidence_dict()
+
+        # Keys should be CommandKind.value strings
+        assert result.get("test") is True
+        assert result.get("lint") is True
+        assert result.get("typecheck") is True
+        # format wasn't set (make_evidence only sets True values)
+        assert "format" not in result
+
+    def test_includes_all_command_kinds_that_ran(self) -> None:
+        """Should include all command kinds that were detected."""
+        evidence = make_evidence(
+            pytest_ran=True,
+            ruff_check_ran=True,
+            ruff_format_ran=True,
+            ty_check_ran=True,
+            setup_ran=True,
+        )
+        result = evidence.to_evidence_dict()
+
+        assert result.get("test") is True
+        assert result.get("lint") is True
+        assert result.get("format") is True
+        assert result.get("typecheck") is True
+        assert result.get("setup") is True
+
+    def test_dict_is_suitable_for_json_serialization(self) -> None:
+        """Returned dict should be JSON-serializable without conversion."""
+        evidence = make_evidence(pytest_ran=True, ruff_check_ran=True)
+        result = evidence.to_evidence_dict()
+
+        # Should be directly JSON-serializable
+        serialized = json.dumps(result)
+        deserialized = json.loads(serialized)
+        assert deserialized == result
+
+
 class TestCommitBaselineCheck:
     """Test check_commit_exists with baseline timestamp to reject stale commits."""
 

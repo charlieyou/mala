@@ -47,14 +47,15 @@ class TestQualityGateResult:
         assert result.failure_reasons == []
 
     def test_failed_result(self) -> None:
+        # New spec-driven evidence uses CommandKind values as keys
         result = QualityGateResult(
             passed=False,
-            evidence={"pytest_ran": True, "ruff_check_ran": False},
+            evidence={"test": True, "lint": False},
             failure_reasons=["ruff check not run"],
         )
         assert result.passed is False
-        assert result.evidence["pytest_ran"] is True
-        assert result.evidence["ruff_check_ran"] is False
+        assert result.evidence["test"] is True
+        assert result.evidence["lint"] is False
         assert "ruff check not run" in result.failure_reasons
 
 
@@ -277,7 +278,7 @@ class TestRunMetadataSerialization:
             log_path="/tmp/logs/agent-1.jsonl",
             quality_gate=QualityGateResult(
                 passed=True,
-                evidence={"pytest_ran": True, "commit_found": True},
+                evidence={"test": True, "commit_found": True},
             ),
             validation=validation,
         )

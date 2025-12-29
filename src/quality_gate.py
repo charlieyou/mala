@@ -144,6 +144,20 @@ class ValidationEvidence:
             missing.append("ty check")
         return missing
 
+    def to_evidence_dict(self) -> dict[str, bool]:
+        """Convert evidence to a serializable dict keyed by CommandKind value.
+
+        This is the spec-driven alternative to accessing individual properties.
+        Returns a dict with keys like "test", "lint", "format", "typecheck"
+        based on what commands were detected.
+
+        Use this method when building metadata to avoid hardcoded property access.
+
+        Returns:
+            Dict mapping CommandKind.value strings to their ran status.
+        """
+        return {kind.value: ran for kind, ran in self.commands_ran.items()}
+
 
 def get_required_evidence_kinds(spec: ValidationSpec) -> set[CommandKind]:
     """Get the set of command kinds required by a ValidationSpec.
