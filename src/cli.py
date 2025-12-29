@@ -345,6 +345,13 @@ def run(
             help="Reasoning effort level for Codex reviews (e.g., 'high', 'medium', 'low', 'xhigh')",
         ),
     ] = "high",
+    no_morph: Annotated[
+        bool,
+        typer.Option(
+            "--no-morph",
+            help="Disable MorphLLM routing; use models directly for debugging or when MorphLLM is unavailable",
+        ),
+    ] = False,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -428,10 +435,16 @@ def run(
         "max_review_retries": max_review_retries,
         "braintrust": _braintrust_enabled,
         "codex_thinking_mode": codex_thinking_mode,
+        "no_morph": no_morph,
     }
 
     # Construct config from environment (orchestrator uses this for API keys and feature flags)
     config = _lazy("MalaConfig").from_env(validate=False)
+
+    # Determine morph_enabled: disabled if --no-morph flag set, otherwise use config default
+    morph_enabled = (
+        False if no_morph else None
+    )  # None lets orchestrator use config default
 
     orchestrator = _lazy("MalaOrchestrator")(
         repo_path=repo_path,
@@ -445,6 +458,7 @@ def run(
         max_review_retries=max_review_retries,
         disable_validations=disable_set,
         coverage_threshold=coverage_threshold,
+        morph_enabled=morph_enabled,
         prioritize_wip=wip,
         focus=focus,
         cli_args=cli_args,
