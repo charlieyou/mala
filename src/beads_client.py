@@ -166,14 +166,16 @@ class BeadsClient:
     # Pipeline steps for _fetch_and_filter_issues
     #
     # Design: Pipeline has two types of steps:
-    # - I/O steps (_fetch_base_issues, _fetch_wip_issues, _enrich_with_epics):
-    #   Perform async/subprocess calls, testable via mocked subprocess
-    # - Pure transformation steps (_merge_wip_issues, _apply_filters, _sort_issues):
+    # - I/O steps (fetch_ready_issues_async, fetch_wip_issues_async, enrich_with_epics_async):
+    #   Perform async/subprocess calls, return raw data
+    # - Pure transformation steps (in IssueManager):
     #   Static methods with no I/O, directly testable with fixture data
+    #
+    # BeadsClient provides raw I/O methods; IssueManager handles all processing.
     # ───────────────────────────────────────────────────────────────────────────
 
-    async def _fetch_base_issues(self) -> tuple[list[dict[str, object]], bool]:
-        """Fetch ready issues from bd CLI (pipeline step 1).
+    async def fetch_ready_issues_async(self) -> tuple[list[dict[str, object]], bool]:
+        """Fetch ready issues from bd CLI (raw I/O, no processing).
 
         Returns:
             Tuple of (issues list, success flag). Returns ([], False) on error.
@@ -187,6 +189,50 @@ class BeadsClient:
             return (list(issues), True) if isinstance(issues, list) else ([], True)
         except json.JSONDecodeError:
             return [], False
+
+    async def fetch_wip_issues_async(self) -> list[dict[str, object]]:
+        """Fetch unblocked in_progress issues from bd CLI (raw I/O, no processing)."""
+        result = await self._run_subprocess_async(
+            ["bd", "list", "--status", "in_progress", "--json"]
+        )
+        if result.returncode != 0:
+            return []
+        try:
+            wip = json.loads(result.stdout)
+            if not isinstance(wip, list):
+                return []
+            return [w for w in wip if w.get("blocked_by") is None]
+        except json.JSONDecodeError:
+            return []
+
+    async def enrich_with_epics_async(
+        self, issues: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        """Add parent_epic info and filter blocked epics (I/O step).
+
+        Returns a new list with enriched copies; does not mutate input.
+        """
+        if not issues:
+            return issues
+        ids = [str(i["id"]) for i in issues]
+        epics = await self.get_parent_epics_async(ids)
+        blocked = await self._get_blocked_epics_async({e for e in epics.values() if e})
+        return [
+            {**i, "parent_epic": epics.get(str(i["id"]))}
+            for i in issues
+            if epics.get(str(i["id"])) not in blocked
+        ]
+
+    # ───────────────────────────────────────────────────────────────────────────
+    # Legacy pipeline methods (delegate to public methods or IssueManager)
+    # ───────────────────────────────────────────────────────────────────────────
+
+    async def _fetch_base_issues(self) -> tuple[list[dict[str, object]], bool]:
+        """Fetch ready issues from bd CLI (pipeline step 1).
+
+        Delegates to fetch_ready_issues_async for actual I/O.
+        """
+        return await self.fetch_ready_issues_async()
 
     @staticmethod
     def _merge_wip_issues(
@@ -218,16 +264,7 @@ class BeadsClient:
 
         Returns a new list with enriched copies; does not mutate input.
         """
-        if not issues:
-            return issues
-        ids = [str(i["id"]) for i in issues]
-        epics = await self.get_parent_epics_async(ids)
-        blocked = await self._get_blocked_epics_async({e for e in epics.values() if e})
-        return [
-            {**i, "parent_epic": epics.get(str(i["id"]))}
-            for i in issues
-            if epics.get(str(i["id"])) not in blocked
-        ]
+        return await self.enrich_with_epics_async(issues)
 
     def _sort_issues(
         self, issues: list[dict[str, object]], focus: bool, prioritize_wip: bool
@@ -249,18 +286,7 @@ class BeadsClient:
 
     async def _fetch_wip_issues(self) -> list[dict[str, object]]:
         """Fetch unblocked in_progress issues from bd CLI."""
-        result = await self._run_subprocess_async(
-            ["bd", "list", "--status", "in_progress", "--json"]
-        )
-        if result.returncode != 0:
-            return []
-        try:
-            wip = json.loads(result.stdout)
-            if not isinstance(wip, list):
-                return []
-            return [w for w in wip if w.get("blocked_by") is None]
-        except json.JSONDecodeError:
-            return []
+        return await self.fetch_wip_issues_async()
 
     def _warn_missing_ids(
         self,
