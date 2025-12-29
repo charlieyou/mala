@@ -15,6 +15,7 @@ import asyncio
 import json
 from typing import TYPE_CHECKING
 
+from src.issue_manager import IssueManager
 from src.tools.command_runner import CommandResult, CommandRunner
 
 if TYPE_CHECKING:
@@ -129,6 +130,9 @@ class BeadsClient:
 
         Orphan tasks (no parent epic) form a virtual group with the same rules.
 
+        Note: This async version fetches parent epics first, then delegates
+        to IssueManager.sort_by_epic_groups for the actual sorting.
+
         Args:
             issues: List of issue dicts to sort.
 
@@ -142,73 +146,21 @@ class BeadsClient:
         issue_ids = [str(i["id"]) for i in issues]
         parent_epics = await self.get_parent_epics_async(issue_ids)
 
-        # Group issues by parent epic (None for orphans)
-        groups: dict[str | None, list[dict[str, object]]] = {}
-        for issue in issues:
-            epic = parent_epics.get(str(issue["id"]))
-            if epic not in groups:
-                groups[epic] = []
-            groups[epic].append(issue)
+        # Enrich issues with parent_epic field
+        enriched = [
+            {**issue, "parent_epic": parent_epics.get(str(issue["id"]))}
+            for issue in issues
+        ]
 
-        def get_priority(issue: dict[str, object]) -> int:
-            """Extract priority as int, defaulting to 0."""
-            prio = issue.get("priority")
-            if prio is None:
-                return 0
-            if isinstance(prio, int):
-                return prio
-            return int(str(prio))
-
-        def get_updated_at(issue: dict[str, object]) -> str:
-            """Extract updated_at as string, defaulting to empty."""
-            val = issue.get("updated_at")
-            return str(val) if val is not None else ""
-
-        # Sort within each group by (priority, updated DESC)
-        for epic, group_issues in groups.items():
-            group_issues.sort(
-                key=lambda i: (
-                    get_priority(i),
-                    self._negate_timestamp(get_updated_at(i)),
-                )
-            )
-
-        # Compute group sort key: (min_priority, -max_updated)
-        def group_sort_key(epic: str | None) -> tuple[int, str]:
-            group_issues = groups[epic]
-            min_priority = min(get_priority(i) for i in group_issues)
-            # Find max updated_at (most recent first)
-            max_updated = max(get_updated_at(i) for i in group_issues)
-            # Negate by prepending ~ to reverse sort (~ > any alphanum)
-            # We want max_updated DESC, so higher updated = earlier in sort
-            return (min_priority, self._negate_timestamp(max_updated))
-
-        # Sort groups and flatten
-        sorted_epics = sorted(groups.keys(), key=group_sort_key)
-        result: list[dict[str, object]] = []
-        for epic in sorted_epics:
-            result.extend(groups[epic])
-
-        return result
+        # Delegate to IssueManager for pure sorting logic
+        return IssueManager.sort_by_epic_groups(enriched)
 
     def _negate_timestamp(self, timestamp: object) -> str:
         """Negate a timestamp string for descending sort.
 
-        Converts each character to its complement relative to 'z'/'9'
-        so that lexicographic sort becomes descending.
-
-        Args:
-            timestamp: ISO timestamp string or empty string.
-
-        Returns:
-            Negated string for descending sort.
+        Delegates to IssueManager.negate_timestamp for actual logic.
         """
-        if not timestamp or not isinstance(timestamp, str):
-            # Empty/missing timestamps sort last (after all real timestamps)
-            return "~"  # ~ sorts after alphanumeric
-        # Negate each character: higher chars become lower
-        # This works for ISO timestamps like "2025-01-15T10:30:00Z"
-        return "".join(chr(255 - ord(c)) for c in timestamp)
+        return IssueManager.negate_timestamp(timestamp)
 
     # ───────────────────────────────────────────────────────────────────────────
     # Pipeline steps for _fetch_and_filter_issues
@@ -240,9 +192,11 @@ class BeadsClient:
     def _merge_wip_issues(
         base_issues: list[dict[str, object]], wip_issues: list[dict[str, object]]
     ) -> list[dict[str, object]]:
-        """Merge WIP issues into base list (pipeline step 2, pure function)."""
-        ready_ids: set[str] = {str(i["id"]) for i in base_issues}
-        return base_issues + [w for w in wip_issues if str(w["id"]) not in ready_ids]
+        """Merge WIP issues into base list (pipeline step 2, pure function).
+
+        Delegates to IssueManager.merge_wip_issues for actual logic.
+        """
+        return IssueManager.merge_wip_issues(base_issues, wip_issues)
 
     @staticmethod
     def _apply_filters(
@@ -251,15 +205,11 @@ class BeadsClient:
         epic_children: set[str] | None,
         only_ids: set[str] | None,
     ) -> list[dict[str, object]]:
-        """Apply only_ids and epic filters (pipeline step 3, pure function)."""
-        return [
-            i
-            for i in issues
-            if str(i["id"]) not in exclude_ids
-            and i.get("issue_type") != "epic"
-            and (epic_children is None or str(i["id"]) in epic_children)
-            and (only_ids is None or str(i["id"]) in only_ids)
-        ]
+        """Apply only_ids and epic filters (pipeline step 3, pure function).
+
+        Delegates to IssueManager.apply_filters for actual logic.
+        """
+        return IssueManager.apply_filters(issues, exclude_ids, epic_children, only_ids)
 
     async def _enrich_with_epics(
         self, issues: list[dict[str, object]]
@@ -282,49 +232,20 @@ class BeadsClient:
     def _sort_issues(
         self, issues: list[dict[str, object]], focus: bool, prioritize_wip: bool
     ) -> list[dict[str, object]]:
-        """Sort issues by focus mode vs priority (pipeline step 5, pure function)."""
-        if not issues:
-            return issues
-        result = (
-            self._sort_by_epic_groups_sync(list(issues))
-            if focus
-            else sorted(issues, key=lambda i: i.get("priority") or 0)
-        )
-        return (
-            sorted(result, key=lambda i: 0 if i.get("status") == "in_progress" else 1)
-            if prioritize_wip
-            else result
-        )
+        """Sort issues by focus mode vs priority (pipeline step 5, pure function).
+
+        Delegates to IssueManager.sort_issues for actual logic.
+        """
+        return IssueManager.sort_issues(issues, focus, prioritize_wip)
 
     def _sort_by_epic_groups_sync(
         self, issues: list[dict[str, object]]
     ) -> list[dict[str, object]]:
-        """Sort issues by epic groups for focus mode."""
-        if not issues:
-            return issues
-        groups: dict[str | None, list[dict[str, object]]] = {}
-        for issue in issues:
-            key: str | None = (
-                str(issue.get("parent_epic")) if issue.get("parent_epic") else None
-            )
-            groups.setdefault(key, []).append(issue)
+        """Sort issues by epic groups for focus mode.
 
-        def prio(i: dict[str, object]) -> int:
-            return int(str(i.get("priority"))) if i.get("priority") else 0
-
-        def upd(i: dict[str, object]) -> str:
-            return str(i.get("updated_at")) if i.get("updated_at") else ""
-
-        for g in groups.values():
-            g.sort(key=lambda i: (prio(i), self._negate_timestamp(upd(i))))
-
-        def gkey(e: str | None) -> tuple[int, str]:
-            return (
-                min(prio(i) for i in groups[e]),
-                self._negate_timestamp(max(upd(i) for i in groups[e])),
-            )
-
-        return [i for e in sorted(groups.keys(), key=gkey) for i in groups[e]]
+        Delegates to IssueManager.sort_by_epic_groups for actual logic.
+        """
+        return IssueManager.sort_by_epic_groups(issues)
 
     async def _fetch_wip_issues(self) -> list[dict[str, object]]:
         """Fetch unblocked in_progress issues from bd CLI."""
@@ -347,10 +268,11 @@ class BeadsClient:
         issues: list[dict[str, object]],
         suppress_ids: set[str],
     ) -> None:
-        """Log warning for specified IDs not found in issues."""
-        if not only_ids:
-            return
-        bad = only_ids - {str(i["id"]) for i in issues} - suppress_ids
+        """Log warning for specified IDs not found in issues.
+
+        Delegates to IssueManager.find_missing_ids for actual logic.
+        """
+        bad = IssueManager.find_missing_ids(only_ids, issues, suppress_ids)
         if bad:
             self._log_warning(f"Specified IDs not ready: {', '.join(sorted(bad))}")
 
