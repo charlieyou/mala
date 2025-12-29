@@ -36,7 +36,7 @@ class TestE2EConfig:
         assert config.enabled is True
         assert config.skip_if_no_keys is False
         assert config.keep_fixture is False
-        assert config.timeout_seconds == 120.0
+        assert config.timeout_seconds == 300.0
         assert config.max_agents == 1
         assert config.max_issues == 1
 

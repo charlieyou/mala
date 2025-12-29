@@ -382,7 +382,7 @@ def build_validation_spec(
 
     # Add pytest for Python repos (unless skipping tests)
     if is_python_repo and not skip_tests:
-        pytest_cmd = ["uv", "run", "pytest"]
+        pytest_cmd = ["uv", "run", "pytest", "-n", "auto"]
 
         # Add coverage flags when coverage is enabled
         if coverage_enabled:
