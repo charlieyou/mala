@@ -43,7 +43,7 @@ def _run_git_command(args: list[str], cwd: Path) -> str | None:
     Returns:
         stdout as a string, or None if the command failed.
     """
-    result = run_command(["git", *args], cwd=cwd)
+    result = run_command(["git", *args], cwd=cwd, timeout_seconds=5.0)
     if result.ok:
         return result.stdout.strip()
     return None

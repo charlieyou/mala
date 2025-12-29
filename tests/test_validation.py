@@ -1661,16 +1661,16 @@ class TestSpecRunnerBaselineRefresh:
         # Baseline file should be updated
         assert baseline_path.exists()
 
-    def test_baseline_refresh_strips_slow_test_markers(
+    def test_baseline_refresh_replaces_marker_expression(
         self, service: BaselineCoverageService, tmp_path: Path
     ) -> None:
-        """Baseline refresh should replace -m markers with 'not slow'.
+        """Baseline refresh should replace -m markers with 'unit or integration'.
 
         When the spec includes any -m marker, the baseline refresh should
-        replace it with '-m not slow' to exclude slow/E2E tests that require
-        special env/fixtures and would increase refresh runtime.
+        replace it with '-m unit or integration' to exclude E2E tests that
+        require special auth and would increase refresh runtime.
         """
-        # Spec with slow test markers (typical run-level configuration)
+        # Spec with an arbitrary marker (will be replaced)
         spec = ValidationSpec(
             commands=[
                 ValidationCommand(
@@ -1681,7 +1681,7 @@ class TestSpecRunnerBaselineRefresh:
                         "pytest",
                         "--cov=src",
                         "-m",
-                        "slow or not slow",
+                        "e2e",
                         "--cov-fail-under=85",
                     ],
                     kind=CommandKind.TEST,
@@ -1755,13 +1755,13 @@ class TestSpecRunnerBaselineRefresh:
 
         pytest_cmd = pytest_cmds[-1]  # The actual pytest run (not uv sync)
 
-        # Verify -m marker was replaced with "not slow" to exclude slow tests
+        # Verify -m marker was replaced with "unit or integration"
         assert "-m" in pytest_cmd, f"Expected -m marker in: {pytest_cmd}"
         m_idx = pytest_cmd.index("-m")
-        assert pytest_cmd[m_idx + 1] == "not slow", (
-            f"Expected '-m not slow', but got: {pytest_cmd[m_idx : m_idx + 2]}"
+        assert pytest_cmd[m_idx + 1] == "unit or integration", (
+            f"Expected '-m unit or integration', but got: {pytest_cmd[m_idx : m_idx + 2]}"
         )
-        assert "slow or not slow" not in pytest_cmd, (
+        assert "e2e" not in pytest_cmd, (
             f"Original marker value should be removed, but found in: {pytest_cmd}"
         )
 

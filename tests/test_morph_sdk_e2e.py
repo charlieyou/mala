@@ -6,13 +6,14 @@ using a mock MCP server that mimics MorphLLM's tools.
 Requirements:
 - Claude Code CLI must be authenticated (run `claude` to verify)
 
-Run with: uv run pytest tests/test_morph_sdk_e2e.py -m slow -v
+Run with: uv run pytest tests/test_morph_sdk_e2e.py -m e2e -v
 """
 
 import os
 import sys
 import pytest
 from pathlib import Path
+import types
 
 from claude_agent_sdk import (
     ClaudeSDKClient,
@@ -26,8 +27,8 @@ from claude_agent_sdk.types import (
     SyncHookJSONOutput,
 )
 
-# All SDK tests are slow (require API calls)
-pytestmark = [pytest.mark.slow, pytest.mark.morph]
+# All SDK tests are end-to-end (require CLI auth and API calls)
+pytestmark = [pytest.mark.e2e, pytest.mark.morph]
 
 # Define MCP config inline to avoid importing from cli.py (which triggers Braintrust)
 MORPH_DISALLOWED_TOOLS = ["Edit", "Grep"]
@@ -35,10 +36,73 @@ MORPH_DISALLOWED_TOOLS = ["Edit", "Grep"]
 # Path to the mock MCP server
 MOCK_MCP_SERVER = Path(__file__).parent / "mock_mcp_server.py"
 
-# Skip if running in CI without proper Claude SDK setup
-# These tests require a full Claude CLI installation with authentication
-# Skip by default unless explicitly enabled with ENABLE_SDK_TESTS=true
-SKIP_SDK_TESTS = os.environ.get("ENABLE_SDK_TESTS", "").lower() != "true"
+
+def _is_claude_cli_available() -> bool:
+    """Check if Claude Code CLI is installed."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["claude", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def _has_oauth_credentials() -> bool:
+    """Check if OAuth credentials are available for Claude Code CLI."""
+    # Check test config dir first (set by conftest.py)
+    test_config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if test_config_dir:
+        test_creds = Path(test_config_dir) / ".credentials.json"
+        if test_creds.exists():
+            return True
+
+    # Check real OAuth credentials file
+    auth_file = Path.home() / ".claude" / ".credentials.json"
+    return auth_file.exists()
+
+
+@pytest.fixture(autouse=True)
+def require_claude_cli_auth() -> None:
+    """Skip tests if Claude Code CLI is not available or OAuth credentials missing."""
+    if not _is_claude_cli_available():
+        pytest.skip("Claude Code CLI not installed")
+    if not _has_oauth_credentials():
+        pytest.skip("Claude Code CLI not logged in - run `claude` and login with OAuth")
+
+
+@pytest.fixture(autouse=True)
+def clean_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable Braintrust during tests to avoid network/logging side effects."""
+    monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    try:
+        import braintrust
+
+        class _NoopSpan:
+            def __enter__(self) -> "_NoopSpan":
+                return self
+
+            def __exit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc_val: BaseException | None,
+                exc_tb: types.TracebackType | None,
+            ) -> None:
+                return None
+
+            def log(self, **_kwargs: object) -> None:
+                return None
+
+        braintrust.start_span = lambda *args, **kwargs: _NoopSpan()  # type: ignore[assignment]
+        braintrust.flush = lambda *args, **kwargs: None  # type: ignore[assignment]
+    except Exception:
+        pass
 
 
 def get_mcp_servers(repo_path: Path) -> dict:
@@ -92,7 +156,6 @@ class TestMcpToolsAvailable:
 
     @pytest.mark.asyncio
     @pytest.mark.flaky(reruns=2)
-    @pytest.mark.skipif(SKIP_SDK_TESTS, reason="Claude SDK E2E tests disabled in CI")
     async def test_agent_can_use_edit_file_tool(
         self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path
     ) -> None:
@@ -126,7 +189,6 @@ Respond with "DONE" when complete."""
 
     @pytest.mark.asyncio
     @pytest.mark.flaky(reruns=2)
-    @pytest.mark.skipif(SKIP_SDK_TESTS, reason="Claude SDK E2E tests disabled in CI")
     async def test_agent_can_use_warpgrep_search(
         self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path
     ) -> None:
@@ -164,7 +226,6 @@ class TestMorphWorkflowE2E:
 
     @pytest.mark.asyncio
     @pytest.mark.flaky(reruns=2)
-    @pytest.mark.skipif(SKIP_SDK_TESTS, reason="Claude SDK E2E tests disabled in CI")
     async def test_search_and_edit_workflow(
         self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path
     ) -> None:
