@@ -373,6 +373,34 @@ class TestNoProgressDetection:
 
         assert is_no_progress is True
 
+    def test_progress_when_working_tree_has_changes(self, tmp_path: Path) -> None:
+        """Progress detected: uncommitted changes in working tree.
+
+        Even with same commit and no new validation evidence, if there are
+        uncommitted changes in the working tree, that counts as progress.
+        """
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")  # No new evidence
+
+        gate = QualityGate(tmp_path)
+
+        # Mock _has_working_tree_changes to return True
+        original_method = gate._has_working_tree_changes
+        gate._has_working_tree_changes = lambda: True  # type: ignore[method-assign]
+
+        try:
+            is_no_progress = gate.check_no_progress(
+                log_path=log_path,
+                log_offset=0,
+                previous_commit_hash="abc1234",
+                current_commit_hash="abc1234",  # Same commit
+            )
+
+            # Working tree changes = progress
+            assert is_no_progress is False
+        finally:
+            gate._has_working_tree_changes = original_method  # type: ignore[method-assign]
+
 
 class TestGateResultNoProgress:
     """Test GateResult includes no-progress indicator."""

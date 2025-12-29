@@ -403,9 +403,10 @@ class QualityGate:
     ) -> bool:
         """Check if no progress was made since the last attempt.
 
-        No progress is detected when:
+        No progress is detected when ALL of these are true:
         - The commit hash hasn't changed (or both are None)
         - No new validation evidence was found after the log offset
+        - No uncommitted changes in the working tree
 
         Args:
             log_path: Path to the JSONL log file from agent session.
@@ -427,6 +428,10 @@ class QualityGate:
 
         # If commit changed, that's progress
         if commit_changed:
+            return False
+
+        # Check for uncommitted working tree changes
+        if self._has_working_tree_changes():
             return False
 
         # Build default spec if not provided
@@ -452,8 +457,28 @@ class QualityGate:
         if has_new_evidence:
             return False
 
-        # No commit change and no new evidence = no progress
+        # No commit change, no working tree changes, and no new evidence = no progress
         return True
+
+    def _has_working_tree_changes(self) -> bool:
+        """Check if the working tree has uncommitted changes.
+
+        Returns:
+            True if there are staged or unstaged changes, False otherwise.
+        """
+        # Use git status --porcelain to detect any changes
+        # This includes staged, unstaged, and untracked files
+        result = run_command(
+            ["git", "status", "--porcelain"],
+            cwd=self.repo_path,
+            timeout_seconds=5.0,
+        )
+        if not result.ok:
+            # If git status fails, assume no changes (safe default)
+            return False
+
+        # Any output means there are changes
+        return bool(result.stdout.strip())
 
     def check_commit_exists(
         self, issue_id: str, baseline_timestamp: int | None = None

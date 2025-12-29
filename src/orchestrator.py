@@ -1006,6 +1006,55 @@ class MalaOrchestrator:
 
                                 # Handle RUN_REVIEW effect
                                 if result.effect == Effect.RUN_REVIEW:
+                                    # Check for no-progress on review retries BEFORE running review
+                                    # (same commit, no working tree changes, no new validation evidence)
+                                    # This prevents burning a review attempt when agent made no progress
+                                    no_progress = False
+                                    if lifecycle_ctx.retry_state.review_attempt > 1:
+                                        log_path = self.session_log_paths[issue_id]
+                                        current_commit = (
+                                            lifecycle_ctx.last_gate_result.commit_hash
+                                            if lifecycle_ctx.last_gate_result
+                                            else None
+                                        )
+                                        no_progress = self.quality_gate.check_no_progress(
+                                            log_path,
+                                            lifecycle_ctx.retry_state.log_offset,
+                                            lifecycle_ctx.retry_state.previous_commit_hash,
+                                            current_commit,
+                                            spec=self.per_issue_spec,
+                                        )
+                                        if no_progress:
+                                            # Fail fast without running review
+                                            log(
+                                                "✗",
+                                                "Review skipped: No progress (commit unchanged, no working tree changes, no new validation evidence)",
+                                                Colors.RED,
+                                                agent_id=issue_id,
+                                            )
+                                            # Create a synthetic failed review result
+                                            from src.codex_review import (
+                                                CodexReviewResult,
+                                            )
+
+                                            synthetic_result = CodexReviewResult(
+                                                passed=False,
+                                                issues=[],
+                                                parse_error=None,
+                                            )
+                                            new_offset = self.quality_gate.get_log_end_offset(
+                                                log_path,
+                                                start_offset=lifecycle_ctx.retry_state.log_offset,
+                                            )
+                                            result = lifecycle.on_review_result(
+                                                lifecycle_ctx,
+                                                synthetic_result,
+                                                new_offset,
+                                                no_progress=True,
+                                            )
+                                            final_result = lifecycle_ctx.final_result
+                                            break
+
                                     log(
                                         "◐",
                                         f"Running Codex review (attempt {lifecycle_ctx.retry_state.review_attempt}/{self.max_review_retries})",
@@ -1043,29 +1092,11 @@ class MalaOrchestrator:
                                         start_offset=lifecycle_ctx.retry_state.log_offset,
                                     )
 
-                                    # Check for no-progress on review retries
-                                    # (same commit, no new validation evidence since last attempt)
-                                    no_progress = False
-                                    if lifecycle_ctx.retry_state.review_attempt > 1:
-                                        current_commit = (
-                                            lifecycle_ctx.last_gate_result.commit_hash
-                                            if lifecycle_ctx.last_gate_result
-                                            else None
-                                        )
-                                        no_progress = self.quality_gate.check_no_progress(
-                                            log_path,
-                                            lifecycle_ctx.retry_state.log_offset,
-                                            lifecycle_ctx.retry_state.previous_commit_hash,
-                                            current_commit,
-                                            spec=self.per_issue_spec,
-                                        )
-
                                     # Transition based on review result
                                     result = lifecycle.on_review_result(
                                         lifecycle_ctx,
                                         review_result,
                                         new_offset,
-                                        no_progress,
                                     )
 
                                     if result.effect == Effect.COMPLETE_SUCCESS:
@@ -1080,14 +1111,6 @@ class MalaOrchestrator:
                                         break
 
                                     if result.effect == Effect.COMPLETE_FAILURE:
-                                        # Log specific reason for review failure
-                                        if no_progress:
-                                            log(
-                                                "✗",
-                                                "Review failed: No progress (commit unchanged, no new validation evidence)",
-                                                Colors.RED,
-                                                agent_id=issue_id,
-                                            )
                                         final_result = lifecycle_ctx.final_result
                                         break
 
