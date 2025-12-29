@@ -232,8 +232,8 @@ class TestSpecValidationRunner:
 
     @pytest.fixture
     def runner(self, tmp_path: Path) -> SpecValidationRunner:
-        """Create a spec runner."""
-        return SpecValidationRunner(tmp_path)
+        """Create a spec runner with lint caching disabled for tests."""
+        return SpecValidationRunner(tmp_path, enable_lint_cache=False)
 
     @pytest.fixture
     def basic_spec(self) -> ValidationSpec:

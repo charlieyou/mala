@@ -26,7 +26,8 @@ from .coverage import (
 from .e2e import E2EConfig as E2ERunnerConfig
 from .e2e import E2ERunner, E2EStatus
 from .helpers import format_step_output
-from .spec import ValidationArtifacts
+from .lint_cache import LintCache
+from .spec import CommandKind, ValidationArtifacts
 from .worktree import (
     WorktreeConfig,
     WorktreeState,
@@ -70,21 +71,26 @@ class SpecValidationRunner:
     - Per-command mutex settings
     - Integrated worktree, coverage, and E2E handling
     - Artifact tracking
+    - Lint caching to skip redundant lint commands
     """
 
     def __init__(
         self,
         repo_path: Path,
         step_timeout_seconds: float | None = None,
+        enable_lint_cache: bool = True,
     ):
         """Initialize the spec validation runner.
 
         Args:
             repo_path: Path to the repository to validate.
             step_timeout_seconds: Optional timeout for individual steps.
+            enable_lint_cache: Whether to enable lint caching. Set to False
+                in tests or when caching is not desired.
         """
         self.repo_path = repo_path.resolve()
         self.step_timeout_seconds = step_timeout_seconds
+        self.enable_lint_cache = enable_lint_cache
 
     async def run_spec(
         self,
@@ -319,7 +325,37 @@ class SpecValidationRunner:
         """
         steps: list[ValidationStepResult] = []
 
+        # Initialize lint cache for cacheable commands (only if enabled)
+        lint_cache: LintCache | None = None
+        cacheable_kinds = {CommandKind.LINT, CommandKind.FORMAT, CommandKind.TYPECHECK}
+        if self.enable_lint_cache:
+            lint_cache = LintCache(cache_dir=log_dir, repo_path=cwd)
+
         for i, cmd in enumerate(spec.commands):
+            # Check if this command can be skipped via cache
+            if (
+                lint_cache is not None
+                and cmd.kind in cacheable_kinds
+                and lint_cache.should_skip(cmd.name)
+            ):
+                log(
+                    "○",
+                    f"Skipping {cmd.name} (no changes since last check)",
+                    Colors.CYAN,
+                )
+                # Create a synthetic step result for skipped commands
+                step = ValidationStepResult(
+                    name=cmd.name,
+                    command=cmd.command,
+                    ok=True,
+                    returncode=0,
+                    stdout_tail="Skipped: no changes since last check",
+                    stderr_tail="",
+                    duration_seconds=0.0,
+                )
+                steps.append(step)
+                continue
+
             # Log command start for debugging
             start_marker = log_dir / f"{i:02d}_{cmd.name.replace(' ', '_')}.started"
             start_marker.write_text(f"command: {cmd.command}\ncwd: {cwd}\n")
@@ -354,6 +390,9 @@ class SpecValidationRunner:
                     f"{cmd.name} passed{duration_str}",
                     Colors.GREEN,
                 )
+                # Mark command as passed in cache for cacheable commands
+                if lint_cache is not None and cmd.kind in cacheable_kinds:
+                    lint_cache.mark_passed(cmd.name)
             else:
                 log(
                     "✗",
