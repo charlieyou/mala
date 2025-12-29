@@ -30,9 +30,4 @@ if ! is_literal_key "$filepath"; then
     fi
 fi
 
-exec uv run python -c "
-import sys
-sys.argv = ['locking', 'wait', '$filepath', '$timeout', '$poll_ms']
-from src.tools.locking import _cli_main
-sys.exit(_cli_main())
-"
+exec uv run python -m src.tools.locking wait "$filepath" "$timeout" "$poll_ms"

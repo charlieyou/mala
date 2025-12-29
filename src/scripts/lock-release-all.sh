@@ -5,9 +5,4 @@
 
 set -euo pipefail
 
-exec uv run python -c "
-import sys
-sys.argv = ['locking', 'release-all']
-from src.tools.locking import _cli_main
-sys.exit(_cli_main())
-"
+exec uv run python -m src.tools.locking release-all
