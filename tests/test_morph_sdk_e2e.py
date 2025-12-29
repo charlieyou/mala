@@ -9,6 +9,7 @@ Requirements:
 Run with: uv run pytest tests/test_morph_sdk_e2e.py -m slow -v
 """
 
+import os
 import sys
 import pytest
 from pathlib import Path
@@ -33,6 +34,11 @@ MORPH_DISALLOWED_TOOLS = ["Edit", "Grep"]
 
 # Path to the mock MCP server
 MOCK_MCP_SERVER = Path(__file__).parent / "mock_mcp_server.py"
+
+# Skip if running in CI without proper Claude SDK setup
+# These tests require a full Claude CLI installation with authentication
+# Skip by default unless explicitly enabled with ENABLE_SDK_TESTS=true
+SKIP_SDK_TESTS = os.environ.get("ENABLE_SDK_TESTS", "").lower() != "true"
 
 
 def get_mcp_servers(repo_path: Path) -> dict:
@@ -86,6 +92,7 @@ class TestMcpToolsAvailable:
 
     @pytest.mark.asyncio
     @pytest.mark.flaky(reruns=2)
+    @pytest.mark.skipif(SKIP_SDK_TESTS, reason="Claude SDK E2E tests disabled in CI")
     async def test_agent_can_use_edit_file_tool(
         self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path
     ) -> None:
@@ -119,6 +126,7 @@ Respond with "DONE" when complete."""
 
     @pytest.mark.asyncio
     @pytest.mark.flaky(reruns=2)
+    @pytest.mark.skipif(SKIP_SDK_TESTS, reason="Claude SDK E2E tests disabled in CI")
     async def test_agent_can_use_warpgrep_search(
         self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path
     ) -> None:
@@ -156,6 +164,7 @@ class TestMorphWorkflowE2E:
 
     @pytest.mark.asyncio
     @pytest.mark.flaky(reruns=2)
+    @pytest.mark.skipif(SKIP_SDK_TESTS, reason="Claude SDK E2E tests disabled in CI")
     async def test_search_and_edit_workflow(
         self, morph_agent_options: ClaudeAgentOptions, tmp_path: Path
     ) -> None:
