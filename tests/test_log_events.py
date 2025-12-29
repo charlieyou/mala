@@ -183,8 +183,12 @@ class TestAssistantToolUse:
         assert isinstance(entry, AssistantLogEntry)
         assert len(entry.message.content) == 2
         assert all(isinstance(b, ToolUseBlock) for b in entry.message.content)
-        assert entry.message.content[0].id == "toolu_1"
-        assert entry.message.content[1].id == "toolu_2"
+        block0 = entry.message.content[0]
+        block1 = entry.message.content[1]
+        assert isinstance(block0, ToolUseBlock)
+        assert isinstance(block1, ToolUseBlock)
+        assert block0.id == "toolu_1"
+        assert block1.id == "toolu_2"
 
     def test_read_tool_use(self) -> None:
         """Parse a Read tool_use entry."""
@@ -354,7 +358,9 @@ class TestForwardCompatibility:
         entry = parse_log_entry(data)
 
         assert isinstance(entry, AssistantLogEntry)
-        assert entry.message.content[0].text == "Hello"
+        block = entry.message.content[0]
+        assert isinstance(block, TextBlock)
+        assert block.text == "Hello"
 
     def test_unknown_block_fields_ignored(self) -> None:
         """Unknown fields in content blocks should be ignored."""
