@@ -66,7 +66,12 @@ def _resolve_with_parents(path: Path) -> Path:
         current = parent
 
     if iterations >= max_iterations:
-        # Fallback to original path if loop doesn't terminate normally
+        import logging
+
+        logging.warning(
+            f"_resolve_with_parents: max iterations reached for path {path}, "
+            "using unresolved path which may cause inconsistent lock keys"
+        )
         return path
 
     # Resolve the existing ancestor (resolves symlinks)

@@ -556,6 +556,57 @@ class TestFileReadCache:
         assert info.content_hash == "abc123"
         assert info.read_count == 1
 
+    def test_different_offset_limit_allowed(self, tmp_path: Path) -> None:
+        """Reading same file with different offset/limit should be allowed."""
+        cache = FileReadCache()
+        test_file = tmp_path / "test.py"
+        test_file.write_text("line1\nline2\nline3\nline4\nline5")
+
+        # First read - full file (no offset/limit)
+        is_redundant1, _ = cache.check_and_update(str(test_file))
+        assert is_redundant1 is False
+
+        # Second read with offset=0, limit=2 - different range, should be allowed
+        is_redundant2, _ = cache.check_and_update(str(test_file), offset=0, limit=2)
+        assert is_redundant2 is False
+
+        # Third read with offset=2, limit=2 - different range, should be allowed
+        is_redundant3, _ = cache.check_and_update(str(test_file), offset=2, limit=2)
+        assert is_redundant3 is False
+
+        # Fourth read - same full file read - should be blocked
+        is_redundant4, _ = cache.check_and_update(str(test_file))
+        assert is_redundant4 is True
+
+        # Fifth read with offset=0, limit=2 again - same range as second, should be blocked
+        is_redundant5, _ = cache.check_and_update(str(test_file), offset=0, limit=2)
+        assert is_redundant5 is True
+
+        # Cache should have 3 entries (full, offset=0/limit=2, offset=2/limit=2)
+        assert cache.cache_size == 3
+
+    def test_invalidate_clears_all_ranges(self, tmp_path: Path) -> None:
+        """Invalidating a file should clear all offset/limit cache entries."""
+        cache = FileReadCache()
+        test_file = tmp_path / "test.py"
+        test_file.write_text("line1\nline2\nline3\nline4\nline5")
+
+        # Cache multiple ranges
+        cache.check_and_update(str(test_file))  # full file
+        cache.check_and_update(str(test_file), offset=0, limit=2)
+        cache.check_and_update(str(test_file), offset=2, limit=2)
+        assert cache.cache_size == 3
+
+        # Invalidate the file
+        cache.invalidate(str(test_file))
+        assert cache.cache_size == 0
+
+        # All reads should now be allowed
+        is_redundant1, _ = cache.check_and_update(str(test_file))
+        is_redundant2, _ = cache.check_and_update(str(test_file), offset=0, limit=2)
+        assert is_redundant1 is False
+        assert is_redundant2 is False
+
 
 class TestMakeFileReadCacheHook:
     """Tests for the make_file_read_cache_hook factory function."""
@@ -681,6 +732,43 @@ class TestMakeFileReadCacheHook:
         result = await hook(hook_input, None, context)
 
         assert result == {}  # Allowed (tool will fail anyway)
+
+    @pytest.mark.asyncio
+    async def test_allows_different_offset_limit(self, tmp_path: Path) -> None:
+        """Read with different offset/limit should be allowed."""
+        cache = FileReadCache()
+        hook = make_file_read_cache_hook(cache)
+        test_file = tmp_path / "test.py"
+        test_file.write_text("line1\nline2\nline3\nline4\nline5")
+
+        context = make_context()
+
+        # First read - full file
+        full_read = make_hook_input("Read", {"file_path": str(test_file)})
+        result1 = await hook(full_read, None, context)
+        assert result1 == {}  # allowed
+
+        # Second read - with offset and limit (different range)
+        partial_read = make_hook_input(
+            "Read", {"file_path": str(test_file), "offset": 0, "limit": 2}
+        )
+        result2 = await hook(partial_read, None, context)
+        assert result2 == {}  # allowed (different range)
+
+        # Third read - full file again (same as first)
+        result3 = await hook(full_read, None, context)
+        assert result3["decision"] == "block"  # blocked (same as first read)
+
+        # Fourth read - different offset
+        partial_read2 = make_hook_input(
+            "Read", {"file_path": str(test_file), "offset": 2, "limit": 2}
+        )
+        result4 = await hook(partial_read2, None, context)
+        assert result4 == {}  # allowed (different range)
+
+        # Fifth read - same as second (offset=0, limit=2)
+        result5 = await hook(partial_read, None, context)
+        assert result5["decision"] == "block"  # blocked (same as second read)
 
 
 class TestDetectLintCommand:
@@ -1152,6 +1240,76 @@ class TestMakeLintCacheHook:
         result = await hook(hook_input, None, context)
 
         assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_allows_compound_commands_with_lint(self, tmp_path: Path) -> None:
+        """Compound commands containing lint should not be blocked.
+
+        When an agent runs 'ruff check . && pytest', the entire command should
+        be allowed even if ruff check was previously cached. This ensures the
+        test portion runs.
+        """
+        from src.hooks import LintCache, make_lint_cache_hook
+
+        # Create a git repo
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        (tmp_path / "file.py").write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        cache = LintCache(repo_path=tmp_path)
+        hook = make_lint_cache_hook(cache)
+        context = make_context()
+
+        # First lint (simple) - allowed
+        simple_lint = make_hook_input("Bash", {"command": "uvx ruff check ."})
+        result = await hook(simple_lint, None, context)
+        assert result == {}  # Allow
+
+        # Simulate successful lint completion
+        cache.mark_success("ruff_check", "uvx ruff check .")
+
+        # Second simple lint - blocked due to cached success
+        result = await hook(simple_lint, None, context)
+        assert result["decision"] == "block"
+
+        # Compound command with && - should NOT be blocked
+        compound_and = make_hook_input(
+            "Bash", {"command": "uvx ruff check . && pytest"}
+        )
+        result = await hook(compound_and, None, context)
+        assert result == {}  # Allow compound commands
+
+        # Compound command with || - should NOT be blocked
+        compound_or = make_hook_input(
+            "Bash", {"command": "uvx ruff check . || echo 'lint failed'"}
+        )
+        result = await hook(compound_or, None, context)
+        assert result == {}  # Allow compound commands
+
+        # Compound command with ; - should NOT be blocked
+        compound_semi = make_hook_input("Bash", {"command": "uvx ruff check .; pytest"})
+        result = await hook(compound_semi, None, context)
+        assert result == {}  # Allow compound commands
 
     @pytest.mark.asyncio
     async def test_invalidates_cache_on_write(self, tmp_path: Path) -> None:

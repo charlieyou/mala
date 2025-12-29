@@ -329,7 +329,9 @@ class SpecValidationRunner:
         lint_cache: LintCache | None = None
         cacheable_kinds = {CommandKind.LINT, CommandKind.FORMAT, CommandKind.TYPECHECK}
         if self.enable_lint_cache:
-            lint_cache = LintCache(cache_dir=cwd / ".mala-cache", repo_path=cwd)
+            lint_cache = LintCache(
+                cache_dir=self.repo_path / ".mala-cache", repo_path=cwd
+            )
 
         for i, cmd in enumerate(spec.commands):
             # Check if this command can be skipped via cache

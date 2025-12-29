@@ -329,14 +329,24 @@ class FileReadCache:
 
     def __init__(self) -> None:
         """Initialize an empty file read cache."""
-        self._cache: dict[str, CachedFileInfo] = {}
+        # Cache key is (resolved_path, offset, limit) to support range-specific caching
+        self._cache: dict[tuple[str, int | None, int | None], CachedFileInfo] = {}
         self._blocked_count: int = 0
 
-    def check_and_update(self, file_path: str) -> tuple[bool, str]:
+    def check_and_update(
+        self,
+        file_path: str,
+        offset: int | None = None,
+        limit: int | None = None,
+    ) -> tuple[bool, str]:
         """Check if a file read is redundant and update the cache.
 
         Args:
             file_path: Path to the file being read.
+            offset: Line offset for partial reads. If provided with different
+                value than cached read, allows the read.
+            limit: Line limit for partial reads. If provided with different
+                value than cached read, allows the read.
 
         Returns:
             Tuple of (is_redundant, message). If is_redundant is True,
@@ -352,12 +362,16 @@ class FileReadCache:
             mtime_ns = stat.st_mtime_ns
             size = stat.st_size
 
-            # Check if we have a cached entry for this file
-            cached = self._cache.get(str(path))
+            # Create cache key that includes offset/limit for range-specific caching
+            # Use (None, None) as default to represent full file reads
+            cache_key = (str(path), offset, limit)
+
+            # Check if we have a cached entry for this exact file + range
+            cached = self._cache.get(cache_key)
             if cached is None:
-                # First read - cache it
+                # First read of this file/range combination - cache it
                 content_hash = self._compute_hash(path)
-                self._cache[str(path)] = CachedFileInfo(
+                self._cache[cache_key] = CachedFileInfo(
                     mtime_ns=mtime_ns,
                     size=size,
                     content_hash=content_hash,
@@ -369,7 +383,7 @@ class FileReadCache:
             if mtime_ns != cached.mtime_ns or size != cached.size:
                 # File modified - update cache with new mtime/size, defer hash
                 # computation since we already know the file changed
-                self._cache[str(path)] = CachedFileInfo(
+                self._cache[cache_key] = CachedFileInfo(
                     mtime_ns=mtime_ns,
                     size=size,
                     content_hash=None,  # Defer hash computation
@@ -384,7 +398,7 @@ class FileReadCache:
             if cached.content_hash is None or content_hash != cached.content_hash:
                 # Content changed despite same mtime/size (rare but possible)
                 # Or no cached hash yet - update cache
-                self._cache[str(path)] = CachedFileInfo(
+                self._cache[cache_key] = CachedFileInfo(
                     mtime_ns=mtime_ns,
                     size=size,
                     content_hash=content_hash,
@@ -422,7 +436,7 @@ class FileReadCache:
         return hasher.hexdigest()
 
     def invalidate(self, file_path: str) -> None:
-        """Invalidate the cache entry for a file.
+        """Invalidate all cache entries for a file (all offset/limit combinations).
 
         Call this when a file is modified (e.g., after a Write or edit).
 
@@ -431,7 +445,10 @@ class FileReadCache:
         """
         try:
             path = str(Path(file_path).resolve())
-            self._cache.pop(path, None)
+            # Remove all entries for this file path (any offset/limit)
+            keys_to_remove = [key for key in self._cache if key[0] == path]
+            for key in keys_to_remove:
+                del self._cache[key]
         except OSError:
             pass
 
@@ -476,7 +493,12 @@ def make_file_read_cache_hook(cache: FileReadCache) -> PreToolUseHook:
         if tool_name == "Read":
             file_path = tool_input.get("file_path")
             if file_path:
-                is_redundant, message = cache.check_and_update(file_path)
+                # Extract offset/limit for range-specific caching
+                offset = tool_input.get("offset")
+                limit = tool_input.get("limit")
+                is_redundant, message = cache.check_and_update(
+                    file_path, offset=offset, limit=limit
+                )
                 if is_redundant:
                     return {
                         "decision": "block",
@@ -762,6 +784,11 @@ def make_lint_cache_hook(
             command = tool_input.get("command", "")
             lint_type = _detect_lint_command(command)
             if lint_type:
+                # Don't block compound commands - only block simple lint commands
+                # This ensures "ruff check . && pytest" runs the test portion
+                if any(sep in command for sep in ["&&", "||", ";"]):
+                    return {}  # Allow compound commands to run
+
                 is_redundant, message = cache.check_and_update(lint_type, command)
                 if is_redundant:
                     return {
