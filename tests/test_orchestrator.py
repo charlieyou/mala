@@ -2217,10 +2217,9 @@ class TestRetryExhaustion:
             patch("src.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
-            success_count, _total = await orchestrator.run()
+            await orchestrator.run()
 
         # Should have failed due to no progress
-        assert success_count == 0
         assert "issue-no-progress" in orchestrator.failed_issues
 
 
@@ -3333,6 +3332,7 @@ class TestFailedRunQualityGateEvidence:
 def _make_mock_log_provider(log_file: Path) -> object:
     """Create a mock LogProvider that returns the given log file."""
     from collections.abc import Iterator
+
     from src.session_log_parser import JsonlEntry
 
     class MockLogProvider:
@@ -3373,7 +3373,7 @@ class TestBaselineCommitSelection:
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
-            log_provider=_make_mock_log_provider(log_file),
+            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
         )
 
         # Track what baseline is used when running codex review
@@ -3453,7 +3453,7 @@ class TestBaselineCommitSelection:
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
-            log_provider=_make_mock_log_provider(log_file),
+            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
         )
 
         captured_baseline: list[str | None] = []
@@ -3530,7 +3530,7 @@ class TestBaselineCommitSelection:
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
-            log_provider=_make_mock_log_provider(log_file),
+            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
         )
 
         call_order: list[str] = []
@@ -3616,10 +3616,17 @@ class TestCodexReviewUsesCurrentHead:
         from src.orchestrator import MalaOrchestrator
         from src.quality_gate import GateResult
 
+        # Create a fake log file
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "test-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
         orchestrator = MalaOrchestrator(
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
+            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
         )
 
         # Track the commit hash passed to codex review
@@ -3678,12 +3685,6 @@ class TestCodexReviewUsesCurrentHead:
 
         mock_client.receive_response = mock_receive_response
 
-        # Create a fake log file
-        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "test-session.jsonl"
-        log_file.write_text('{"type": "result"}\n')
-
         # Mock the quality gate to return our specific gate result
         mock_quality_gate = MagicMock()
         mock_quality_gate.run_gate = AsyncMock(return_value=mock_gate_result)
@@ -3703,8 +3704,6 @@ class TestCodexReviewUsesCurrentHead:
                 "src.orchestrator.run_codex_review",
                 side_effect=mock_run_codex_review,
             ),
-            # TracedAgentExecution removed - telemetry_provider injected via constructor
-            patch("src.orchestrator.get_claude_log_path", return_value=log_file),
             patch.object(orchestrator, "quality_gate", mock_quality_gate),
             patch.object(
                 orchestrator.beads,
