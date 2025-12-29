@@ -5,10 +5,10 @@ with fixture XML files for pass/fail/invalid cases.
 """
 
 import os
-import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+from src.tools.command_runner import CommandResult
 from src.validation.coverage import (
     CoverageResult,
     CoverageStatus,
@@ -581,14 +581,14 @@ class TestIsBaselineStale:
         report.write_text(VALID_COVERAGE_XML_90_PERCENT)
 
         # Mock git status to return dirty
-        mock_result = subprocess.CompletedProcess(
-            args=["git", "status", "--porcelain"],
+        mock_result = CommandResult(
+            command=["git", "status", "--porcelain"],
             returncode=0,
             stdout="M src/app.py\n",
             stderr="",
         )
 
-        with patch("src.validation.coverage.subprocess.run", return_value=mock_result):
+        with patch("src.validation.coverage.run_command", return_value=mock_result):
             result = is_baseline_stale(report, tmp_path)
 
         assert result is True
@@ -604,19 +604,17 @@ class TestIsBaselineStale:
         os.utime(report, (old_time, old_time))
 
         # Mock git commands
-        def mock_run(
-            args: list[str], **_kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
+        def mock_run(args: list[str], **_kwargs: object) -> CommandResult:
             if "status" in args:
-                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
                 # Commit time is more recent than baseline mtime
-                return subprocess.CompletedProcess(
-                    args, 0, stdout="1700000000\n", stderr=""
+                return CommandResult(
+                    command=args, returncode=0, stdout="1700000000\n", stderr=""
                 )
-            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.validation.coverage.subprocess.run", side_effect=mock_run):
+        with patch("src.validation.coverage.run_command", side_effect=mock_run):
             result = is_baseline_stale(report, tmp_path)
 
         assert result is True
@@ -632,19 +630,17 @@ class TestIsBaselineStale:
         os.utime(report, (future_time, future_time))
 
         # Mock git commands
-        def mock_run(
-            args: list[str], **_kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
+        def mock_run(args: list[str], **_kwargs: object) -> CommandResult:
             if "status" in args:
-                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
                 # Commit time is older than baseline mtime
-                return subprocess.CompletedProcess(
-                    args, 0, stdout="1700000000\n", stderr=""
+                return CommandResult(
+                    command=args, returncode=0, stdout="1700000000\n", stderr=""
                 )
-            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.validation.coverage.subprocess.run", side_effect=mock_run):
+        with patch("src.validation.coverage.run_command", side_effect=mock_run):
             result = is_baseline_stale(report, tmp_path)
 
         assert result is False
@@ -655,11 +651,14 @@ class TestIsBaselineStale:
         report = tmp_path / "coverage.xml"
         report.write_text(VALID_COVERAGE_XML_90_PERCENT)
 
-        # Mock git to fail
-        with patch(
-            "src.validation.coverage.subprocess.run",
-            side_effect=subprocess.CalledProcessError(128, "git"),
-        ):
+        # Mock git to fail (return non-zero exit code)
+        mock_result = CommandResult(
+            command=["git", "status", "--porcelain"],
+            returncode=128,
+            stdout="",
+            stderr="fatal: not a git repository",
+        )
+        with patch("src.validation.coverage.run_command", return_value=mock_result):
             result = is_baseline_stale(report, tmp_path)
 
         assert result is True
@@ -671,17 +670,15 @@ class TestIsBaselineStale:
         report.write_text(VALID_COVERAGE_XML_90_PERCENT)
 
         # Mock git commands - status clean but log returns empty
-        def mock_run(
-            args: list[str], **_kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
+        def mock_run(args: list[str], **_kwargs: object) -> CommandResult:
             if "status" in args:
-                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
                 # No commits - empty output
-                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
+            return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.validation.coverage.subprocess.run", side_effect=mock_run):
+        with patch("src.validation.coverage.run_command", side_effect=mock_run):
             result = is_baseline_stale(report, tmp_path)
 
         assert result is True
@@ -779,19 +776,17 @@ class TestNoDecreaseMode:
         os.utime(report, (old_time, old_time))
 
         # Mock a recent commit
-        def mock_run(
-            args: list[str], **_kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
+        def mock_run(args: list[str], **_kwargs: object) -> CommandResult:
             if "status" in args:
-                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
                 # Commit time is 2023 (much newer than baseline)
-                return subprocess.CompletedProcess(
-                    args, 0, stdout="1700000000\n", stderr=""
+                return CommandResult(
+                    command=args, returncode=0, stdout="1700000000\n", stderr=""
                 )
-            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.validation.coverage.subprocess.run", side_effect=mock_run):
+        with patch("src.validation.coverage.run_command", side_effect=mock_run):
             assert is_baseline_stale(report, tmp_path) is True
 
     def test_fresh_baseline_not_stale_after_commit(self, tmp_path: Path) -> None:
@@ -804,19 +799,17 @@ class TestNoDecreaseMode:
         os.utime(report, (future_time, future_time))
 
         # Mock an old commit
-        def mock_run(
-            args: list[str], **_kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
+        def mock_run(args: list[str], **_kwargs: object) -> CommandResult:
             if "status" in args:
-                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
                 # Old commit time
-                return subprocess.CompletedProcess(
-                    args, 0, stdout="1700000000\n", stderr=""
+                return CommandResult(
+                    command=args, returncode=0, stdout="1700000000\n", stderr=""
                 )
-            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.validation.coverage.subprocess.run", side_effect=mock_run):
+        with patch("src.validation.coverage.run_command", side_effect=mock_run):
             assert is_baseline_stale(report, tmp_path) is False
 
     def test_explicit_threshold_overrides_baseline(self, tmp_path: Path) -> None:

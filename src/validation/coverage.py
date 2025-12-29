@@ -6,15 +6,25 @@ This module provides:
 - check_coverage_threshold: compare coverage against minimum threshold
 - get_baseline_coverage: extract coverage percentage from existing baseline file
 - is_baseline_stale: check if baseline file is older than last commit or repo is dirty
+- BaselineCoverageService: service for refreshing baseline coverage in isolated worktree
 """
 
 from __future__ import annotations
 
-import subprocess
+import os
+import shutil
+import tempfile
+import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path  # noqa: TC003 - used at runtime for .exists() and ET.parse()
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from ..tools.command_runner import run_command
+
+if TYPE_CHECKING:
+    from .spec import ValidationSpec
 
 
 class CoverageStatus(Enum):
@@ -280,25 +290,25 @@ def is_baseline_stale(report_path: Path, repo_path: Path) -> bool:
 
     try:
         # Check for dirty working tree
-        dirty_result = subprocess.run(
+        dirty_result = run_command(
             ["git", "status", "--porcelain"],
             cwd=repo_path,
-            capture_output=True,
-            text=True,
-            check=True,
         )
+        if not dirty_result.ok:
+            # Git command failed - treat as stale
+            return True
         if dirty_result.stdout.strip():
             # Has uncommitted changes
             return True
 
         # Get last commit timestamp (Unix epoch seconds)
-        commit_time_result = subprocess.run(
+        commit_time_result = run_command(
             ["git", "log", "-1", "--format=%ct"],
             cwd=repo_path,
-            capture_output=True,
-            text=True,
-            check=True,
         )
+        if not commit_time_result.ok:
+            # Git command failed - treat as stale
+            return True
         commit_time_str = commit_time_result.stdout.strip()
         if not commit_time_str:
             # No commits in repo
@@ -312,6 +322,274 @@ def is_baseline_stale(report_path: Path, repo_path: Path) -> bool:
         # Stale if baseline is older than last commit
         return baseline_mtime < commit_time
 
-    except (subprocess.CalledProcessError, ValueError, OSError):
-        # Git command failed, path error, or parse error - treat as stale
+    except (ValueError, OSError):
+        # Path error or parse error - treat as stale
         return True
+
+
+# Lock file path for baseline refresh coordination
+_BASELINE_LOCK_FILE = "coverage-baseline.lock"
+
+
+@dataclass
+class BaselineRefreshResult:
+    """Result of a baseline coverage refresh operation.
+
+    Attributes:
+        percent: The baseline coverage percentage if successful.
+        success: Whether the refresh succeeded.
+        error: Error message if refresh failed.
+    """
+
+    percent: float | None
+    success: bool
+    error: str | None = None
+
+    @staticmethod
+    def ok(percent: float) -> BaselineRefreshResult:
+        """Create a successful result."""
+        return BaselineRefreshResult(percent=percent, success=True)
+
+    @staticmethod
+    def fail(error: str) -> BaselineRefreshResult:
+        """Create a failed result."""
+        return BaselineRefreshResult(percent=None, success=False, error=error)
+
+
+class BaselineCoverageService:
+    """Service for refreshing baseline coverage in an isolated worktree.
+
+    This service handles:
+    - File-based locking to prevent concurrent refreshes
+    - Temporary worktree creation at HEAD
+    - Running pytest with coverage to generate baseline
+    - Copying the coverage report back to the main repo
+
+    Usage:
+        service = BaselineCoverageService(repo_path)
+        result = service.refresh_if_stale(spec)
+        if result.success:
+            baseline_percent = result.percent
+    """
+
+    def __init__(
+        self,
+        repo_path: Path,
+        step_timeout_seconds: float | None = None,
+    ):
+        """Initialize the baseline coverage service.
+
+        Args:
+            repo_path: Path to the repository.
+            step_timeout_seconds: Optional timeout for commands.
+        """
+        self.repo_path = repo_path.resolve()
+        self.step_timeout_seconds = step_timeout_seconds
+
+    def refresh_if_stale(
+        self,
+        spec: ValidationSpec,
+    ) -> BaselineRefreshResult:
+        """Refresh the baseline coverage if stale or missing.
+
+        Uses file locking with double-check pattern to prevent concurrent
+        agents from clobbering each other's baseline refresh.
+
+        Args:
+            spec: Validation spec with pytest command and coverage config.
+
+        Returns:
+            BaselineRefreshResult with the baseline percentage or error.
+        """
+        from ..tools.locking import _lock_path, try_lock, wait_for_lock
+
+        # Determine baseline report path
+        baseline_path = self.repo_path / "coverage.xml"
+
+        # Check if baseline is fresh (no refresh needed)
+        if not is_baseline_stale(baseline_path, self.repo_path):
+            try:
+                baseline = get_baseline_coverage(baseline_path)
+                if baseline is not None:
+                    return BaselineRefreshResult.ok(baseline)
+            except ValueError:
+                # Malformed baseline - need to refresh
+                pass
+
+        # Baseline is stale or missing - try to acquire lock for refresh
+        run_id = f"baseline-{uuid.uuid4().hex[:8]}"
+        agent_id = f"baseline-refresh-{run_id}"
+        repo_namespace = str(self.repo_path)
+
+        # Try to acquire lock (non-blocking first)
+        if not try_lock(_BASELINE_LOCK_FILE, agent_id, repo_namespace):
+            # Another agent is refreshing - wait for them
+            if not wait_for_lock(
+                _BASELINE_LOCK_FILE,
+                agent_id,
+                repo_namespace,
+                timeout_seconds=300.0,  # 5 min max wait
+                poll_interval_ms=1000,
+            ):
+                return BaselineRefreshResult.fail(
+                    "Timeout waiting for baseline refresh lock"
+                )
+
+        # Lock acquired - double-check if still stale (another agent may have refreshed)
+        try:
+            if not is_baseline_stale(baseline_path, self.repo_path):
+                try:
+                    baseline = get_baseline_coverage(baseline_path)
+                    if baseline is not None:
+                        return BaselineRefreshResult.ok(baseline)
+                except ValueError:
+                    pass  # Still need to refresh
+
+            # Still stale - run refresh in temp worktree
+            return self._run_refresh(spec, baseline_path)
+        finally:
+            # Release lock by removing lock file
+            lock_file = _lock_path(_BASELINE_LOCK_FILE, repo_namespace)
+            lock_file.unlink(missing_ok=True)
+
+    def _run_refresh(
+        self,
+        spec: ValidationSpec,
+        baseline_path: Path,
+    ) -> BaselineRefreshResult:
+        """Run pytest in temp worktree to refresh baseline coverage.
+
+        Args:
+            spec: Validation spec with pytest command.
+            baseline_path: Where to write the baseline coverage.xml.
+
+        Returns:
+            BaselineRefreshResult with the new baseline percentage or error.
+        """
+        from src.tools.command_runner import CommandRunner
+
+        from ..tools.env import get_lock_dir
+        from .spec import CommandKind
+        from .worktree import (
+            WorktreeConfig,
+            WorktreeState,
+            create_worktree,
+            remove_worktree,
+        )
+
+        # Find the pytest command from spec
+        pytest_commands = spec.commands_by_kind(CommandKind.TEST)
+        if not pytest_commands:
+            return BaselineRefreshResult.fail(
+                "No pytest command in spec for baseline refresh"
+            )
+
+        # Create temp worktree at HEAD
+        run_id = f"baseline-{uuid.uuid4().hex[:8]}"
+        temp_dir = Path(tempfile.mkdtemp(prefix="mala-baseline-"))
+        worktree_config = WorktreeConfig(
+            base_dir=temp_dir,
+            keep_on_failure=False,
+        )
+
+        worktree_ctx = None
+        try:
+            worktree_ctx = create_worktree(
+                repo_path=self.repo_path,
+                commit_sha="HEAD",
+                config=worktree_config,
+                run_id=run_id,
+                issue_id="baseline",
+                attempt=1,
+            )
+
+            if worktree_ctx.state == WorktreeState.FAILED:
+                return BaselineRefreshResult.fail(
+                    f"Baseline worktree creation failed: {worktree_ctx.error}"
+                )
+
+            worktree_path = worktree_ctx.path
+
+            # Build environment
+            env = {
+                **os.environ,
+                "LOCK_DIR": str(get_lock_dir()),
+                "AGENT_ID": f"baseline-{run_id}",
+            }
+
+            # Run uv sync first to install dependencies
+            timeout = self.step_timeout_seconds or 300.0
+            runner = CommandRunner(cwd=worktree_path, timeout_seconds=timeout)
+            sync_result = runner.run(["uv", "sync", "--all-extras"], env=env)
+            if sync_result.returncode != 0:
+                return BaselineRefreshResult.fail(
+                    f"uv sync failed during baseline refresh: {sync_result.stderr}"
+                )
+
+            # Get pytest command and modify for baseline (override threshold to 0)
+            pytest_cmd = list(pytest_commands[0].command)
+
+            # Replace any existing --cov-fail-under with 0
+            # This ensures we capture baseline even if it's below pyproject.toml threshold
+            # Also remove slow test markers to avoid running expensive E2E tests
+            # during baseline refresh (baseline only needs coverage from fast tests)
+            new_pytest_cmd = []
+            skip_next = False
+            skip_markers = False
+            for arg in pytest_cmd:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if skip_markers:
+                    skip_markers = False
+                    continue
+                if arg.startswith("--cov-fail-under="):
+                    continue
+                if arg == "--cov-fail-under":
+                    skip_next = True
+                    continue
+                # Remove slow test markers - baseline refresh should only run fast tests
+                if arg == "-m":
+                    skip_markers = True
+                    continue
+                new_pytest_cmd.append(arg)
+            new_pytest_cmd.append("--cov-fail-under=0")
+
+            # Run pytest
+            result = runner.run(new_pytest_cmd, env=env)
+            if result.returncode != 0:
+                return BaselineRefreshResult.fail(
+                    f"pytest failed during baseline refresh (exit {result.returncode})"
+                )
+
+            # Check for coverage.xml in worktree
+            worktree_coverage = worktree_path / "coverage.xml"
+            if not worktree_coverage.exists():
+                return BaselineRefreshResult.fail(
+                    "No coverage.xml generated during baseline refresh"
+                )
+
+            # Atomic rename to main repo
+            temp_coverage = baseline_path.with_suffix(".xml.tmp")
+            shutil.copy2(worktree_coverage, temp_coverage)
+            os.rename(temp_coverage, baseline_path)
+
+            # Parse and return the coverage percentage
+            try:
+                baseline = get_baseline_coverage(baseline_path)
+                if baseline is None:
+                    return BaselineRefreshResult.fail(
+                        "Baseline coverage.xml exists but has no coverage data"
+                    )
+                return BaselineRefreshResult.ok(baseline)
+            except ValueError as e:
+                return BaselineRefreshResult.fail(
+                    f"Failed to parse baseline coverage: {e}"
+                )
+
+        finally:
+            # Clean up temp worktree
+            if worktree_ctx is not None:
+                remove_worktree(worktree_ctx, validation_passed=True)
+            # Clean up temp directory
+            shutil.rmtree(temp_dir, ignore_errors=True)
