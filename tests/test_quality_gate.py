@@ -1323,22 +1323,24 @@ class TestClearFailureMessages:
 
 
 class TestGetRequiredEvidenceKinds:
-    """Test get_required_evidence_kinds extracts CommandKinds from spec."""
+    """Test get_required_evidence_kinds extracts gate-required CommandKinds."""
 
-    def test_returns_all_command_kinds_from_spec(self) -> None:
-        """Should return set of all command kinds in the spec."""
+    def test_returns_gate_required_kinds_from_spec(self) -> None:
+        """Should return set of gate-required command kinds."""
         from src.quality_gate import get_required_evidence_kinds
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         kinds = get_required_evidence_kinds(spec)
 
-        # Per-issue spec should have TEST, LINT, FORMAT, TYPECHECK
+        # Per-issue spec should require TEST, LINT, FORMAT, TYPECHECK
         from src.validation.spec import CommandKind
 
         assert CommandKind.TEST in kinds
         assert CommandKind.LINT in kinds
         assert CommandKind.FORMAT in kinds
         assert CommandKind.TYPECHECK in kinds
+        # SETUP (uv sync) should be ignored by the quality gate
+        assert CommandKind.SETUP not in kinds
         # E2E should NOT be in per-issue scope
         assert CommandKind.E2E not in kinds
 
@@ -1348,13 +1350,11 @@ class TestCheckEvidenceAgainstSpec:
 
     def test_passes_when_all_required_evidence_present(self) -> None:
         """Should pass when all required commands ran."""
-        # Include setup_ran since uv sync is in the spec
         evidence = make_evidence(
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=True,
             ty_check_ran=True,
-            setup_ran=True,
         )
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
@@ -1365,13 +1365,11 @@ class TestCheckEvidenceAgainstSpec:
 
     def test_fails_when_missing_required_evidence(self) -> None:
         """Should fail and list missing commands."""
-        # Include setup_ran but missing pytest
         evidence = make_evidence(
             pytest_ran=False,  # Missing pytest
             ruff_check_ran=True,
             ruff_format_ran=True,
             ty_check_ran=True,
-            setup_ran=True,
         )
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
@@ -1382,13 +1380,11 @@ class TestCheckEvidenceAgainstSpec:
 
     def test_per_issue_does_not_require_e2e(self) -> None:
         """Per-issue scope should pass without E2E evidence."""
-        # Include setup_ran since uv sync is in the spec
         evidence = make_evidence(
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=True,
             ty_check_ran=True,
-            setup_ran=True,
             # No E2E evidence - should still pass for per-issue
         )
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)

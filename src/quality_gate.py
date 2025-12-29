@@ -45,6 +45,12 @@ __all__ = [
     "ValidationEvidence",
 ]
 
+# Command kinds that should not be required by the quality gate.
+# SETUP commands like `uv sync` are useful for local setup, but should not
+# block gate passing if omitted or failed.
+QUALITY_GATE_IGNORED_KINDS: set[CommandKind] = {CommandKind.SETUP}
+QUALITY_GATE_IGNORED_COMMANDS: set[str] = {"uv sync"}
+
 
 @dataclass
 class ValidationEvidence:
@@ -172,7 +178,9 @@ def get_required_evidence_kinds(spec: ValidationSpec) -> set[CommandKind]:
     Returns:
         Set of CommandKind values that must have evidence.
     """
-    return {cmd.kind for cmd in spec.commands}
+    return {
+        cmd.kind for cmd in spec.commands if cmd.kind not in QUALITY_GATE_IGNORED_KINDS
+    }
 
 
 def check_evidence_against_spec(
@@ -789,9 +797,15 @@ class QualityGate:
             failure_reasons.append(f"Missing validation commands: {', '.join(missing)}")
 
         # Check for validation commands that failed (exited non-zero)
-        if evidence.failed_commands:
+        failed_commands = [
+            command
+            for command in evidence.failed_commands
+            if command not in QUALITY_GATE_IGNORED_COMMANDS
+        ]
+        if failed_commands:
             failure_reasons.append(
-                f"Validation commands failed (non-zero exit): {', '.join(evidence.failed_commands)}"
+                "Validation commands failed (non-zero exit): "
+                f"{', '.join(failed_commands)}"
             )
 
         return GateResult(

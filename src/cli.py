@@ -251,7 +251,7 @@ def run(
     timeout: Annotated[
         int | None,
         typer.Option(
-            "--timeout", "-t", help="Timeout per agent in minutes (default: no timeout)"
+            "--timeout", "-t", help="Timeout per agent in minutes (default: 60)"
         ),
     ] = None,
     max_issues: Annotated[
