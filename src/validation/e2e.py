@@ -20,7 +20,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .command_runner import CommandRunner
+from src.tools.command_runner import CommandRunner
 from .helpers import (
     annotate_issue,
     get_ready_issue_id,

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 from ..logging.console import Colors, log
 from ..tools.env import SCRIPTS_DIR, get_lock_dir
 from ..tools.locking import try_lock, wait_for_lock
-from .command_runner import CommandRunner
+from src.tools.command_runner import CommandRunner
 from .coverage import (
     CoverageResult,
     CoverageStatus,
