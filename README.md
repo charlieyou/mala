@@ -312,9 +312,7 @@ After all issues complete, the orchestrator runs a final validation pass. This c
 File locks are enforced at two levels:
 
 1. **Advisory locks**: Agents acquire locks before editing files via `lock-try.sh`
-2. **PreToolUse hook**: A hook blocks file-write tool calls (`Write`, `NotebookEdit`, `mcp__morphllm__edit_file`) unless the agent holds the lock for that file
-
-**Edit tool blocking**: The built-in `Edit` tool is always blocked (regardless of MorphLLM configuration) because the lock enforcement hook doesn't cover it. Agents must use either `Write` (which is lock-enforced) or MorphLLM's `edit_file` tool.
+2. **PreToolUse hook**: A hook blocks file-write tool calls (`Write`, `Edit`, `NotebookEdit`, `mcp__morphllm__edit_file`) unless the agent holds the lock for that file
 
 Lock keys are canonicalized so equivalent paths (absolute/relative, with `./..` segments) produce identical locks. When `REPO_NAMESPACE` is set, paths become repo-relative.
 
@@ -448,6 +446,7 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | `--coverage-threshold` | 85.0 | Minimum coverage percentage (0-100) |
 | `--wip` | false | Include and prioritize in_progress issues (without this flag, only open issues are fetched) |
 | `--verbose/-q` | verbose | Verbose shows full tool args; quiet (`-q`) shows single line per tool call |
+| `--no-morph` | false | Disable MorphLLM routing; use built-in tools directly |
 
 **Disable validation flags:**
 
@@ -495,19 +494,24 @@ echo "BRAINTRUST_API_KEY=your-key" >> ~/.config/mala/.env
 MorphLLM MCP provides enhanced editing and search tools (`edit_file`, `warpgrep_codebase_search`)
 for agents. It is **optional** and enabled when `MORPH_API_KEY` is present.
 
-**When enabled** (MORPH_API_KEY set):
+**When enabled** (MORPH_API_KEY set and `--no-morph` not specified):
 - MCP server is launched via `npx -y @morphllm/morphmcp`
 - Agents use MCP tools (prefixed as `mcp__morphllm__*`)
 - Built-in `Edit` and `Grep` tools are blocked to enforce MCP usage
 
-**When disabled** (MORPH_API_KEY not set):
+**When disabled** (MORPH_API_KEY not set or `--no-morph` flag used):
 - No MCP server is configured
-- Agents use built-in `Grep` tool (Edit remains blocked for lock safety)
-- Startup logs show "morph: disabled (MORPH_API_KEY not set)"
+- Agents use built-in `Edit` and `Grep` tools (both lock-enforced)
+- Startup logs show "morph: disabled"
 
 To enable MorphLLM:
 ```bash
 echo "MORPH_API_KEY=your-key" >> ~/.config/mala/.env
+```
+
+To temporarily disable MorphLLM (useful for debugging or cost control):
+```bash
+mala run --no-morph /path/to/repo
 ```
 
 ## Logs
@@ -560,19 +564,20 @@ All ty rules are set to `error` level in `pyproject.toml` for maximum strictness
 
 ### Test Coverage
 
-Tests require 85% minimum coverage:
+Tests require 85% minimum coverage (enforced at quality gate, not during default test runs):
 
 ```bash
-uv run pytest                              # Unit + integration tests (default, excludes e2e)
+uv run pytest                              # Unit + integration tests (default, excludes e2e, no coverage)
 uv run pytest -m unit                      # Unit tests only
 uv run pytest -m integration -n auto       # Integration tests in parallel
 uv run pytest -m e2e                       # End-to-end tests (requires CLI auth)
 uv run pytest -m "unit or integration or e2e"  # All tests
 uv run pytest --reruns 2                   # Auto-retry flaky tests (2 retries)
 uv run pytest -m integration -n auto --reruns 2   # Parallel + auto-retry
-uv run pytest --cov-fail-under=90          # Override coverage threshold
+uv run pytest --cov=src --cov-fail-under=85       # Manual coverage check
 ```
 
 - **Parallel execution**: Use `-n auto` for parallel test runs (pytest-xdist)
 - **Flaky test retries**: Use `--reruns N` to auto-retry failed tests (pytest-rerunfailures)
 - **Unit/Integration/E2E**: Use markers `unit`, `integration`, `e2e` to select categories
+- **Coverage**: Not run by default; quality gate adds coverage flags automatically
