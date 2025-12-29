@@ -5,30 +5,34 @@ Contains PreToolUse hooks and related constants for blocking dangerous commands
 and managing tool restrictions.
 """
 
+from __future__ import annotations
+
 import os
 import subprocess
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
-from claude_agent_sdk.types import (
-    HookContext,
-    PreToolUseHookInput,
-    StopHookInput,
-    SyncHookJSONOutput,
-)
+if TYPE_CHECKING:
+    from claude_agent_sdk.types import (
+        HookContext,
+        PreToolUseHookInput,
+        StopHookInput,
+        SyncHookJSONOutput,
+    )
 
 from .tools.env import SCRIPTS_DIR, get_lock_dir
 from .tools.locking import get_lock_holder
 
-# Type alias for PreToolUse hooks
+# Type alias for PreToolUse hooks (using string annotations to avoid import)
 PreToolUseHook = Callable[
-    [PreToolUseHookInput, str | None, HookContext],
-    Awaitable[SyncHookJSONOutput],
+    ["PreToolUseHookInput", str | None, "HookContext"],
+    Awaitable["SyncHookJSONOutput"],
 ]
 
-# Type alias for Stop hooks
+# Type alias for Stop hooks (using string annotations to avoid import)
 StopHook = Callable[
-    [StopHookInput, str | None, HookContext],
-    Awaitable[SyncHookJSONOutput],
+    ["StopHookInput", str | None, "HookContext"],
+    Awaitable["SyncHookJSONOutput"],
 ]
 
 # Dangerous bash command patterns to block

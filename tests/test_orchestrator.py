@@ -1615,7 +1615,7 @@ class TestMissingLogFile:
 
         # Patch ClaudeSDKClient to return our mock
         with (
-            patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
             patch("src.orchestrator.get_git_branch_async", return_value="main"),
             patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
             # TracedAgentExecution removed - telemetry_provider injected via constructor
@@ -1669,7 +1669,7 @@ class TestMissingLogFile:
         mock_client.receive_response = mock_receive_response
 
         with (
-            patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
             patch("src.orchestrator.get_git_branch_async", return_value="main"),
             patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
             # TracedAgentExecution removed - telemetry_provider injected via constructor
@@ -1847,7 +1847,7 @@ class TestAgentEnvInheritance:
 
         try:
             with (
-                patch("src.orchestrator.ClaudeSDKClient", MockClient),
+                patch("claude_agent_sdk.ClaudeSDKClient", MockClient),
                 patch("src.orchestrator.get_git_branch_async", return_value="main"),
                 patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
                 # TracedAgentExecution removed - telemetry_provider injected via constructor
@@ -3398,7 +3398,7 @@ class TestBaselineCommitSelection:
         log_file.write_text('{"type": "result"}\n')
 
         with (
-            patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
             patch("src.orchestrator.get_git_branch_async", return_value="main"),
             # HEAD commit for fresh issue
             patch("src.orchestrator.get_git_commit_async", return_value="headabc123"),
@@ -3477,7 +3477,7 @@ class TestBaselineCommitSelection:
         log_file.write_text('{"type": "result"}\n')
 
         with (
-            patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
             patch("src.orchestrator.get_git_branch_async", return_value="main"),
             patch("src.orchestrator.get_git_commit_async", return_value="currenthead"),
             # Prior commits exist - return parent of first commit
@@ -3549,7 +3549,7 @@ class TestBaselineCommitSelection:
         log_file.write_text('{"type": "result"}\n')
 
         with (
-            patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
             patch("src.orchestrator.get_git_branch_async", return_value="main"),
             patch(
                 "src.orchestrator.get_git_commit_async",
@@ -3677,7 +3677,7 @@ class TestCodexReviewUsesCurrentHead:
         )
 
         with (
-            patch("src.orchestrator.ClaudeSDKClient", return_value=mock_client),
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
             patch("src.orchestrator.get_git_branch_async", return_value="main"),
             patch(
                 "src.orchestrator.get_git_commit_async",

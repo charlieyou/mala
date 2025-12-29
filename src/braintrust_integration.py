@@ -31,18 +31,15 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any, Self
 
-from claude_agent_sdk import (
-    AssistantMessage,
-    ResultMessage,
-    TextBlock,
-    ToolUseBlock,
-    ToolResultBlock,
-)
-
 if TYPE_CHECKING:
     import types
     from collections.abc import Callable
     from types import TracebackType
+
+    from claude_agent_sdk import (
+        AssistantMessage,
+        ResultMessage,
+    )
 
 # Type alias for SDK messages (all types from receive_response)
 # We only handle AssistantMessage and ResultMessage, but accept all for type safety
@@ -173,6 +170,9 @@ class TracedAgentExecution:
 
     def log_message(self, message: SDKMessage) -> None:
         """Log a message from the Claude Agent SDK (for output/tool tracking)."""
+        # Import SDK types at runtime (only when actually processing messages)
+        from claude_agent_sdk import AssistantMessage, ResultMessage
+
         try:
             if isinstance(message, AssistantMessage):
                 self._handle_assistant_message(message)
@@ -183,6 +183,9 @@ class TracedAgentExecution:
 
     def _handle_assistant_message(self, message: AssistantMessage) -> None:
         """Process an assistant message, tracking text and tool calls."""
+        # Import SDK types at runtime (only when actually processing messages)
+        from claude_agent_sdk import TextBlock, ToolResultBlock, ToolUseBlock
+
         for block in message.content:
             if isinstance(block, TextBlock):
                 self.output_text += block.text + "\n"

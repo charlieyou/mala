@@ -1,5 +1,7 @@
 """MalaOrchestrator: Orchestrates parallel issue processing using Claude Agent SDK."""
 
+from __future__ import annotations
+
 import asyncio
 import functools
 import os
@@ -9,15 +11,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from claude_agent_sdk import (
-    ClaudeSDKClient,
-    ClaudeAgentOptions,
-    AssistantMessage,
-    ResultMessage,
-    TextBlock,
-    ToolUseBlock,
-)
-from claude_agent_sdk.types import HookMatcher
+if TYPE_CHECKING:
+    from claude_agent_sdk import (
+        AssistantMessage,
+        ClaudeAgentOptions,
+        ClaudeSDKClient,
+        ResultMessage,
+        TextBlock,
+        ToolUseBlock,
+    )
+    from claude_agent_sdk.types import HookMatcher
 
 from .beads_client import BeadsClient
 from .config import MalaConfig
@@ -629,6 +632,17 @@ class MalaOrchestrator:
         Returns:
             True if fixer agent completed successfully, False otherwise.
         """
+        # Import SDK types at runtime (deferred from module level)
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ClaudeAgentOptions,
+            ClaudeSDKClient,
+            ResultMessage,
+            TextBlock,
+            ToolUseBlock,
+        )
+        from claude_agent_sdk.types import HookMatcher
+
         agent_id = f"fixer-{uuid.uuid4().hex[:8]}"
 
         prompt = _get_fixer_prompt().format(
@@ -720,6 +734,17 @@ class MalaOrchestrator:
         Uses ImplementerLifecycle to drive policy decisions. The orchestrator
         handles I/O (SDK calls, logs, hooks) based on Effect returns.
         """
+        # Import SDK types at runtime (deferred from module level)
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ClaudeAgentOptions,
+            ClaudeSDKClient,
+            ResultMessage,
+            TextBlock,
+            ToolUseBlock,
+        )
+        from claude_agent_sdk.types import HookMatcher
+
         agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
         self.agent_ids[issue_id] = agent_id
 
