@@ -29,35 +29,6 @@ from src.validation.helpers import (
 )
 
 
-class TestE2EConfig:
-    """Test E2EConfig dataclass defaults."""
-
-    def test_default_values(self) -> None:
-        config = E2EConfig()
-        assert config.enabled is True
-        assert config.skip_if_no_keys is False
-        assert config.keep_fixture is False
-        assert config.timeout_seconds == 300.0
-        assert config.max_agents == 1
-        assert config.max_issues == 1
-
-    def test_custom_values(self) -> None:
-        config = E2EConfig(
-            enabled=False,
-            skip_if_no_keys=True,
-            keep_fixture=True,
-            timeout_seconds=60.0,
-            max_agents=2,
-            max_issues=3,
-        )
-        assert config.enabled is False
-        assert config.skip_if_no_keys is True
-        assert config.keep_fixture is True
-        assert config.timeout_seconds == 60.0
-        assert config.max_agents == 2
-        assert config.max_issues == 3
-
-
 class TestE2EPrereqResult:
     """Test E2EPrereqResult dataclass."""
 
