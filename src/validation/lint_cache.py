@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from ..tools.command_runner import run_command
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,17 +43,10 @@ def _run_git_command(args: list[str], cwd: Path) -> str | None:
     Returns:
         stdout as a string, or None if the command failed.
     """
-    try:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+    result = run_command(["git", *args], cwd=cwd)
+    if result.ok:
         return result.stdout.strip()
-    except (subprocess.CalledProcessError, OSError, ValueError):
-        return None
+    return None
 
 
 @dataclass(frozen=True)
