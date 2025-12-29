@@ -267,7 +267,7 @@ Codex review is enabled by default. After the deterministic gate passes:
    - Cumulative diff from baseline (includes all work across retry attempts)
 6. **Re-gating**: After fixes, runs both deterministic gate AND Codex review again
 
-Review retries are capped at `max_review_retries` (default: 5). Use `--disable-validations=codex-review` to disable.
+Review retries are capped at `max_review_retries` (default: 2). Use `--disable-validations=codex-review` to disable.
 
 **Skipped for no-work resolutions**: Issues resolved with `ISSUE_NO_CHANGE`, `ISSUE_OBSOLETE`, or `ISSUE_ALREADY_COMPLETE` skip Codex review entirely since there's no new code to review.
 
@@ -443,7 +443,7 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | `--epic`, `-e` | - | Only process tasks that are children of this epic |
 | `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
 | `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
-| `--max-review-retries` | 5 | Maximum Codex review retry attempts per issue |
+| `--max-review-retries` | 2 | Maximum Codex review retry attempts per issue |
 | `--disable-validations` | - | Comma-separated list (see below) |
 | `--coverage-threshold` | 85.0 | Minimum coverage percentage (0-100) |
 | `--wip` | false | Include and prioritize in_progress issues (without this flag, only open issues are fetched) |
