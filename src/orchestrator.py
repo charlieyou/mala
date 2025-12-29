@@ -58,7 +58,12 @@ from .logging.run_metadata import (
     remove_run_marker,
     write_run_marker,
 )
-from .quality_gate import QualityGate, GateResult
+from .pipeline.gate_runner import (
+    GateRunner,
+    GateRunnerConfig,
+    PerIssueGateInput,
+)
+from .quality_gate import QualityGate
 from .session_log_parser import FileSystemLogProvider
 from .tools.env import (
     USER_CONFIG_DIR,
@@ -83,6 +88,7 @@ if TYPE_CHECKING:
         RetryState,
     )
     from .protocols import CodeReviewer, GateChecker, IssueProvider, LogProvider
+    from .quality_gate import GateResult
     from .telemetry import TelemetryProvider
     from .models import IssueResolution
     from .validation.result import ValidationResult
@@ -337,6 +343,18 @@ class MalaOrchestrator:
         # Cached per-issue validation spec (built once at run start)
         self.per_issue_spec: ValidationSpec | None = None
 
+        # GateRunner: Extracted gate checking logic
+        gate_runner_config = GateRunnerConfig(
+            max_gate_retries=self.max_gate_retries,
+            disable_validations=self.disable_validations,
+            coverage_threshold=self.coverage_threshold,
+        )
+        self.gate_runner = GateRunner(
+            gate_checker=self.quality_gate,
+            repo_path=self.repo_path,
+            config=gate_runner_config,
+        )
+
     def _cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup)."""
         cleaned = cleanup_agent_locks(agent_id)
@@ -356,57 +374,25 @@ class MalaOrchestrator:
         """Synchronous quality gate check (blocking I/O).
 
         This is the blocking implementation that gets run via asyncio.to_thread.
+        Delegates to GateRunner for the actual gate checking logic.
         """
-        # Use cached per-issue validation spec (or build if not set)
-        if self.per_issue_spec is None:
-            self.per_issue_spec = build_validation_spec(
-                scope=ValidationScope.PER_ISSUE,
-                disable_validations=self.disable_validations,
-                coverage_threshold=self.coverage_threshold,
-                repo_path=self.repo_path,
-            )
-        spec = self.per_issue_spec
+        # Sync per_issue_spec with gate_runner (orchestrator may have built it at run start)
+        if self.per_issue_spec is not None:
+            self.gate_runner.set_cached_spec(self.per_issue_spec)
 
-        # Use check_with_resolution which handles no-op/obsolete cases
-        gate_result = self.quality_gate.check_with_resolution(
+        gate_input = PerIssueGateInput(
             issue_id=issue_id,
             log_path=log_path,
-            baseline_timestamp=retry_state.baseline_timestamp,
-            log_offset=retry_state.log_offset,
-            spec=spec,
+            retry_state=retry_state,
+            spec=self.per_issue_spec,
         )
+        output = self.gate_runner.run_per_issue_gate(gate_input)
 
-        # Calculate new offset for next attempt (lightweight - just get file end position)
-        new_offset = self.quality_gate.get_log_end_offset(
-            log_path, start_offset=retry_state.log_offset
-        )
+        # Sync cached spec back to orchestrator (gate_runner may have built it)
+        if self.per_issue_spec is None:
+            self.per_issue_spec = self.gate_runner.get_cached_spec()
 
-        # Check for no-progress condition (same commit, no new evidence)
-        # Only check if this is a retry and the gate didn't already pass
-        if retry_state.gate_attempt > 1 and not gate_result.passed:
-            no_progress = self.quality_gate.check_no_progress(
-                log_path,
-                retry_state.log_offset,
-                retry_state.previous_commit_hash,
-                gate_result.commit_hash,
-                spec=spec,  # Pass spec for spec-driven evidence detection
-            )
-            if no_progress:
-                # Add no-progress to failure reasons and set flag
-                updated_reasons = list(gate_result.failure_reasons)
-                updated_reasons.append(
-                    "No progress: commit unchanged and no new validation evidence"
-                )
-                gate_result = GateResult(
-                    passed=False,
-                    failure_reasons=updated_reasons,
-                    commit_hash=gate_result.commit_hash,
-                    validation_evidence=gate_result.validation_evidence,
-                    no_progress=True,
-                    resolution=gate_result.resolution,
-                )
-
-        return (gate_result, new_offset)
+        return (output.gate_result, output.new_log_offset)
 
     async def _run_quality_gate_async(
         self,

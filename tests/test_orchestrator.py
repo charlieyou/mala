@@ -3687,9 +3687,18 @@ class TestCodexReviewUsesCurrentHead:
 
         # Mock the quality gate to return our specific gate result
         mock_quality_gate = MagicMock()
-        mock_quality_gate.run_gate = AsyncMock(return_value=mock_gate_result)
-        mock_quality_gate.parse_validation_evidence_from_offset = MagicMock(
-            return_value=(None, 0)
+        mock_quality_gate.check_with_resolution = MagicMock(
+            return_value=mock_gate_result
+        )
+        mock_quality_gate.get_log_end_offset = MagicMock(return_value=0)
+        mock_quality_gate.check_no_progress = MagicMock(return_value=False)
+        mock_quality_gate.parse_validation_evidence_with_spec = MagicMock(
+            return_value=MagicMock(
+                pytest_ran=True,
+                ruff_check_ran=True,
+                ruff_format_ran=True,
+                ty_check_ran=True,
+            )
         )
 
         with (
@@ -3705,6 +3714,7 @@ class TestCodexReviewUsesCurrentHead:
                 side_effect=mock_run_codex_review,
             ),
             patch.object(orchestrator, "quality_gate", mock_quality_gate),
+            patch.object(orchestrator.gate_runner, "gate_checker", mock_quality_gate),
             patch.object(
                 orchestrator.beads,
                 "get_issue_description_async",
