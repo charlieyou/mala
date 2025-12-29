@@ -301,13 +301,14 @@ class CachedFileInfo:
     Attributes:
         mtime_ns: File modification time in nanoseconds at time of read.
         size: File size in bytes at time of read.
-        content_hash: SHA-256 hash of the file content.
+        content_hash: SHA-256 hash of the file content. None if hash computation
+            was deferred (when mtime/size change detected file modification).
         read_count: Number of times this file was read.
     """
 
     mtime_ns: int
     size: int
-    content_hash: str
+    content_hash: str | None
     read_count: int = 1
 
 
@@ -364,21 +365,22 @@ class FileReadCache:
                 )
                 return (False, "")
 
-            # Check if file has changed
+            # Check if file has changed based on mtime/size
             if mtime_ns != cached.mtime_ns or size != cached.size:
-                # File modified - update cache and allow read
-                content_hash = self._compute_hash(path)
+                # File modified - update cache with new mtime/size, defer hash
+                # computation since we already know the file changed
                 self._cache[str(path)] = CachedFileInfo(
                     mtime_ns=mtime_ns,
                     size=size,
-                    content_hash=content_hash,
+                    content_hash=None,  # Defer hash computation
                     read_count=cached.read_count + 1,
                 )
                 return (False, "")
 
             # mtime/size match - verify with content hash
+            # Only compute hash now since we need it to detect content changes
             content_hash = self._compute_hash(path)
-            if content_hash != cached.content_hash:
+            if cached.content_hash is None or content_hash != cached.content_hash:
                 # Content changed despite same mtime/size (rare but possible)
                 self._cache[str(path)] = CachedFileInfo(
                     mtime_ns=mtime_ns,
@@ -630,7 +632,24 @@ class LintCache:
         self._skipped_count: int = 0
         self._repo_path = repo_path
 
-    def check_and_update(self, lint_type: str) -> tuple[bool, str]:
+    def _make_cache_key(self, lint_type: str, command: str) -> str:
+        """Create a cache key combining lint type and command.
+
+        This ensures commands with different arguments (e.g., 'ruff check src/'
+        vs 'ruff check .') are cached separately.
+
+        Args:
+            lint_type: Type of lint command (e.g., "ruff_check").
+            command: Full command string.
+
+        Returns:
+            A cache key string combining lint type and command hash.
+        """
+        # Use SHA-256 hash of command to create a stable key
+        command_hash = hashlib.sha256(command.encode()).hexdigest()[:12]
+        return f"{lint_type}:{command_hash}"
+
+    def check_and_update(self, lint_type: str, command: str = "") -> tuple[bool, str]:
         """Check if a lint run is redundant and update the cache.
 
         Uses two-phase caching:
@@ -642,6 +661,7 @@ class LintCache:
 
         Args:
             lint_type: Type of lint command (e.g., "ruff_check").
+            command: Full command string for cache key differentiation.
 
         Returns:
             Tuple of (is_redundant, message). If is_redundant is True,
@@ -652,8 +672,11 @@ class LintCache:
             # Can't determine git state, allow the lint
             return (False, "")
 
+        # Create cache key combining lint type and command
+        cache_key = self._make_cache_key(lint_type, command)
+
         # Check if we have a confirmed successful lint at this state
-        cached = self._cache.get(lint_type)
+        cached = self._cache.get(cache_key)
         if cached is not None and cached.git_state == current_state:
             # State unchanged since last confirmed success - skip
             cached.skipped_count += 1
@@ -666,11 +689,11 @@ class LintCache:
             )
 
         # Check if we have a pending lint at this state
-        pending_state = self._pending.get(lint_type)
+        pending_state = self._pending.get(cache_key)
         if pending_state == current_state:
             # Same state as pending attempt - lint must have passed
             # Promote to confirmed cache entry
-            self._cache[lint_type] = LintCacheEntry(
+            self._cache[cache_key] = LintCacheEntry(
                 git_state=current_state,
                 timestamp=time.time(),
                 skipped_count=1,
@@ -684,10 +707,10 @@ class LintCache:
             )
 
         # State is different or first attempt - record as pending and allow
-        self._pending[lint_type] = current_state
+        self._pending[cache_key] = current_state
         return (False, "")
 
-    def mark_success(self, lint_type: str) -> None:
+    def mark_success(self, lint_type: str, command: str = "") -> None:
         """Explicitly mark a lint as successful at current state.
 
         Call this after a lint command completes successfully to immediately
@@ -695,16 +718,18 @@ class LintCache:
 
         Args:
             lint_type: Type of lint command that succeeded.
+            command: Full command string for cache key differentiation.
         """
         current_state = _get_git_state(self._repo_path)
         if current_state is not None:
-            self._cache[lint_type] = LintCacheEntry(
+            cache_key = self._make_cache_key(lint_type, command)
+            self._cache[cache_key] = LintCacheEntry(
                 git_state=current_state,
                 timestamp=time.time(),
                 skipped_count=0,
             )
             # Clear pending since it's now confirmed
-            self._pending.pop(lint_type, None)
+            self._pending.pop(cache_key, None)
 
     def invalidate(self, lint_type: str | None = None) -> None:
         """Invalidate cache entries.
@@ -713,13 +738,21 @@ class LintCache:
 
         Args:
             lint_type: Specific lint type to invalidate. If None, clears all.
+                When provided, invalidates all commands for that lint type.
         """
         if lint_type is None:
             self._cache.clear()
             self._pending.clear()
         else:
-            self._cache.pop(lint_type, None)
-            self._pending.pop(lint_type, None)
+            # Cache keys are in format "lint_type:command_hash"
+            # Remove all entries matching the lint type prefix
+            prefix = f"{lint_type}:"
+            keys_to_remove = [k for k in self._cache if k.startswith(prefix)]
+            for key in keys_to_remove:
+                del self._cache[key]
+            pending_to_remove = [k for k in self._pending if k.startswith(prefix)]
+            for key in pending_to_remove:
+                del self._pending[key]
 
     @property
     def skipped_count(self) -> int:
@@ -765,7 +798,7 @@ def make_lint_cache_hook(
             command = tool_input.get("command", "")
             lint_type = _detect_lint_command(command)
             if lint_type:
-                is_redundant, message = cache.check_and_update(lint_type)
+                is_redundant, message = cache.check_and_update(lint_type, command)
                 if is_redundant:
                     return {
                         "decision": "block",

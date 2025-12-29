@@ -9,6 +9,10 @@ logs that can be used for:
 
 The parser uses typed log events from log_events.py to ensure type safety
 and contract adherence with the Claude Agent SDK schema.
+
+This module also provides FileSystemLogProvider, the canonical implementation
+of the LogProvider protocol that reads logs from the Claude SDK's filesystem
+storage at ~/.claude/projects/{encoded-path}/.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from src.log_events import (
     UserLogEntry,
     parse_log_entry,
 )
+from src.tools.env import encode_repo_path, get_claude_config_dir
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -289,3 +294,69 @@ class SessionLogParser:
             if isinstance(block, dict) and block.get("type") == "text":
                 texts.append(block.get("text", ""))
         return texts
+
+
+class FileSystemLogProvider:
+    """LogProvider implementation for Claude SDK filesystem logs.
+
+    Reads JSONL session logs from the Claude SDK's standard location:
+    {claude_config_dir}/projects/{encoded-repo-path}/{session_id}.jsonl
+
+    This class conforms to the LogProvider protocol and wraps SessionLogParser
+    for the actual parsing logic.
+
+    Example:
+        >>> provider = FileSystemLogProvider()
+        >>> log_path = provider.get_log_path(repo_path, session_id)
+        >>> for entry in provider.iter_events(log_path):
+        ...     # Process entry
+    """
+
+    def __init__(self) -> None:
+        """Initialize the FileSystemLogProvider."""
+        self._parser = SessionLogParser()
+
+    def get_log_path(self, repo_path: Path, session_id: str) -> Path:
+        """Get path to Claude SDK's session log file.
+
+        Claude SDK writes session logs to:
+        {claude_config_dir}/projects/{encoded-repo-path}/{session_id}.jsonl
+
+        Args:
+            repo_path: Repository path the session was run in.
+            session_id: Claude SDK session ID (UUID from ResultMessage).
+
+        Returns:
+            Path to the JSONL log file.
+        """
+        encoded = encode_repo_path(repo_path)
+        return get_claude_config_dir() / "projects" / encoded / f"{session_id}.jsonl"
+
+    def iter_events(self, log_path: Path, offset: int = 0) -> Iterator[JsonlEntry]:
+        """Iterate over parsed JSONL entries from a log file.
+
+        Delegates to SessionLogParser.iter_jsonl_entries().
+
+        Args:
+            log_path: Path to the JSONL log file.
+            offset: Byte offset to start reading from (default 0).
+
+        Yields:
+            JsonlEntry objects for each successfully parsed JSON line.
+        """
+        return self._parser.iter_jsonl_entries(log_path, offset)
+
+    def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
+        """Get the byte offset at the end of a log file.
+
+        Delegates to SessionLogParser.get_log_end_offset().
+
+        Args:
+            log_path: Path to the JSONL log file.
+            start_offset: Byte offset to start from (default 0).
+
+        Returns:
+            The byte offset at the end of the file, or start_offset if file
+            doesn't exist or can't be read.
+        """
+        return self._parser.get_log_end_offset(log_path, start_offset)

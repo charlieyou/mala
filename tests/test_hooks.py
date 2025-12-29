@@ -3,12 +3,15 @@
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pytest
 
 from claude_agent_sdk.types import PreToolUseHookInput, HookContext
+
+if TYPE_CHECKING:
+    from claude_agent_sdk.types import StopHookInput
 
 from src.hooks import (
     make_lock_enforcement_hook,
@@ -19,7 +22,10 @@ from src.hooks import (
     FileReadCache,
     CachedFileInfo,
     make_file_read_cache_hook,
+    make_stop_hook,
+    _get_git_state,
 )
+from src.tools.command_runner import CommandResult
 
 
 def make_hook_input(tool_name: str, tool_input: dict[str, Any]) -> PreToolUseHookInput:
@@ -951,10 +957,12 @@ class TestLintCache:
         cache.check_and_update("ruff_check")  # Promotes to confirmed
         cache.check_and_update("ruff_format")
         cache.check_and_update("ruff_format")  # Promotes to confirmed
-        assert cache.cache_size == 2
+        cache.check_and_update("ty_check")
+        cache.check_and_update("ty_check")  # Promotes to confirmed
+        assert cache.cache_size == 3
 
         cache.invalidate("ruff_check")
-        assert cache.cache_size == 1
+        assert cache.cache_size == 2
 
         # ruff_check should be allowed again (goes back to pending)
         is_redundant, _ = cache.check_and_update("ruff_check")
@@ -1231,3 +1239,154 @@ class TestMakeLintCacheHook:
         )
         await hook(edit_input, None, context)
         assert cache.cache_size == 0
+
+
+class TestMakeStopHookWithCommandRunner:
+    """Tests for make_stop_hook that verify CommandRunner integration."""
+
+    @pytest.mark.asyncio
+    async def test_uses_run_command_for_lock_cleanup(self) -> None:
+        """Stop hook should use run_command instead of subprocess.run."""
+        hook = make_stop_hook("test-agent-123")
+        context = make_context()
+        hook_input = cast("StopHookInput", {"stop_hook_type": "natural"})
+
+        with patch("src.hooks.run_command") as mock_run_command:
+            mock_run_command.return_value = CommandResult(
+                command=["lock-release-all.sh"],
+                returncode=0,
+            )
+            result = await hook(hook_input, None, context)
+
+        assert result == {}  # Hook returns empty dict
+        mock_run_command.assert_called_once()
+        # Verify the script path is passed
+        call_args = mock_run_command.call_args
+        assert "lock-release-all.sh" in call_args[0][0][0]
+
+    @pytest.mark.asyncio
+    async def test_passes_agent_id_in_env(self) -> None:
+        """Stop hook should pass AGENT_ID in environment."""
+        agent_id = "my-special-agent"
+        hook = make_stop_hook(agent_id)
+        context = make_context()
+        hook_input = cast("StopHookInput", {"stop_hook_type": "natural"})
+
+        with patch("src.hooks.run_command") as mock_run_command:
+            mock_run_command.return_value = CommandResult(
+                command=["lock-release-all.sh"],
+                returncode=0,
+            )
+            await hook(hook_input, None, context)
+
+        call_kwargs = mock_run_command.call_args[1]
+        assert call_kwargs["env"]["AGENT_ID"] == agent_id
+
+    @pytest.mark.asyncio
+    async def test_ignores_run_command_failure(self) -> None:
+        """Stop hook should not raise on run_command failure."""
+        hook = make_stop_hook("test-agent")
+        context = make_context()
+        hook_input = cast("StopHookInput", {"stop_hook_type": "natural"})
+
+        with patch("src.hooks.run_command") as mock_run_command:
+            mock_run_command.side_effect = Exception("Command failed")
+            result = await hook(hook_input, None, context)
+
+        assert result == {}  # Should return empty dict despite failure
+
+
+class TestGetGitStateWithCommandRunner:
+    """Tests for _get_git_state that verify CommandRunner integration."""
+
+    def test_uses_run_command_for_git_operations(self, tmp_path: Path) -> None:
+        """_get_git_state should use run_command instead of subprocess.run."""
+        with patch("src.hooks.run_command") as mock_run_command:
+            # Mock successful git commands
+            mock_run_command.side_effect = [
+                CommandResult(
+                    command=["git", "rev-parse", "HEAD"],
+                    returncode=0,
+                    stdout="abc123def456\n",
+                ),
+                CommandResult(
+                    command=["git", "diff", "HEAD"],
+                    returncode=0,
+                    stdout="",
+                ),
+                CommandResult(
+                    command=["git", "ls-files", "--others", "--exclude-standard"],
+                    returncode=0,
+                    stdout="",
+                ),
+            ]
+
+            result = _get_git_state(tmp_path)
+
+        assert result is not None
+        assert len(result) == 16  # SHA-256 hash truncated to 16 chars
+        assert mock_run_command.call_count == 3
+
+    def test_returns_none_on_git_failure(self, tmp_path: Path) -> None:
+        """_get_git_state should return None if git command fails."""
+        with patch("src.hooks.run_command") as mock_run_command:
+            mock_run_command.return_value = CommandResult(
+                command=["git", "rev-parse", "HEAD"],
+                returncode=128,
+                stdout="",
+                stderr="fatal: not a git repository",
+            )
+
+            result = _get_git_state(tmp_path)
+
+        assert result is None
+
+    def test_respects_commandrunner_timeout_behavior(self, tmp_path: Path) -> None:
+        """_get_git_state uses CommandRunner which handles timeouts."""
+        # This test verifies that run_command is used, which means
+        # CommandRunner's timeout and process-group termination apply
+        with patch("src.hooks.run_command") as mock_run_command:
+            mock_run_command.side_effect = [
+                CommandResult(
+                    command=["git", "rev-parse", "HEAD"],
+                    returncode=0,
+                    stdout="abc123\n",
+                ),
+                CommandResult(
+                    command=["git", "diff", "HEAD"],
+                    returncode=124,  # TIMEOUT_EXIT_CODE
+                    stdout="",
+                    timed_out=True,
+                ),
+            ]
+
+            result = _get_git_state(tmp_path)
+
+        # Should return None because diff command "failed" (timed out)
+        assert result is None
+
+    def test_handles_untracked_files_failure_gracefully(self, tmp_path: Path) -> None:
+        """_get_git_state should handle ls-files failure gracefully."""
+        with patch("src.hooks.run_command") as mock_run_command:
+            mock_run_command.side_effect = [
+                CommandResult(
+                    command=["git", "rev-parse", "HEAD"],
+                    returncode=0,
+                    stdout="abc123\n",
+                ),
+                CommandResult(
+                    command=["git", "diff", "HEAD"],
+                    returncode=0,
+                    stdout="",
+                ),
+                CommandResult(
+                    command=["git", "ls-files", "--others", "--exclude-standard"],
+                    returncode=1,  # Failed
+                    stdout="",
+                ),
+            ]
+
+            result = _get_git_state(tmp_path)
+
+        # Should still return a hash, just without untracked files
+        assert result is not None

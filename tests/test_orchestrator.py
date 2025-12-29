@@ -3330,6 +3330,24 @@ class TestFailedRunQualityGateEvidence:
         assert len(issue_run.quality_gate.failure_reasons) > 0
 
 
+def _make_mock_log_provider(log_file: Path) -> object:
+    """Create a mock LogProvider that returns the given log file."""
+    from collections.abc import Iterator
+    from src.session_log_parser import JsonlEntry
+
+    class MockLogProvider:
+        def get_log_path(self, repo_path: Path, session_id: str) -> Path:
+            return log_file
+
+        def iter_events(self, log_path: Path, offset: int = 0) -> Iterator[JsonlEntry]:
+            return iter([])
+
+        def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
+            return log_path.stat().st_size if log_path.exists() else start_offset
+
+    return MockLogProvider()
+
+
 class TestBaselineCommitSelection:
     """Tests for baseline commit selection in run_implementer.
 
@@ -3345,10 +3363,17 @@ class TestBaselineCommitSelection:
         """Fresh issue with no prior commits should use HEAD as baseline."""
         from src.orchestrator import MalaOrchestrator
 
+        # Create a fake log file for the session
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "test-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
         orchestrator = MalaOrchestrator(
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
+            log_provider=_make_mock_log_provider(log_file),
         )
 
         # Track what baseline is used when running codex review
@@ -3391,12 +3416,6 @@ class TestBaselineCommitSelection:
 
         mock_client.receive_response = mock_receive_response
 
-        # Create a fake log file for the session
-        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "test-session.jsonl"
-        log_file.write_text('{"type": "result"}\n')
-
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
             patch("src.orchestrator.get_git_branch_async", return_value="main"),
@@ -3407,8 +3426,6 @@ class TestBaselineCommitSelection:
             patch(
                 "src.orchestrator.run_codex_review", side_effect=mock_run_codex_review
             ),
-            # TracedAgentExecution removed - telemetry_provider injected via constructor
-            patch("src.orchestrator.get_claude_log_path", return_value=log_file),
             patch.object(
                 orchestrator.beads,
                 "get_issue_description_async",
@@ -3427,10 +3444,16 @@ class TestBaselineCommitSelection:
         """Resumed issue should use parent of first issue commit as baseline."""
         from src.orchestrator import MalaOrchestrator
 
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "resumed-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
         orchestrator = MalaOrchestrator(
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
+            log_provider=_make_mock_log_provider(log_file),
         )
 
         captured_baseline: list[str | None] = []
@@ -3471,11 +3494,6 @@ class TestBaselineCommitSelection:
 
         mock_client.receive_response = mock_receive_response
 
-        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "resumed-session.jsonl"
-        log_file.write_text('{"type": "result"}\n')
-
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
             patch("src.orchestrator.get_git_branch_async", return_value="main"),
@@ -3487,8 +3505,6 @@ class TestBaselineCommitSelection:
             patch(
                 "src.orchestrator.run_codex_review", side_effect=mock_run_codex_review
             ),
-            # TracedAgentExecution removed - telemetry_provider injected via constructor
-            patch("src.orchestrator.get_claude_log_path", return_value=log_file),
             patch.object(
                 orchestrator.beads,
                 "get_issue_description_async",
@@ -3505,10 +3521,16 @@ class TestBaselineCommitSelection:
         """Verify get_baseline_for_issue is called first, HEAD used as fallback."""
         from src.orchestrator import MalaOrchestrator
 
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "order-test-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
         orchestrator = MalaOrchestrator(
             repo_path=tmp_path,
             max_agents=1,
             timeout_minutes=1,
+            log_provider=_make_mock_log_provider(log_file),
         )
 
         call_order: list[str] = []
@@ -3543,11 +3565,6 @@ class TestBaselineCommitSelection:
 
         mock_client.receive_response = mock_receive_response
 
-        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / "order-test-session.jsonl"
-        log_file.write_text('{"type": "result"}\n')
-
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
             patch("src.orchestrator.get_git_branch_async", return_value="main"),
@@ -3559,8 +3576,6 @@ class TestBaselineCommitSelection:
                 "src.orchestrator.get_baseline_for_issue",
                 side_effect=mock_get_baseline_for_issue,
             ),
-            # TracedAgentExecution removed - telemetry_provider injected via constructor
-            patch("src.orchestrator.get_claude_log_path", return_value=log_file),
             patch.object(
                 orchestrator.beads,
                 "get_issue_description_async",

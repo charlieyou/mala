@@ -532,6 +532,8 @@ class BaselineCoverageService:
 
             # Replace any existing --cov-fail-under with 0
             # This ensures we capture baseline even if it's below pyproject.toml threshold
+            # Also replace any existing -m marker with "not slow" to exclude slow tests
+            # (slow tests require special env/fixtures and increase refresh runtime)
             new_pytest_cmd = []
             skip_next = False
             for arg in pytest_cmd:
@@ -543,8 +545,15 @@ class BaselineCoverageService:
                 if arg == "--cov-fail-under":
                     skip_next = True
                     continue
+                # Strip any existing -m marker (we'll add "not slow" at the end)
+                if arg.startswith("-m=") or arg.startswith("-m "):
+                    continue
+                if arg == "-m":
+                    skip_next = True
+                    continue
                 new_pytest_cmd.append(arg)
             new_pytest_cmd.append("--cov-fail-under=0")
+            new_pytest_cmd.extend(["-m", "not slow"])
 
             # Run pytest - we ignore the exit code because tests may fail
             # but still generate a valid coverage.xml baseline

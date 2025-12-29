@@ -215,20 +215,46 @@ class LintCache:
         )
 
     def _hash_uncommitted(self) -> str:
-        """Hash the uncommitted changes.
+        """Hash the uncommitted changes including untracked files.
 
         Returns:
-            SHA256 hash of the uncommitted diff.
+            SHA256 hash of the uncommitted diff plus untracked file contents.
         """
+        hasher = hashlib.sha256()
+
+        # Get staged + unstaged diff (captures tracked file changes)
         try:
-            # Get staged + unstaged diff (captures all uncommitted changes)
             diff = _run_git_command(["diff", "HEAD"], self.repo_path)
             if diff is None:
                 diff = ""
         except Exception:
             diff = ""
+        hasher.update(diff.encode())
 
-        return hashlib.sha256(diff.encode()).hexdigest()[:16]
+        # Get untracked files and include their contents in the hash
+        try:
+            untracked_output = _run_git_command(
+                ["ls-files", "--others", "--exclude-standard"], self.repo_path
+            )
+            if untracked_output:
+                untracked_files = untracked_output.split("\n")
+                # Sort for deterministic ordering
+                for filepath in sorted(untracked_files):
+                    if filepath:
+                        # Include the path in the hash
+                        hasher.update(f"\n--- untracked: {filepath}\n".encode())
+                        # Include the file content
+                        full_path = self.repo_path / filepath
+                        try:
+                            content = full_path.read_bytes()
+                            hasher.update(content)
+                        except OSError:
+                            # File may have been deleted or be unreadable
+                            hasher.update(b"<unreadable>")
+        except Exception:
+            pass
+
+        return hasher.hexdigest()[:16]
 
     def should_skip(self, command_name: str) -> bool:
         """Check if a lint command can be skipped.

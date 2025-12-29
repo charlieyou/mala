@@ -11,6 +11,7 @@ Tests cover:
 import json
 from pathlib import Path
 
+import pytest
 from src.session_log_parser import JsonlEntry, SessionLogParser
 
 
@@ -460,3 +461,94 @@ class TestSessionLogParserIndependentUsability:
         assert all_commands == [("t1", "pytest")]
         assert all_results == [("t1", False)]
         assert all_texts == ["Running tests..."]
+
+
+class TestFileSystemLogProvider:
+    """Test FileSystemLogProvider implementation of LogProvider protocol."""
+
+    def test_get_log_path_computes_sdk_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """get_log_path should compute the Claude SDK log path."""
+        from src.session_log_parser import FileSystemLogProvider
+
+        # Mock the Claude config dir to use tmp_path
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+
+        provider = FileSystemLogProvider()
+        repo_path = Path("/home/cyou/mala")
+        session_id = "abc123"
+
+        log_path = provider.get_log_path(repo_path, session_id)
+
+        # Should use encoded repo path format
+        assert log_path == tmp_path / "projects" / "-home-cyou-mala" / "abc123.jsonl"
+
+    def test_iter_events_delegates_to_parser(self, tmp_path: Path) -> None:
+        """iter_events should delegate to SessionLogParser."""
+        from src.session_log_parser import FileSystemLogProvider
+
+        log_path = tmp_path / "session.jsonl"
+        entry = {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "Hello"}]},
+        }
+        log_path.write_text(json.dumps(entry) + "\n")
+
+        provider = FileSystemLogProvider()
+        results = list(provider.iter_events(log_path))
+
+        assert len(results) == 1
+        assert results[0].data["type"] == "assistant"
+
+    def test_iter_events_respects_offset(self, tmp_path: Path) -> None:
+        """iter_events should start from the given offset."""
+        from src.session_log_parser import FileSystemLogProvider
+
+        log_path = tmp_path / "session.jsonl"
+        first_entry = json.dumps({"type": "assistant", "message": {"content": []}})
+        second_entry = json.dumps({"type": "user", "message": {"content": []}})
+        log_path.write_text(first_entry + "\n" + second_entry + "\n")
+
+        provider = FileSystemLogProvider()
+        offset = len(first_entry) + 1
+        results = list(provider.iter_events(log_path, offset=offset))
+
+        assert len(results) == 1
+        assert results[0].data["type"] == "user"
+
+    def test_get_end_offset_returns_file_size(self, tmp_path: Path) -> None:
+        """get_end_offset should return the file size."""
+        from src.session_log_parser import FileSystemLogProvider
+
+        log_path = tmp_path / "session.jsonl"
+        content = json.dumps({"type": "assistant", "message": {"content": []}}) + "\n"
+        log_path.write_text(content)
+
+        provider = FileSystemLogProvider()
+        offset = provider.get_end_offset(log_path)
+
+        assert offset == log_path.stat().st_size
+
+    def test_get_end_offset_returns_start_for_missing_file(
+        self, tmp_path: Path
+    ) -> None:
+        """get_end_offset should return start_offset for missing files."""
+        from src.session_log_parser import FileSystemLogProvider
+
+        provider = FileSystemLogProvider()
+        nonexistent = tmp_path / "nonexistent.jsonl"
+
+        offset = provider.get_end_offset(nonexistent, start_offset=50)
+
+        assert offset == 50
+
+    def test_conforms_to_log_provider_protocol(self, tmp_path: Path) -> None:
+        """FileSystemLogProvider should conform to LogProvider protocol."""
+        from src.protocols import LogProvider
+        from src.session_log_parser import FileSystemLogProvider
+
+        provider = FileSystemLogProvider()
+
+        # Protocol check (runtime_checkable)
+        assert isinstance(provider, LogProvider)

@@ -33,11 +33,50 @@ def _is_literal_key(filepath: str) -> bool:
     return filepath.startswith("__") and filepath.endswith("__")
 
 
+def _resolve_with_parents(path: Path) -> Path:
+    """Resolve a path by resolving existing parent directories.
+
+    For non-existent paths, walks up to find the first existing ancestor,
+    resolves its symlinks, then appends the remaining path components.
+    This ensures consistent lock keys for paths through symlinked directories.
+
+    Args:
+        path: The path to resolve (should be absolute).
+
+    Returns:
+        The resolved path with parent symlinks resolved.
+    """
+    if path.exists():
+        return path.resolve()
+
+    # Walk up to find an existing ancestor
+    # Collect the parts that don't exist yet
+    missing_parts: list[str] = []
+    current = path
+
+    while not current.exists():
+        missing_parts.append(current.name)
+        parent = current.parent
+        if parent == current:
+            # Reached root without finding existing path
+            break
+        current = parent
+
+    # Resolve the existing ancestor (resolves symlinks)
+    resolved_base = current.resolve()
+
+    # Append the missing parts back
+    for part in reversed(missing_parts):
+        resolved_base = resolved_base / part
+
+    return resolved_base
+
+
 def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
     """Canonicalize a file path for consistent lock key generation.
 
     Normalizes paths by:
-    - Resolving symlinks (if the path exists)
+    - Resolving symlinks (including parent directory symlinks for non-existent paths)
     - Making paths absolute
     - Normalizing . and .. segments
 
@@ -72,8 +111,9 @@ def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
             # Path exists - resolve symlinks
             return str(candidate.resolve())
         else:
-            # Normalize . and .. segments
-            return str(Path(os.path.normpath(candidate)))
+            # Normalize and resolve parent symlinks for non-existent paths
+            normalized = Path(os.path.normpath(candidate))
+            return str(_resolve_with_parents(normalized))
 
     # Absolute path or no namespace - resolve to absolute
     if path.exists():
@@ -83,8 +123,9 @@ def _canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
             resolved = path
         else:
             resolved = Path.cwd() / path
-        # Normalize . and .. segments
-        return str(Path(os.path.normpath(resolved)))
+        # Normalize . and .. segments, then resolve parent symlinks
+        normalized = Path(os.path.normpath(resolved))
+        return str(_resolve_with_parents(normalized))
 
 
 def _lock_key(filepath: str, repo_namespace: str | None = None) -> str:

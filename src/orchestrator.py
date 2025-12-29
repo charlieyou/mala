@@ -58,10 +58,10 @@ from .logging.run_metadata import (
     write_run_marker,
 )
 from .quality_gate import QualityGate, GateResult
+from .session_log_parser import FileSystemLogProvider
 from .tools.env import (
     USER_CONFIG_DIR,
     SCRIPTS_DIR,
-    get_claude_log_path,
     get_lock_dir,
     get_runs_dir,
 )
@@ -81,7 +81,7 @@ if TYPE_CHECKING:
     from .lifecycle import (
         RetryState,
     )
-    from .protocols import CodeReviewer, GateChecker, IssueProvider
+    from .protocols import CodeReviewer, GateChecker, IssueProvider, LogProvider
     from .telemetry import TelemetryProvider
     from .models import IssueResolution
     from .validation.result import ValidationResult
@@ -242,6 +242,7 @@ class MalaOrchestrator:
         issue_provider: IssueProvider | None = None,
         code_reviewer: CodeReviewer | None = None,
         gate_checker: GateChecker | None = None,
+        log_provider: LogProvider | None = None,
         telemetry_provider: TelemetryProvider | None = None,
         # Centralized configuration (optional, uses from_env() if not provided)
         config: MalaConfig | None = None,
@@ -296,9 +297,17 @@ class MalaOrchestrator:
         self.codex_review_log_paths: dict[str, str] = {}
 
         # Initialize pipeline stage implementations (use defaults if not provided)
+        # LogProvider: FileSystemLogProvider for reading Claude SDK logs
+        self.log_provider: LogProvider = (
+            FileSystemLogProvider() if log_provider is None else log_provider
+        )
+
         # GateChecker: QualityGate for post-run validation
+        # Pass log_provider to QualityGate for log access
         self.quality_gate: GateChecker = (
-            QualityGate(self.repo_path) if gate_checker is None else gate_checker
+            QualityGate(self.repo_path, log_provider=self.log_provider)
+            if gate_checker is None
+            else gate_checker
         )
 
         # IssueProvider: BeadsClient for issue tracking
@@ -657,13 +666,14 @@ class MalaOrchestrator:
             "MCP_TIMEOUT": "300000",
         }
 
-        # Build hooks - similar to implementer but without lock enforcement
+        # Build hooks - same as implementer including lock enforcement
         # Create per-session file read cache to avoid redundant re-reads
         file_read_cache = FileReadCache()
         # Create per-session lint cache to avoid redundant re-lints
         lint_cache = LintCache(repo_path=self.repo_path)
         pre_tool_hooks: list = [
             block_dangerous_commands,
+            make_lock_enforcement_hook(agent_id, str(self.repo_path)),
             make_file_read_cache_hook(file_read_cache),
             make_lint_cache_hook(lint_cache),
         ]
@@ -921,7 +931,7 @@ class MalaOrchestrator:
 
                                 # Handle WAIT_FOR_LOG effect
                                 if result.effect == Effect.WAIT_FOR_LOG:
-                                    log_path = get_claude_log_path(
+                                    log_path = self.log_provider.get_log_path(
                                         self.repo_path,
                                         claude_session_id,  # type: ignore[arg-type]
                                     )

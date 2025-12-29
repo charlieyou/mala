@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
-from src.session_log_parser import JsonlEntry, SessionLogParser
+from src.session_log_parser import FileSystemLogProvider, JsonlEntry, SessionLogParser
 from src.tools.command_runner import run_command
 from src.validation.spec import (
     CommandKind,
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from src.protocols import LogProvider
     from src.validation.spec import ValidationSpec
 
 
@@ -164,8 +165,9 @@ class GateResult:
 class QualityGate:
     """Quality gate for verifying agent work meets requirements.
 
-    Uses SessionLogParser for JSONL log parsing, keeping this class
-    focused on policy checking and validation logic.
+    Uses LogProvider for JSONL log parsing, keeping this class
+    focused on policy checking and validation logic. If no LogProvider
+    is injected, creates a FileSystemLogProvider by default.
     """
 
     # Patterns for detecting issue resolution markers in log text
@@ -184,13 +186,21 @@ class QualityGate:
         "already_complete": ResolutionOutcome.ALREADY_COMPLETE,
     }
 
-    def __init__(self, repo_path: Path):
+    def __init__(self, repo_path: Path, log_provider: LogProvider | None = None):
         """Initialize quality gate.
 
         Args:
             repo_path: Path to the repository for git operations.
+            log_provider: Optional LogProvider for reading session logs.
+                If not provided, uses FileSystemLogProvider (filesystem access).
         """
         self.repo_path = repo_path
+        # Use injected LogProvider or create default FileSystemLogProvider
+        if log_provider is not None:
+            self._log_provider = log_provider
+        else:
+            self._log_provider = FileSystemLogProvider()
+        # Keep SessionLogParser for extract_* helper methods
         self._parser = SessionLogParser()
 
     def _match_resolution_pattern(self, text: str) -> IssueResolution | None:
@@ -280,7 +290,7 @@ class QualityGate:
     ) -> Iterator[JsonlEntry]:
         """Iterate over parsed JSONL entries from a log file.
 
-        Delegates to SessionLogParser.iter_jsonl_entries().
+        Delegates to LogProvider.iter_events().
 
         Args:
             log_path: Path to the JSONL log file.
@@ -289,7 +299,7 @@ class QualityGate:
         Yields:
             JsonlEntry objects for each successfully parsed JSON line.
         """
-        return self._parser.iter_jsonl_entries(log_path, offset)
+        return self._log_provider.iter_events(log_path, offset)
 
     def parse_issue_resolution(self, log_path: Path) -> IssueResolution | None:
         """Parse JSONL log file for issue resolution markers.
@@ -381,7 +391,7 @@ class QualityGate:
     def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         """Get the byte offset at the end of a log file.
 
-        Delegates to SessionLogParser.get_log_end_offset().
+        Delegates to LogProvider.get_end_offset().
 
         Args:
             log_path: Path to the JSONL log file.
@@ -391,7 +401,7 @@ class QualityGate:
             The byte offset at the end of the file, or start_offset if file
             doesn't exist or can't be read.
         """
-        return self._parser.get_log_end_offset(log_path, start_offset)
+        return self._log_provider.get_end_offset(log_path, start_offset)
 
     def check_no_progress(
         self,

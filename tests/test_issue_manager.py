@@ -237,7 +237,12 @@ class TestSortByEpicGroups:
         """Should handle issues without updated_at field."""
         issues = [
             {"id": "a", "priority": 1, "parent_epic": "epic-1"},
-            {"id": "b", "priority": 1, "parent_epic": "epic-1", "updated_at": "2025-01-01"},
+            {
+                "id": "b",
+                "priority": 1,
+                "parent_epic": "epic-1",
+                "updated_at": "2025-01-01",
+            },
         ]
         result = IssueManager.sort_by_epic_groups(issues)
         # Both have same priority, so order is by negated updated_at (ascending)

@@ -1664,11 +1664,11 @@ class TestSpecRunnerBaselineRefresh:
     def test_baseline_refresh_strips_slow_test_markers(
         self, service: BaselineCoverageService, tmp_path: Path
     ) -> None:
-        """Baseline refresh should strip -m markers to avoid running slow tests.
+        """Baseline refresh should replace -m markers with 'not slow'.
 
-        When the spec includes slow tests (e.g., -m 'slow or not slow'), the
-        baseline refresh should exclude these to avoid timing out on expensive
-        E2E tests that are not needed for coverage calculation.
+        When the spec includes any -m marker, the baseline refresh should
+        replace it with '-m not slow' to exclude slow/E2E tests that require
+        special env/fixtures and would increase refresh runtime.
         """
         # Spec with slow test markers (typical run-level configuration)
         spec = ValidationSpec(
@@ -1755,12 +1755,14 @@ class TestSpecRunnerBaselineRefresh:
 
         pytest_cmd = pytest_cmds[-1]  # The actual pytest run (not uv sync)
 
-        # Verify -m marker was stripped
-        assert "-m" not in pytest_cmd, (
-            f"Expected -m marker to be stripped, but found in: {pytest_cmd}"
+        # Verify -m marker was replaced with "not slow" to exclude slow tests
+        assert "-m" in pytest_cmd, f"Expected -m marker in: {pytest_cmd}"
+        m_idx = pytest_cmd.index("-m")
+        assert pytest_cmd[m_idx + 1] == "not slow", (
+            f"Expected '-m not slow', but got: {pytest_cmd[m_idx : m_idx + 2]}"
         )
         assert "slow or not slow" not in pytest_cmd, (
-            f"Expected marker value to be stripped, but found in: {pytest_cmd}"
+            f"Original marker value should be removed, but found in: {pytest_cmd}"
         )
 
         # Verify --cov-fail-under was replaced with 0

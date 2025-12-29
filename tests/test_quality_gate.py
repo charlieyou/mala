@@ -2820,3 +2820,104 @@ class TestSpecCommandChangesPropagation:
         assert evidence2.ruff_check_ran is True
         assert evidence2.ruff_format_ran is True
         assert evidence2.ty_check_ran is True
+
+
+class TestLogProviderInjection:
+    """Test QualityGate with injected LogProvider for testability."""
+
+    def test_accepts_custom_log_provider(self, tmp_path: Path) -> None:
+        """QualityGate should accept a custom LogProvider."""
+        from collections.abc import Iterator
+
+        from src.log_events import AssistantLogEntry, AssistantMessage, ToolUseBlock
+        from src.session_log_parser import JsonlEntry
+
+        class MockLogProvider:
+            """Mock LogProvider that returns synthetic events."""
+
+            def __init__(self, entries: list[JsonlEntry]) -> None:
+                self._entries = entries
+
+            def get_log_path(self, repo_path: Path, session_id: str) -> Path:
+                return repo_path / f"{session_id}.jsonl"
+
+            def iter_events(
+                self, log_path: Path, offset: int = 0
+            ) -> Iterator[JsonlEntry]:
+                yield from self._entries
+
+            def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
+                return 100  # Synthetic offset
+
+        # Create mock entries with pytest command - include typed entry
+        tool_use_block = ToolUseBlock(
+            id="test-1", name="Bash", input={"command": "uv run pytest"}
+        )
+        typed_entry = AssistantLogEntry(
+            message=AssistantMessage(content=[tool_use_block])
+        )
+        mock_entries = [
+            JsonlEntry(
+                data={
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "test-1",
+                                "name": "Bash",
+                                "input": {"command": "uv run pytest"},
+                            }
+                        ]
+                    },
+                },
+                entry=typed_entry,  # Include typed entry for extraction
+                line_len=100,
+                offset=0,
+            )
+        ]
+
+        mock_provider = MockLogProvider(mock_entries)
+        gate = QualityGate(tmp_path, log_provider=mock_provider)
+
+        # Verify LogProvider is used
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create a fake log file so parse_validation_evidence_with_spec doesn't exit early
+        fake_log = tmp_path / "fake.jsonl"
+        fake_log.touch()
+        evidence = gate.parse_validation_evidence_with_spec(fake_log, spec)
+
+        assert evidence.pytest_ran is True
+
+    def test_get_log_end_offset_uses_provider(self, tmp_path: Path) -> None:
+        """get_log_end_offset should delegate to LogProvider."""
+        from collections.abc import Iterator
+
+        from src.session_log_parser import JsonlEntry
+
+        class MockLogProvider:
+            def get_log_path(self, repo_path: Path, session_id: str) -> Path:
+                return repo_path / f"{session_id}.jsonl"
+
+            def iter_events(
+                self, log_path: Path, offset: int = 0
+            ) -> Iterator[JsonlEntry]:
+                return iter([])
+
+            def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
+                return 42  # Return known value to verify delegation
+
+        mock_provider = MockLogProvider()
+        gate = QualityGate(tmp_path, log_provider=mock_provider)
+
+        offset = gate.get_log_end_offset(tmp_path / "fake.jsonl")
+        assert offset == 42
+
+    def test_default_uses_filesystem_provider(self, tmp_path: Path) -> None:
+        """QualityGate should use FileSystemLogProvider by default."""
+        from src.session_log_parser import FileSystemLogProvider
+
+        gate = QualityGate(tmp_path)
+
+        # Verify internal provider is FileSystemLogProvider
+        assert isinstance(gate._log_provider, FileSystemLogProvider)
