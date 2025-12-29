@@ -382,7 +382,20 @@ def build_validation_spec(
 
     # Add pytest for Python repos (unless skipping tests)
     if is_python_repo and not skip_tests:
-        pytest_cmd = ["uv", "run", "pytest", "-n", "auto"]
+        # Start with minimal output flags to reduce token usage
+        # -q: quiet mode (only failures + summary), --tb=short: shorter tracebacks
+        # --no-header: skip header, --disable-warnings: hide warnings
+        pytest_cmd = [
+            "uv",
+            "run",
+            "pytest",
+            "-q",
+            "--tb=short",
+            "--no-header",
+            "--disable-warnings",
+            "-n",
+            "auto",
+        ]
 
         # Add coverage flags when coverage is enabled
         if coverage_enabled:
