@@ -485,7 +485,9 @@ class ImplementerLifecycle:
                 if i.priority is not None and i.priority <= 1  # P0 and P1 are critical
             ]
             if critical_msgs:
-                ctx.final_result = f"Codex review failed: {'; '.join(critical_msgs[:3])}"
+                ctx.final_result = (
+                    f"Codex review failed: {'; '.join(critical_msgs[:3])}"
+                )
             elif review_result.issues:
                 # Only lower-priority issues found - include them in the summary
                 other_msgs = [
