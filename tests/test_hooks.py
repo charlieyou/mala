@@ -1,5 +1,6 @@
 """Unit tests for PreToolUse hooks in src/hooks.py."""
 
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -674,3 +675,559 @@ class TestMakeFileReadCacheHook:
         result = await hook(hook_input, None, context)
 
         assert result == {}  # Allowed (tool will fail anyway)
+
+
+class TestDetectLintCommand:
+    """Tests for the _detect_lint_command function."""
+
+    def test_detects_ruff_check(self) -> None:
+        """Should detect ruff check commands."""
+        from src.hooks import _detect_lint_command
+
+        assert _detect_lint_command("uvx ruff check .") == "ruff_check"
+        assert _detect_lint_command("ruff check src/") == "ruff_check"
+        assert _detect_lint_command("uvx ruff check $CHANGED_FILES") == "ruff_check"
+
+    def test_detects_ruff_format(self) -> None:
+        """Should detect ruff format commands."""
+        from src.hooks import _detect_lint_command
+
+        assert _detect_lint_command("uvx ruff format .") == "ruff_format"
+        assert _detect_lint_command("ruff format --check .") == "ruff_format"
+        assert _detect_lint_command("uvx ruff format $CHANGED_FILES") == "ruff_format"
+
+    def test_detects_ty_check(self) -> None:
+        """Should detect ty check commands."""
+        from src.hooks import _detect_lint_command
+
+        assert _detect_lint_command("uvx ty check") == "ty_check"
+        assert _detect_lint_command("ty check src/") == "ty_check"
+        assert _detect_lint_command("uvx ty check $CHANGED_FILES") == "ty_check"
+
+    def test_returns_none_for_non_lint_commands(self) -> None:
+        """Should return None for non-lint commands."""
+        from src.hooks import _detect_lint_command
+
+        assert _detect_lint_command("git status") is None
+        assert _detect_lint_command("uv run pytest") is None
+        assert _detect_lint_command("ls -la") is None
+        assert _detect_lint_command("echo hello") is None
+
+    def test_case_insensitive(self) -> None:
+        """Should be case insensitive."""
+        from src.hooks import _detect_lint_command
+
+        assert _detect_lint_command("RUFF CHECK .") == "ruff_check"
+        assert _detect_lint_command("Ruff Format .") == "ruff_format"
+        assert _detect_lint_command("TY CHECK") == "ty_check"
+
+    def test_distinguishes_ruff_check_from_format(self) -> None:
+        """Should correctly distinguish ruff check from ruff format."""
+        from src.hooks import _detect_lint_command
+
+        # format should not be detected as check
+        assert _detect_lint_command("ruff format .") == "ruff_format"
+        assert _detect_lint_command("ruff format .") != "ruff_check"
+
+        # check should not be detected as format
+        assert _detect_lint_command("ruff check .") == "ruff_check"
+        assert _detect_lint_command("ruff check .") != "ruff_format"
+
+
+class TestLintCache:
+    """Tests for the LintCache class."""
+
+    def test_first_lint_is_allowed(self, tmp_path: Path) -> None:
+        """First lint of a type should be allowed (recorded as pending)."""
+        from src.hooks import LintCache
+
+        # Create a git repo for testing
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        # Create initial commit
+        (tmp_path / "file.py").write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        cache = LintCache(repo_path=tmp_path)
+        is_redundant, message = cache.check_and_update("ruff_check")
+
+        assert is_redundant is False
+        assert message == ""
+        # First call only records pending state, not confirmed cache
+        assert cache.cache_size == 0
+        assert cache.skipped_count == 0
+
+    def test_second_lint_unchanged_is_blocked(self, tmp_path: Path) -> None:
+        """Second lint with unchanged state promotes pending to confirmed and blocks."""
+        from src.hooks import LintCache
+
+        # Create a git repo
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        (tmp_path / "file.py").write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        cache = LintCache(repo_path=tmp_path)
+
+        # First lint - allowed (pending)
+        cache.check_and_update("ruff_check")
+
+        # Second lint - blocked (pending promoted to confirmed)
+        is_redundant, message = cache.check_and_update("ruff_check")
+
+        assert is_redundant is True
+        assert "no changes" in message.lower()
+        assert "skipped 1x" in message
+        # Now we have 1 confirmed cache entry
+        assert cache.cache_size == 1
+        assert cache.skipped_count == 1
+
+    def test_lint_after_file_change_is_allowed(self, tmp_path: Path) -> None:
+        """Lint after file modification should be allowed."""
+        from src.hooks import LintCache
+
+        # Create a git repo
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        test_file = tmp_path / "file.py"
+        test_file.write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        cache = LintCache(repo_path=tmp_path)
+
+        # First lint
+        cache.check_and_update("ruff_check")
+
+        # Modify file (creates uncommitted change)
+        test_file.write_text("print('world')")
+
+        # Second lint after modification - should be allowed
+        is_redundant, message = cache.check_and_update("ruff_check")
+
+        assert is_redundant is False
+        assert message == ""
+        assert cache.skipped_count == 0
+
+    def test_different_lint_types_cached_separately(self, tmp_path: Path) -> None:
+        """Different lint types should be cached independently."""
+        from src.hooks import LintCache
+
+        # Create a git repo
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        (tmp_path / "file.py").write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        cache = LintCache(repo_path=tmp_path)
+
+        # Run different lint types (first calls - all pending)
+        cache.check_and_update("ruff_check")
+        cache.check_and_update("ruff_format")
+        cache.check_and_update("ty_check")
+
+        # First calls only create pending state, not confirmed cache
+        assert cache.cache_size == 0
+
+        # Second run of each - promotes pending to confirmed and blocks
+        is_redundant_1, _ = cache.check_and_update("ruff_check")
+        is_redundant_2, _ = cache.check_and_update("ruff_format")
+        is_redundant_3, _ = cache.check_and_update("ty_check")
+
+        assert is_redundant_1 is True
+        assert is_redundant_2 is True
+        assert is_redundant_3 is True
+        # Now all 3 are confirmed
+        assert cache.cache_size == 3
+        assert cache.skipped_count == 3
+
+    def test_invalidate_clears_specific_type(self, tmp_path: Path) -> None:
+        """Invalidating a specific lint type should only clear that type."""
+        from src.hooks import LintCache
+
+        # Create a git repo
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        (tmp_path / "file.py").write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        cache = LintCache(repo_path=tmp_path)
+        # Run twice each to promote from pending to confirmed
+        cache.check_and_update("ruff_check")
+        cache.check_and_update("ruff_check")  # Promotes to confirmed
+        cache.check_and_update("ruff_format")
+        cache.check_and_update("ruff_format")  # Promotes to confirmed
+        assert cache.cache_size == 2
+
+        cache.invalidate("ruff_check")
+        assert cache.cache_size == 1
+
+        # ruff_check should be allowed again (goes back to pending)
+        is_redundant, _ = cache.check_and_update("ruff_check")
+        assert is_redundant is False
+
+    def test_invalidate_all_clears_cache(self, tmp_path: Path) -> None:
+        """Invalidating without type should clear all entries."""
+        from src.hooks import LintCache
+
+        # Create a git repo
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        (tmp_path / "file.py").write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        cache = LintCache(repo_path=tmp_path)
+        # Run twice each to promote from pending to confirmed
+        cache.check_and_update("ruff_check")
+        cache.check_and_update("ruff_check")
+        cache.check_and_update("ruff_format")
+        cache.check_and_update("ruff_format")
+        cache.check_and_update("ty_check")
+        cache.check_and_update("ty_check")
+        assert cache.cache_size == 3
+
+        cache.invalidate()
+        assert cache.cache_size == 0
+
+    def test_non_git_repo_allows_all_lints(self, tmp_path: Path) -> None:
+        """In a non-git directory, all lints should be allowed."""
+        from src.hooks import LintCache
+
+        # tmp_path is not a git repo
+        cache = LintCache(repo_path=tmp_path)
+
+        # First lint
+        is_redundant_1, _ = cache.check_and_update("ruff_check")
+        # Second lint (would normally be blocked)
+        is_redundant_2, _ = cache.check_and_update("ruff_check")
+
+        # Both should be allowed since we can't determine git state
+        assert is_redundant_1 is False
+        assert is_redundant_2 is False
+
+
+class TestMakeLintCacheHook:
+    """Tests for the make_lint_cache_hook factory function."""
+
+    @pytest.mark.asyncio
+    async def test_allows_first_lint(self, tmp_path: Path) -> None:
+        """First lint through hook should be allowed."""
+        from src.hooks import LintCache, make_lint_cache_hook
+
+        # Create a git repo
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        (tmp_path / "file.py").write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        cache = LintCache(repo_path=tmp_path)
+        hook = make_lint_cache_hook(cache)
+
+        hook_input = make_hook_input("Bash", {"command": "uvx ruff check ."})
+        context = make_context()
+
+        result = await hook(hook_input, None, context)
+
+        assert result == {}  # Empty dict means allow
+
+    @pytest.mark.asyncio
+    async def test_blocks_second_lint_unchanged(self, tmp_path: Path) -> None:
+        """Second lint through hook should be blocked if unchanged."""
+        from src.hooks import LintCache, make_lint_cache_hook
+
+        # Create a git repo
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        (tmp_path / "file.py").write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        cache = LintCache(repo_path=tmp_path)
+        hook = make_lint_cache_hook(cache)
+
+        hook_input = make_hook_input("Bash", {"command": "uvx ruff check ."})
+        context = make_context()
+
+        # First lint
+        await hook(hook_input, None, context)
+
+        # Second lint
+        result = await hook(hook_input, None, context)
+
+        assert result["decision"] == "block"
+        assert "no changes" in result["reason"].lower()
+
+    @pytest.mark.asyncio
+    async def test_allows_non_lint_bash_commands(self, tmp_path: Path) -> None:
+        """Non-lint Bash commands should be allowed."""
+        from src.hooks import LintCache, make_lint_cache_hook
+
+        cache = LintCache(repo_path=tmp_path)
+        hook = make_lint_cache_hook(cache)
+
+        hook_input = make_hook_input("Bash", {"command": "git status"})
+        context = make_context()
+
+        result = await hook(hook_input, None, context)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_allows_non_bash_tools(self, tmp_path: Path) -> None:
+        """Non-Bash tools should be allowed."""
+        from src.hooks import LintCache, make_lint_cache_hook
+
+        cache = LintCache(repo_path=tmp_path)
+        hook = make_lint_cache_hook(cache)
+
+        hook_input = make_hook_input("Read", {"file_path": "/some/file.py"})
+        context = make_context()
+
+        result = await hook(hook_input, None, context)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_invalidates_cache_on_write(self, tmp_path: Path) -> None:
+        """Write tool should invalidate lint cache."""
+        from src.hooks import LintCache, make_lint_cache_hook
+
+        # Create a git repo
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        (tmp_path / "file.py").write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        cache = LintCache(repo_path=tmp_path)
+        hook = make_lint_cache_hook(cache)
+        context = make_context()
+
+        # First lint - records as pending (not yet confirmed)
+        lint_input = make_hook_input("Bash", {"command": "uvx ruff check ."})
+        await hook(lint_input, None, context)
+        # Second lint promotes to confirmed
+        await hook(lint_input, None, context)
+        assert cache.cache_size == 1
+
+        # Write tool - should invalidate cache
+        write_input = make_hook_input("Write", {"file_path": str(tmp_path / "file.py")})
+        await hook(write_input, None, context)
+        assert cache.cache_size == 0
+
+    @pytest.mark.asyncio
+    async def test_invalidates_cache_on_edit_file(self, tmp_path: Path) -> None:
+        """MCP edit_file tool should invalidate lint cache."""
+        from src.hooks import LintCache, make_lint_cache_hook
+
+        # Create a git repo
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        (tmp_path / "file.py").write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        cache = LintCache(repo_path=tmp_path)
+        hook = make_lint_cache_hook(cache)
+        context = make_context()
+
+        # First lint - pending
+        lint_input = make_hook_input("Bash", {"command": "uvx ruff check ."})
+        await hook(lint_input, None, context)
+        # Second lint - promotes to confirmed
+        await hook(lint_input, None, context)
+        assert cache.cache_size == 1
+
+        # Edit file - should invalidate
+        edit_input = make_hook_input(
+            "mcp__morphllm__edit_file",
+            {"path": str(tmp_path / "file.py"), "code_edit": "new content"},
+        )
+        await hook(edit_input, None, context)
+        assert cache.cache_size == 0

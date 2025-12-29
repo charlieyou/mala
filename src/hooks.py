@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -491,3 +493,295 @@ def make_file_read_cache_hook(cache: FileReadCache) -> PreToolUseHook:
         return {}
 
     return file_read_cache_hook
+
+
+# Lint command patterns for detecting lint/format/typecheck commands
+# Using regex patterns for precise matching to avoid false positives
+LINT_COMMAND_PATTERNS: dict[str, re.Pattern[str]] = {
+    # Match "ruff check" but not "ruff format"
+    "ruff_check": re.compile(r"\bruff\s+check\b", re.IGNORECASE),
+    # Match "ruff format"
+    "ruff_format": re.compile(r"\bruff\s+format\b", re.IGNORECASE),
+    # Match "ty check" as a standalone command (ty must be a word boundary)
+    # This avoids matching "pytest --check" or similar
+    "ty_check": re.compile(r"\bty\s+check\b", re.IGNORECASE),
+}
+
+
+def _get_git_state(repo_path: Path | None = None) -> str | None:
+    """Get a hash representing the current git state including commit SHA.
+
+    This captures:
+    - Current HEAD commit SHA
+    - Staged and unstaged changes to tracked files
+    - Untracked files list
+
+    Returns None if git command fails or not in a git repo.
+
+    Args:
+        repo_path: Path to the repository. If None, uses current directory.
+
+    Returns:
+        A hash string representing the complete git state, or None on failure.
+    """
+    try:
+        cwd = repo_path or Path.cwd()
+
+        # Get current HEAD commit SHA
+        head_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if head_result.returncode != 0:
+            return None
+        head_sha = head_result.stdout.strip()
+
+        # Get hash of working tree state (staged + unstaged changes)
+        diff_result = subprocess.run(
+            ["git", "diff", "HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if diff_result.returncode != 0:
+            return None
+
+        # Also include untracked files in the hash
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        # Combine HEAD SHA, diff, and untracked files for complete state
+        combined = (
+            head_sha
+            + "\n"
+            + diff_result.stdout
+            + "\n"
+            + (untracked.stdout if untracked.returncode == 0 else "")
+        )
+        return hashlib.sha256(combined.encode()).hexdigest()[:16]
+    except Exception:
+        return None
+
+
+def _detect_lint_command(command: str) -> str | None:
+    """Detect which lint command type is being run.
+
+    Uses regex patterns with word boundaries to avoid false positives.
+
+    Args:
+        command: The bash command string.
+
+    Returns:
+        The lint command key (e.g., "ruff_check") or None if not a lint command.
+    """
+    for lint_key, pattern in LINT_COMMAND_PATTERNS.items():
+        if pattern.search(command):
+            return lint_key
+    return None
+
+
+@dataclass
+class LintCacheEntry:
+    """Cached information about a successful lint run.
+
+    Attributes:
+        git_state: Git state hash when lint successfully completed.
+        timestamp: Unix timestamp when lint passed.
+        skipped_count: Number of times this lint was skipped due to cache hit.
+    """
+
+    git_state: str
+    timestamp: float
+    skipped_count: int = 0
+
+
+class LintCache:
+    """Cache for tracking successful lint runs and detecting redundant re-runs.
+
+    This cache tracks the git state when lint commands pass. It uses a two-phase
+    approach:
+    1. On first lint attempt, record the state as "pending"
+    2. On subsequent attempt with same state, assume previous lint passed and skip
+
+    This works because:
+    - If lint failed, the agent would fix the code, changing the git state
+    - If git state is unchanged and agent tries to lint again, previous lint passed
+
+    The cache uses commit SHA + working tree diff hash to detect any file changes.
+
+    Attributes:
+        _cache: Mapping of lint command type to cached entry.
+        _pending: Mapping of lint type to state at time of last attempt.
+        _skipped_count: Total count of lints skipped due to cache hits.
+        _repo_path: Path to the repository for git operations.
+    """
+
+    def __init__(self, repo_path: Path | None = None) -> None:
+        """Initialize an empty lint cache.
+
+        Args:
+            repo_path: Path to the repository. If None, uses current directory.
+        """
+        self._cache: dict[str, LintCacheEntry] = {}
+        self._pending: dict[str, str] = {}  # lint_type -> git_state at attempt
+        self._skipped_count: int = 0
+        self._repo_path = repo_path
+
+    def check_and_update(self, lint_type: str) -> tuple[bool, str]:
+        """Check if a lint run is redundant and update the cache.
+
+        Uses two-phase caching:
+        1. First attempt: record state as pending, allow lint to run
+        2. Second attempt with same state: previous lint must have passed, skip
+
+        This ensures we only cache after lint success (inferred from unchanged
+        state on re-attempt).
+
+        Args:
+            lint_type: Type of lint command (e.g., "ruff_check").
+
+        Returns:
+            Tuple of (is_redundant, message). If is_redundant is True,
+            the message explains why the lint is skipped.
+        """
+        current_state = _get_git_state(self._repo_path)
+        if current_state is None:
+            # Can't determine git state, allow the lint
+            return (False, "")
+
+        # Check if we have a confirmed successful lint at this state
+        cached = self._cache.get(lint_type)
+        if cached is not None and cached.git_state == current_state:
+            # State unchanged since last confirmed success - skip
+            cached.skipped_count += 1
+            self._skipped_count += 1
+            lint_name = lint_type.replace("_", " ")
+            return (
+                True,
+                f"No changes since last {lint_name} (skipped {cached.skipped_count}x). "
+                "Git state unchanged - lint would produce same results.",
+            )
+
+        # Check if we have a pending lint at this state
+        pending_state = self._pending.get(lint_type)
+        if pending_state == current_state:
+            # Same state as pending attempt - lint must have passed
+            # Promote to confirmed cache entry
+            self._cache[lint_type] = LintCacheEntry(
+                git_state=current_state,
+                timestamp=time.time(),
+                skipped_count=1,
+            )
+            self._skipped_count += 1
+            lint_name = lint_type.replace("_", " ")
+            return (
+                True,
+                f"No changes since last {lint_name} (skipped 1x). "
+                "Git state unchanged - lint would produce same results.",
+            )
+
+        # State is different or first attempt - record as pending and allow
+        self._pending[lint_type] = current_state
+        return (False, "")
+
+    def mark_success(self, lint_type: str) -> None:
+        """Explicitly mark a lint as successful at current state.
+
+        Call this after a lint command completes successfully to immediately
+        cache the result without waiting for a second attempt.
+
+        Args:
+            lint_type: Type of lint command that succeeded.
+        """
+        current_state = _get_git_state(self._repo_path)
+        if current_state is not None:
+            self._cache[lint_type] = LintCacheEntry(
+                git_state=current_state,
+                timestamp=time.time(),
+                skipped_count=0,
+            )
+            # Clear pending since it's now confirmed
+            self._pending.pop(lint_type, None)
+
+    def invalidate(self, lint_type: str | None = None) -> None:
+        """Invalidate cache entries.
+
+        Call this when files are modified to ensure lint runs again.
+
+        Args:
+            lint_type: Specific lint type to invalidate. If None, clears all.
+        """
+        if lint_type is None:
+            self._cache.clear()
+            self._pending.clear()
+        else:
+            self._cache.pop(lint_type, None)
+            self._pending.pop(lint_type, None)
+
+    @property
+    def skipped_count(self) -> int:
+        """Return the total number of lints skipped due to cache hits."""
+        return self._skipped_count
+
+    @property
+    def cache_size(self) -> int:
+        """Return the number of lint types currently cached."""
+        return len(self._cache)
+
+
+def make_lint_cache_hook(
+    cache: LintCache,
+) -> PreToolUseHook:
+    """Create a PreToolUse hook that blocks redundant lint commands.
+
+    This hook checks Bash tool invocations for lint commands (ruff check,
+    ruff format, ty check). If the working tree hasn't changed since the
+    last run of that lint type, the hook blocks the command.
+
+    The hook also invalidates cache entries when files are written to,
+    ensuring subsequent lints see the updated state.
+
+    Args:
+        cache: The LintCache instance to use for tracking lint runs.
+
+    Returns:
+        An async hook function for ClaudeAgentOptions.hooks["PreToolUse"].
+    """
+
+    async def lint_cache_hook(
+        hook_input: PreToolUseHookInput,
+        stderr: str | None,
+        context: HookContext,
+    ) -> SyncHookJSONOutput:
+        """PreToolUse hook to block redundant lint commands."""
+        tool_name = hook_input["tool_name"]
+        tool_input = hook_input["tool_input"]
+
+        # Check for Bash tool with lint command
+        if tool_name.lower() in BASH_TOOL_NAMES:
+            command = tool_input.get("command", "")
+            lint_type = _detect_lint_command(command)
+            if lint_type:
+                is_redundant, message = cache.check_and_update(lint_type)
+                if is_redundant:
+                    return {
+                        "decision": "block",
+                        "reason": message,
+                    }
+
+        # Invalidate cache on file writes (lint results may change)
+        if tool_name in FILE_WRITE_TOOLS:
+            cache.invalidate()
+
+        return {}
+
+    return lint_cache_hook
