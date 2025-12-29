@@ -8,7 +8,7 @@ Tests for:
 import json
 from pathlib import Path
 from src.tools.command_runner import CommandResult
-from src.validation.spec import ValidationScope, build_validation_spec
+from src.validation.spec import CommandKind, ValidationScope, build_validation_spec
 from unittest.mock import patch
 
 from src.quality_gate import (
@@ -16,6 +16,37 @@ from src.quality_gate import (
     ValidationEvidence,
     check_evidence_against_spec,
 )
+
+
+def make_evidence(
+    *,
+    pytest_ran: bool = False,
+    ruff_check_ran: bool = False,
+    ruff_format_ran: bool = False,
+    ty_check_ran: bool = False,
+    setup_ran: bool = False,
+    failed_commands: list[str] | None = None,
+) -> ValidationEvidence:
+    """Create ValidationEvidence with convenience arguments.
+
+    This helper allows tests to use the old-style keyword arguments
+    while the underlying structure uses spec-driven dict[CommandKind, bool].
+    """
+    commands_ran: dict[CommandKind, bool] = {}
+    if pytest_ran:
+        commands_ran[CommandKind.TEST] = True
+    if ruff_check_ran:
+        commands_ran[CommandKind.LINT] = True
+    if ruff_format_ran:
+        commands_ran[CommandKind.FORMAT] = True
+    if ty_check_ran:
+        commands_ran[CommandKind.TYPECHECK] = True
+    if setup_ran:
+        commands_ran[CommandKind.SETUP] = True
+    return ValidationEvidence(
+        commands_ran=commands_ran,
+        failed_commands=failed_commands or [],
+    )
 
 
 class TestSpecDrivenParsing:
@@ -426,17 +457,17 @@ class TestHasMinimumValidation:
 
     def test_fails_when_only_pytest_ran(self) -> None:
         """Should fail when only pytest ran (missing ruff, ty check)."""
-        evidence = ValidationEvidence(pytest_ran=True)
+        evidence = make_evidence(pytest_ran=True)
         assert evidence.has_minimum_validation() is False
 
     def test_fails_when_only_ruff_ran(self) -> None:
         """Should fail when only ruff check/format ran (missing pytest, ty check)."""
-        evidence = ValidationEvidence(ruff_check_ran=True, ruff_format_ran=True)
+        evidence = make_evidence(ruff_check_ran=True, ruff_format_ran=True)
         assert evidence.has_minimum_validation() is False
 
     def test_fails_when_missing_ty_check(self) -> None:
         """Should fail when ty check is missing."""
-        evidence = ValidationEvidence(
+        evidence = make_evidence(
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=True,
@@ -446,7 +477,7 @@ class TestHasMinimumValidation:
 
     def test_fails_when_missing_pytest(self) -> None:
         """Should fail when pytest is missing."""
-        evidence = ValidationEvidence(
+        evidence = make_evidence(
             pytest_ran=False,
             ruff_check_ran=True,
             ruff_format_ran=True,
@@ -456,7 +487,7 @@ class TestHasMinimumValidation:
 
     def test_fails_when_missing_ruff_check(self) -> None:
         """Should fail when ruff check is missing."""
-        evidence = ValidationEvidence(
+        evidence = make_evidence(
             pytest_ran=True,
             ruff_check_ran=False,
             ruff_format_ran=True,
@@ -466,7 +497,7 @@ class TestHasMinimumValidation:
 
     def test_fails_when_missing_ruff_format(self) -> None:
         """Should fail when ruff format is missing."""
-        evidence = ValidationEvidence(
+        evidence = make_evidence(
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=False,
@@ -476,7 +507,7 @@ class TestHasMinimumValidation:
 
     def test_passes_when_all_commands_ran(self) -> None:
         """Should pass when all required commands ran."""
-        evidence = ValidationEvidence(
+        evidence = make_evidence(
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=True,
@@ -490,13 +521,13 @@ class TestMissingCommands:
 
     def test_includes_ty_check_when_missing(self) -> None:
         """Should include 'ty check' when it didn't run."""
-        evidence = ValidationEvidence(ty_check_ran=False)
+        evidence = make_evidence(ty_check_ran=False)
         missing = evidence.missing_commands()
         assert "ty check" in missing
 
     def test_includes_all_missing_commands(self) -> None:
         """Should list all missing commands."""
-        evidence = ValidationEvidence()  # All default to False
+        evidence = make_evidence()  # All default to False
         missing = evidence.missing_commands()
         assert "pytest" in missing
         assert "ruff check" in missing
@@ -505,7 +536,7 @@ class TestMissingCommands:
 
     def test_excludes_commands_that_ran(self) -> None:
         """Should not list commands that ran."""
-        evidence = ValidationEvidence(
+        evidence = make_evidence(
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=True,
@@ -527,14 +558,14 @@ class TestCommitBaselineCheck:
         # Mock git log returning a commit with a timestamp before baseline
         # The commit exists but is older than the run started
         with patch("src.quality_gate.run_command") as mock_run:
-            # Return commit with timestamp 1000 seconds before baseline
+            # Return a commit that is older than the baseline
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
                 stdout="abc1234 1703500000 bd-issue-123: Old fix\n",
                 stderr="",
             )
-            # Baseline is at timestamp 1703501000 (1000s after the commit)
+            # Baseline makes the commit stale
             result = gate.check_commit_exists(
                 "issue-123", baseline_timestamp=1703501000
             )
@@ -548,14 +579,14 @@ class TestCommitBaselineCheck:
         gate = QualityGate(tmp_path)
 
         with patch("src.quality_gate.run_command") as mock_run:
-            # Return commit with timestamp 1000 seconds after baseline
+            # Return a commit that is newer than the baseline
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-issue-123: New fix\n",
                 stderr="",
             )
-            # Baseline is at timestamp 1703501000 (commit is newer)
+            # Baseline allows the newer commit
             result = gate.check_commit_exists(
                 "issue-123", baseline_timestamp=1703501000
             )
@@ -576,7 +607,8 @@ class TestCommitBaselineCheck:
                 stdout="abc1234 bd-issue-123: Old fix\n",
                 stderr="",
             )
-            result = gate.check_commit_exists("issue-123")  # No baseline
+            # No baseline - accepts any commit
+            result = gate.check_commit_exists("issue-123")
 
         assert result.exists is True
         assert result.commit_hash == "abc1234"
@@ -642,9 +674,10 @@ class TestCommitBaselineCheck:
 
         gate = QualityGate(tmp_path)
 
-        # Create log with all validation commands
+        # Create log with all validation commands (including uv sync for SETUP)
         log_path = tmp_path / "session.jsonl"
         commands = [
+            "uv sync --all-extras",
             "uv run pytest",
             "uvx ruff check .",
             "uvx ruff format .",
@@ -848,7 +881,6 @@ class TestScopeAwareEvidence:
 
     def test_per_issue_scope_does_not_require_e2e(self, tmp_path: Path) -> None:
         """Per-issue EvidenceGate should never require E2E evidence."""
-        from src.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
@@ -857,7 +889,6 @@ class TestScopeAwareEvidence:
 
     def test_run_level_scope_can_require_e2e(self, tmp_path: Path) -> None:
         """Run-level scope can require E2E evidence when enabled."""
-        from src.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.RUN_LEVEL)
 
@@ -934,10 +965,7 @@ class TestScopeAwareEvidence:
 
         with patch("src.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
-                command=[],
-                returncode=0,
-                stdout="",  # No output = clean tree
-                stderr="",
+                command=[], returncode=0, stdout="", stderr=""
             )
             result = gate.check_with_resolution(
                 issue_id="test-123",
@@ -1246,7 +1274,6 @@ class TestGetRequiredEvidenceKinds:
     def test_returns_all_command_kinds_from_spec(self) -> None:
         """Should return set of all command kinds in the spec."""
         from src.quality_gate import get_required_evidence_kinds
-        from src.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         kinds = get_required_evidence_kinds(spec)
@@ -1267,14 +1294,13 @@ class TestCheckEvidenceAgainstSpec:
 
     def test_passes_when_all_required_evidence_present(self) -> None:
         """Should pass when all required commands ran."""
-        from src.quality_gate import ValidationEvidence, check_evidence_against_spec
-        from src.validation.spec import ValidationScope, build_validation_spec
-
-        evidence = ValidationEvidence(
+        # Include setup_ran since uv sync is in the spec
+        evidence = make_evidence(
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=True,
             ty_check_ran=True,
+            setup_ran=True,
         )
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
@@ -1285,14 +1311,13 @@ class TestCheckEvidenceAgainstSpec:
 
     def test_fails_when_missing_required_evidence(self) -> None:
         """Should fail and list missing commands."""
-        from src.quality_gate import ValidationEvidence, check_evidence_against_spec
-        from src.validation.spec import ValidationScope, build_validation_spec
-
-        evidence = ValidationEvidence(
+        # Include setup_ran but missing pytest
+        evidence = make_evidence(
             pytest_ran=False,  # Missing pytest
             ruff_check_ran=True,
             ruff_format_ran=True,
             ty_check_ran=True,
+            setup_ran=True,
         )
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
@@ -1303,14 +1328,13 @@ class TestCheckEvidenceAgainstSpec:
 
     def test_per_issue_does_not_require_e2e(self) -> None:
         """Per-issue scope should pass without E2E evidence."""
-        from src.quality_gate import ValidationEvidence, check_evidence_against_spec
-        from src.validation.spec import ValidationScope, build_validation_spec
-
-        evidence = ValidationEvidence(
+        # Include setup_ran since uv sync is in the spec
+        evidence = make_evidence(
             pytest_ran=True,
             ruff_check_ran=True,
             ruff_format_ran=True,
             ty_check_ran=True,
+            setup_ran=True,
             # No E2E evidence - should still pass for per-issue
         )
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
@@ -1323,10 +1347,7 @@ class TestCheckEvidenceAgainstSpec:
 
     def test_respects_disabled_validations(self) -> None:
         """Should not require disabled validations."""
-        from src.quality_gate import ValidationEvidence, check_evidence_against_spec
-        from src.validation.spec import ValidationScope, build_validation_spec
-
-        evidence = ValidationEvidence(
+        evidence = make_evidence(
             pytest_ran=False,  # Not run
             ruff_check_ran=False,  # Not run (post-validate disables ruff/ty too)
             ruff_format_ran=False,  # Not run
@@ -1353,7 +1374,6 @@ class TestCheckWithResolutionSpec:
 
     def test_uses_spec_when_provided(self, tmp_path: Path) -> None:
         """Should use spec-based evidence checking when spec is provided."""
-        from src.validation.spec import ValidationScope, build_validation_spec
 
         log_path = tmp_path / "session.jsonl"
         # Log with all commands EXCEPT pytest
@@ -1711,14 +1731,27 @@ class TestByteOffsetConsistency:
         entry1 = json.dumps(
             {
                 "type": "assistant",
-                "message": {"content": [{"type": "text", "text": "First"}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
             }
         )
         entry2 = json.dumps(
             {
                 "type": "assistant",
                 "message": {
-                    "content": [{"type": "text", "text": "ISSUE_NO_CHANGE: done"}]
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_NO_CHANGE: done",
+                        }
+                    ]
                 },
             }
         )
@@ -1747,7 +1780,6 @@ class TestByteOffsetConsistency:
                         {
                             "type": "tool_use",
                             "name": "Bash",
-                            "id": "t1",
                             "input": {"command": "uv run pytest"},
                         }
                     ]
@@ -1832,7 +1864,6 @@ class TestSpecDrivenEvidencePatterns:
         This test fails if a command is added to build_validation_spec without a pattern,
         ensuring evidence parsing will work for all spec commands.
         """
-        from src.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
@@ -1851,7 +1882,6 @@ class TestSpecDrivenEvidencePatterns:
         This validates that patterns are correct - if we change a command,
         we must also update the pattern to match.
         """
-        from src.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
@@ -1868,7 +1898,6 @@ class TestSpecDrivenEvidencePatterns:
 
         This ensures evidence parsing is driven from spec command definitions.
         """
-        from src.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
@@ -2091,8 +2120,9 @@ class TestValidationExitCodeParsing:
                 },
             }
         )
-        # Other commands succeed
+        # Other commands succeed (including uv sync for SETUP)
         other_commands = [
+            ("toolu_uv_sync_1", "uv sync --all-extras", False),
             ("toolu_ruff_check_1", "uvx ruff check .", False),
             ("toolu_ruff_format_1", "uvx ruff format .", False),
             ("toolu_ty_check_1", "uvx ty check", False),
@@ -2240,8 +2270,9 @@ class TestValidationExitCodeParsing:
         """Gate should pass when all validation commands exit with code 0."""
         log_path = tmp_path / "session.jsonl"
 
-        # All commands succeed
+        # All commands succeed (including uv sync for SETUP)
         commands = [
+            ("toolu_uv_sync_1", "uv sync --all-extras", False, "Resolved"),
             ("toolu_pytest_1", "uv run pytest", False, "5 passed"),
             ("toolu_ruff_check_1", "uvx ruff check .", False, "All checks passed"),
             ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
@@ -2462,8 +2493,9 @@ class TestValidationExitCodeParsing:
                 }
             )
         )
-        # Other commands all succeed
+        # Other commands all succeed (including uv sync for SETUP)
         other_commands = [
+            ("toolu_uv_sync_1", "uv sync --all-extras", False, "Resolved"),
             ("toolu_ruff_check_1", "uvx ruff check .", False, "All checks passed"),
             ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
             ("toolu_ty_check_1", "uvx ty check", False, "No errors"),

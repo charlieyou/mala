@@ -1147,9 +1147,10 @@ class TestQualityGateFullCheck:
 
         gate = QualityGate(tmp_path)
 
-        # Create log with all validation commands
+        # Create log with all validation commands (including uv sync for SETUP)
         log_path = tmp_path / "session.jsonl"
         commands = [
+            "uv sync --all-extras",
             "uv run pytest",
             "uvx ruff check .",
             "uvx ruff format .",

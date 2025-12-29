@@ -48,15 +48,72 @@ __all__ = [
 
 @dataclass
 class ValidationEvidence:
-    """Evidence of validation commands executed during agent run."""
+    """Evidence of validation commands executed during agent run.
 
-    pytest_ran: bool = False
-    ruff_check_ran: bool = False
-    ruff_format_ran: bool = False
-    ty_check_ran: bool = False
+    This class is spec-driven: evidence is stored by CommandKind rather than
+    using hardcoded tool-specific boolean flags. This allows adding new
+    validation commands without code changes to the evidence structure.
+
+    Backward Compatibility:
+        Properties like `pytest_ran`, `ruff_check_ran`, etc. are provided
+        for backward compatibility with existing code that references these
+        directly. Internally, all evidence is stored in `commands_ran`.
+    """
+
+    # Spec-driven evidence storage: CommandKind -> ran boolean
+    commands_ran: dict[CommandKind, bool] = field(default_factory=dict)
 
     # Track which validation commands failed (exited non-zero)
     failed_commands: list[str] = field(default_factory=list)
+
+    # Backward-compatible properties for external consumers
+    @property
+    def pytest_ran(self) -> bool:
+        """Whether pytest (TEST) command ran."""
+        return self.commands_ran.get(CommandKind.TEST, False)
+
+    @pytest_ran.setter
+    def pytest_ran(self, value: bool) -> None:
+        """Set pytest (TEST) evidence."""
+        self.commands_ran[CommandKind.TEST] = value
+
+    @property
+    def ruff_check_ran(self) -> bool:
+        """Whether ruff check (LINT) command ran."""
+        return self.commands_ran.get(CommandKind.LINT, False)
+
+    @ruff_check_ran.setter
+    def ruff_check_ran(self, value: bool) -> None:
+        """Set ruff check (LINT) evidence."""
+        self.commands_ran[CommandKind.LINT] = value
+
+    @property
+    def ruff_format_ran(self) -> bool:
+        """Whether ruff format (FORMAT) command ran."""
+        return self.commands_ran.get(CommandKind.FORMAT, False)
+
+    @ruff_format_ran.setter
+    def ruff_format_ran(self, value: bool) -> None:
+        """Set ruff format (FORMAT) evidence."""
+        self.commands_ran[CommandKind.FORMAT] = value
+
+    @property
+    def ty_check_ran(self) -> bool:
+        """Whether ty check (TYPECHECK) command ran."""
+        return self.commands_ran.get(CommandKind.TYPECHECK, False)
+
+    @ty_check_ran.setter
+    def ty_check_ran(self, value: bool) -> None:
+        """Set ty check (TYPECHECK) evidence."""
+        self.commands_ran[CommandKind.TYPECHECK] = value
+
+    def has_any_evidence(self) -> bool:
+        """Check if any validation command ran.
+
+        Used for progress detection to determine if new validation
+        activity occurred since the last check.
+        """
+        return any(self.commands_ran.values())
 
     def has_minimum_validation(self) -> bool:
         """Check if minimum required validation was performed.
@@ -109,6 +166,10 @@ def check_evidence_against_spec(
 ) -> tuple[bool, list[str]]:
     """Check if evidence satisfies a ValidationSpec's requirements.
 
+    This is fully spec-driven: evidence requirements and display names are
+    derived from the spec's commands, not hardcoded. This allows adding new
+    validation commands without code changes.
+
     This is scope-aware: a per-issue spec won't require E2E evidence because
     per-issue specs don't include E2E commands.
 
@@ -120,23 +181,21 @@ def check_evidence_against_spec(
         Tuple of (passed, missing_commands) where missing_commands lists
         human-readable names of commands that didn't run.
     """
-    required = get_required_evidence_kinds(spec)
     missing: list[str] = []
 
-    # Map CommandKind to evidence flags and display names
-    kind_to_evidence: dict[CommandKind, tuple[bool, str]] = {
-        CommandKind.TEST: (evidence.pytest_ran, "pytest"),
-        CommandKind.LINT: (evidence.ruff_check_ran, "ruff check"),
-        CommandKind.FORMAT: (evidence.ruff_format_ran, "ruff format"),
-        CommandKind.TYPECHECK: (evidence.ty_check_ran, "ty check"),
-        # E2E is checked separately since it has special handling
-    }
+    # Build kind-to-name mapping from spec (spec-driven display names)
+    kind_to_name: dict[CommandKind, str] = {}
+    for cmd in spec.commands:
+        # Use first command name for each kind as the display name
+        if cmd.kind not in kind_to_name:
+            kind_to_name[cmd.kind] = cmd.name
 
-    for kind in required:
-        if kind in kind_to_evidence:
-            ran, name = kind_to_evidence[kind]
-            if not ran:
-                missing.append(name)
+    # Check each required kind from the spec
+    for kind in get_required_evidence_kinds(spec):
+        ran = evidence.commands_ran.get(kind, False)
+        if not ran:
+            name = kind_to_name.get(kind, kind.value)
+            missing.append(name)
 
     return len(missing) == 0, missing
 
@@ -233,6 +292,9 @@ class QualityGate:
         Checks ALL patterns independently (a command may match multiple).
         Returns the last matched command name for failure tracking.
 
+        This method is spec-driven: any CommandKind from the spec will be
+        recorded in evidence.commands_ran without requiring code changes.
+
         Args:
             command: The bash command string.
             evidence: ValidationEvidence to update.
@@ -246,14 +308,8 @@ class QualityGate:
         for kind, patterns in kind_patterns.items():
             for pattern in patterns:
                 if pattern.search(command):
-                    if kind == CommandKind.TEST:
-                        evidence.pytest_ran = True
-                    elif kind == CommandKind.LINT:
-                        evidence.ruff_check_ran = True
-                    elif kind == CommandKind.FORMAT:
-                        evidence.ruff_format_ran = True
-                    elif kind == CommandKind.TYPECHECK:
-                        evidence.ty_check_ran = True
+                    # Spec-driven: record any CommandKind directly
+                    evidence.commands_ran[kind] = True
                     last_match = kind_to_name.get(kind)
                     break  # Found match for this kind, try next kind
         return last_match
@@ -465,15 +521,8 @@ class QualityGate:
         # Check for new validation evidence after the offset using spec-driven parsing
         evidence = self.parse_validation_evidence_with_spec(log_path, spec, log_offset)
 
-        # Any new validation evidence counts as progress
-        has_new_evidence = (
-            evidence.pytest_ran
-            or evidence.ruff_check_ran
-            or evidence.ruff_format_ran
-            or evidence.ty_check_ran
-        )
-
-        if has_new_evidence:
+        # Any new validation evidence counts as progress (spec-driven)
+        if evidence.has_any_evidence():
             return False
 
         # No commit change, no working tree changes, and no new evidence = no progress
