@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from .event_sink import EventRunConfig, MalaEventSink
-from .logging.console import (
+from .log_output.console import (
     Colors,
     log,
     log_agent_text,
@@ -21,7 +21,7 @@ class ConsoleEventSink:
     """Event sink that outputs to the console using existing log helpers.
 
     Implements all MalaEventSink methods, delegating to log(), log_tool(),
-    and log_agent_text() from src/logging/console.py.
+    and log_agent_text() from src/log_output/console.py.
 
     Example:
         sink = ConsoleEventSink()

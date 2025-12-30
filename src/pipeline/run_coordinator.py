@@ -37,7 +37,7 @@ from src.hooks import (
     make_lock_enforcement_hook,
     make_stop_hook,
 )
-from src.logging.console import (
+from src.log_output.console import (
     log_agent_text,
     log_tool,
     truncate_text,
@@ -54,7 +54,7 @@ from src.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
     from src.event_sink import MalaEventSink
-    from src.logging.run_metadata import (
+    from src.log_output.run_metadata import (
         RunMetadata,
         ValidationResult as MetaValidationResult,
     )
@@ -189,7 +189,7 @@ class SpecResultBuilder:
         Returns:
             MetaValidationResult for run metadata.
         """
-        from src.logging.run_metadata import ValidationResult as MetaValidationResult
+        from src.log_output.run_metadata import ValidationResult as MetaValidationResult
 
         e2e_passed = SpecResultBuilder.derive_e2e_passed(result)
         failed_commands = (

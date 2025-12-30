@@ -101,7 +101,7 @@ from typing import Annotated, Never
 
 import typer
 
-from .logging.console import Colors, log, set_verbose
+from .log_output.console import Colors, log, set_verbose
 
 # SDK-dependent imports (BeadsClient, MalaOrchestrator, get_lock_dir, run_metadata)
 # are lazy-loaded via __getattr__ to ensure bootstrap() runs before claude_agent_sdk
@@ -793,11 +793,11 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
 
         _lazy_modules[name] = get_lock_dir
     elif name == "get_running_instances":
-        from .logging.run_metadata import get_running_instances
+        from .log_output.run_metadata import get_running_instances
 
         _lazy_modules[name] = get_running_instances
     elif name == "get_running_instances_for_dir":
-        from .logging.run_metadata import get_running_instances_for_dir
+        from .log_output.run_metadata import get_running_instances_for_dir
 
         _lazy_modules[name] = get_running_instances_for_dir
 

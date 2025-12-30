@@ -2489,7 +2489,7 @@ class TestValidationResultMetadata:
         This tests mala-3qp.8: Gate and metadata share the same validation result,
         avoiding duplicate validation parsing.
         """
-        from src.logging.run_metadata import IssueRun, RunMetadata
+        from src.log_output.run_metadata import IssueRun, RunMetadata
         from src.quality_gate import (
             CommandKind,
             GateResult,
@@ -2598,7 +2598,7 @@ class TestValidationResultMetadata:
         This tests mala-3qp.8: No duplicate validation parsing - both gate decisions
         and metadata use the same ValidationEvidence object stored in gate result.
         """
-        from src.logging.run_metadata import IssueRun, RunMetadata
+        from src.log_output.run_metadata import IssueRun, RunMetadata
         from src.quality_gate import (
             CommandKind,
             GateResult,
@@ -2717,7 +2717,7 @@ class TestResolutionRecordingInMetadata:
         self, tmp_path: Path
     ) -> None:
         """ISSUE_NO_CHANGE resolution should be recorded in IssueRun metadata."""
-        from src.logging.run_metadata import IssueRun, RunMetadata
+        from src.log_output.run_metadata import IssueRun, RunMetadata
         from src.validation.spec import IssueResolution, ResolutionOutcome
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
@@ -2807,7 +2807,7 @@ class TestResolutionRecordingInMetadata:
         self, tmp_path: Path
     ) -> None:
         """ISSUE_OBSOLETE resolution should be recorded in IssueRun metadata."""
-        from src.logging.run_metadata import IssueRun, RunMetadata
+        from src.log_output.run_metadata import IssueRun, RunMetadata
         from src.validation.spec import IssueResolution, ResolutionOutcome
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
@@ -2895,7 +2895,7 @@ class TestResolutionRecordingInMetadata:
     @pytest.mark.asyncio
     async def test_normal_success_has_no_resolution(self, tmp_path: Path) -> None:
         """Normal success (with commit) should have no resolution marker."""
-        from src.logging.run_metadata import IssueRun, RunMetadata
+        from src.log_output.run_metadata import IssueRun, RunMetadata
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -3307,7 +3307,7 @@ class TestFailedRunQualityGateEvidence:
         self, tmp_path: Path
     ) -> None:
         """Failed run should populate quality_gate with evidence and failure reasons."""
-        from src.logging.run_metadata import IssueRun, RunMetadata
+        from src.log_output.run_metadata import IssueRun, RunMetadata
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
 

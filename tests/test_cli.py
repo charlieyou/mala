@@ -371,7 +371,7 @@ def test_status_no_running_instance(
 ) -> None:
     """Test status when no mala instance is running in cwd."""
     cli = _reload_cli(monkeypatch)
-    import src.logging.run_metadata
+    import src.log_output.run_metadata
 
     config_dir = tmp_path / "config"
     config_dir.mkdir()
@@ -384,7 +384,7 @@ def test_status_no_running_instance(
     monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
     # Mock to return no running instances
     monkeypatch.setattr(
-        src.logging.run_metadata, "get_running_instances_for_dir", lambda _: []
+        src.log_output.run_metadata, "get_running_instances_for_dir", lambda _: []
     )
 
     cli.status()
@@ -399,7 +399,7 @@ def test_status_with_running_instance(
 ) -> None:
     """Test status when a mala instance is running in cwd."""
     cli = _reload_cli(monkeypatch)
-    import src.logging.run_metadata
+    import src.log_output.run_metadata
     from datetime import datetime, UTC
 
     config_dir = tmp_path / "config"
@@ -417,7 +417,7 @@ def test_status_with_running_instance(
     (run_dir / "two.json").write_text("{}")
 
     # Create a mock RunningInstance
-    mock_instance = src.logging.run_metadata.RunningInstance(
+    mock_instance = src.log_output.run_metadata.RunningInstance(
         run_id="test-run-id",
         repo_path=tmp_path,
         started_at=datetime.now(UTC),
@@ -429,7 +429,7 @@ def test_status_with_running_instance(
     monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
     monkeypatch.setattr(
-        src.logging.run_metadata,
+        src.log_output.run_metadata,
         "get_running_instances_for_dir",
         lambda _: [mock_instance],
     )
@@ -450,7 +450,7 @@ def test_status_all_flag(
 ) -> None:
     """Test status --all flag shows all instances grouped by directory."""
     cli = _reload_cli(monkeypatch)
-    import src.logging.run_metadata
+    import src.log_output.run_metadata
     from datetime import datetime, UTC
 
     config_dir = tmp_path / "config"
@@ -461,14 +461,14 @@ def test_status_all_flag(
     lock_dir.mkdir()
 
     # Create mock instances for two different directories
-    mock_instance_1 = src.logging.run_metadata.RunningInstance(
+    mock_instance_1 = src.log_output.run_metadata.RunningInstance(
         run_id="run-1",
         repo_path=tmp_path / "repo1",
         started_at=datetime.now(UTC),
         pid=111,
         max_agents=2,
     )
-    mock_instance_2 = src.logging.run_metadata.RunningInstance(
+    mock_instance_2 = src.log_output.run_metadata.RunningInstance(
         run_id="run-2",
         repo_path=tmp_path / "repo2",
         started_at=datetime.now(UTC),
@@ -479,7 +479,7 @@ def test_status_all_flag(
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(
-        src.logging.run_metadata,
+        src.log_output.run_metadata,
         "get_running_instances",
         lambda: [mock_instance_1, mock_instance_2],
     )

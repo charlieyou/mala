@@ -21,11 +21,11 @@ from .git_utils import (
     get_baseline_for_issue,
 )
 from .hooks import MORPH_DISALLOWED_TOOLS
-from .logging.console import (
+from .log_output.console import (
     truncate_text,
     is_verbose_enabled,
 )
-from .logging.run_metadata import (
+from .log_output.run_metadata import (
     RunMetadata,
     RunConfig,
     IssueRun,

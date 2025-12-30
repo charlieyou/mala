@@ -226,7 +226,7 @@ def map_exit_code_to_result(
 
     # Warn if exit code and JSON verdict disagree
     if json_passed != exit_passed:
-        from src.logging.console import Colors, log
+        from src.log_output.console import Colors, log
 
         log(
             "!",

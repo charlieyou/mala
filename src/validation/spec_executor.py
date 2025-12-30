@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ..logging.console import Colors, log
+from ..log_output.console import Colors, log
 from ..tools.env import SCRIPTS_DIR, get_cache_dir
 from src.tools.command_runner import CommandRunner
 from .helpers import format_step_output

@@ -47,7 +47,7 @@ from src.lifecycle import (
     LifecycleContext,
     LifecycleState,
 )
-from src.logging.console import (
+from src.log_output.console import (
     Colors,
     log,
     log_verbose,

@@ -1,4 +1,4 @@
-"""Unit tests for src/logging/run_metadata.py - RunMetadata and related types.
+"""Unit tests for src/log_output/run_metadata.py - RunMetadata and related types.
 
 Tests for:
 - RunMetadata serialization/deserialization
@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.logging.run_metadata import (
+from src.log_output.run_metadata import (
     IssueRun,
     QualityGateResult,
     RunConfig,
@@ -354,7 +354,7 @@ class TestRunMetadataSerialization:
                 return Path(tmpdir) / "-tmp-test-repo"
 
             with patch(
-                "src.logging.run_metadata.get_repo_runs_dir", mock_get_repo_runs_dir
+                "src.log_output.run_metadata.get_repo_runs_dir", mock_get_repo_runs_dir
             ):
                 # Save
                 path = metadata_with_issues.save()
@@ -432,7 +432,7 @@ class TestRunMetadataSerialization:
                 return Path(tmpdir) / "-home-user-my-project"
 
             with patch(
-                "src.logging.run_metadata.get_repo_runs_dir", mock_get_repo_runs_dir
+                "src.log_output.run_metadata.get_repo_runs_dir", mock_get_repo_runs_dir
             ):
                 path = metadata.save()
 
@@ -607,7 +607,9 @@ class TestRunMarkers:
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_dir = Path(tmpdir)
 
-            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+            with patch(
+                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+            ):
                 # Write marker
                 path = write_run_marker(
                     run_id="test-run-1",
@@ -640,7 +642,9 @@ class TestRunMarkers:
         """Test _get_marker_path helper."""
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_dir = Path(tmpdir)
-            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+            with patch(
+                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+            ):
                 path = _get_marker_path("my-run-id")
                 assert path == lock_dir / "run-my-run-id.marker"
 
@@ -652,14 +656,16 @@ class TestGetRunningInstances:
         """Test with no markers."""
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_dir = Path(tmpdir)
-            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+            with patch(
+                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+            ):
                 instances = get_running_instances()
                 assert instances == []
 
     def test_get_running_instances_nonexistent_dir(self) -> None:
         """Test with non-existent lock directory."""
         with patch(
-            "src.logging.run_metadata.get_lock_dir",
+            "src.log_output.run_metadata.get_lock_dir",
             return_value=Path("/nonexistent/path"),
         ):
             instances = get_running_instances()
@@ -697,7 +703,9 @@ class TestGetRunningInstances:
                 )
             )
 
-            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+            with patch(
+                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+            ):
                 instances = get_running_instances()
 
             assert len(instances) == 2
@@ -723,10 +731,13 @@ class TestGetRunningInstances:
                 )
             )
 
-            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+            with patch(
+                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+            ):
                 # Mock _is_process_running to return False for stale PID
                 with patch(
-                    "src.logging.run_metadata._is_process_running", return_value=False
+                    "src.log_output.run_metadata._is_process_running",
+                    return_value=False,
                 ):
                     instances = get_running_instances()
 
@@ -757,7 +768,9 @@ class TestGetRunningInstances:
                 )
             )
 
-            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+            with patch(
+                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+            ):
                 instances = get_running_instances()
 
             # Should return only the good instance
@@ -802,7 +815,9 @@ class TestGetRunningInstances:
                 )
             )
 
-            with patch("src.logging.run_metadata.get_lock_dir", return_value=lock_dir):
+            with patch(
+                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+            ):
                 # Filter for target directory
                 target_instances = get_running_instances_for_dir(target_dir)
                 assert len(target_instances) == 1
