@@ -962,3 +962,152 @@ class TestPriorityAdjustment:
 
         priority = await verifier._get_adjusted_priority("epic-1", "minor")
         assert priority == "P5"  # P4 + 2 = P6, capped to P5
+
+
+# ============================================================================
+# Test model error handling
+# ============================================================================
+
+
+class TestModelErrorHandling:
+    """Tests for model timeout/error handling."""
+
+    @pytest.mark.asyncio
+    async def test_model_timeout_returns_low_confidence_verdict(
+        self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
+    ) -> None:
+        """Should return low-confidence verdict when model times out."""
+        # Make model raise timeout error
+        mock_model.verify.side_effect = TimeoutError("Model call timed out")
+
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "log" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="abc123")
+            if "show" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="diff")
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+
+        verdict = await verifier.verify_epic("epic-1")
+
+        assert verdict.passed is False
+        assert verdict.confidence == 0.0
+        assert "Model verification failed" in verdict.reasoning
+
+    @pytest.mark.asyncio
+    async def test_model_error_returns_low_confidence_verdict(
+        self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
+    ) -> None:
+        """Should return low-confidence verdict when model raises error."""
+        # Make model raise generic error
+        mock_model.verify.side_effect = RuntimeError("API connection failed")
+
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "log" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="abc123")
+            if "show" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="diff")
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+
+        verdict = await verifier.verify_epic("epic-1")
+
+        assert verdict.passed is False
+        assert verdict.confidence == 0.0
+        assert "API connection failed" in verdict.reasoning
+
+    @pytest.mark.asyncio
+    async def test_model_error_triggers_human_review_in_eligible_flow(
+        self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
+    ) -> None:
+        """Model errors should trigger human review in verify_and_close_eligible."""
+        mock_model.verify.side_effect = TimeoutError("timeout")
+
+        review_created = False
+
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            nonlocal review_created
+            if "epic" in cmd and "list" in cmd:
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout='[{"id": "epic-1"}]',
+                )
+            if "log" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="abc123")
+            if "show" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="diff")
+            if "issue" in cmd and "create" in cmd:
+                review_created = True
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout="Created issue: review-1",
+                )
+            if "dep" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="")
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+
+        result = await verifier.verify_and_close_eligible()
+
+        # Low confidence (0.0) should trigger human review
+        assert result.human_review_count == 1
+        assert review_created
+
+
+# ============================================================================
+# Test binary file handling
+# ============================================================================
+
+
+class TestBinaryFileHandling:
+    """Tests for handling binary/non-UTF8 files in file-list mode."""
+
+    def test_file_list_skips_binary_files(
+        self, tmp_path: Path, mock_beads: MagicMock, mock_model: MagicMock
+    ) -> None:
+        """Should skip binary files without crashing."""
+        # Create a binary file
+        (tmp_path / "binary.bin").write_bytes(b"\x00\x01\x02\xff\xfe")
+        # Create a text file
+        (tmp_path / "text.py").write_text("print('hello')")
+
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=tmp_path,
+        )
+
+        diff = "diff --git a/binary.bin b/binary.bin\n+content\ndiff --git a/text.py b/text.py\n+code"
+        result = verifier._to_file_list_mode(diff)
+
+        # Should include text file but not crash on binary
+        assert "text.py" in result
+        assert "print('hello')" in result
+        # Binary file should be listed but content not included
+        assert "binary.bin" in result
+
+    def test_file_list_skips_non_utf8_files(
+        self, tmp_path: Path, mock_beads: MagicMock, mock_model: MagicMock
+    ) -> None:
+        """Should skip files with invalid UTF-8 without crashing."""
+        # Create a file with invalid UTF-8
+        (tmp_path / "invalid.txt").write_bytes(b"Hello \xff\xfe World")
+
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=tmp_path,
+        )
+
+        diff = "diff --git a/invalid.txt b/invalid.txt\n+content"
+        # Should not raise UnicodeDecodeError
+        result = verifier._to_file_list_mode(diff)
+
+        # File should be listed but content not included
+        assert "invalid.txt" in result
+        assert "Hello" not in result  # Content should not be present

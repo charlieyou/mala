@@ -406,8 +406,18 @@ class EpicVerifier:
                 except OSError:
                     pass
 
-        # Invoke verification model
-        return await self.model.verify(epic_description, diff, spec_content)
+        # Invoke verification model with error handling
+        # Per spec: timeouts/errors should trigger human review, not abort
+        try:
+            return await self.model.verify(epic_description, diff, spec_content)
+        except Exception as e:
+            # Model timeout or error - return low-confidence verdict for human review
+            return EpicVerdict(
+                passed=False,
+                unmet_criteria=[],
+                confidence=0.0,
+                reasoning=f"Model verification failed: {e}",
+            )
 
     async def _get_eligible_epics(self) -> list[str]:
         """Get list of epics eligible for closure.
@@ -577,14 +587,15 @@ class EpicVerifier:
             full_path = self.repo_path / f
             if full_path.exists():
                 try:
-                    content = full_path.read_text()
-                    if len(content.encode()) <= FILE_LIST_MAX_FILE_SIZE_KB * 1024:
+                    file_content = full_path.read_text()
+                    if len(file_content.encode()) <= FILE_LIST_MAX_FILE_SIZE_KB * 1024:
                         result_lines.append(f"### {f}")
                         result_lines.append("```")
-                        result_lines.append(content)
+                        result_lines.append(file_content)
                         result_lines.append("```")
                         result_lines.append("")
-                except OSError:
+                except (OSError, UnicodeDecodeError):
+                    # Skip binary or unreadable files
                     pass
 
         return "\n".join(result_lines)
