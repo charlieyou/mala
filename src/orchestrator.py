@@ -348,6 +348,8 @@ class MalaOrchestrator:
                 model=verification_model,
                 repo_path=self.repo_path,
                 max_diff_size_kb=self._config.max_diff_size_kb,
+                event_sink=self.event_sink,
+                lock_manager=True,  # Enable locking for sequential epic processing
             )
         else:
             # When using a mock issue_provider, skip EpicVerifier

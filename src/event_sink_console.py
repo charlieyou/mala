@@ -4,6 +4,7 @@ Implements MalaEventSink using existing console logging helpers.
 Produces human-readable output for terminal use.
 """
 
+import re
 from typing import Any
 
 from .event_sink import EventRunConfig, MalaEventSink
@@ -503,8 +504,13 @@ class ConsoleEventSink:
         criterion: str,
     ) -> None:
         """Log remediation issue creation."""
-        # Truncate criterion for display
-        crit_display = criterion[:60] + "..." if len(criterion) > 60 else criterion
+        # Sanitize and truncate criterion for display
+        sanitized_criterion = re.sub(r"\s+", " ", criterion.strip())
+        crit_display = (
+            sanitized_criterion[:60] + "..."
+            if len(sanitized_criterion) > 60
+            else sanitized_criterion
+        )
         log_verbose(
             "◐",
             f"Created remediation {issue_id} for epic {epic_id}: {crit_display}",

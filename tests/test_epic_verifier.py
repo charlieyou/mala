@@ -275,9 +275,38 @@ class TestLargeDiffHandling:
     def test_file_list_includes_small_files(
         self, tmp_path: Path, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:
-        """Should include contents of small files in file-list mode."""
-        # Create a small file
+        """Should include contents of small files in file-list mode.
+
+        Files are read from HEAD commit to ensure consistency with the scoped diff.
+        """
+        import subprocess
+
+        # Initialize a git repo in tmp_path
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        # Create and commit a small file
         (tmp_path / "small.py").write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "small.py"], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
 
         verifier = EpicVerifier(
             beads=mock_beads,
@@ -1070,11 +1099,41 @@ class TestBinaryFileHandling:
     def test_file_list_skips_binary_files(
         self, tmp_path: Path, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:
-        """Should skip binary files without crashing."""
+        """Should skip binary files without crashing.
+
+        Files are read from HEAD commit to ensure consistency with the scoped diff.
+        """
+        import subprocess
+
+        # Initialize a git repo in tmp_path
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        # Create and commit files
         # Create a binary file
         (tmp_path / "binary.bin").write_bytes(b"\x00\x01\x02\xff\xfe")
         # Create a text file
         (tmp_path / "text.py").write_text("print('hello')")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
 
         verifier = EpicVerifier(
             beads=mock_beads,
@@ -1094,9 +1153,38 @@ class TestBinaryFileHandling:
     def test_file_list_skips_non_utf8_files(
         self, tmp_path: Path, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:
-        """Should skip files with invalid UTF-8 without crashing."""
-        # Create a file with invalid UTF-8
+        """Should skip files with invalid UTF-8 without crashing.
+
+        Files are read from HEAD commit to ensure consistency with the scoped diff.
+        """
+        import subprocess
+
+        # Initialize a git repo in tmp_path
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        # Create a file with invalid UTF-8 and commit it
         (tmp_path / "invalid.txt").write_bytes(b"Hello \xff\xfe World")
+        subprocess.run(
+            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
 
         verifier = EpicVerifier(
             beads=mock_beads,

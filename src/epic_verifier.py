@@ -17,9 +17,11 @@ Design principles:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -38,11 +40,47 @@ if TYPE_CHECKING:
 
 # Spec path patterns from docs (case-insensitive)
 SPEC_PATH_PATTERNS = [
-    r"[Ss]ee\s+(specs/[\w/.-]+\.(?:md|MD))",  # "See specs/foo/bar.md"
-    r"[Ss]pec:\s*(specs/[\w/.-]+\.(?:md|MD))",  # "Spec: specs/foo.md"
-    r"\[(specs/[\w/.-]+\.(?:md|MD))\]",  # "[specs/foo.md]"
-    r"(?:^|\s)(specs/[\w/.-]+\.(?:md|MD))(?:\s|$)",  # Bare "specs/foo.md"
+    r"[Ss]ee\s+(specs/[\w/-]+\.(?:md|MD))",  # "See specs/foo/bar.md"
+    r"[Ss]pec:\s*(specs/[\w/-]+\.(?:md|MD))",  # "Spec: specs/foo.md"
+    r"\[(specs/[\w/-]+\.(?:md|MD))\]",  # "[specs/foo.md]"
+    r"(?:^|\s)(specs/[\w/-]+\.(?:md|MD))(?:\s|$)",  # Bare "specs/foo.md"
 ]
+
+
+def _get_file_at_commit(
+    file_path: str, repo_path: Path, commit: str = "HEAD"
+) -> str | None:
+    """Get file content at a specific commit using git show.
+
+    This reads the file content from the git repository at the specified
+    commit, avoiding potential discrepancies with uncommitted working tree
+    changes.
+
+    Args:
+        file_path: The path to the file (relative to repo root).
+        repo_path: Path to the repository.
+        commit: The commit to read from (default: HEAD).
+
+    Returns:
+        The file content as a string, or None if the file doesn't exist
+        at that commit or cannot be read.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{commit}:{file_path}"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout
+    except subprocess.CalledProcessError:
+        # File doesn't exist at this commit or git command failed
+        return None
+    except UnicodeDecodeError:
+        # Binary file
+        return None
+
 
 # Default diff size limit (100KB)
 DEFAULT_MAX_DIFF_SIZE_KB = 100
@@ -98,21 +136,34 @@ class ClaudeEpicVerificationModel:
     """Claude-based implementation of EpicVerificationModel protocol.
 
     Uses the Claude SDK to verify epic acceptance criteria against code diffs.
+    Supports configuration via constructor parameters to integrate with MalaConfig.
     """
+
+    # Default model for epic verification
+    DEFAULT_MODEL = "claude-sonnet-4-20250514"
 
     def __init__(
         self,
-        model: str = "claude-sonnet-4-20250514",
+        model: str | None = None,
         timeout_ms: int = 120000,
+        api_key: str | None = None,
+        base_url: str | None = None,
     ):
         """Initialize ClaudeEpicVerificationModel.
 
         Args:
-            model: The Claude model to use for verification.
+            model: The Claude model to use for verification. Defaults to
+                DEFAULT_MODEL if not specified.
             timeout_ms: Timeout for model calls in milliseconds.
+            api_key: Anthropic API key. If not provided, the Anthropic client
+                will use the ANTHROPIC_API_KEY environment variable.
+            base_url: Optional base URL for API requests. Useful for routing
+                through MorphLLM or other proxies.
         """
-        self.model = model
+        self.model = model or self.DEFAULT_MODEL
         self.timeout_ms = timeout_ms
+        self.api_key = api_key
+        self.base_url = base_url
         self._prompt_template = _load_prompt_template()
 
     async def verify(
@@ -145,8 +196,17 @@ class ClaudeEpicVerificationModel:
             diff_content=diff,
         )
 
-        client = Anthropic()
-        response = client.messages.create(
+        # Build client kwargs, only including non-None values
+        client_kwargs: dict[str, object] = {"timeout": self.timeout_ms / 1000}
+        if self.api_key is not None:
+            client_kwargs["api_key"] = self.api_key
+        if self.base_url is not None:
+            client_kwargs["base_url"] = self.base_url
+
+        client = Anthropic(**client_kwargs)
+        # Use asyncio.to_thread to avoid blocking the event loop during API calls
+        response = await asyncio.to_thread(
+            client.messages.create,
             model=self.model,
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
@@ -276,12 +336,14 @@ class EpicVerifier:
         passed_count = 0
         failed_count = 0
         human_review_count = 0
+        verified_count = 0  # Track actually verified epics (not skipped due to lock)
 
         for epic_id in eligible_epics:
             # Human override bypasses verification
             if epic_id in human_override_epic_ids:
                 await self.beads.close_async(epic_id)
                 passed_count += 1
+                verified_count += 1  # Human override counts as verified
                 verdicts[epic_id] = EpicVerdict(
                     passed=True,
                     unmet_criteria=[],
@@ -316,6 +378,7 @@ class EpicVerifier:
 
                 verdict = await self.verify_epic(epic_id)
                 verdicts[epic_id] = verdict
+                verified_count += 1  # Epic was actually verified (not skipped)
 
                 if verdict.passed and verdict.confidence >= LOW_CONFIDENCE_THRESHOLD:
                     # Verification passed, close the epic
@@ -365,7 +428,7 @@ class EpicVerifier:
                         pass
 
         return EpicVerificationResult(
-            verified_count=len(eligible_epics),
+            verified_count=verified_count,
             passed_count=passed_count,
             failed_count=failed_count,
             human_review_count=human_review_count,
@@ -496,10 +559,14 @@ class EpicVerifier:
         if not all_commits:
             return ""
 
+        # Deduplicate commits while preserving order
+        # A single commit may fix multiple child issues under the same epic
+        unique_commits = list(dict.fromkeys(all_commits))
+
         # Generate combined diff for all commits
         # Use git show to get diff for each commit and concatenate
         diffs: list[str] = []
-        for commit in all_commits:
+        for commit in unique_commits:
             result = await self._runner.run_async(["git", "show", "--format=", commit])
             if result.ok and result.stdout:
                 diffs.append(result.stdout)
@@ -545,7 +612,6 @@ class EpicVerifier:
 
         current_file: str | None = None
         file_lines: list[str] = []
-        file_line_count = 0
 
         for line in lines:
             if line.startswith("diff --git"):
@@ -561,10 +627,8 @@ class EpicVerifier:
                 match = re.search(r"diff --git a/(.+?) b/", line)
                 current_file = match.group(1) if match else "unknown"
                 file_lines = [line]
-                file_line_count = 0
             else:
                 file_lines.append(line)
-                file_line_count += 1
 
         # Save last file
         if current_file and file_lines:
@@ -579,6 +643,8 @@ class EpicVerifier:
         """Convert diff to file-list mode.
 
         Lists changed files only, with contents for files under 5KB.
+        File contents are read from HEAD commit to ensure consistency
+        with the scoped diff.
 
         Args:
             diff: The original diff content.
@@ -608,19 +674,16 @@ class EpicVerifier:
         result_lines.append("")
 
         for f in files_changed:
-            full_path = self.repo_path / f
-            if full_path.exists():
-                try:
-                    file_content = full_path.read_text()
-                    if len(file_content.encode()) <= FILE_LIST_MAX_FILE_SIZE_KB * 1024:
-                        result_lines.append(f"### {f}")
-                        result_lines.append("```")
-                        result_lines.append(file_content)
-                        result_lines.append("```")
-                        result_lines.append("")
-                except (OSError, UnicodeDecodeError):
-                    # Skip binary or unreadable files
-                    pass
+            # Read file content from HEAD commit to ensure consistency with
+            # the scoped diff (avoids issues with uncommitted working tree changes)
+            file_content = _get_file_at_commit(f, self.repo_path)
+            if file_content is not None:
+                if len(file_content.encode()) <= FILE_LIST_MAX_FILE_SIZE_KB * 1024:
+                    result_lines.append(f"### {f}")
+                    result_lines.append("```")
+                    result_lines.append(file_content)
+                    result_lines.append("```")
+                    result_lines.append("")
 
         return "\n".join(result_lines)
 
@@ -652,8 +715,10 @@ class EpicVerifier:
                 continue
 
             # Create new remediation issue
-            title = f"[Remediation] {criterion.criterion[:60]}"
-            if len(criterion.criterion) > 60:
+            # Sanitize criterion text for title: remove newlines, collapse whitespace
+            sanitized_criterion = re.sub(r"\s+", " ", criterion.criterion.strip())
+            title = f"[Remediation] {sanitized_criterion[:60]}"
+            if len(sanitized_criterion) > 60:
                 title = title + "..."
 
             description = f"""## Context
@@ -736,7 +801,7 @@ This epic has been flagged for human review.
 - Reasoning: {verdict.reasoning}
 """
 
-        description += """
+        description += f"""
 ## Resolution
 Review the epic and its child issues manually. When satisfied, close this issue
 to unblock the epic, or use `--epic-override {epic_id}` to force closure.
