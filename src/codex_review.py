@@ -356,7 +356,7 @@ def _parse_session_log_path(stderr: str) -> str | None:
 async def run_codex_review(
     repo_path: Path,
     commit_sha: str,
-    max_retries: int = 2,
+    max_retries: int = 3,
     issue_description: str | None = None,
     baseline_commit: str | None = None,
     capture_session_log: bool = False,
@@ -369,7 +369,7 @@ async def run_codex_review(
     Args:
         repo_path: Path to the git repository.
         commit_sha: The commit SHA to review.
-        max_retries: Maximum number of attempts (default 2 = 1 initial + 1 retry).
+        max_retries: Maximum number of attempts (default 3 = 1 initial + 2 retries).
         issue_description: The issue description to verify scope completeness.
             If provided, Codex will verify the diff addresses all scope items.
         baseline_commit: Optional baseline commit for cumulative diff review.

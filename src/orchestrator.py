@@ -145,7 +145,7 @@ class DefaultCodeReviewer:
         self,
         repo_path: Path,
         commit_sha: str,
-        max_retries: int = 2,
+        max_retries: int = 3,
         issue_description: str | None = None,
         baseline_commit: str | None = None,
         capture_session_log: bool = False,
@@ -941,7 +941,7 @@ class MalaOrchestrator:
             )
 
             if ready:
-                self.event_sink.on_ready_issues(ready)
+                self.event_sink.on_ready_issues(list(ready))
 
             while (
                 self.max_agents is None or len(self.active_tasks) < self.max_agents

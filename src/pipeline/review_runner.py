@@ -38,7 +38,7 @@ class ReviewRunnerConfig:
         capture_session_log: Whether to capture codex session log path.
     """
 
-    max_review_retries: int = 2
+    max_review_retries: int = 3
     thinking_mode: str | None = None
     capture_session_log: bool = False
 
@@ -141,7 +141,7 @@ class ReviewRunner:
         result = await self.code_reviewer(
             repo_path=input.repo_path,
             commit_sha=input.commit_sha,
-            max_retries=2,  # Internal retry within codex
+            max_retries=3,  # Internal retry within codex
             issue_description=input.issue_description,
             baseline_commit=input.baseline_commit,
             capture_session_log=self.config.capture_session_log,

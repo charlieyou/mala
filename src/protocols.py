@@ -260,7 +260,7 @@ class CodeReviewer(Protocol):
         self,
         repo_path: Path,
         commit_sha: str,
-        max_retries: int = 2,
+        max_retries: int = 3,
         issue_description: str | None = None,
         baseline_commit: str | None = None,
         capture_session_log: bool = False,
@@ -271,7 +271,7 @@ class CodeReviewer(Protocol):
         Args:
             repo_path: Path to the git repository.
             commit_sha: The commit SHA to review.
-            max_retries: Maximum number of attempts (default 2).
+            max_retries: Maximum number of attempts (default 3).
             issue_description: Issue description for scope verification.
             baseline_commit: Optional baseline commit for cumulative diff.
             capture_session_log: If True, capture session log path.
