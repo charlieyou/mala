@@ -187,7 +187,7 @@ class ConsoleEventSink:
 
     def on_agent_started(self, agent_id: str, issue_id: str) -> None:
         """Log agent spawn."""
-        log("▶", f"Spawning agent for {issue_id}", Colors.GREEN, agent_id=agent_id)
+        log("▶", "Agent started", Colors.BLUE, agent_id=issue_id)
 
     def on_agent_completed(
         self,
@@ -210,7 +210,7 @@ class ConsoleEventSink:
 
     def on_claim_failed(self, agent_id: str, issue_id: str) -> None:
         """Log when claiming an issue fails."""
-        log("!", f"Failed to claim {issue_id}", Colors.YELLOW, agent_id=agent_id)
+        log("⚠", f"Failed to claim {issue_id}", Colors.YELLOW, agent_id=issue_id)
 
     # -------------------------------------------------------------------------
     # SDK message streaming
@@ -418,14 +418,16 @@ class ConsoleEventSink:
 
     def on_locks_cleaned(self, agent_id: str, count: int) -> None:
         """Log stale lock cleanup."""
-        log_verbose(
-            "◦", f"Cleaned {count} stale lock(s)", Colors.MUTED, agent_id=agent_id
+        log(
+            "🧹",
+            f"Cleaned {count} locks for {agent_id[:8]}",
+            Colors.MUTED,
         )
 
     def on_locks_released(self, count: int) -> None:
         """Log remaining locks released at run end."""
         if count > 0:
-            log_verbose("◦", f"Released {count} remaining lock(s)", Colors.MUTED)
+            log("🧹", f"Released {count} remaining locks", Colors.MUTED)
 
     def on_issues_committed(self) -> None:
         """Log issues.jsonl commit."""
