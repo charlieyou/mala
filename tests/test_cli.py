@@ -732,10 +732,10 @@ def test_run_review_disabled_via_disable_validations(
     assert DummyOrchestrator.last_kwargs["disable_validations"] == {"review"}
 
 
-def test_run_codex_review_value_rejected(
+def test_disable_validations_legacy_codex_value_rejected(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that codex-review value is no longer valid (renamed to review)."""
+    """Test that legacy codex-review value is rejected (use 'review' instead)."""
     cli = _reload_cli(monkeypatch)
     monkeypatch.setenv("MORPH_API_KEY", "test-key")
 

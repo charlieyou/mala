@@ -3414,11 +3414,11 @@ class TestBaselineCommitSelection:
             log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
         )
 
-        # Track what baseline is used when running codex review
+        # Track what baseline is used when running review
         captured_baseline: list[str | None] = []
 
-        # Mock to capture the baseline passed to codex review
-        async def mock_run_codex_review(
+        # Mock to capture the baseline passed to review
+        async def mock_run_review(
             repo_path: Path,
             commit_hash: str | None,
             max_retries: int = 2,
@@ -3464,7 +3464,7 @@ class TestBaselineCommitSelection:
             patch.object(
                 orchestrator.code_reviewer,
                 "__call__",
-                side_effect=mock_run_codex_review,
+                side_effect=mock_run_review,
             ),
             patch.object(
                 orchestrator.beads,
@@ -3474,8 +3474,8 @@ class TestBaselineCommitSelection:
         ):
             await orchestrator.run_implementer("fresh-issue")
 
-        # For fresh issues, codex review should receive current HEAD as baseline
-        # (if codex review was called; if not, we verified get_git_commit_async was used)
+        # For fresh issues, review should receive current HEAD as baseline
+        # (if review was called; if not, we verified get_git_commit_async was used)
 
     @pytest.mark.asyncio
     async def test_resumed_issue_uses_git_derived_baseline(
@@ -3498,7 +3498,7 @@ class TestBaselineCommitSelection:
 
         captured_baseline: list[str | None] = []
 
-        async def mock_run_codex_review(
+        async def mock_run_review(
             repo_path: Path,
             commit_hash: str | None,
             max_retries: int = 2,
@@ -3545,7 +3545,7 @@ class TestBaselineCommitSelection:
             patch.object(
                 orchestrator.code_reviewer,
                 "__call__",
-                side_effect=mock_run_codex_review,
+                side_effect=mock_run_review,
             ),
             patch.object(
                 orchestrator.beads,
@@ -3632,27 +3632,27 @@ class TestBaselineCommitSelection:
         assert "get_git_commit_async" in call_order
 
 
-class TestCodexReviewUsesCurrentHead:
-    """Tests that Codex review uses current HEAD instead of specific commit.
+class TestReviewUsesCurrentHead:
+    """Tests that external review uses current HEAD instead of specific commit.
 
     When multiple agents are working in parallel, one agent may fix issues
-    introduced by another agent. The Codex review should see the cumulative
+    introduced by another agent. The review should see the cumulative
     diff from baseline to current HEAD, not just up to the agent's specific
     commit.
 
     See issue mala-l10: If Agent A makes commit abc123 with issues, and Agent B
-    makes commit def456 that fixes those issues, Codex review for Agent A
+    makes commit def456 that fixes those issues, review for Agent A
     should review baseline..HEAD (seeing the fix) not baseline..abc123.
     """
 
     @pytest.mark.asyncio
-    async def test_codex_review_receives_current_head_not_agent_commit(
+    async def test_review_receives_current_head_not_agent_commit(
         self, tmp_path: Path
     ) -> None:
-        """Codex review should use current HEAD, not the agent's specific commit.
+        """Review should use current HEAD, not the agent's specific commit.
 
         This ensures that if another agent fixed issues after this agent's commit,
-        the Codex review will see the clean cumulative diff.
+        the review will see the clean cumulative diff.
         """
         from src.cerberus_review import ReviewResult
         from src.orchestrator import MalaOrchestrator
@@ -3700,7 +3700,7 @@ class TestCodexReviewUsesCurrentHead:
         # Mock the quality gate to return a passing result with the agent's specific commit.
         # Gate must pass for review to be triggered (see lifecycle.py:270-284).
         mock_gate_result = GateResult(
-            passed=True,  # Gate passes, triggering Codex review
+            passed=True,  # Gate passes, triggering review
             failure_reasons=[],
             commit_hash=agent_commit,  # This is the agent's commit
         )

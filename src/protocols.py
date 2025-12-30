@@ -8,7 +8,7 @@ Design principles:
 - Protocols use structural typing (typing.Protocol) for flexibility
 - Methods match exactly what the orchestrator actually calls
 - Result types are referenced from existing modules, not redefined
-- BeadsClient, run_codex_review, and QualityGate conform to these protocols
+- BeadsClient, ReviewRunner, and QualityGate conform to these protocols
 
 Usage:
     These protocols enable:

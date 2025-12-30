@@ -422,8 +422,8 @@ class MalaOrchestrator:
         # Track session log paths for quality gate (issue_id -> log_path)
         self.session_log_paths: dict[str, Path] = {}
 
-        # Track codex review session log paths (issue_id -> log_path)
-        self.codex_review_log_paths: dict[str, str] = {}
+        # Track review session log paths (issue_id -> log_path)
+        self.review_log_paths: dict[str, str] = {}
 
         # Track last gate results per issue to avoid duplicate validation
         # Gate result includes validation_evidence parsed from logs
@@ -734,13 +734,13 @@ class MalaOrchestrator:
             review_attempts=result.review_attempts,
             validation=validation_result,
             resolution=result.resolution,
-            review_log_path=self.codex_review_log_paths.get(issue_id),
+            review_log_path=self.review_log_paths.get(issue_id),
         )
         run_metadata.record_issue(issue_run)
 
         # Pop log paths after recording
         self.session_log_paths.pop(issue_id, None)
-        self.codex_review_log_paths.pop(issue_id, None)
+        self.review_log_paths.pop(issue_id, None)
 
         self.event_sink.on_issue_completed(
             issue_id,
@@ -830,7 +830,7 @@ class MalaOrchestrator:
             )
             output = await self.review_runner.run_review(review_input)
             if output.session_log_path:
-                self.codex_review_log_paths[issue_id] = output.session_log_path
+                self.review_log_paths[issue_id] = output.session_log_path
             return output.result
 
         def on_review_no_progress(

@@ -28,7 +28,7 @@ from src.validation.spec import ResolutionOutcome
 if TYPE_CHECKING:
     from src.validation.spec import IssueResolution
 
-# Resolution outcomes that skip codex review (no new code to review)
+# Resolution outcomes that skip review (no new code to review)
 _SKIP_REVIEW_OUTCOMES = frozenset(
     {
         ResolutionOutcome.NO_CHANGE,
@@ -82,7 +82,7 @@ class ReviewIssue(Protocol):
 
     Matches the fields lifecycle needs from review issues for building
     failure messages. Uses Protocol to allow structural subtyping with
-    codex_review.ReviewIssue.
+    cerberus_review.ReviewIssue.
     """
 
     @property
@@ -125,8 +125,8 @@ class ReviewIssue(Protocol):
 class ReviewOutcome(Protocol):
     """Protocol defining what lifecycle needs from an external review result.
 
-    Callers (orchestrator) pass infra review result objects (e.g., CodexReviewResult,
-    CerberusReviewResult) that satisfy this protocol. Lifecycle only accesses
+    Callers (orchestrator) pass infra review result objects (e.g., ReviewResult
+    from cerberus_review) that satisfy this protocol. Lifecycle only accesses
     these fields.
     """
 
@@ -162,7 +162,7 @@ class LifecycleState(Enum):
     AWAITING_LOG = auto()
     # Running quality gate check
     RUNNING_GATE = auto()
-    # Running Codex review (after gate passed)
+    # Running external review (after gate passed)
     RUNNING_REVIEW = auto()
     # Terminal: success
     SUCCESS = auto()
@@ -183,7 +183,7 @@ class Effect(Enum):
     WAIT_FOR_LOG = auto()
     # Run quality gate check
     RUN_GATE = auto()
-    # Run Codex review
+    # Run external review
     RUN_REVIEW = auto()
     # Send gate retry follow-up prompt to SDK
     SEND_GATE_RETRY = auto()

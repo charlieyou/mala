@@ -7,7 +7,7 @@ machine that can be tested with simple data inputs.
 
 import pytest
 
-from src.codex_review import CodexReviewResult, ReviewIssue
+from src.cerberus_review import ReviewIssue, ReviewResult
 from src.lifecycle import (
     Effect,
     ImplementerLifecycle,
@@ -291,7 +291,7 @@ class TestReviewResult:
     def test_review_passed_succeeds(self) -> None:
         """Review passed transitions to SUCCESS."""
         lifecycle, ctx = self._setup_for_review()
-        review_result = CodexReviewResult(passed=True)
+        review_result = ReviewResult(passed=True)
 
         result = lifecycle.on_review_result(ctx, review_result, new_log_offset=200)
 
@@ -311,17 +311,17 @@ class TestReviewResult:
         lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
         # review_attempt is 1 after gate_result, max is 2
 
-        review_result = CodexReviewResult(
+        review_result = ReviewResult(
             passed=False,
             issues=[
                 ReviewIssue(
-                    title="Bug",
-                    body="",
-                    confidence_score=0.9,
-                    priority=1,
                     file="test.py",
                     line_start=10,
                     line_end=10,
+                    priority=1,
+                    title="Bug",
+                    body="",
+                    reviewer="cerberus",
                 )
             ],
         )
@@ -345,17 +345,17 @@ class TestReviewResult:
         lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
         # review_attempt is 1 after gate_result, max is also 1
 
-        review_result = CodexReviewResult(
+        review_result = ReviewResult(
             passed=False,
             issues=[
                 ReviewIssue(
-                    title="Bug found",
-                    body="",
-                    confidence_score=0.9,
-                    priority=1,
                     file="test.py",
                     line_start=10,
                     line_end=10,
+                    priority=1,
+                    title="Bug found",
+                    body="",
+                    reviewer="cerberus",
                 )
             ],
         )
@@ -378,7 +378,7 @@ class TestReviewResult:
         lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
         # review_attempt is 1 after gate_result
 
-        review_result = CodexReviewResult(
+        review_result = ReviewResult(
             passed=False,
             parse_error="Invalid JSON response",
         )
@@ -403,7 +403,7 @@ class TestReviewResult:
         lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
         # review_attempt is 1 after gate_result, max is also 1
 
-        review_result = CodexReviewResult(
+        review_result = ReviewResult(
             passed=False,
             parse_error="Invalid JSON response",
         )
@@ -418,7 +418,7 @@ class TestReviewResult:
         """Fatal review errors should fail immediately without retries."""
         lifecycle, ctx = self._setup_for_review()
 
-        review_result = CodexReviewResult(
+        review_result = ReviewResult(
             passed=False,
             parse_error="Invalid schema for response_format 'codex_output_schema'",
             fatal_error=True,
@@ -447,17 +447,17 @@ class TestReviewResult:
         lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
 
         # First review fails (attempt 1)
-        review_result = CodexReviewResult(
+        review_result = ReviewResult(
             passed=False,
             issues=[
                 ReviewIssue(
-                    title="Bug",
-                    body="",
-                    confidence_score=0.9,
-                    priority=1,
                     file="test.py",
                     line_start=10,
                     line_end=10,
+                    priority=1,
+                    title="Bug",
+                    body="",
+                    reviewer="cerberus",
                 )
             ],
         )
@@ -475,17 +475,17 @@ class TestReviewResult:
 
         # Second review also fails, but no_progress=True
         # (orchestrator detected same commit, no new validation evidence)
-        review_result = CodexReviewResult(
+        review_result = ReviewResult(
             passed=False,
             issues=[
                 ReviewIssue(
-                    title="Bug",
-                    body="",
-                    confidence_score=0.9,
-                    priority=1,
                     file="test.py",
                     line_start=10,
                     line_end=10,
+                    priority=1,
+                    title="Bug",
+                    body="",
+                    reviewer="cerberus",
                 )
             ],
         )
@@ -617,7 +617,7 @@ class TestFullLifecycleScenarios:
         # Now in RUNNING_REVIEW
         assert lifecycle.state == LifecycleState.RUNNING_REVIEW
 
-        review_result = CodexReviewResult(passed=True)
+        review_result = ReviewResult(passed=True)
         result = lifecycle.on_review_result(ctx, review_result, new_log_offset=200)
 
         assert result.effect == Effect.COMPLETE_SUCCESS
@@ -665,17 +665,17 @@ class TestFullLifecycleScenarios:
         lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
 
         # First review fails
-        review_result = CodexReviewResult(
+        review_result = ReviewResult(
             passed=False,
             issues=[
                 ReviewIssue(
-                    title="Bug",
-                    body="",
-                    confidence_score=0.9,
-                    priority=1,
                     file="a.py",
                     line_start=1,
                     line_end=1,
+                    priority=1,
+                    title="Bug",
+                    body="",
+                    reviewer="cerberus",
                 )
             ],
         )
@@ -692,7 +692,7 @@ class TestFullLifecycleScenarios:
         lifecycle.on_gate_result(ctx, gate_result, new_log_offset=300)
 
         # Review passes
-        review_result = CodexReviewResult(passed=True)
+        review_result = ReviewResult(passed=True)
         result = lifecycle.on_review_result(ctx, review_result, new_log_offset=400)
         assert result.effect == Effect.COMPLETE_SUCCESS
         assert ctx.success
@@ -720,17 +720,17 @@ class TestFullLifecycleScenarios:
 
         # First review fails (attempt 1)
         assert ctx.retry_state.review_attempt == 1
-        review_result = CodexReviewResult(
+        review_result = ReviewResult(
             passed=False,
             issues=[
                 ReviewIssue(
-                    title="Bug",
-                    body="",
-                    confidence_score=0.9,
-                    priority=1,
                     file="a.py",
                     line_start=1,
                     line_end=1,
+                    priority=1,
+                    title="Bug",
+                    body="",
+                    reviewer="cerberus",
                 )
             ],
         )
@@ -750,17 +750,17 @@ class TestFullLifecycleScenarios:
         assert ctx.retry_state.review_attempt == 2
 
         # Second review also fails - should hit max and fail
-        review_result = CodexReviewResult(
+        review_result = ReviewResult(
             passed=False,
             issues=[
                 ReviewIssue(
-                    title="Another bug",
-                    body="",
-                    confidence_score=0.9,
-                    priority=1,
                     file="a.py",
                     line_start=5,
                     line_end=5,
+                    priority=1,
+                    title="Another bug",
+                    body="",
+                    reviewer="cerberus",
                 )
             ],
         )
@@ -777,27 +777,31 @@ class TestReviewIssueProtocol:
     def test_review_issue_has_reviewer_field(self) -> None:
         """ReviewIssue includes reviewer field for attribution."""
         issue = ReviewIssue(
-            title="Test bug",
-            body="Description",
-            confidence_score=0.9,
-            priority=1,
             file="test.py",
             line_start=10,
             line_end=10,
-        )
-        # Default reviewer is "codex" for backward compatibility
-        assert issue.reviewer == "codex"
-
-    def test_review_issue_custom_reviewer(self) -> None:
-        """ReviewIssue accepts custom reviewer value."""
-        issue = ReviewIssue(
+            priority=1,
             title="Test bug",
             body="Description",
-            confidence_score=0.9,
-            priority=1,
-            file="test.py",
-            line_start=10,
-            line_end=10,
             reviewer="cerberus",
         )
         assert issue.reviewer == "cerberus"
+
+    def test_review_issue_fields(self) -> None:
+        """ReviewIssue provides all required fields."""
+        issue = ReviewIssue(
+            file="test.py",
+            line_start=10,
+            line_end=20,
+            priority=1,
+            title="Test bug",
+            body="Description",
+            reviewer="code-reviewer",
+        )
+        assert issue.file == "test.py"
+        assert issue.line_start == 10
+        assert issue.line_end == 20
+        assert issue.priority == 1
+        assert issue.title == "Test bug"
+        assert issue.body == "Description"
+        assert issue.reviewer == "code-reviewer"
