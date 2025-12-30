@@ -175,7 +175,8 @@ class AgentSessionConfig:
         max_review_retries: Maximum review retry attempts.
         morph_enabled: Whether Morph MCP is enabled.
         morph_api_key: Morph API key (required if morph_enabled).
-        review_enabled: Whether external review is enabled.
+        review_enabled: Whether Cerberus external review is enabled.
+            When enabled, code changes are reviewed after the gate passes.
     """
 
     repo_path: Path
