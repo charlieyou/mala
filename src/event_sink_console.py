@@ -447,6 +447,14 @@ class ConsoleEventSink:
         """Log when run-level validation is disabled."""
         log_verbose("◦", "Run-level validation disabled", Colors.MUTED)
 
+    def on_abort_requested(self, reason: str) -> None:
+        """Log fatal error triggering run abort."""
+        log("✗", f"Fatal error: {reason}. Aborting run.", Colors.RED)
+
+    def on_tasks_aborting(self, count: int, reason: str) -> None:
+        """Log when active tasks are being aborted."""
+        log("✗", f"Aborting {count} active task(s): {reason}", Colors.RED)
+
 
 # Verify ConsoleEventSink implements MalaEventSink at import time
 assert isinstance(ConsoleEventSink(), MalaEventSink)

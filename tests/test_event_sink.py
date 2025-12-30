@@ -165,6 +165,8 @@ class TestNullEventSink:
         assert sink.on_issues_committed() is None
         assert sink.on_run_metadata_saved("/tmp/run.json") is None
         assert sink.on_run_level_validation_disabled() is None
+        assert sink.on_abort_requested("Fatal error occurred") is None
+        assert sink.on_tasks_aborting(3, "Unrecoverable error") is None
 
     def test_can_be_called_multiple_times(self) -> None:
         """NullEventSink methods can be called repeatedly."""
@@ -336,6 +338,32 @@ class TestConsoleEventSink:
         sink.on_warning("Something went wrong")
         sink.on_warning("Agent issue", agent_id="agent-1")
         sink.on_log_timeout("agent-1", "/tmp/log.jsonl")
+        sink.on_abort_requested("Fatal error occurred")
+        sink.on_tasks_aborting(3, "Unrecoverable error")
 
         # All should have executed without raising exceptions
         assert mock_log.called
+
+    @patch("src.event_sink_console.log")
+    def test_on_abort_requested_logs_fatal_error(self, mock_log: MagicMock) -> None:
+        """on_abort_requested logs fatal error with abort message."""
+        sink = ConsoleEventSink()
+        sink.on_abort_requested("Database connection lost")
+
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        assert "Fatal error" in call_args[0][1]
+        assert "Database connection lost" in call_args[0][1]
+        assert "Aborting run" in call_args[0][1]
+
+    @patch("src.event_sink_console.log")
+    def test_on_tasks_aborting_logs_count_and_reason(self, mock_log: MagicMock) -> None:
+        """on_tasks_aborting logs task count and reason."""
+        sink = ConsoleEventSink()
+        sink.on_tasks_aborting(5, "Timeout exceeded")
+
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        assert "5" in call_args[0][1]
+        assert "active task" in call_args[0][1]
+        assert "Timeout exceeded" in call_args[0][1]

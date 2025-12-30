@@ -443,6 +443,23 @@ class MalaEventSink(Protocol):
         """Called when run-level validation is disabled."""
         ...
 
+    def on_abort_requested(self, reason: str) -> None:
+        """Called when a fatal error triggers a run abort.
+
+        Args:
+            reason: Description of the fatal error.
+        """
+        ...
+
+    def on_tasks_aborting(self, count: int, reason: str) -> None:
+        """Called when active tasks are being aborted.
+
+        Args:
+            count: Number of active tasks being aborted.
+            reason: Reason for the abort.
+        """
+        ...
+
 
 class NullEventSink:
     """No-op event sink for testing.
@@ -616,4 +633,10 @@ class NullEventSink:
         pass
 
     def on_run_level_validation_disabled(self) -> None:
+        pass
+
+    def on_abort_requested(self, reason: str) -> None:
+        pass
+
+    def on_tasks_aborting(self, count: int, reason: str) -> None:
         pass

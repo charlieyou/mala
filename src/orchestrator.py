@@ -22,8 +22,6 @@ from .git_utils import (
 )
 from .hooks import MORPH_DISALLOWED_TOOLS
 from .logging.console import (
-    Colors,
-    log,
     truncate_text,
     is_verbose_enabled,
 )
@@ -321,9 +319,15 @@ class MalaOrchestrator:
             else gate_checker
         )
 
+        # EventSink: ConsoleEventSink by default for run lifecycle logging
+        # (moved earlier so log_warning can use it)
+        self.event_sink: MalaEventSink = (
+            ConsoleEventSink() if event_sink is None else event_sink
+        )
+
         # IssueProvider: BeadsClient for issue tracking
         def log_warning(msg: str) -> None:
-            log("⚠", msg, Colors.YELLOW)
+            self.event_sink.on_warning(msg)
 
         self.beads: IssueProvider = (
             BeadsClient(self.repo_path, log_warning=log_warning)
@@ -343,11 +347,6 @@ class MalaOrchestrator:
             self.telemetry_provider = BraintrustProvider()
         else:
             self.telemetry_provider = NullTelemetryProvider()
-
-        # EventSink: ConsoleEventSink by default for run lifecycle logging
-        self.event_sink: MalaEventSink = (
-            ConsoleEventSink() if event_sink is None else event_sink
-        )
 
         # Cached per-issue validation spec (built once at run start)
         self.per_issue_spec: ValidationSpec | None = None
@@ -405,7 +404,7 @@ class MalaOrchestrator:
             return
         self.abort_run = True
         self.abort_reason = reason
-        log("✗", f"Fatal error: {reason}. Aborting run.", Colors.RED)
+        self.event_sink.on_abort_requested(reason)
 
     def _run_quality_gate_sync(
         self,
@@ -485,20 +484,10 @@ class MalaOrchestrator:
         if result.success:
             # Gate passed - close the issue and check epic closure
             if await self.beads.close_async(issue_id):
-                log(
-                    "◐",
-                    "Closed issue",
-                    Colors.MUTED,
-                    agent_id=issue_id,
-                )
+                self.event_sink.on_issue_closed(issue_id, issue_id)
                 # Check if this closes any parent epics
                 if await self.beads.close_eligible_epics_async():
-                    log(
-                        "◐",
-                        "Auto-closed completed epic(s)",
-                        Colors.MUTED,
-                        agent_id=issue_id,
-                    )
+                    self.event_sink.on_epic_closed(issue_id)
 
             # Populate metadata from stored gate result (if available)
             if stored_gate_result is not None:
@@ -626,22 +615,14 @@ class MalaOrchestrator:
         self.session_log_paths.pop(issue_id, None)
         self.codex_review_log_paths.pop(issue_id, None)
 
-        duration_str = f"{result.duration_seconds:.0f}s"
-        if result.success:
-            summary = truncate_text(result.summary, 50)
-            log(
-                "✓",
-                f"({duration_str}): {summary}",
-                Colors.GREEN,
-                agent_id=issue_id,
-            )
-        else:
-            log(
-                "✗",
-                f"({duration_str}): {result.summary}",
-                Colors.RED,
-                agent_id=issue_id,
-            )
+        self.event_sink.on_issue_completed(
+            issue_id,
+            issue_id,
+            result.success,
+            result.duration_seconds,
+            truncate_text(result.summary, 50) if result.success else result.summary,
+        )
+        if not result.success:
             self.failed_issues.add(issue_id)
             # Mark needs-followup with log path
             await self.beads.mark_needs_followup_async(
@@ -657,11 +638,7 @@ class MalaOrchestrator:
         if not self.active_tasks:
             return
         reason = self.abort_reason or "Unrecoverable error"
-        log(
-            "✗",
-            f"Aborting {len(self.active_tasks)} active task(s): {reason}",
-            Colors.RED,
-        )
+        self.event_sink.on_tasks_aborting(len(self.active_tasks), reason)
         # Cancel tasks that are still running
         for task in self.active_tasks.values():
             if not task.done():
