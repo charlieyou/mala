@@ -33,15 +33,16 @@ class ReviewRunnerConfig:
 
     Attributes:
         max_review_retries: Maximum number of review retry attempts.
-        thinking_mode: Optional reasoning effort level for reviewer.
-        capture_session_log: Whether to capture review session log path.
         review_timeout: Timeout in seconds for review operations.
+        thinking_mode: Deprecated, kept for backward compatibility.
+        capture_session_log: Deprecated, kept for backward compatibility.
     """
 
     max_review_retries: int = 3
+    review_timeout: int = 300
+    # Deprecated fields (kept for backward compatibility with orchestrator)
     thinking_mode: str | None = None
     capture_session_log: bool = False
-    review_timeout: int = 300
 
 
 @dataclass

@@ -1,7 +1,7 @@
 """Unit tests for ReviewRunner pipeline stage.
 
 Tests the extracted code review orchestration logic using fake code reviewers,
-without actual Codex CLI or subprocess dependencies.
+without actual Cerberus CLI or subprocess dependencies.
 """
 
 from dataclasses import dataclass, field
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from src.codex_review import CodexReviewResult, ReviewIssue
+from src.cerberus_review import ReviewIssue, ReviewResult
 from src.pipeline.review_runner import (
     NoProgressInput,
     ReviewInput,
@@ -25,34 +25,26 @@ from src.validation.spec import ValidationSpec
 class FakeCodeReviewer:
     """Fake code reviewer for testing.
 
-    Returns predetermined results without invoking Codex CLI.
+    Returns predetermined results without invoking Cerberus CLI.
     """
 
-    result: CodexReviewResult = field(
-        default_factory=lambda: CodexReviewResult(passed=True, issues=[])
+    result: ReviewResult = field(
+        default_factory=lambda: ReviewResult(passed=True, issues=[])
     )
     calls: list[dict] = field(default_factory=list)
 
     async def __call__(
         self,
-        repo_path: Path,
-        commit_sha: str,
-        max_retries: int = 2,
-        issue_description: str | None = None,
-        baseline_commit: str | None = None,
-        capture_session_log: bool = False,
-        thinking_mode: str | None = None,
-    ) -> CodexReviewResult:
+        diff_range: str,
+        context_file: Path | None = None,
+        timeout: int = 300,
+    ) -> ReviewResult:
         """Record call and return configured result."""
         self.calls.append(
             {
-                "repo_path": repo_path,
-                "commit_sha": commit_sha,
-                "max_retries": max_retries,
-                "issue_description": issue_description,
-                "baseline_commit": baseline_commit,
-                "capture_session_log": capture_session_log,
-                "thinking_mode": thinking_mode,
+                "diff_range": diff_range,
+                "context_file": context_file,
+                "timeout": timeout,
             }
         )
         return self.result
@@ -172,8 +164,7 @@ class TestReviewRunnerBasics:
     ) -> None:
         """Runner should pass all parameters to code reviewer."""
         config = ReviewRunnerConfig(
-            thinking_mode="high",
-            capture_session_log=True,
+            review_timeout=600,
         )
         runner = ReviewRunner(
             code_reviewer=fake_reviewer,
@@ -192,27 +183,26 @@ class TestReviewRunnerBasics:
 
         assert len(fake_reviewer.calls) == 1
         call = fake_reviewer.calls[0]
-        assert call["repo_path"] == tmp_path
-        assert call["commit_sha"] == "abc123"
-        assert call["issue_description"] == "Fix the bug"
-        assert call["baseline_commit"] == "def456"
-        assert call["capture_session_log"] is True
-        assert call["thinking_mode"] == "high"
+        # New signature: diff_range, context_file, timeout
+        assert call["diff_range"] == "def456..abc123"
+        assert call["timeout"] == 600
+        # context_file should be set when issue_description is provided
+        assert call["context_file"] is not None
 
     @pytest.mark.asyncio
-    async def test_run_review_captures_session_log(
+    async def test_run_review_captures_review_log(
         self,
         tmp_path: Path,
     ) -> None:
-        """Runner should capture session log path when available."""
-        result = CodexReviewResult(
+        """Runner should capture review log path when available."""
+        result = ReviewResult(
             passed=True,
             issues=[],
-            session_log_path="/path/to/session.jsonl",
+            review_log_path=Path("/path/to/review.jsonl"),
         )
         fake_reviewer = FakeCodeReviewer(result=result)
 
-        config = ReviewRunnerConfig(capture_session_log=True)
+        config = ReviewRunnerConfig()
         runner = ReviewRunner(
             code_reviewer=fake_reviewer,
             config=config,
@@ -226,7 +216,59 @@ class TestReviewRunnerBasics:
 
         output = await runner.run_review(review_input)
 
-        assert output.session_log_path == "/path/to/session.jsonl"
+        assert output.session_log_path == "/path/to/review.jsonl"
+
+    @pytest.mark.asyncio
+    async def test_run_review_no_context_file_without_description(
+        self,
+        fake_reviewer: FakeCodeReviewer,
+        config: ReviewRunnerConfig,
+        tmp_path: Path,
+    ) -> None:
+        """Runner should not create context file when no issue_description."""
+        runner = ReviewRunner(
+            code_reviewer=fake_reviewer,
+            config=config,
+        )
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_sha="abc123",
+            issue_description=None,  # No description
+        )
+
+        await runner.run_review(review_input)
+
+        assert len(fake_reviewer.calls) == 1
+        call = fake_reviewer.calls[0]
+        assert call["context_file"] is None
+
+    @pytest.mark.asyncio
+    async def test_run_review_diff_range_without_baseline(
+        self,
+        fake_reviewer: FakeCodeReviewer,
+        config: ReviewRunnerConfig,
+        tmp_path: Path,
+    ) -> None:
+        """Runner should use HEAD~1 as baseline when not provided."""
+        runner = ReviewRunner(
+            code_reviewer=fake_reviewer,
+            config=config,
+        )
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_sha="abc123",
+            baseline_commit=None,  # No baseline
+        )
+
+        await runner.run_review(review_input)
+
+        assert len(fake_reviewer.calls) == 1
+        call = fake_reviewer.calls[0]
+        assert call["diff_range"] == "HEAD~1..abc123"
 
 
 class TestReviewRunnerResults:
@@ -235,7 +277,7 @@ class TestReviewRunnerResults:
     @pytest.mark.asyncio
     async def test_review_passed(self, tmp_path: Path) -> None:
         """Runner should return passed result correctly."""
-        result = CodexReviewResult(passed=True, issues=[])
+        result = ReviewResult(passed=True, issues=[])
         fake_reviewer = FakeCodeReviewer(result=result)
         runner = ReviewRunner(code_reviewer=fake_reviewer)
 
@@ -257,14 +299,14 @@ class TestReviewRunnerResults:
             ReviewIssue(
                 title="[P1] Bug found",
                 body="Description",
-                confidence_score=0.9,
                 priority=1,
                 file="src/main.py",
                 line_start=10,
                 line_end=15,
+                reviewer="cerberus",
             )
         ]
-        result = CodexReviewResult(passed=False, issues=issues)
+        result = ReviewResult(passed=False, issues=issues)
         fake_reviewer = FakeCodeReviewer(result=result)
         runner = ReviewRunner(code_reviewer=fake_reviewer)
 
@@ -283,7 +325,7 @@ class TestReviewRunnerResults:
     @pytest.mark.asyncio
     async def test_review_failed_with_parse_error(self, tmp_path: Path) -> None:
         """Runner should return failed result with parse error."""
-        result = CodexReviewResult(
+        result = ReviewResult(
             passed=False,
             issues=[],
             parse_error="Invalid JSON output",
@@ -425,12 +467,28 @@ class TestReviewRunnerConfig:
         """Config should accept custom values via flags."""
         config = ReviewRunnerConfig(
             max_review_retries=4,
-            thinking_mode="xhigh",
-            capture_session_log=True,
+            review_timeout=600,
         )
 
         assert config.max_review_retries == 4
-        assert config.thinking_mode == "xhigh"
+        assert config.review_timeout == 600
+
+    def test_config_defaults(self) -> None:
+        """Config should have sensible defaults."""
+        config = ReviewRunnerConfig()
+
+        assert config.max_review_retries == 3
+        assert config.review_timeout == 300
+
+    def test_config_deprecated_fields_still_accepted(self) -> None:
+        """Config should accept deprecated fields for backward compatibility."""
+        config = ReviewRunnerConfig(
+            thinking_mode="high",
+            capture_session_log=True,
+        )
+
+        # These fields are deprecated but still accepted for backward compat
+        assert config.thinking_mode == "high"
         assert config.capture_session_log is True
 
 
@@ -470,7 +528,7 @@ class TestReviewOutput:
 
     def test_output_required_fields(self) -> None:
         """Output should have required fields with defaults."""
-        result = CodexReviewResult(passed=True, issues=[])
+        result = ReviewResult(passed=True, issues=[])
         output = ReviewOutput(result=result)
 
         assert output.result.passed is True
@@ -478,7 +536,7 @@ class TestReviewOutput:
 
     def test_output_with_session_log(self) -> None:
         """Output should include session log path."""
-        result = CodexReviewResult(passed=True, issues=[])
+        result = ReviewResult(passed=True, issues=[])
         output = ReviewOutput(
             result=result,
             session_log_path="/path/to/log.jsonl",
