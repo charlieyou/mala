@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..logging.console import Colors, log
-from ..tools.env import SCRIPTS_DIR
+from ..tools.env import SCRIPTS_DIR, get_cache_dir
 from src.tools.command_runner import CommandRunner
 from .helpers import format_step_output
 from .lint_cache import LintCache
@@ -175,7 +175,7 @@ class SpecCommandExecutor:
         if self.config.repo_path is None:
             return None
         return LintCache(
-            cache_dir=self.config.repo_path / ".mala-cache",
+            cache_dir=get_cache_dir(),
             repo_path=cwd,
         )
 

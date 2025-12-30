@@ -9,8 +9,32 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+
 # User config directory (stores .env, runs, etc.)
-USER_CONFIG_DIR = Path.home() / ".config" / "mala"
+# Respects XDG_CONFIG_HOME if set, otherwise defaults to ~/.config
+def _get_xdg_config_home() -> Path:
+    """Get XDG_CONFIG_HOME or default to ~/.config."""
+    return Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+
+
+USER_CONFIG_DIR = _get_xdg_config_home() / "mala"
+
+
+def get_cache_dir() -> Path:
+    """Get the mala cache directory.
+
+    Returns the path to mala's cache directory, following XDG conventions.
+    Uses $XDG_CONFIG_HOME/mala/.cache if XDG_CONFIG_HOME is set,
+    otherwise ~/.config/mala/.cache.
+
+    The directory is created if it doesn't exist.
+
+    Returns:
+        Path to the cache directory.
+    """
+    cache_dir = USER_CONFIG_DIR / ".cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
 
 
 # Run metadata directory
