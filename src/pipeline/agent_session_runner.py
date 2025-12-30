@@ -50,8 +50,6 @@ from src.lifecycle import (
 from src.logging.console import (
     Colors,
     log,
-    log_agent_text,
-    log_tool,
     log_verbose,
 )
 from src.tools.env import SCRIPTS_DIR, get_lock_dir
@@ -158,6 +156,10 @@ ReviewNoProgressCallback = Callable[
 ]
 LogOffsetCallback = Callable[[Path, int], int]
 
+# Callbacks for SDK message streaming events
+ToolUseCallback = Callable[[str, str, dict[str, Any] | None], None]
+AgentTextCallback = Callable[[str, str], None]
+
 
 @dataclass
 class AgentSessionConfig:
@@ -255,6 +257,10 @@ class SessionCallbacks:
             Args: (log_path, start_offset) -> int
         on_abort: Callback when fatal error requires run abort.
             Args: (reason) -> None
+        on_tool_use: Callback for SDK tool use events.
+            Args: (agent_id, tool_name, arguments) -> None
+        on_agent_text: Callback for SDK text output events.
+            Args: (agent_id, text) -> None
     """
 
     on_gate_check: GateCheckCallback | None = None
@@ -263,6 +269,8 @@ class SessionCallbacks:
     get_log_path: Callable[[str], Path] | None = None
     get_log_offset: LogOffsetCallback | None = None
     on_abort: Callable[[str], None] | None = None
+    on_tool_use: ToolUseCallback | None = None
+    on_agent_text: AgentTextCallback | None = None
 
 
 @dataclass
@@ -495,13 +503,17 @@ class AgentSessionRunner:
                             if isinstance(message, AssistantMessage):
                                 for block in message.content:
                                     if isinstance(block, TextBlock):
-                                        log_agent_text(block.text, input.issue_id)
+                                        if self.callbacks.on_agent_text is not None:
+                                            self.callbacks.on_agent_text(
+                                                input.issue_id, block.text
+                                            )
                                     elif isinstance(block, ToolUseBlock):
-                                        log_tool(
-                                            block.name,
-                                            agent_id=input.issue_id,
-                                            arguments=block.input,
-                                        )
+                                        if self.callbacks.on_tool_use is not None:
+                                            self.callbacks.on_tool_use(
+                                                input.issue_id,
+                                                block.name,
+                                                block.input,
+                                            )
                                         # Track lint commands
                                         if block.name.lower() == "bash":
                                             cmd = block.input.get("command", "")

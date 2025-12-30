@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Self
 import pytest
 
 # Import SDK types that the runner uses for isinstance checks
-from claude_agent_sdk import ResultMessage
+from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
 from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
@@ -523,3 +523,181 @@ class TestAgentSessionOutput:
         assert output.resolution is None
         assert output.duration_seconds == 0.0
         assert output.agent_id == ""
+
+
+class TestAgentSessionRunnerStreamingCallbacks:
+    """Test streaming event callbacks (on_tool_use, on_agent_text)."""
+
+    @pytest.fixture
+    def tmp_log_path(self, tmp_path: Path) -> Path:
+        """Create a temporary log file path."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+        return log_path
+
+    @pytest.fixture
+    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=3,
+            max_review_retries=2,
+            morph_enabled=False,
+            codex_review_enabled=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_tool_use_callback_invoked(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """Runner should invoke on_tool_use callback for ToolUseBlock messages."""
+        # Create messages with a ToolUseBlock
+        tool_block = ToolUseBlock(id="tool-1", name="Read", input={"path": "test.py"})
+        assistant_msg = AssistantMessage(content=[tool_block], model="test-model")
+
+        fake_client = FakeSDKClient(messages=[assistant_msg])
+        fake_factory = FakeSDKClientFactory(fake_client)
+
+        tool_use_calls: list[tuple[str, str, dict[str, Any] | None]] = []
+
+        def on_tool_use(
+            agent_id: str, tool_name: str, arguments: dict[str, Any] | None
+        ) -> None:
+            tool_use_calls.append((agent_id, tool_name, arguments))
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+            on_tool_use=on_tool_use,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+        )
+
+        input = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        await runner.run_session(input)
+
+        assert len(tool_use_calls) == 1
+        assert tool_use_calls[0] == ("test-123", "Read", {"path": "test.py"})
+
+    @pytest.mark.asyncio
+    async def test_on_agent_text_callback_invoked(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """Runner should invoke on_agent_text callback for TextBlock messages."""
+        # Create messages with a TextBlock
+        text_block = TextBlock(text="Processing the request...")
+        assistant_msg = AssistantMessage(content=[text_block], model="test-model")
+
+        fake_client = FakeSDKClient(messages=[assistant_msg])
+        fake_factory = FakeSDKClientFactory(fake_client)
+
+        agent_text_calls: list[tuple[str, str]] = []
+
+        def on_agent_text(agent_id: str, text: str) -> None:
+            agent_text_calls.append((agent_id, text))
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+            on_agent_text=on_agent_text,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+        )
+
+        input = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        await runner.run_session(input)
+
+        assert len(agent_text_calls) == 1
+        assert agent_text_calls[0] == ("test-123", "Processing the request...")
+
+    @pytest.mark.asyncio
+    async def test_streaming_callbacks_optional(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """Runner should work without streaming callbacks (optional)."""
+        # Create messages with both TextBlock and ToolUseBlock
+        text_block = TextBlock(text="Working...")
+        tool_block = ToolUseBlock(id="tool-1", name="Read", input={"path": "test.py"})
+        assistant_msg = AssistantMessage(
+            content=[text_block, tool_block], model="test-model"
+        )
+
+        fake_client = FakeSDKClient(messages=[assistant_msg])
+        fake_factory = FakeSDKClientFactory(fake_client)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        # No on_tool_use or on_agent_text callbacks
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+        )
+
+        input = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        # Should succeed without raising errors
+        output = await runner.run_session(input)
+        assert output.success is True

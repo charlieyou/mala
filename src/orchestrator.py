@@ -396,11 +396,7 @@ class MalaOrchestrator:
         """Remove locks held by a specific agent (crash/timeout cleanup)."""
         cleaned = cleanup_agent_locks(agent_id)
         if cleaned:
-            log(
-                "🧹",
-                f"Cleaned {cleaned} locks for {agent_id[:8]}",
-                Colors.MUTED,
-            )
+            self.event_sink.on_locks_cleaned(agent_id, cleaned)
 
     def _request_abort(self, reason: str) -> None:
         """Signal that the current run should stop due to a fatal error."""
@@ -737,6 +733,12 @@ class MalaOrchestrator:
         def get_log_offset(log_path: Path, start_offset: int) -> int:
             return self.quality_gate.get_log_end_offset(log_path, start_offset)
 
+        def on_tool_use(agent_id: str, tool_name: str, arguments: dict | None) -> None:
+            self.event_sink.on_tool_use(agent_id, tool_name, arguments=arguments)
+
+        def on_agent_text(agent_id: str, text: str) -> None:
+            self.event_sink.on_agent_text(agent_id, text)
+
         return SessionCallbacks(
             on_gate_check=on_gate_check,
             on_review_check=on_review_check,
@@ -744,6 +746,8 @@ class MalaOrchestrator:
             get_log_path=get_log_path,
             get_log_offset=get_log_offset,
             on_abort=self._request_abort,
+            on_tool_use=on_tool_use,
+            on_agent_text=on_agent_text,
         )
 
     async def run_implementer(self, issue_id: str) -> IssueResult:
@@ -830,12 +834,12 @@ class MalaOrchestrator:
         """Spawn a new agent task for an issue. Returns True if spawned."""
         if not await self.beads.claim_async(issue_id):
             self.failed_issues.add(issue_id)
-            log("⚠", f"Failed to claim {issue_id}", Colors.YELLOW, agent_id=issue_id)
+            self.event_sink.on_claim_failed(issue_id, issue_id)
             return False
 
         task = asyncio.create_task(self.run_implementer(issue_id))
         self.active_tasks[issue_id] = task
-        log("▶", "Agent started", Colors.BLUE, agent_id=issue_id)
+        self.event_sink.on_agent_started(issue_id, issue_id)
         return True
 
     def _build_run_config(self) -> EventRunConfig:
@@ -1059,8 +1063,10 @@ class MalaOrchestrator:
             await self._run_main_loop(run_metadata)
         finally:
             released = release_run_locks(list(self.agent_ids.values()))
-            if released:
-                log("🧹", f"Released {released} remaining locks", Colors.MUTED)
+            # Only emit event if released is a positive integer
+            # (release_run_locks returns int, but tests may mock it)
+            if isinstance(released, int) and released > 0:
+                self.event_sink.on_locks_released(released)
             remove_run_marker(run_metadata.run_id)
 
         success_count = sum(1 for r in self.completed if r.success)
