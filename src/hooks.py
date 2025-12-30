@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         SyncHookJSONOutput,
     )
 
+from .mcp import MORPH_DISALLOWED_TOOLS
 from .tools.command_runner import run_command
 from .tools.env import SCRIPTS_DIR, get_lock_dir
 from .tools.locking import get_lock_holder
@@ -101,9 +102,6 @@ SAFE_GIT_ALTERNATIVES: dict[str, str] = {
 
 # Tool names that should be treated as bash (case-insensitive matching)
 BASH_TOOL_NAMES = frozenset(["bash"])
-
-# Tools replaced by MorphLLM MCP (use disallowed_tools parameter, not hooks)
-MORPH_DISALLOWED_TOOLS = ["Edit", "Grep"]
 
 # Tools that write to files and require lock ownership
 FILE_WRITE_TOOLS: frozenset[str] = frozenset(

@@ -29,7 +29,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from src.hooks import (
-    MORPH_DISALLOWED_TOOLS,
     FileReadCache,
     LintCache,
     _detect_lint_command,
@@ -40,6 +39,7 @@ from src.hooks import (
     make_lock_enforcement_hook,
     make_stop_hook,
 )
+from src.mcp import get_disallowed_tools, get_mcp_servers
 from src.lifecycle import (
     Effect,
     ImplementerLifecycle,
@@ -349,37 +349,6 @@ class AgentSessionRunner:
 
         return pre_tool_hooks, stop_hooks
 
-    def _get_mcp_servers(self) -> dict[str, Any]:
-        """Get MCP server configurations.
-
-        Returns:
-            Dict of MCP server configs, empty if Morph disabled.
-        """
-        if not self.config.morph_enabled:
-            return {}
-        if not self.config.morph_api_key:
-            raise ValueError(
-                "morph_api_key is required when morph_enabled=True. "
-                "Pass morph_api_key from MalaConfig or set morph_enabled=False."
-            )
-        return {
-            "morphllm": {
-                "command": "npx",
-                "args": ["-y", "@morphllm/morphmcp"],
-                "cwd": str(self.config.repo_path),
-                "env": {
-                    "MORPH_API_KEY": self.config.morph_api_key,
-                    "ENABLED_TOOLS": "all",
-                    "WORKSPACE_MODE": "true",
-                    "WORKSPACE_PATH": str(self.config.repo_path),
-                },
-            }
-        }
-
-    def _get_disallowed_tools(self) -> list[str]:
-        """Get list of disallowed tools based on Morph enablement."""
-        return list(MORPH_DISALLOWED_TOOLS) if self.config.morph_enabled else []
-
     async def run_session(
         self,
         input: AgentSessionInput,
@@ -443,8 +412,12 @@ class AgentSessionRunner:
             model="opus",
             system_prompt={"type": "preset", "preset": "claude_code"},
             setting_sources=["project", "user"],
-            mcp_servers=self._get_mcp_servers(),
-            disallowed_tools=self._get_disallowed_tools(),
+            mcp_servers=get_mcp_servers(
+                self.config.repo_path,
+                morph_api_key=self.config.morph_api_key,
+                morph_enabled=self.config.morph_enabled,
+            ),
+            disallowed_tools=get_disallowed_tools(self.config.morph_enabled),
             env=agent_env,
             hooks={
                 "PreToolUse": [

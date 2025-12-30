@@ -23,10 +23,9 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from src.hooks import (
-    MORPH_DISALLOWED_TOOLS,
     FileReadCache,
     LintCache,
     _detect_lint_command,
@@ -37,6 +36,7 @@ from src.hooks import (
     make_lock_enforcement_hook,
     make_stop_hook,
 )
+from src.mcp import get_disallowed_tools, get_mcp_servers
 from src.log_output.console import (
     log_agent_text,
     log_tool,
@@ -71,37 +71,6 @@ FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
 def _get_fixer_prompt() -> str:
     """Load fixer prompt (cached on first use)."""
     return FIXER_PROMPT_FILE.read_text()
-
-
-def _get_mcp_servers(
-    repo_path: Path, morph_api_key: str | None, morph_enabled: bool
-) -> dict[str, Any]:
-    """Get MCP server configurations."""
-    if not morph_enabled:
-        return {}
-    if not morph_api_key:
-        raise ValueError(
-            "morph_api_key is required when morph_enabled=True. "
-            "Pass morph_api_key from MalaConfig or set morph_enabled=False."
-        )
-    return {
-        "morphllm": {
-            "command": "npx",
-            "args": ["-y", "@morphllm/morphmcp"],
-            "cwd": str(repo_path),
-            "env": {
-                "MORPH_API_KEY": morph_api_key,
-                "ENABLED_TOOLS": "all",
-                "WORKSPACE_MODE": "true",
-                "WORKSPACE_PATH": str(repo_path),
-            },
-        }
-    }
-
-
-def _get_disallowed_tools(morph_enabled: bool) -> list[str]:
-    """Return disallowed tools list based on Morph enablement."""
-    return list(MORPH_DISALLOWED_TOOLS) if morph_enabled else []
 
 
 @dataclass
@@ -457,12 +426,12 @@ class RunCoordinator:
             model="opus",
             system_prompt={"type": "preset", "preset": "claude_code"},
             setting_sources=["project", "user"],
-            mcp_servers=_get_mcp_servers(
+            mcp_servers=get_mcp_servers(
                 fixer_cwd,
                 morph_api_key=self.config.morph_api_key,
                 morph_enabled=self.config.morph_enabled,
             ),
-            disallowed_tools=_get_disallowed_tools(self.config.morph_enabled),
+            disallowed_tools=get_disallowed_tools(self.config.morph_enabled),
             env=agent_env,
             hooks={
                 "PreToolUse": [
