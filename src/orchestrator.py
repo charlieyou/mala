@@ -73,6 +73,7 @@ from .validation.spec import (
     build_validation_spec,
 )
 from .epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
+from .models import RetryConfig
 
 if TYPE_CHECKING:
     import subprocess
@@ -523,6 +524,7 @@ class MalaOrchestrator:
                 api_key=self._config.llm_api_key,
                 base_url=self._config.llm_base_url,
                 timeout_ms=self.timeout_seconds * 1000,
+                retry_config=RetryConfig(),
             )
             self.epic_verifier: EpicVerifier | None = EpicVerifier(
                 beads=self.beads,

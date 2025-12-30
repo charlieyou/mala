@@ -23,7 +23,7 @@ from src.epic_verifier import (
     _compute_criterion_hash,
     extract_spec_paths,
 )
-from src.models import EpicVerdict, UnmetCriterion
+from src.models import EpicVerdict, RetryConfig, UnmetCriterion
 from src.tools.command_runner import CommandResult
 
 
@@ -1451,3 +1451,198 @@ class TestEpicVerifierOrchestratorIntegration:
         mock_beads.close_async.assert_called_with("epic-1")
         assert result.passed_count == 1
         assert result.failed_count == 0
+
+
+# ============================================================================
+# Test retry behavior
+# ============================================================================
+
+
+class TestRetryBehavior:
+    """Tests for retry behavior with exponential backoff."""
+
+    def test_is_retryable_error_for_rate_limit(self) -> None:
+        """Should identify rate limit errors as retryable."""
+        model = ClaudeEpicVerificationModel()
+
+        # Test rate limit errors
+        assert model._is_retryable_error(Exception("rate limit exceeded"))
+        assert model._is_retryable_error(Exception("429 Too Many Requests"))
+
+    def test_is_retryable_error_for_server_errors(self) -> None:
+        """Should identify server errors as retryable."""
+        model = ClaudeEpicVerificationModel()
+
+        # Test server errors
+        assert model._is_retryable_error(Exception("500 Internal Server Error"))
+        assert model._is_retryable_error(Exception("502 Bad Gateway"))
+        assert model._is_retryable_error(Exception("503 Service Unavailable"))
+        assert model._is_retryable_error(Exception("529 Overloaded"))
+
+    def test_is_retryable_error_for_network_errors(self) -> None:
+        """Should identify network/connection errors as retryable."""
+        model = ClaudeEpicVerificationModel()
+
+        # Test network errors
+        assert model._is_retryable_error(Exception("connection refused"))
+        assert model._is_retryable_error(Exception("network unreachable"))
+        assert model._is_retryable_error(TimeoutError("request timed out"))
+
+    def test_is_retryable_error_for_non_retryable(self) -> None:
+        """Should identify non-transient errors as not retryable."""
+        model = ClaudeEpicVerificationModel()
+
+        # Test non-retryable errors
+        assert not model._is_retryable_error(ValueError("invalid input"))
+        assert not model._is_retryable_error(KeyError("missing key"))
+        assert not model._is_retryable_error(Exception("authentication failed"))
+
+    def test_retry_config_is_stored(self) -> None:
+        """Should store retry_config when provided."""
+        custom_config = RetryConfig(
+            max_retries=5,
+            initial_delay_ms=500,
+            backoff_multiplier=3.0,
+            max_delay_ms=60000,
+        )
+        model = ClaudeEpicVerificationModel(retry_config=custom_config)
+
+        assert model.retry_config.max_retries == 5
+        assert model.retry_config.initial_delay_ms == 500
+        assert model.retry_config.backoff_multiplier == 3.0
+        assert model.retry_config.max_delay_ms == 60000
+
+    def test_retry_config_defaults(self) -> None:
+        """Should use default RetryConfig when not provided."""
+        model = ClaudeEpicVerificationModel()
+
+        # Check defaults from RetryConfig
+        assert model.retry_config.max_retries == 2
+        assert model.retry_config.initial_delay_ms == 1000
+        assert model.retry_config.backoff_multiplier == 2.0
+        assert model.retry_config.max_delay_ms == 30000
+
+    @pytest.mark.asyncio
+    async def test_verify_retries_on_transient_error(self) -> None:
+        """Should retry on transient errors and succeed on eventual success."""
+        # Configure with short delays for testing
+        retry_config = RetryConfig(
+            max_retries=2,
+            initial_delay_ms=10,  # Short delay for testing
+            backoff_multiplier=2.0,
+            max_delay_ms=100,
+        )
+        model = ClaudeEpicVerificationModel(retry_config=retry_config)
+        # Use a simple template that doesn't conflict with .format()
+        model._prompt_template = "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+
+        call_count = 0
+
+        def mock_messages_create(**kwargs: object) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise Exception("429 rate limit exceeded")
+            # Succeed on second call
+            response = MagicMock()
+            response.content = [
+                MagicMock(
+                    text='{"passed": true, "confidence": 0.9, "reasoning": "ok", "unmet_criteria": []}'
+                )
+            ]
+            return response
+
+        with patch("src.anthropic_client.create_anthropic_client") as mock_client:
+            mock_client.return_value.messages.create = mock_messages_create
+
+            verdict = await model.verify("criteria", "diff", None)
+
+        assert verdict.passed is True
+        assert call_count == 2  # First failed, second succeeded
+
+    @pytest.mark.asyncio
+    async def test_verify_exhausts_retries_on_persistent_error(self) -> None:
+        """Should raise after exhausting retries on persistent transient errors."""
+        retry_config = RetryConfig(
+            max_retries=2,
+            initial_delay_ms=10,
+            backoff_multiplier=2.0,
+            max_delay_ms=100,
+        )
+        model = ClaudeEpicVerificationModel(retry_config=retry_config)
+        # Use a simple template that doesn't conflict with .format()
+        model._prompt_template = "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+
+        call_count = 0
+
+        def mock_messages_create(**kwargs: object) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            raise Exception("503 Service Unavailable")
+
+        with patch("src.anthropic_client.create_anthropic_client") as mock_client:
+            mock_client.return_value.messages.create = mock_messages_create
+
+            with pytest.raises(Exception, match="503 Service Unavailable"):
+                await model.verify("criteria", "diff", None)
+
+        # Should have tried max_retries + 1 times (initial + retries)
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_verify_does_not_retry_on_non_transient_error(self) -> None:
+        """Should not retry on non-transient errors."""
+        retry_config = RetryConfig(
+            max_retries=3,
+            initial_delay_ms=10,
+            backoff_multiplier=2.0,
+            max_delay_ms=100,
+        )
+        model = ClaudeEpicVerificationModel(retry_config=retry_config)
+        # Use a simple template that doesn't conflict with .format()
+        model._prompt_template = "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+
+        call_count = 0
+
+        def mock_messages_create(**kwargs: object) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            raise ValueError("invalid request format")
+
+        with patch("src.anthropic_client.create_anthropic_client") as mock_client:
+            mock_client.return_value.messages.create = mock_messages_create
+
+            with pytest.raises(ValueError, match="invalid request format"):
+                await model.verify("criteria", "diff", None)
+
+        # Should only try once (no retries for non-transient)
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_verify_succeeds_without_retry_on_first_attempt(self) -> None:
+        """Should return immediately on successful first attempt."""
+        model = ClaudeEpicVerificationModel()
+        # Use a simple template that doesn't conflict with .format()
+        model._prompt_template = "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+
+        call_count = 0
+
+        def mock_messages_create(**kwargs: object) -> MagicMock:
+            nonlocal call_count
+            call_count += 1
+            response = MagicMock()
+            response.content = [
+                MagicMock(
+                    text='{"passed": true, "confidence": 0.95, "reasoning": "all good", "unmet_criteria": []}'
+                )
+            ]
+            return response
+
+        with patch("src.anthropic_client.create_anthropic_client") as mock_client:
+            mock_client.return_value.messages.create = mock_messages_create
+
+            verdict = await model.verify("criteria", "diff", None)
+
+        assert verdict.passed is True
+        assert verdict.confidence == 0.95
+        assert call_count == 1

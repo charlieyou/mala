@@ -155,6 +155,7 @@ class ClaudeEpicVerificationModel:
         timeout_ms: int = 120000,
         api_key: str | None = None,
         base_url: str | None = None,
+        retry_config: RetryConfig | None = None,
     ):
         """Initialize ClaudeEpicVerificationModel.
 
@@ -166,11 +167,14 @@ class ClaudeEpicVerificationModel:
                 will use the ANTHROPIC_API_KEY environment variable.
             base_url: Optional base URL for API requests. Useful for routing
                 through MorphLLM or other proxies.
+            retry_config: Configuration for retry behavior with exponential
+                backoff. If not provided, uses default RetryConfig.
         """
         self.model = model or self.DEFAULT_MODEL
         self.timeout_ms = timeout_ms
         self.api_key = api_key
         self.base_url = base_url
+        self.retry_config = retry_config or RetryConfig()
         self._prompt_template = _load_prompt_template()
 
     async def verify(
@@ -181,6 +185,9 @@ class ClaudeEpicVerificationModel:
     ) -> EpicVerdict:
         """Verify if the diff satisfies the epic's acceptance criteria.
 
+        Uses retry logic with exponential backoff for transient API failures
+        (rate limits, network issues, server errors).
+
         Args:
             epic_criteria: The epic's acceptance criteria text.
             diff: Scoped git diff of child issue commits only.
@@ -188,6 +195,9 @@ class ClaudeEpicVerificationModel:
 
         Returns:
             Structured verdict with pass/fail and unmet criteria details.
+
+        Raises:
+            Exception: If all retry attempts fail for non-transient errors.
         """
         from src.anthropic_client import create_anthropic_client
 
@@ -204,17 +214,106 @@ class ClaudeEpicVerificationModel:
             timeout=self.timeout_ms / 1000,
         )
 
-        # Use asyncio.to_thread to avoid blocking the event loop during API calls
-        response = await asyncio.to_thread(
-            client.messages.create,
-            model=self.model,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        # Retry loop with exponential backoff
+        last_exception: Exception | None = None
+        delay_ms = self.retry_config.initial_delay_ms
 
-        # Parse the response
-        response_text = response.content[0].text
-        return self._parse_verdict(response_text)
+        for attempt in range(self.retry_config.max_retries + 1):
+            try:
+                # Use asyncio.to_thread to avoid blocking the event loop
+                response = await asyncio.to_thread(
+                    client.messages.create,
+                    model=self.model,
+                    max_tokens=4096,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+                # Parse the response
+                response_text = response.content[0].text
+                return self._parse_verdict(response_text)
+
+            except Exception as e:
+                last_exception = e
+
+                # Check if this is a transient/retryable error
+                if not self._is_retryable_error(e):
+                    raise
+
+                # Check if we've exhausted retries
+                if attempt >= self.retry_config.max_retries:
+                    raise
+
+                # Wait before retrying with exponential backoff
+                await asyncio.sleep(delay_ms / 1000)
+
+                # Calculate next delay with exponential backoff, capped at max
+                delay_ms = min(
+                    int(delay_ms * self.retry_config.backoff_multiplier),
+                    self.retry_config.max_delay_ms,
+                )
+
+        # Should not reach here, but satisfy type checker
+        if last_exception is not None:
+            raise last_exception
+        raise RuntimeError("Unexpected retry loop exit")
+
+    def _is_retryable_error(self, error: Exception) -> bool:
+        """Check if an error is transient and should trigger a retry.
+
+        Retryable errors include:
+        - Rate limit errors (429)
+        - Server errors (500, 502, 503, 529)
+        - Network/connection errors
+        - Timeout errors
+
+        Args:
+            error: The exception to check.
+
+        Returns:
+            True if the error is retryable, False otherwise.
+        """
+        error_str = str(error).lower()
+        error_type = type(error).__name__.lower()
+
+        # Check error message for common transient patterns
+        transient_patterns = [
+            "rate limit",
+            "rate_limit",
+            "too many requests",
+            "429",
+            "500",
+            "502",
+            "503",
+            "529",
+            "overloaded",
+            "server error",
+            "internal error",
+            "connection",
+            "timeout",
+            "timed out",
+            "network",
+            "temporarily unavailable",
+        ]
+
+        for pattern in transient_patterns:
+            if pattern in error_str or pattern in error_type:
+                return True
+
+        # Check for specific exception types by name
+        retryable_types = [
+            "ratelimiterror",
+            "apierror",
+            "internalservererror",
+            "overloadederror",
+            "connectionerror",
+            "timeouterror",
+            "timeout",
+        ]
+
+        if error_type in retryable_types:
+            return True
+
+        return False
 
     def _parse_verdict(self, response_text: str) -> EpicVerdict:
         """Parse model response into EpicVerdict.
