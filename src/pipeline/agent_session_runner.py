@@ -180,7 +180,7 @@ class AgentSessionConfig:
     repo_path: Path
     timeout_seconds: int
     max_gate_retries: int = 3
-    max_review_retries: int = 2
+    max_review_retries: int = 3
     morph_enabled: bool = False
     morph_api_key: str | None = None
     codex_review_enabled: bool = True

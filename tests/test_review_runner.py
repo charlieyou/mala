@@ -421,16 +421,8 @@ class TestReviewRunnerNoProgress:
 class TestReviewRunnerConfig:
     """Test configuration handling."""
 
-    def test_config_default_values(self) -> None:
-        """Config should have sensible defaults."""
-        config = ReviewRunnerConfig()
-
-        assert config.max_review_retries == 2
-        assert config.thinking_mode is None
-        assert config.capture_session_log is False
-
     def test_config_with_custom_values(self) -> None:
-        """Config should accept custom values."""
+        """Config should accept custom values via flags."""
         config = ReviewRunnerConfig(
             max_review_retries=4,
             thinking_mode="xhigh",

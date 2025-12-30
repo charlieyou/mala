@@ -267,7 +267,7 @@ Codex review is enabled by default. After the deterministic gate passes:
    - Cumulative diff from baseline (includes all work across retry attempts)
 6. **Re-gating**: After fixes, runs both deterministic gate AND Codex review again
 
-Review retries are capped at `max_review_retries` (default: 2). Use `--disable-validations=codex-review` to disable.
+Review retries are capped at `max_review_retries` (default: 3). Use `--disable-validations=codex-review` to disable.
 
 **Skipped for no-work resolutions**: Issues resolved with `ISSUE_NO_CHANGE`, `ISSUE_OBSOLETE`, or `ISSUE_ALREADY_COMPLETE` skip Codex review entirely since there's no new code to review.
 

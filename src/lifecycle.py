@@ -194,7 +194,7 @@ class LifecycleConfig:
     """Configuration for lifecycle behavior."""
 
     max_gate_retries: int = 3
-    max_review_retries: int = 2
+    max_review_retries: int = 3
     codex_review_enabled: bool = True
 
 

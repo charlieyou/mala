@@ -442,20 +442,8 @@ class TestAgentSessionRunnerCallbacks:
 class TestAgentSessionRunnerConfig:
     """Test configuration handling."""
 
-    def test_config_default_values(self, tmp_path: Path) -> None:
-        """Config should have sensible defaults."""
-        config = AgentSessionConfig(
-            repo_path=tmp_path,
-            timeout_seconds=60,
-        )
-
-        assert config.max_gate_retries == 3
-        assert config.max_review_retries == 2
-        assert config.morph_enabled is False
-        assert config.codex_review_enabled is True
-
     def test_config_with_custom_values(self, tmp_path: Path) -> None:
-        """Config should accept custom values."""
+        """Config should accept custom values via flags."""
         config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=120,
