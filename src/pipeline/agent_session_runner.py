@@ -175,7 +175,7 @@ class AgentSessionConfig:
         max_review_retries: Maximum review retry attempts.
         morph_enabled: Whether Morph MCP is enabled.
         morph_api_key: Morph API key (required if morph_enabled).
-        codex_review_enabled: Whether Codex review is enabled.
+        review_enabled: Whether external review is enabled.
     """
 
     repo_path: Path
@@ -184,7 +184,7 @@ class AgentSessionConfig:
     max_review_retries: int = 3
     morph_enabled: bool = False
     morph_api_key: str | None = None
-    codex_review_enabled: bool = True
+    review_enabled: bool = True
 
 
 @dataclass
@@ -425,7 +425,7 @@ class AgentSessionRunner:
         lifecycle_config = LifecycleConfig(
             max_gate_retries=self.config.max_gate_retries,
             max_review_retries=self.config.max_review_retries,
-            codex_review_enabled=self.config.codex_review_enabled,
+            review_enabled=self.config.review_enabled,
         )
         lifecycle = ImplementerLifecycle(lifecycle_config)
         lifecycle_ctx = LifecycleContext()

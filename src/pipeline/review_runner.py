@@ -18,12 +18,11 @@ Design principles:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
-    from src.codex_review import CodexReviewResult
+    from src.cerberus_review import ReviewResult
     from src.protocols import CodeReviewer, GateChecker
     from src.validation.spec import ValidationSpec
 
@@ -35,12 +34,14 @@ class ReviewRunnerConfig:
     Attributes:
         max_review_retries: Maximum number of review retry attempts.
         thinking_mode: Optional reasoning effort level for reviewer.
-        capture_session_log: Whether to capture codex session log path.
+        capture_session_log: Whether to capture review session log path.
+        review_timeout: Timeout in seconds for review operations.
     """
 
     max_review_retries: int = 3
     thinking_mode: str | None = None
     capture_session_log: bool = False
+    review_timeout: int = 300
 
 
 @dataclass
@@ -69,11 +70,11 @@ class ReviewOutput:
     """Output from a code review check.
 
     Attributes:
-        result: The CodexReviewResult from the review.
-        session_log_path: Path to the codex review session log (if captured).
+        result: The ReviewResult from the review.
+        session_log_path: Path to the review session log (if captured).
     """
 
-    result: CodexReviewResult
+    result: ReviewResult
     session_log_path: str | None = None
 
 
@@ -138,19 +139,29 @@ class ReviewRunner:
         Returns:
             ReviewOutput with result and optional session log path.
         """
+        import tempfile
+
+        # Build diff range
+        baseline = input.baseline_commit or "HEAD~1"
+        diff_range = f"{baseline}..{input.commit_sha}"
+
+        # Create context file if issue_description provided
+        context_file: Path | None = None
+        if input.issue_description:
+            context_dir = Path(tempfile.gettempdir()) / "claude"
+            context_dir.mkdir(parents=True, exist_ok=True)
+            context_file = context_dir / f"review-context-{input.issue_id}.txt"
+            context_file.write_text(input.issue_description)
+
         result = await self.code_reviewer(
-            repo_path=input.repo_path,
-            commit_sha=input.commit_sha,
-            max_retries=3,  # Internal retry within codex
-            issue_description=input.issue_description,
-            baseline_commit=input.baseline_commit,
-            capture_session_log=self.config.capture_session_log,
-            thinking_mode=self.config.thinking_mode,
+            diff_range=diff_range,
+            context_file=context_file,
+            timeout=self.config.review_timeout,
         )
 
         session_log_path = None
-        if result.session_log_path:
-            session_log_path = result.session_log_path
+        if result.review_log_path:
+            session_log_path = str(result.review_log_path)
 
         return ReviewOutput(
             result=result,

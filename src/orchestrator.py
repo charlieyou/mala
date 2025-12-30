@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING
 
 
 from .beads_client import BeadsClient
+from .cerberus_review import ReviewResult, map_exit_code_to_result
 from .config import MalaConfig
 from .event_sink_console import ConsoleEventSink
 from .telemetry import BraintrustProvider, NullTelemetryProvider
-from .codex_review import run_codex_review
 from .git_utils import (
     get_git_commit_async,
     get_git_branch_async,
@@ -74,7 +74,8 @@ from .validation.spec import (
 )
 
 if TYPE_CHECKING:
-    from .codex_review import CodexReviewResult
+    import subprocess
+
     from .event_sink import EventRunConfig, MalaEventSink
     from .lifecycle import RetryState
     from .models import IssueResolution
@@ -132,32 +133,155 @@ def _get_fixer_prompt() -> str:
     return FIXER_PROMPT_FILE.read_text()
 
 
-class DefaultCodeReviewer:
-    """Default CodeReviewer implementation that wraps run_codex_review.
+@dataclass
+class DefaultReviewer:
+    """Default CodeReviewer implementation using Cerberus review-gate CLI.
 
     This class conforms to the CodeReviewer protocol and provides the default
     behavior for the orchestrator. Tests can inject alternative implementations.
+
+    The reviewer spawns review-gate CLI processes and parses their output.
+    For the initial review, an empty diff short-circuits to PASS without spawning.
     """
+
+    repo_path: Path
 
     async def __call__(
         self,
-        repo_path: Path,
-        commit_sha: str,
-        max_retries: int = 3,
-        issue_description: str | None = None,
-        baseline_commit: str | None = None,
-        capture_session_log: bool = False,
-        thinking_mode: str | None = None,
-    ) -> CodexReviewResult:
-        """Delegate to run_codex_review function."""
-        return await run_codex_review(
-            repo_path,
-            commit_sha,
-            max_retries=max_retries,
-            issue_description=issue_description,
-            baseline_commit=baseline_commit,
-            capture_session_log=capture_session_log,
-            thinking_mode=thinking_mode,
+        diff_range: str,
+        context_file: Path | None = None,
+        timeout: int = 300,
+    ) -> ReviewResult:
+        """Run review-gate spawn/wait flow and return ReviewResult.
+
+        Args:
+            diff_range: Git diff range to review (e.g., "baseline..HEAD").
+            context_file: Optional path to file with issue description context.
+            timeout: Timeout in seconds for the review operation.
+
+        Returns:
+            ReviewResult with review outcome. On spawn failure, returns
+            parse_error with stderr. On empty diff (initial review), returns passed=True.
+        """
+        import asyncio
+        import json
+
+        # Check for empty diff (short-circuit for initial review only)
+        # This is detected via git diff --stat; if output is empty, no changes
+        try:
+            diff_check = await asyncio.to_thread(
+                self._run_command,
+                ["git", "diff", "--stat", diff_range],
+            )
+            if diff_check.returncode == 0 and not diff_check.stdout.strip():
+                # Empty diff on initial review - pass without spawning
+                return ReviewResult(
+                    passed=True,
+                    issues=[],
+                    parse_error=None,
+                    fatal_error=False,
+                    review_log_path=None,
+                )
+        except Exception:
+            # If diff check fails, proceed with review anyway
+            pass
+
+        # Build spawn command
+        spawn_cmd = ["review-gate", "spawn-code-review", "--diff", diff_range]
+        if context_file:
+            spawn_cmd.extend(["--context-file", str(context_file)])
+
+        # Run spawn command
+        try:
+            spawn_result = await asyncio.to_thread(self._run_command, spawn_cmd)
+        except Exception as e:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=f"spawn failed: {e}",
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        if spawn_result.returncode != 0:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=f"spawn failed: {spawn_result.stderr.strip() or 'exit code ' + str(spawn_result.returncode)}",
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        # Parse session_key from spawn output
+        try:
+            spawn_data = json.loads(spawn_result.stdout)
+            session_key = spawn_data.get("session_key")
+        except (json.JSONDecodeError, KeyError) as e:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=f"spawn output parse error: {e}",
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        if not session_key:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error="spawn output missing session_key",
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        # Build wait command with timeout
+        wait_cmd = [
+            "review-gate",
+            "wait",
+            "--json",
+            "--session-key",
+            session_key,
+            "--timeout",
+            str(timeout),
+        ]
+
+        # Run wait command
+        try:
+            wait_result = await asyncio.to_thread(self._run_command, wait_cmd)
+        except Exception as e:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=f"wait failed: {e}",
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        # Map exit code to ReviewResult using cerberus_review adapter
+        return map_exit_code_to_result(
+            exit_code=wait_result.returncode,
+            stdout=wait_result.stdout,
+            stderr=wait_result.stderr,
+            review_log_path=None,  # Cerberus logs handled internally
+        )
+
+    def _run_command(self, cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        """Run a subprocess command in repo_path directory.
+
+        Args:
+            cmd: Command and arguments to run.
+
+        Returns:
+            CompletedProcess with stdout, stderr, and returncode.
+        """
+        import subprocess
+
+        return subprocess.run(
+            cmd,
+            cwd=self.repo_path,
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 minute timeout for review operations
         )
 
 
@@ -335,9 +459,11 @@ class MalaOrchestrator:
             else issue_provider
         )
 
-        # CodeReviewer: DefaultCodeReviewer wrapping run_codex_review
+        # CodeReviewer: DefaultReviewer using Cerberus review-gate
         self.code_reviewer: CodeReviewer = (
-            DefaultCodeReviewer() if code_reviewer is None else code_reviewer
+            DefaultReviewer(repo_path=self.repo_path)
+            if code_reviewer is None
+            else code_reviewer
         )
 
         # TelemetryProvider: BraintrustProvider when enabled, else NullTelemetryProvider
@@ -369,6 +495,7 @@ class MalaOrchestrator:
             max_review_retries=self.max_review_retries,
             thinking_mode=self.codex_thinking_mode,
             capture_session_log=False,  # Set per-issue based on verbose
+            review_timeout=self._config.review_timeout,
         )
         self.review_runner = ReviewRunner(
             code_reviewer=self.code_reviewer,
@@ -691,7 +818,7 @@ class MalaOrchestrator:
 
         async def on_review_check(
             issue_id: str, issue_desc: str | None, baseline: str | None
-        ) -> CodexReviewResult:
+        ) -> ReviewResult:
             current_head = await get_git_commit_async(self.repo_path)
             self.review_runner.config.capture_session_log = is_verbose_enabled()
             review_input = ReviewInput(
@@ -768,7 +895,7 @@ class MalaOrchestrator:
             agent_id=temp_agent_id,
         )
 
-        codex_review_enabled = "codex-review" not in (self.disable_validations or set())
+        review_enabled = "review" not in (self.disable_validations or set())
         session_config = AgentSessionConfig(
             repo_path=self.repo_path,
             timeout_seconds=self.timeout_seconds,
@@ -776,7 +903,7 @@ class MalaOrchestrator:
             max_review_retries=self.max_review_retries,
             morph_enabled=self.morph_enabled,
             morph_api_key=self._config.morph_api_key,
-            codex_review_enabled=codex_review_enabled,
+            review_enabled=review_enabled,
         )
         session_input = AgentSessionInput(
             issue_id=issue_id,
@@ -843,7 +970,7 @@ class MalaOrchestrator:
         """Build EventRunConfig for on_run_started event."""
         from .event_sink import EventRunConfig
 
-        codex_review_enabled = "codex-review" not in (self.disable_validations or set())
+        review_enabled = "review" not in (self.disable_validations or set())
 
         # Compute morph disabled reason
         morph_disabled_reason: str | None = None
@@ -875,7 +1002,7 @@ class MalaOrchestrator:
             only_ids=list(self.only_ids) if self.only_ids else None,
             braintrust_enabled=self.braintrust_enabled,
             braintrust_disabled_reason=braintrust_disabled_reason,
-            review_enabled=codex_review_enabled,
+            review_enabled=review_enabled,
             morph_enabled=self.morph_enabled,
             morph_disallowed_tools=list(MORPH_DISALLOWED_TOOLS)
             if self.morph_enabled
@@ -898,7 +1025,7 @@ class MalaOrchestrator:
             braintrust_enabled=self.braintrust_enabled,
             max_gate_retries=self.max_gate_retries,
             max_review_retries=self.max_review_retries,
-            review_enabled="codex-review" not in (self.disable_validations or set()),
+            review_enabled="review" not in (self.disable_validations or set()),
             cli_args=self.cli_args,
         )
         return RunMetadata(self.repo_path, run_config, __version__)

@@ -201,7 +201,7 @@ class LifecycleConfig:
 
     max_gate_retries: int = 3
     max_review_retries: int = 3
-    codex_review_enabled: bool = True
+    review_enabled: bool = True
 
 
 @dataclass
@@ -373,7 +373,7 @@ class ImplementerLifecycle:
                 and gate_result.resolution.outcome in _SKIP_REVIEW_OUTCOMES
             )
             if (
-                self.config.codex_review_enabled
+                self.config.review_enabled
                 and gate_result.commit_hash
                 and not resolution_skips_review
             ):

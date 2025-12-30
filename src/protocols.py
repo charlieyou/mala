@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from .codex_review import CodexReviewResult
+    from .cerberus_review import ReviewResult
     from .quality_gate import CommitResult, GateResult, ValidationEvidence
     from .session_log_parser import JsonlEntry
     from .validation.spec import ValidationSpec
@@ -249,37 +249,28 @@ class CodeReviewer(Protocol):
 
     Provides a callable interface for reviewing commits and returning
     structured results. The orchestrator uses this to run post-commit
-    code reviews.
+    code reviews via the Cerberus review-gate CLI.
 
-    The canonical implementation is the run_codex_review function, which
-    conforms to this protocol as a callable with matching signature.
+    The canonical implementation is DefaultReviewer in orchestrator.py.
     Test implementations can return predetermined results for isolation.
     """
 
     async def __call__(
         self,
-        repo_path: Path,
-        commit_sha: str,
-        max_retries: int = 3,
-        issue_description: str | None = None,
-        baseline_commit: str | None = None,
-        capture_session_log: bool = False,
-        thinking_mode: str | None = None,
-    ) -> CodexReviewResult:
-        """Run code review on a commit with JSON output and retry logic.
+        diff_range: str,
+        context_file: Path | None = None,
+        timeout: int = 300,
+    ) -> ReviewResult:
+        """Run code review on a diff range.
 
         Args:
-            repo_path: Path to the git repository.
-            commit_sha: The commit SHA to review.
-            max_retries: Maximum number of attempts (default 3).
-            issue_description: Issue description for scope verification.
-            baseline_commit: Optional baseline commit for cumulative diff.
-            capture_session_log: If True, capture session log path.
-            thinking_mode: Optional reasoning effort level for reviewer.
+            diff_range: Git diff range to review (e.g., "baseline..HEAD").
+            context_file: Optional path to file with issue description context.
+            timeout: Timeout in seconds for the review operation.
 
         Returns:
-            CodexReviewResult with review outcome. On parse failure after
-            all retries, returns passed=False (fail-closed).
+            ReviewResult with review outcome. On parse failure,
+            returns passed=False with parse_error set.
         """
         ...
 

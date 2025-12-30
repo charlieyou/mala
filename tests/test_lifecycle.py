@@ -136,7 +136,7 @@ class TestGateResult:
 
     def test_gate_passed_without_commit_hash_succeeds(self) -> None:
         """Gate passed without commit hash completes successfully."""
-        config = LifecycleConfig(codex_review_enabled=True)
+        config = LifecycleConfig(review_enabled=True)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
         ctx = LifecycleContext()
@@ -152,7 +152,7 @@ class TestGateResult:
 
     def test_gate_passed_with_review_disabled_succeeds(self) -> None:
         """Gate passed with review disabled completes successfully."""
-        config = LifecycleConfig(codex_review_enabled=False)
+        config = LifecycleConfig(review_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
         ctx = LifecycleContext()
@@ -530,7 +530,7 @@ class TestTimeoutAndError:
 
     def test_timeout_from_terminal_state_is_noop(self) -> None:
         """Timeout from terminal state doesn't change state."""
-        lifecycle = ImplementerLifecycle(LifecycleConfig(codex_review_enabled=False))
+        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=False))
         lifecycle.start()
         ctx = LifecycleContext()
         lifecycle.on_messages_complete(ctx, has_session_id=True)
@@ -552,7 +552,7 @@ class TestTerminalStates:
 
     def test_success_is_terminal(self) -> None:
         """SUCCESS state is terminal."""
-        lifecycle = ImplementerLifecycle(LifecycleConfig(codex_review_enabled=False))
+        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=False))
         lifecycle.start()
         ctx = LifecycleContext()
         lifecycle.on_messages_complete(ctx, has_session_id=True)
@@ -579,7 +579,7 @@ class TestFullLifecycleScenarios:
 
     def test_happy_path_gate_only(self) -> None:
         """Full lifecycle: agent completes, gate passes, no review."""
-        config = LifecycleConfig(codex_review_enabled=False)
+        config = LifecycleConfig(review_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         ctx = LifecycleContext()
 
@@ -625,7 +625,7 @@ class TestFullLifecycleScenarios:
 
     def test_gate_retry_then_success(self) -> None:
         """Gate fails once, retry succeeds."""
-        config = LifecycleConfig(max_gate_retries=3, codex_review_enabled=False)
+        config = LifecycleConfig(max_gate_retries=3, review_enabled=False)
         lifecycle = ImplementerLifecycle(config)
         ctx = LifecycleContext()
 

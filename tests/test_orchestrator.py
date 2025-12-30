@@ -3461,8 +3461,10 @@ class TestBaselineCommitSelection:
             patch("src.orchestrator.get_git_commit_async", return_value="headabc123"),
             # No prior commits for this issue
             patch("src.orchestrator.get_baseline_for_issue", return_value=None),
-            patch(
-                "src.orchestrator.run_codex_review", side_effect=mock_run_codex_review
+            patch.object(
+                orchestrator.code_reviewer,
+                "__call__",
+                side_effect=mock_run_codex_review,
             ),
             patch.object(
                 orchestrator.beads,
@@ -3540,8 +3542,10 @@ class TestBaselineCommitSelection:
             patch(
                 "src.orchestrator.get_baseline_for_issue", return_value="parentofirst"
             ),
-            patch(
-                "src.orchestrator.run_codex_review", side_effect=mock_run_codex_review
+            patch.object(
+                orchestrator.code_reviewer,
+                "__call__",
+                side_effect=mock_run_codex_review,
             ),
             patch.object(
                 orchestrator.beads,
@@ -3650,7 +3654,7 @@ class TestCodexReviewUsesCurrentHead:
         This ensures that if another agent fixed issues after this agent's commit,
         the Codex review will see the clean cumulative diff.
         """
-        from src.codex_review import CodexReviewResult
+        from src.cerberus_review import ReviewResult
         from src.orchestrator import MalaOrchestrator
         from src.quality_gate import GateResult
 
@@ -3667,25 +3671,26 @@ class TestCodexReviewUsesCurrentHead:
             log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
         )
 
-        # Track the commit hash passed to codex review
-        captured_review_commits: list[str] = []
+        # Track the diff_range passed to code review
+        captured_diff_ranges: list[str] = []
 
-        async def mock_run_codex_review(
-            repo_path: Path,
-            commit_hash: str,
-            max_retries: int = 2,
-            issue_description: str | None = None,
-            baseline_commit: str | None = None,
-            capture_session_log: bool = False,
-            thinking_mode: str | None = None,
-        ) -> CodexReviewResult:
-            captured_review_commits.append(commit_hash)
-            return CodexReviewResult(
-                passed=True,
-                issues=[],
-                parse_error=None,
-                attempt=1,
-            )
+        class MockCodeReviewer:
+            async def __call__(
+                self,
+                diff_range: str,
+                context_file: Path | None = None,
+                timeout: int = 300,
+            ) -> ReviewResult:
+                captured_diff_ranges.append(diff_range)
+                return ReviewResult(
+                    passed=True,
+                    issues=[],
+                    parse_error=None,
+                    fatal_error=False,
+                    review_log_path=None,
+                )
+
+        mock_reviewer = MockCodeReviewer()
 
         # Simulate: agent made commit "agent_commit_abc", but HEAD is now "current_head_xyz"
         # (because another agent made a subsequent commit)
@@ -3747,10 +3752,7 @@ class TestCodexReviewUsesCurrentHead:
                 side_effect=mock_get_git_commit_async,
             ),
             patch("src.orchestrator.get_baseline_for_issue", return_value=None),
-            patch(
-                "src.orchestrator.run_codex_review",
-                side_effect=mock_run_codex_review,
-            ),
+            patch.object(orchestrator.review_runner, "code_reviewer", mock_reviewer),
             patch.object(orchestrator, "quality_gate", mock_quality_gate),
             patch.object(orchestrator.gate_runner, "gate_checker", mock_quality_gate),
             patch.object(
@@ -3761,12 +3763,12 @@ class TestCodexReviewUsesCurrentHead:
         ):
             await orchestrator.run_implementer("test-issue")
 
-        # The key assertion: codex review should receive current HEAD,
-        # NOT the agent's specific commit
-        assert len(captured_review_commits) >= 1, "Codex review should have been called"
-        assert captured_review_commits[0] == current_head, (
-            f"Codex review should use current HEAD ({current_head}), "
-            f"not agent's commit ({agent_commit}). Got: {captured_review_commits[0]}"
+        # The key assertion: code review should receive diff range with current HEAD
+        assert len(captured_diff_ranges) >= 1, "Code review should have been called"
+        # The diff range should include current HEAD in the format "baseline..HEAD"
+        assert current_head in captured_diff_ranges[0], (
+            f"Code review diff range should include current HEAD ({current_head}), "
+            f"got: {captured_diff_ranges[0]}"
         )
 
 
