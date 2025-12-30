@@ -768,6 +768,17 @@ class FakeEventSink:
     def on_warning(self, message: str, agent_id: str | None = None) -> None:
         self._record("on_warning", message, agent_id=agent_id)
 
+    def on_fixer_text(self, attempt: int, text: str) -> None:
+        self._record("on_fixer_text", attempt, text)
+
+    def on_fixer_tool_use(
+        self,
+        attempt: int,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> None:
+        self._record("on_fixer_tool_use", attempt, tool_name, arguments=arguments)
+
 
 class TestAgentSessionRunnerEventSink:
     """Test event sink integration for gate/review events."""

@@ -77,6 +77,9 @@ class DefaultReviewer:
     def _validate_review_gate_bin(self) -> str | None:
         """Validate that the review-gate binary exists and is executable.
 
+        Uses the merged env's PATH (respecting self.env) when checking for
+        the binary to avoid false negatives when callers inject PATH via cerberus_env.
+
         Returns:
             None if the binary is valid, or an error message if not.
         """
@@ -88,8 +91,16 @@ class DefaultReviewer:
             if not os.access(binary_path, os.X_OK):
                 return f"review-gate binary at {binary_path} is not executable"
         else:
-            # Bare "review-gate" - check if it's in PATH
-            if shutil.which("review-gate") is None:
+            # Bare "review-gate" - check if it's in PATH (respecting self.env)
+            # Build effective PATH by merging self.env with current os.environ
+            if "PATH" in self.env:
+                # Prepend self.env PATH to current PATH (matches CommandRunner._merge_env behavior)
+                effective_path = (
+                    self.env["PATH"] + os.pathsep + os.environ.get("PATH", "")
+                )
+            else:
+                effective_path = os.environ.get("PATH", "")
+            if shutil.which("review-gate", path=effective_path) is None:
                 return "review-gate binary not found in PATH"
         return None
 

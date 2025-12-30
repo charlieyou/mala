@@ -286,6 +286,7 @@ class MalaOrchestrator:
         self.review_disabled_reason: str | None = None
         if code_reviewer is None and "review" not in self._disabled_validations:
             import os
+            import shutil
 
             review_gate_path = (
                 self._config.cerberus_bin_path / "review-gate"
@@ -293,9 +294,22 @@ class MalaOrchestrator:
                 else None
             )
             if review_gate_path is None:
-                self.review_disabled_reason = (
-                    "cerberus plugin not detected (review-gate unavailable)"
-                )
+                # No explicit bin_path - check PATH (respecting cerberus_env if set)
+                # Build effective PATH by merging cerberus_env with current env
+                cerberus_env_dict = dict(self._config.cerberus_env)
+                if "PATH" in cerberus_env_dict:
+                    # Prepend cerberus_env PATH to current PATH
+                    effective_path = (
+                        cerberus_env_dict["PATH"]
+                        + os.pathsep
+                        + os.environ.get("PATH", "")
+                    )
+                else:
+                    effective_path = os.environ.get("PATH", "")
+                if shutil.which("review-gate", path=effective_path) is None:
+                    self.review_disabled_reason = (
+                        "cerberus plugin not detected (review-gate unavailable)"
+                    )
             elif not review_gate_path.exists():
                 self.review_disabled_reason = (
                     f"review-gate missing at {review_gate_path}"
