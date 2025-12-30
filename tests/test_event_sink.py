@@ -251,10 +251,7 @@ class TestConsoleEventSink:
         assert not missing, f"ConsoleEventSink missing protocol methods: {missing}"
 
     @patch("src.event_sink_console.log")
-    @patch("src.event_sink_console.log_verbose")
-    def test_on_run_started_logs(
-        self, mock_log_verbose: MagicMock, mock_log: MagicMock
-    ) -> None:
+    def test_on_run_started_logs(self, mock_log: MagicMock) -> None:
         """on_run_started calls log with run configuration."""
         sink = ConsoleEventSink()
         config = EventRunConfig(
@@ -267,9 +264,9 @@ class TestConsoleEventSink:
         )
         sink.on_run_started(config)
         assert mock_log.called
-        # Verify the message contains the repo path
-        call_args = mock_log.call_args
-        assert "/tmp/repo" in call_args[0][1]
+        # Verify one of the log calls contains the repo path
+        all_call_args = [str(call) for call in mock_log.call_args_list]
+        assert any("/tmp/repo" in args for args in all_call_args)
 
     @patch("src.event_sink_console.log_tool")
     def test_on_tool_use_delegates_to_log_tool(self, mock_log_tool: MagicMock) -> None:

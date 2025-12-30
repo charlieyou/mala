@@ -34,52 +34,152 @@ class ConsoleEventSink:
 
     def on_run_started(self, config: EventRunConfig) -> None:
         """Log run configuration at startup."""
-        log("▶", f"Starting run: {config.repo_path}", Colors.GREEN)
-        details = []
-        if config.max_agents is not None:
-            details.append(f"agents={config.max_agents}")
-        if config.max_issues is not None:
-            details.append(f"max_issues={config.max_issues}")
-        if config.timeout_minutes is not None:
-            details.append(f"timeout={config.timeout_minutes}m")
+        print()
+        log("●", "mala orchestrator", Colors.MAGENTA)
+        log("◐", f"repo: {config.repo_path}", Colors.MUTED)
+
+        # Format settings
+        limit_str = (
+            str(config.max_issues) if config.max_issues is not None else "unlimited"
+        )
+        agents_str = (
+            str(config.max_agents) if config.max_agents is not None else "unlimited"
+        )
+        timeout_str = f"{config.timeout_minutes}m" if config.timeout_minutes else "none"
+        log(
+            "◐",
+            f"max-agents: {agents_str}, timeout: {timeout_str}, max-issues: {limit_str}",
+            Colors.MUTED,
+        )
+        log("◐", f"gate-retries: {config.max_gate_retries}", Colors.MUTED)
+
+        # Codex review
+        if config.codex_review_enabled:
+            thinking_str = (
+                f", thinking: {config.codex_thinking_mode}"
+                if config.codex_thinking_mode
+                else ""
+            )
+            log(
+                "◐",
+                f"codex-review: enabled (max-retries: {config.max_review_retries}{thinking_str})",
+                Colors.CYAN,
+            )
+
+        # Filters
         if config.epic_id:
-            details.append(f"epic={config.epic_id}")
-        if details:
-            log_verbose("◦", ", ".join(details), Colors.MUTED)
+            log("◐", f"epic filter: {config.epic_id}", Colors.CYAN)
+        if config.only_ids:
+            log(
+                "◐",
+                f"only processing: {', '.join(sorted(config.only_ids))}",
+                Colors.CYAN,
+            )
+        if config.prioritize_wip:
+            log("◐", "wip: prioritizing in_progress issues", Colors.CYAN)
+
+        # Braintrust
+        if config.braintrust_enabled:
+            log("◐", "braintrust: enabled (LLM spans auto-traced)", Colors.CYAN)
+        elif config.braintrust_disabled_reason:
+            log(
+                "◐",
+                f"braintrust: disabled ({config.braintrust_disabled_reason})",
+                Colors.MUTED,
+            )
+
+        # Morph
+        if config.morph_enabled:
+            log(
+                "◐",
+                "morph: enabled (edit_file, warpgrep_codebase_search)",
+                Colors.CYAN,
+            )
+            if config.morph_disallowed_tools:
+                log(
+                    "◐",
+                    f"morph: blocked tools: {', '.join(config.morph_disallowed_tools)}",
+                    Colors.MUTED,
+                )
+        elif config.morph_disabled_reason:
+            log("◐", f"morph: disabled ({config.morph_disabled_reason})", Colors.MUTED)
+
+        # CLI args
+        if config.cli_args:
+            cli_parts = []
+            if config.cli_args.get("disable_validations"):
+                cli_parts.append(
+                    f"--disable-validations={config.cli_args['disable_validations']}"
+                )
+            if config.cli_args.get("coverage_threshold") is not None:
+                cli_parts.append(
+                    f"--coverage-threshold={config.cli_args['coverage_threshold']}"
+                )
+            if config.cli_args.get("wip"):
+                cli_parts.append("--wip")
+            if config.cli_args.get("max_issues") is not None:
+                cli_parts.append(f"--max-issues={config.cli_args['max_issues']}")
+            if config.cli_args.get("max_gate_retries") is not None:
+                cli_parts.append(
+                    f"--max-gate-retries={config.cli_args['max_gate_retries']}"
+                )
+            if config.cli_args.get("max_review_retries") is not None:
+                cli_parts.append(
+                    f"--max-review-retries={config.cli_args['max_review_retries']}"
+                )
+            if config.cli_args.get("braintrust"):
+                cli_parts.append("--braintrust")
+            if cli_parts:
+                log("◐", f"cli: {' '.join(cli_parts)}", Colors.MUTED)
+        print()
 
     def on_run_completed(
         self,
         success_count: int,
         total_count: int,
         run_validation_passed: bool,
+        abort_reason: str | None = None,
     ) -> None:
         """Log run completion summary."""
-        status = "✓" if run_validation_passed else "✗"
-        color = Colors.GREEN if run_validation_passed else Colors.RED
-        log(
-            status,
-            f"Run complete: {success_count}/{total_count} issues, "
-            f"validation={'passed' if run_validation_passed else 'failed'}",
-            color,
-        )
+        print()
+        if abort_reason:
+            log("○", f"Run aborted: {abort_reason}", Colors.RED)
+        elif success_count == total_count and total_count > 0 and run_validation_passed:
+            log("●", f"Completed: {success_count}/{total_count} issues", Colors.GREEN)
+        elif success_count > 0:
+            if not run_validation_passed:
+                log(
+                    "◐",
+                    f"Completed: {success_count}/{total_count} issues (Gate 4 failed)",
+                    Colors.YELLOW,
+                )
+            else:
+                log(
+                    "◐",
+                    f"Completed: {success_count}/{total_count} issues",
+                    Colors.YELLOW,
+                )
+        elif total_count == 0:
+            log("○", "No issues to process", Colors.GRAY)
+        else:
+            log("○", f"Completed: {success_count}/{total_count} issues", Colors.RED)
 
     def on_ready_issues(self, issue_ids: list[str]) -> None:
         """Log list of ready issues."""
-        count = len(issue_ids)
-        if count == 0:
-            log_verbose("◦", "No ready issues found", Colors.MUTED)
-        else:
-            log("→", f"{count} issue(s) ready: {', '.join(issue_ids[:5])}", Colors.CYAN)
-            if count > 5:
-                log_verbose("◦", f"...and {count - 5} more", Colors.MUTED)
+        if issue_ids:
+            log("◌", f"Ready issues: {', '.join(issue_ids)}", Colors.MUTED)
 
     def on_waiting_for_agents(self, count: int) -> None:
         """Log when waiting for agents to complete."""
-        log_verbose("◦", f"Waiting for {count} agent(s) to complete...", Colors.MUTED)
+        log("◌", f"Waiting for {count} agent(s)...", Colors.MUTED)
 
     def on_no_more_issues(self, reason: str) -> None:
         """Log when no more issues are available."""
-        log("◦", f"No more issues: {reason}", Colors.MUTED)
+        if reason.startswith("limit_reached"):
+            # Extract limit from reason like "limit_reached (5)"
+            log("○", f"Issue {reason.replace('_', ' ')}", Colors.GRAY)
+        else:
+            log("○", "No more issues to process", Colors.GRAY)
 
     # -------------------------------------------------------------------------
     # Agent lifecycle

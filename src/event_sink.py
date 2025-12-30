@@ -30,10 +30,14 @@ class EventRunConfig:
     epic_id: str | None = None
     only_ids: list[str] | None = None
     braintrust_enabled: bool = False
+    braintrust_disabled_reason: str | None = None  # e.g., "add BRAINTRUST_API_KEY..."
     codex_review_enabled: bool = True
     codex_thinking_mode: str | None = None
     morph_enabled: bool = True
     morph_disallowed_tools: list[str] | None = None
+    morph_disabled_reason: str | None = (
+        None  # e.g., "--no-morph", "MORPH_API_KEY not set"
+    )
     prioritize_wip: bool = False
     cli_args: dict[str, object] | None = None
 
@@ -67,6 +71,7 @@ class MalaEventSink(Protocol):
         success_count: int,
         total_count: int,
         run_validation_passed: bool,
+        abort_reason: str | None = None,
     ) -> None:
         """Called when the orchestrator run completes.
 
@@ -74,6 +79,7 @@ class MalaEventSink(Protocol):
             success_count: Number of issues completed successfully.
             total_count: Total number of issues processed.
             run_validation_passed: Whether Gate 4 (run-level validation) passed.
+            abort_reason: If run was aborted, the reason string.
         """
         ...
 
@@ -458,6 +464,7 @@ class NullEventSink:
         success_count: int,
         total_count: int,
         run_validation_passed: bool,
+        abort_reason: str | None = None,
     ) -> None:
         pass
 

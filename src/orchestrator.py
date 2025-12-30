@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from .beads_client import BeadsClient
 from .config import MalaConfig
+from .event_sink_console import ConsoleEventSink
 from .telemetry import BraintrustProvider, NullTelemetryProvider
 from .codex_review import run_codex_review
 from .git_utils import (
@@ -76,6 +77,7 @@ from .validation.spec import (
 
 if TYPE_CHECKING:
     from .codex_review import CodexReviewResult
+    from .event_sink import EventRunConfig, MalaEventSink
     from .lifecycle import RetryState
     from .models import IssueResolution
     from .protocols import CodeReviewer, GateChecker, IssueProvider, LogProvider
@@ -245,6 +247,7 @@ class MalaOrchestrator:
         gate_checker: GateChecker | None = None,
         log_provider: LogProvider | None = None,
         telemetry_provider: TelemetryProvider | None = None,
+        event_sink: MalaEventSink | None = None,
         # Centralized configuration (optional, uses from_env() if not provided)
         config: MalaConfig | None = None,
     ):
@@ -339,6 +342,11 @@ class MalaOrchestrator:
             self.telemetry_provider = BraintrustProvider()
         else:
             self.telemetry_provider = NullTelemetryProvider()
+
+        # EventSink: ConsoleEventSink by default for run lifecycle logging
+        self.event_sink: MalaEventSink = (
+            ConsoleEventSink() if event_sink is None else event_sink
+        )
 
         # Cached per-issue validation spec (built once at run start)
         self.per_issue_spec: ValidationSpec | None = None
@@ -831,101 +839,52 @@ class MalaOrchestrator:
         log("▶", "Agent started", Colors.BLUE, agent_id=issue_id)
         return True
 
-    def _log_run_status(self) -> None:
-        """Log run configuration and status at startup."""
-        print()
-        log("●", "mala orchestrator", Colors.MAGENTA)
-        log("◐", f"repo: {self.repo_path}", Colors.MUTED)
-        limit_str = str(self.max_issues) if self.max_issues is not None else "unlimited"
-        agents_str = (
-            str(self.max_agents) if self.max_agents is not None else "unlimited"
-        )
-        timeout_str = (
-            f"{self.timeout_seconds // 60}m" if self.timeout_seconds else "none"
-        )
-        log(
-            "◐",
-            f"max-agents: {agents_str}, timeout: {timeout_str}, max-issues: {limit_str}",
-            Colors.MUTED,
-        )
-        log("◐", f"gate-retries: {self.max_gate_retries}", Colors.MUTED)
+    def _build_run_config(self) -> EventRunConfig:
+        """Build EventRunConfig for on_run_started event."""
+        from .event_sink import EventRunConfig
 
         codex_review_enabled = "codex-review" not in (self.disable_validations or set())
-        if codex_review_enabled:
-            thinking_str = (
-                f", thinking: {self.codex_thinking_mode}"
-                if self.codex_thinking_mode
-                else ""
-            )
-            log(
-                "◐",
-                f"codex-review: enabled (max-retries: {self.max_review_retries}{thinking_str})",
-                Colors.CYAN,
-            )
 
-        if self.epic_id:
-            log("◐", f"epic filter: {self.epic_id}", Colors.CYAN)
-        if self.only_ids:
-            log(
-                "◐", f"only processing: {', '.join(sorted(self.only_ids))}", Colors.CYAN
-            )
-        if self.prioritize_wip:
-            log("◐", "wip: prioritizing in_progress issues", Colors.CYAN)
-
-        if self.braintrust_enabled:
-            log("◐", "braintrust: enabled (LLM spans auto-traced)", Colors.CYAN)
-        else:
-            log(
-                "◐",
-                f"braintrust: disabled (add BRAINTRUST_API_KEY to {USER_CONFIG_DIR}/.env)",
-                Colors.MUTED,
-            )
-
-        if self.morph_enabled:
-            log(
-                "◐", "morph: enabled (edit_file, warpgrep_codebase_search)", Colors.CYAN
-            )
-            log(
-                "◐",
-                f"morph: blocked tools: {', '.join(MORPH_DISALLOWED_TOOLS)}",
-                Colors.MUTED,
-            )
-        else:
+        # Compute morph disabled reason
+        morph_disabled_reason: str | None = None
+        if not self.morph_enabled:
             if self.cli_args and self.cli_args.get("no_morph"):
-                reason = "--no-morph"
+                morph_disabled_reason = "--no-morph"
             elif not self._config.morph_api_key:
-                reason = "MORPH_API_KEY not set"
+                morph_disabled_reason = "MORPH_API_KEY not set"
             else:
-                reason = "disabled by config"
-            log("◐", f"morph: disabled ({reason})", Colors.MUTED)
+                morph_disabled_reason = "disabled by config"
 
-        if self.cli_args:
-            cli_parts = []
-            if self.cli_args.get("disable_validations"):
-                cli_parts.append(
-                    f"--disable-validations={self.cli_args['disable_validations']}"
-                )
-            if self.cli_args.get("coverage_threshold") is not None:
-                cli_parts.append(
-                    f"--coverage-threshold={self.cli_args['coverage_threshold']}"
-                )
-            if self.cli_args.get("wip"):
-                cli_parts.append("--wip")
-            if self.cli_args.get("max_issues") is not None:
-                cli_parts.append(f"--max-issues={self.cli_args['max_issues']}")
-            if self.cli_args.get("max_gate_retries") is not None:
-                cli_parts.append(
-                    f"--max-gate-retries={self.cli_args['max_gate_retries']}"
-                )
-            if self.cli_args.get("max_review_retries") is not None:
-                cli_parts.append(
-                    f"--max-review-retries={self.cli_args['max_review_retries']}"
-                )
-            if self.cli_args.get("braintrust"):
-                cli_parts.append("--braintrust")
-            if cli_parts:
-                log("◐", f"cli: {' '.join(cli_parts)}", Colors.MUTED)
-        print()
+        # Compute braintrust disabled reason
+        braintrust_disabled_reason: str | None = None
+        if not self.braintrust_enabled:
+            braintrust_disabled_reason = (
+                f"add BRAINTRUST_API_KEY to {USER_CONFIG_DIR}/.env"
+            )
+
+        return EventRunConfig(
+            repo_path=str(self.repo_path),
+            max_agents=self.max_agents,
+            timeout_minutes=self.timeout_seconds // 60
+            if self.timeout_seconds
+            else None,
+            max_issues=self.max_issues,
+            max_gate_retries=self.max_gate_retries,
+            max_review_retries=self.max_review_retries,
+            epic_id=self.epic_id,
+            only_ids=list(self.only_ids) if self.only_ids else None,
+            braintrust_enabled=self.braintrust_enabled,
+            braintrust_disabled_reason=braintrust_disabled_reason,
+            codex_review_enabled=codex_review_enabled,
+            codex_thinking_mode=self.codex_thinking_mode,
+            morph_enabled=self.morph_enabled,
+            morph_disallowed_tools=list(MORPH_DISALLOWED_TOOLS)
+            if self.morph_enabled
+            else None,
+            morph_disabled_reason=morph_disabled_reason,
+            prioritize_wip=self.prioritize_wip,
+            cli_args=self.cli_args,
+        )
 
     def _create_run_metadata(self) -> RunMetadata:
         """Create run metadata tracker with current configuration."""
@@ -981,7 +940,7 @@ class MalaOrchestrator:
             )
 
             if ready:
-                log("◌", f"Ready issues: {', '.join(ready)}", Colors.MUTED)
+                self.event_sink.on_ready_issues(ready)
 
             while (
                 self.max_agents is None or len(self.active_tasks) < self.max_agents
@@ -998,12 +957,14 @@ class MalaOrchestrator:
 
             if not self.active_tasks:
                 if limit_reached:
-                    log("○", f"Issue limit reached ({self.max_issues})", Colors.GRAY)
+                    self.event_sink.on_no_more_issues(
+                        f"limit_reached ({self.max_issues})"
+                    )
                 elif not ready:
-                    log("○", "No more issues to process", Colors.GRAY)
+                    self.event_sink.on_no_more_issues("none_ready")
                 break
 
-            log("◌", f"Waiting for {len(self.active_tasks)} agent(s)...", Colors.MUTED)
+            self.event_sink.on_waiting_for_agents(len(self.active_tasks))
             done, _ = await asyncio.wait(
                 self.active_tasks.values(),
                 return_when=asyncio.FIRST_COMPLETED,
@@ -1052,36 +1013,21 @@ class MalaOrchestrator:
         success_count = sum(1 for r in self.completed if r.success)
         total = len(self.completed)
 
-        print()
-        if self.abort_run:
-            log(
-                "○",
-                f"Run aborted: {self.abort_reason or 'Unrecoverable error'}",
-                Colors.RED,
-            )
-        elif success_count == total and total > 0 and run_validation_passed:
-            log("●", f"Completed: {success_count}/{total} issues", Colors.GREEN)
-        elif success_count > 0:
-            if not run_validation_passed:
-                log(
-                    "◐",
-                    f"Completed: {success_count}/{total} issues (Gate 4 failed)",
-                    Colors.YELLOW,
-                )
-            else:
-                log("◐", f"Completed: {success_count}/{total} issues", Colors.YELLOW)
-        elif total == 0:
-            log("○", "No issues to process", Colors.GRAY)
-        else:
-            log("○", f"Completed: {success_count}/{total} issues", Colors.RED)
+        # Emit run completed event
+        abort_reason = (
+            self.abort_reason or "Unrecoverable error" if self.abort_run else None
+        )
+        self.event_sink.on_run_completed(
+            success_count, total, run_validation_passed, abort_reason
+        )
 
         if success_count > 0:
             if await self.beads.commit_issues_async():
-                log("◐", "Committed .beads/issues.jsonl", Colors.MUTED)
+                self.event_sink.on_issues_committed()
 
         if total > 0:
             metadata_path = run_metadata.save()
-            log("◐", f"Run metadata: {metadata_path}", Colors.MUTED)
+            self.event_sink.on_run_metadata_saved(str(metadata_path))
 
         print()
         if self.abort_run:
@@ -1092,7 +1038,7 @@ class MalaOrchestrator:
 
     async def run(self) -> tuple[int, int]:
         """Main orchestration loop. Returns (success_count, total_count)."""
-        self._log_run_status()
+        self.event_sink.on_run_started(self._build_run_config())
 
         get_lock_dir().mkdir(parents=True, exist_ok=True)
         get_runs_dir().mkdir(parents=True, exist_ok=True)

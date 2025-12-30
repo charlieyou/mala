@@ -3861,3 +3861,109 @@ class TestGetMcpServers:
 
         assert "morph_api_key is required" in str(exc_info.value)
         assert "MalaConfig" in str(exc_info.value)
+
+
+class TestEventSinkIntegration:
+    """Tests for event sink integration with orchestrator run lifecycle."""
+
+    @pytest.mark.asyncio
+    async def test_run_emits_none_ready_event(self, tmp_path: Path) -> None:
+        """on_no_more_issues is emitted with none_ready when no issues available.
+
+        Verifies that on_no_more_issues is called with 'none_ready' when
+        get_ready returns empty and max_issues is not reached.
+        """
+        from src.event_sink import NullEventSink
+
+        # Create a tracking sink that records calls
+        class TrackingSink(NullEventSink):
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, tuple]] = []
+
+            def on_ready_issues(self, issue_ids: list[str]) -> None:
+                self.calls.append(("on_ready_issues", (issue_ids,)))
+
+            def on_waiting_for_agents(self, count: int) -> None:
+                self.calls.append(("on_waiting_for_agents", (count,)))
+
+            def on_no_more_issues(self, reason: str) -> None:
+                self.calls.append(("on_no_more_issues", (reason,)))
+
+        tracking_sink = TrackingSink()
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_issues=None,  # No limit, so none_ready path will be taken
+            event_sink=tracking_sink,
+        )
+
+        with (
+            patch.object(
+                orchestrator.beads,
+                "get_ready_async",
+                new_callable=AsyncMock,
+                return_value=[],  # No ready issues
+            ),
+            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
+            patch("src.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
+            patch("src.orchestrator.write_run_marker"),
+            patch("src.orchestrator.remove_run_marker"),
+        ):
+            (tmp_path / "locks").mkdir(exist_ok=True)
+            (tmp_path / "runs").mkdir(exist_ok=True)
+
+            await orchestrator.run()
+
+        # Verify on_no_more_issues was called with "none_ready"
+        no_more_calls = [c for c in tracking_sink.calls if c[0] == "on_no_more_issues"]
+        assert len(no_more_calls) >= 1, "on_no_more_issues should be called"
+        assert "none_ready" in no_more_calls[0][1][0]
+
+    @pytest.mark.asyncio
+    async def test_run_emits_limit_reached_event(self, tmp_path: Path) -> None:
+        """on_no_more_issues is called with limit_reached when max_issues=0."""
+        from src.event_sink import NullEventSink
+
+        class TrackingSink(NullEventSink):
+            def __init__(self) -> None:
+                self.no_more_reasons: list[str] = []
+
+            def on_no_more_issues(self, reason: str) -> None:
+                self.no_more_reasons.append(reason)
+
+        tracking_sink = TrackingSink()
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_issues=0,  # Will trigger limit_reached path immediately
+            event_sink=tracking_sink,
+        )
+
+        with (
+            patch.object(
+                orchestrator.beads,
+                "get_ready_async",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
+            patch("src.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
+            patch("src.orchestrator.write_run_marker"),
+            patch("src.orchestrator.remove_run_marker"),
+        ):
+            (tmp_path / "locks").mkdir(exist_ok=True)
+            (tmp_path / "runs").mkdir(exist_ok=True)
+
+            await orchestrator.run()
+
+        # With max_issues=0, limit_reached is True immediately
+        # When no active_tasks, on_no_more_issues should be called
+        assert len(tracking_sink.no_more_reasons) == 1
+        assert "limit_reached" in tracking_sink.no_more_reasons[0]
+
+    @pytest.mark.asyncio
+    async def test_event_sink_defaults_to_console_sink(self, tmp_path: Path) -> None:
+        """Event sink defaults to ConsoleEventSink when not specified."""
+        from src.event_sink_console import ConsoleEventSink
+
+        orchestrator = MalaOrchestrator(repo_path=tmp_path)
+
+        assert isinstance(orchestrator.event_sink, ConsoleEventSink)
