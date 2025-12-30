@@ -184,7 +184,7 @@ class AgentSessionConfig:
     max_review_retries: int = 3
     morph_enabled: bool = False
     morph_api_key: str | None = None
-    review_enabled: bool = True
+    review_enabled: bool = False
 
 
 @dataclass
@@ -248,7 +248,7 @@ class SessionCallbacks:
     Attributes:
         on_gate_check: Async callback to run quality gate check.
             Args: (issue_id, log_path, retry_state) -> (GateResult, new_offset)
-        on_review_check: Async callback to run Codex review.
+        on_review_check: Async callback to run external review (Cerberus).
             Args: (issue_id, issue_description, baseline_commit) -> ReviewOutcome
         on_review_no_progress: Sync callback to check if no progress on review retry.
             Args: (log_path, log_offset, prev_commit, curr_commit) -> bool
@@ -466,7 +466,7 @@ class AgentSessionRunner:
         session_id: str | None = None
         log_path: Path | None = None
         final_result = ""
-        codex_review_log_path: str | None = None
+        cerberus_review_log_path: str | None = None
         pending_lint_commands: dict[str, tuple[str, str]] = {}
 
         # Log file wait constants
@@ -700,9 +700,9 @@ class AgentSessionRunner:
                                         agent_id=input.issue_id,
                                     )
                                     # Create synthetic failed review
-                                    from src.codex_review import CodexReviewResult
+                                    from src.cerberus_review import ReviewResult
 
-                                    synthetic = CodexReviewResult(
+                                    synthetic = ReviewResult(
                                         passed=False, issues=[], parse_error=None
                                     )
                                     new_offset = (
@@ -743,13 +743,13 @@ class AgentSessionRunner:
                                 if self.callbacks.on_abort is not None:
                                     self.callbacks.on_abort(
                                         review_result.parse_error
-                                        or "Unrecoverable Codex review error"
+                                        or "Unrecoverable review error"
                                     )
 
-                            # Capture codex review log if available
-                            log_attr = getattr(review_result, "session_log_path", None)
+                            # Capture Cerberus review log if available
+                            log_attr = getattr(review_result, "review_log_path", None)
                             if log_attr is not None:
-                                codex_review_log_path = str(log_attr)
+                                cerberus_review_log_path = str(log_attr)
 
                             # Get new log offset
                             new_offset = (
@@ -796,14 +796,22 @@ class AgentSessionRunner:
                                         parse_error=review_result.parse_error,
                                     )
 
-                                # Build follow-up prompt
-                                from src.codex_review import format_review_issues
+                                # parse_error indicates review tool failure; re-run
+                                # review without prompting agent (no code changes needed)
+                                if review_result.parse_error:
+                                    log(
+                                        "!",
+                                        f"Review tool error: {review_result.parse_error}; retrying",
+                                        Colors.YELLOW,
+                                        agent_id=input.issue_id,
+                                    )
+                                    continue
 
-                                review_issues_text = (
-                                    format_review_issues(review_result.issues)  # type: ignore[arg-type]
-                                    if review_result.issues
-                                    else review_result.parse_error
-                                    or "Unknown review failure"
+                                # Build follow-up prompt for legitimate review issues
+                                from src.cerberus_review import format_review_issues
+
+                                review_issues_text = format_review_issues(
+                                    review_result.issues  # type: ignore[arg-type]
                                 )
                                 followup = _get_review_followup_prompt().format(
                                     attempt=lifecycle_ctx.retry_state.review_attempt,
@@ -836,5 +844,5 @@ class AgentSessionRunner:
             resolution=lifecycle_ctx.resolution,
             duration_seconds=duration,
             agent_id=agent_id,
-            review_log_path=codex_review_log_path,
+            review_log_path=cerberus_review_log_path,
         )

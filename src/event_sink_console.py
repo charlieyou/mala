@@ -298,7 +298,7 @@ class ConsoleEventSink:
             log("  ", f"Failures: {reasons_str}", Colors.RED, agent_id=agent_id)
 
     # -------------------------------------------------------------------------
-    # Codex review events
+    # Review events
     # -------------------------------------------------------------------------
 
     def on_review_started(
@@ -307,17 +307,17 @@ class ConsoleEventSink:
         attempt: int,
         max_attempts: int,
     ) -> None:
-        """Log Codex review start."""
+        """Log review start."""
         log_verbose(
             "→",
-            f"Codex review (attempt {attempt}/{max_attempts})",
+            f"Review (attempt {attempt}/{max_attempts})",
             Colors.MUTED,
             agent_id=agent_id,
         )
 
     def on_review_passed(self, agent_id: str) -> None:
-        """Log Codex review passed."""
-        log("✓", "Codex review passed", Colors.GREEN, agent_id=agent_id)
+        """Log review passed."""
+        log("✓", "Review passed", Colors.GREEN, agent_id=agent_id)
 
     def on_review_retry(
         self,
@@ -327,7 +327,7 @@ class ConsoleEventSink:
         error_count: int | None = None,
         parse_error: str | None = None,
     ) -> None:
-        """Log Codex review retry."""
+        """Log review retry."""
         if parse_error:
             detail = f"parse error: {parse_error}"
         elif error_count is not None:

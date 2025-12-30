@@ -1,6 +1,6 @@
-## Codex Review Failed (Attempt {attempt}/{max_attempts})
+## External Review Failed (Attempt {attempt}/{max_attempts})
 
-The automated code review found the following issues:
+The external reviewers found the following issues:
 
 {review_issues}
 
@@ -14,4 +14,4 @@ The automated code review found the following issues:
    - `uvx ty check`
 4. Commit your changes with message: `bd-{issue_id}: <description>`
 
-Note: The orchestrator will re-run both the quality gate and Codex review after your fixes.
+Note: The orchestrator will re-run both the quality gate and external review after your fixes.

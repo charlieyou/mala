@@ -117,7 +117,7 @@ class TestAgentSessionRunnerBasics:
             max_gate_retries=3,
             max_review_retries=2,
             morph_enabled=False,
-            codex_review_enabled=False,  # Disable review for basic tests
+            review_enabled=False,  # Disable review for basic tests
         )
 
     @pytest.fixture
@@ -237,7 +237,7 @@ class TestAgentSessionRunnerGateHandling:
             max_gate_retries=3,
             max_review_retries=2,
             morph_enabled=False,
-            codex_review_enabled=False,
+            review_enabled=False,
         )
 
     @pytest.mark.asyncio
@@ -299,7 +299,7 @@ class TestAgentSessionRunnerGateHandling:
             timeout_seconds=60,
             max_gate_retries=1,
             morph_enabled=False,
-            codex_review_enabled=False,
+            review_enabled=False,
         )
 
         fake_client = FakeSDKClient()
@@ -361,7 +361,7 @@ class TestAgentSessionRunnerCallbacks:
             max_gate_retries=3,
             max_review_retries=2,
             morph_enabled=False,
-            codex_review_enabled=False,
+            review_enabled=False,
         )
 
     @pytest.mark.asyncio
@@ -451,7 +451,7 @@ class TestAgentSessionRunnerConfig:
             max_review_retries=4,
             morph_enabled=True,
             morph_api_key="test-key",
-            codex_review_enabled=False,
+            review_enabled=False,
         )
 
         assert config.timeout_seconds == 120
@@ -459,7 +459,7 @@ class TestAgentSessionRunnerConfig:
         assert config.max_review_retries == 4
         assert config.morph_enabled is True
         assert config.morph_api_key == "test-key"
-        assert config.codex_review_enabled is False
+        assert config.review_enabled is False
 
 
 class TestAgentSessionInput:
@@ -532,7 +532,7 @@ class TestAgentSessionRunnerStreamingCallbacks:
             max_gate_retries=3,
             max_review_retries=2,
             morph_enabled=False,
-            codex_review_enabled=False,
+            review_enabled=False,
         )
 
     @pytest.mark.asyncio
@@ -769,7 +769,7 @@ class TestAgentSessionRunnerEventSink:
             max_gate_retries=3,
             max_review_retries=2,
             morph_enabled=False,
-            codex_review_enabled=False,
+            review_enabled=False,
         )
 
     @pytest.mark.asyncio
@@ -842,7 +842,7 @@ class TestAgentSessionRunnerEventSink:
             timeout_seconds=60,
             max_gate_retries=1,  # Fail immediately
             morph_enabled=False,
-            codex_review_enabled=False,
+            review_enabled=False,
         )
 
         fake_client = FakeSDKClient()
@@ -916,7 +916,7 @@ class TestAgentSessionRunnerEventSink:
             timeout_seconds=60,
             max_gate_retries=2,  # Allow 1 retry
             morph_enabled=False,
-            codex_review_enabled=False,
+            review_enabled=False,
         )
 
         fake_client = FakeSDKClient()
@@ -1031,7 +1031,7 @@ class TestAgentSessionRunnerEventSink:
         tmp_log_path: Path,
     ) -> None:
         """Runner should emit on_review_started and on_review_passed when review passes."""
-        from src.codex_review import CodexReviewResult
+        from src.cerberus_review import ReviewResult
 
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
@@ -1039,7 +1039,7 @@ class TestAgentSessionRunnerEventSink:
             max_gate_retries=3,
             max_review_retries=2,
             morph_enabled=False,
-            codex_review_enabled=True,  # Enable review
+            review_enabled=True,  # Enable review
         )
 
         fake_client = FakeSDKClient()
@@ -1059,8 +1059,8 @@ class TestAgentSessionRunnerEventSink:
 
         async def on_review_check(
             issue_id: str, description: str | None, baseline: str | None
-        ) -> CodexReviewResult:
-            return CodexReviewResult(passed=True, issues=[], parse_error=None)
+        ) -> ReviewResult:
+            return ReviewResult(passed=True, issues=[], parse_error=None)
 
         callbacks = SessionCallbacks(
             get_log_path=get_log_path,
@@ -1104,7 +1104,7 @@ class TestAgentSessionRunnerEventSink:
         tmp_log_path: Path,
     ) -> None:
         """Runner should emit on_review_retry when review fails and retries are available."""
-        from src.codex_review import CodexReviewResult, ReviewIssue
+        from src.cerberus_review import ReviewIssue, ReviewResult
 
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
@@ -1112,7 +1112,7 @@ class TestAgentSessionRunnerEventSink:
             max_gate_retries=3,
             max_review_retries=2,  # Allow 1 retry
             morph_enabled=False,
-            codex_review_enabled=True,  # Enable review
+            review_enabled=True,  # Enable review
         )
 
         fake_client = FakeSDKClient()
@@ -1134,29 +1134,29 @@ class TestAgentSessionRunnerEventSink:
 
         async def on_review_check(
             issue_id: str, description: str | None, baseline: str | None
-        ) -> CodexReviewResult:
+        ) -> ReviewResult:
             nonlocal review_check_count
             review_check_count += 1
             if review_check_count == 1:
                 # First check fails with errors
-                return CodexReviewResult(
+                return ReviewResult(
                     passed=False,
                     issues=[
                         ReviewIssue(
                             title="Bug found",
                             body="A bug was found in the code",
-                            confidence_score=0.9,
                             priority=1,
                             file="test.py",
                             line_start=10,
                             line_end=15,
+                            reviewer="cerberus",
                         )
                     ],
                     parse_error=None,
                 )
             else:
                 # Second check passes
-                return CodexReviewResult(passed=True, issues=[], parse_error=None)
+                return ReviewResult(passed=True, issues=[], parse_error=None)
 
         callbacks = SessionCallbacks(
             get_log_path=get_log_path,

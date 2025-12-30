@@ -273,7 +273,7 @@ def build_validation_spec(
     - "integration-tests": Exclude integration tests from pytest
     - "coverage": Disable coverage checking
     - "e2e": Disable E2E fixture repo test
-    - "codex-review": (handled elsewhere, not here)
+    - "review": (handled elsewhere, not here)
     - "followup-on-run-validate-fail": (handled elsewhere, not here)
 
     Args:
