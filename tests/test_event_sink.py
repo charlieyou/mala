@@ -29,8 +29,7 @@ class TestEventRunConfig:
         assert config.epic_id is None
         assert config.only_ids is None
         assert config.braintrust_enabled is False
-        assert config.codex_review_enabled is True
-        assert config.codex_thinking_mode is None
+        assert config.review_enabled is True
         assert config.morph_enabled is True
         assert config.morph_disallowed_tools is None
         assert config.prioritize_wip is False
@@ -48,8 +47,7 @@ class TestEventRunConfig:
             epic_id="epic-123",
             only_ids=["issue-1", "issue-2"],
             braintrust_enabled=True,
-            codex_review_enabled=False,
-            codex_thinking_mode="minimal",
+            review_enabled=False,
             morph_enabled=False,
             morph_disallowed_tools=["Edit", "Write"],
             prioritize_wip=True,
@@ -58,8 +56,7 @@ class TestEventRunConfig:
         assert config.epic_id == "epic-123"
         assert config.only_ids == ["issue-1", "issue-2"]
         assert config.braintrust_enabled is True
-        assert config.codex_review_enabled is False
-        assert config.codex_thinking_mode == "minimal"
+        assert config.review_enabled is False
         assert config.morph_enabled is False
         assert config.morph_disallowed_tools == ["Edit", "Write"]
         assert config.prioritize_wip is True

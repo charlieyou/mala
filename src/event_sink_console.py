@@ -53,16 +53,11 @@ class ConsoleEventSink:
         )
         log("◐", f"gate-retries: {config.max_gate_retries}", Colors.MUTED)
 
-        # Codex review
-        if config.codex_review_enabled:
-            thinking_str = (
-                f", thinking: {config.codex_thinking_mode}"
-                if config.codex_thinking_mode
-                else ""
-            )
+        # Cerberus review
+        if config.review_enabled:
             log(
                 "◐",
-                f"codex-review: enabled (max-retries: {config.max_review_retries}{thinking_str})",
+                f"review: enabled (max-retries: {config.max_review_retries})",
                 Colors.CYAN,
             )
 

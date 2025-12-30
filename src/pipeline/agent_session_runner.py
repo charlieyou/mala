@@ -222,7 +222,7 @@ class AgentSessionOutput:
         resolution: Issue resolution outcome (if any).
         duration_seconds: Total session duration.
         agent_id: The agent ID used for this session.
-        codex_review_log_path: Path to Codex review session log (if any).
+        review_log_path: Path to Cerberus review session log (if any).
     """
 
     success: bool
@@ -234,7 +234,7 @@ class AgentSessionOutput:
     resolution: IssueResolution | None = None
     duration_seconds: float = 0.0
     agent_id: str = ""
-    codex_review_log_path: str | None = None
+    review_log_path: str | None = None
 
 
 @dataclass
@@ -836,5 +836,5 @@ class AgentSessionRunner:
             resolution=lifecycle_ctx.resolution,
             duration_seconds=duration,
             agent_id=agent_id,
-            codex_review_log_path=codex_review_log_path,
+            review_log_path=codex_review_log_path,
         )

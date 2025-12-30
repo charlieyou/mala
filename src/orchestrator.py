@@ -607,7 +607,7 @@ class MalaOrchestrator:
             review_attempts=result.review_attempts,
             validation=validation_result,
             resolution=result.resolution,
-            codex_review_log_path=self.codex_review_log_paths.get(issue_id),
+            review_log_path=self.codex_review_log_paths.get(issue_id),
         )
         run_metadata.record_issue(issue_run)
 
@@ -875,8 +875,7 @@ class MalaOrchestrator:
             only_ids=list(self.only_ids) if self.only_ids else None,
             braintrust_enabled=self.braintrust_enabled,
             braintrust_disabled_reason=braintrust_disabled_reason,
-            codex_review_enabled=codex_review_enabled,
-            codex_thinking_mode=self.codex_thinking_mode,
+            review_enabled=codex_review_enabled,
             morph_enabled=self.morph_enabled,
             morph_disallowed_tools=list(MORPH_DISALLOWED_TOOLS)
             if self.morph_enabled
@@ -899,7 +898,7 @@ class MalaOrchestrator:
             braintrust_enabled=self.braintrust_enabled,
             max_gate_retries=self.max_gate_retries,
             max_review_retries=self.max_review_retries,
-            codex_review="codex-review" not in (self.disable_validations or set()),
+            review_enabled="codex-review" not in (self.disable_validations or set()),
             cli_args=self.cli_args,
         )
         return RunMetadata(self.repo_path, run_config, __version__)
