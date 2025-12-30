@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from typing import Self
 
+    from src.event_sink import MalaEventSink
     from src.lifecycle import GateOutcome, RetryState, ReviewOutcome
     from src.models import IssueResolution
     from src.telemetry import TelemetrySpan
@@ -298,11 +299,13 @@ class AgentSessionRunner:
         config: Session configuration.
         callbacks: Callbacks for external operations.
         sdk_client_factory: Factory for creating SDK clients (injectable for testing).
+        event_sink: Optional event sink for structured logging.
     """
 
     config: AgentSessionConfig
     callbacks: SessionCallbacks = field(default_factory=SessionCallbacks)
     sdk_client_factory: SDKClientFactory | None = None
+    event_sink: MalaEventSink | None = None
 
     def _build_agent_env(self, agent_id: str) -> dict[str, str]:
         """Build environment variables for agent execution.
@@ -598,12 +601,12 @@ class AgentSessionRunner:
 
                         # Handle RUN_GATE
                         if result.effect == Effect.RUN_GATE:
-                            log(
-                                "o",
-                                "Running quality gate...",
-                                Colors.CYAN,
-                                agent_id=input.issue_id,
-                            )
+                            if self.event_sink is not None:
+                                self.event_sink.on_gate_started(
+                                    input.issue_id,
+                                    lifecycle_ctx.retry_state.gate_attempt,
+                                    self.config.max_gate_retries,
+                                )
 
                             if self.callbacks.on_gate_check is None:
                                 raise ValueError("on_gate_check callback must be set")
@@ -621,33 +624,42 @@ class AgentSessionRunner:
                             )
 
                             if result.effect == Effect.COMPLETE_SUCCESS:
-                                log(
-                                    "v",
-                                    "Quality gate passed",
-                                    Colors.GREEN,
-                                    agent_id=input.issue_id,
-                                )
+                                if self.event_sink is not None:
+                                    self.event_sink.on_gate_passed(input.issue_id)
                                 final_result = lifecycle_ctx.final_result
                                 break
 
                             if result.effect == Effect.COMPLETE_FAILURE:
-                                reasons = "; ".join(gate_result.failure_reasons)
-                                log(
-                                    "x",
-                                    f"Quality gate failed: {reasons}",
-                                    Colors.RED,
-                                    agent_id=input.issue_id,
-                                )
+                                if self.event_sink is not None:
+                                    self.event_sink.on_gate_failed(
+                                        input.issue_id,
+                                        lifecycle_ctx.retry_state.gate_attempt,
+                                        self.config.max_gate_retries,
+                                    )
+                                    self.event_sink.on_gate_result(
+                                        input.issue_id,
+                                        passed=False,
+                                        failure_reasons=list(
+                                            gate_result.failure_reasons
+                                        ),
+                                    )
                                 final_result = lifecycle_ctx.final_result
                                 break
 
                             if result.effect == Effect.SEND_GATE_RETRY:
-                                log(
-                                    "r",
-                                    f"Gate retry {lifecycle_ctx.retry_state.gate_attempt}/{self.config.max_gate_retries}",
-                                    Colors.YELLOW,
-                                    agent_id=input.issue_id,
-                                )
+                                if self.event_sink is not None:
+                                    self.event_sink.on_gate_retry(
+                                        input.issue_id,
+                                        lifecycle_ctx.retry_state.gate_attempt,
+                                        self.config.max_gate_retries,
+                                    )
+                                    self.event_sink.on_gate_result(
+                                        input.issue_id,
+                                        passed=False,
+                                        failure_reasons=list(
+                                            gate_result.failure_reasons
+                                        ),
+                                    )
                                 # Build follow-up prompt
                                 failure_text = "\n".join(
                                     f"- {r}" for r in gate_result.failure_reasons
@@ -710,12 +722,12 @@ class AgentSessionRunner:
                                     final_result = lifecycle_ctx.final_result
                                     break
 
-                            log(
-                                "o",
-                                f"Running Codex review (attempt {lifecycle_ctx.retry_state.review_attempt}/{self.config.max_review_retries})",
-                                Colors.CYAN,
-                                agent_id=input.issue_id,
-                            )
+                            if self.event_sink is not None:
+                                self.event_sink.on_review_started(
+                                    input.issue_id,
+                                    lifecycle_ctx.retry_state.review_attempt,
+                                    self.config.max_review_retries,
+                                )
 
                             if self.callbacks.on_review_check is None:
                                 raise ValueError("on_review_check callback must be set")
@@ -754,12 +766,8 @@ class AgentSessionRunner:
                             )
 
                             if result.effect == Effect.COMPLETE_SUCCESS:
-                                log(
-                                    "v",
-                                    "Codex review passed",
-                                    Colors.GREEN,
-                                    agent_id=input.issue_id,
-                                )
+                                if self.event_sink is not None:
+                                    self.event_sink.on_review_passed(input.issue_id)
                                 final_result = lifecycle_ctx.final_result
                                 break
 
@@ -768,25 +776,24 @@ class AgentSessionRunner:
                                 break
 
                             if result.effect == Effect.SEND_REVIEW_RETRY:
-                                # Log review failure
-                                if review_result.parse_error:
-                                    log(
-                                        "!",
-                                        f"Codex review parse error: {review_result.parse_error}",
-                                        Colors.YELLOW,
-                                        agent_id=input.issue_id,
+                                # Emit review retry event
+                                if self.event_sink is not None:
+                                    error_count = (
+                                        sum(
+                                            1
+                                            for i in review_result.issues
+                                            if i.priority is not None
+                                            and i.priority <= 1
+                                        )
+                                        if review_result.issues
+                                        else None
                                     )
-                                else:
-                                    error_count = sum(
-                                        1
-                                        for i in review_result.issues
-                                        if i.priority is not None and i.priority <= 1
-                                    )
-                                    log(
-                                        "r",
-                                        f"Review retry {lifecycle_ctx.retry_state.review_attempt}/{self.config.max_review_retries} ({error_count} errors)",
-                                        Colors.YELLOW,
-                                        agent_id=input.issue_id,
+                                    self.event_sink.on_review_retry(
+                                        input.issue_id,
+                                        lifecycle_ctx.retry_state.review_attempt,
+                                        self.config.max_review_retries,
+                                        error_count=error_count,
+                                        parse_error=review_result.parse_error,
                                     )
 
                                 # Build follow-up prompt

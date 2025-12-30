@@ -38,8 +38,6 @@ from src.hooks import (
     make_stop_hook,
 )
 from src.logging.console import (
-    Colors,
-    log,
     log_agent_text,
     log_tool,
     truncate_text,
@@ -55,6 +53,7 @@ from src.validation.spec import (
 from src.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
+    from src.event_sink import MalaEventSink
     from src.logging.run_metadata import (
         RunMetadata,
         ValidationResult as MetaValidationResult,
@@ -224,10 +223,12 @@ class RunCoordinator:
     Attributes:
         config: Configuration for run behavior.
         gate_checker: GateChecker for run-level validation.
+        event_sink: Optional event sink for structured logging.
     """
 
     config: RunCoordinatorConfig
     gate_checker: GateChecker
+    event_sink: MalaEventSink | None = None
     _active_fixer_ids: list[str] = field(default_factory=list, init=False)
 
     async def run_validation(
@@ -248,18 +249,18 @@ class RunCoordinator:
 
         # Check if run-level validation is disabled
         if "run-level-validate" in (self.config.disable_validations or set()):
-            log("◐", "Run-level validation disabled", Colors.MUTED)
+            if self.event_sink is not None:
+                self.event_sink.on_run_level_validation_disabled()
             return RunLevelValidationOutput(passed=True)
 
         # Get current HEAD commit
         commit_hash = await get_git_commit_async(self.config.repo_path)
         if not commit_hash:
-            log(
-                "⚠", "Could not get HEAD commit for run-level validation", Colors.YELLOW
-            )
+            if self.event_sink is not None:
+                self.event_sink.on_warning(
+                    "Could not get HEAD commit for run-level validation"
+                )
             return RunLevelValidationOutput(passed=True)
-
-        log("◐", "Running Gate 4 (run-level validation)...", Colors.CYAN)
 
         # Build run-level validation spec
         spec = build_validation_spec(
@@ -283,21 +284,22 @@ class RunCoordinator:
 
         # Retry loop with fixer agent
         for attempt in range(1, self.config.max_gate_retries + 1):
-            log(
-                "◐",
-                f"Gate 4 attempt {attempt}/{self.config.max_gate_retries}",
-                Colors.CYAN,
-            )
+            if self.event_sink is not None:
+                self.event_sink.on_gate_started(
+                    None, attempt, self.config.max_gate_retries
+                )
 
             # Run validation
             try:
                 result = await runner.run_spec(spec, context)
             except Exception as e:
-                log("⚠", f"Validation runner error: {e}", Colors.YELLOW)
+                if self.event_sink is not None:
+                    self.event_sink.on_warning(f"Validation runner error: {e}")
                 result = None
 
             if result and result.passed:
-                log("✓", "Gate 4 passed", Colors.GREEN)
+                if self.event_sink is not None:
+                    self.event_sink.on_gate_passed(None)
                 meta_result = SpecResultBuilder.build_meta_result(result, passed=True)
                 input.run_metadata.record_run_validation(meta_result)
                 return RunLevelValidationOutput(passed=True)
@@ -312,19 +314,23 @@ class RunCoordinator:
 
             # Check if we have retries left
             if attempt >= self.config.max_gate_retries:
-                log(
-                    "✗",
-                    f"Gate 4 failed after {attempt} attempts",
-                    Colors.RED,
-                )
+                if self.event_sink is not None:
+                    self.event_sink.on_gate_failed(
+                        None, attempt, self.config.max_gate_retries
+                    )
+                    failure_reasons = (
+                        result.failure_reasons
+                        if result and result.failure_reasons
+                        else []
+                    )
+                    self.event_sink.on_gate_result(
+                        None, passed=False, failure_reasons=failure_reasons
+                    )
                 return RunLevelValidationOutput(passed=False)
 
             # Spawn fixer agent
-            log(
-                "↻",
-                f"Spawning fixer agent (attempt {attempt}/{self.config.max_gate_retries})",
-                Colors.YELLOW,
-            )
+            if self.event_sink is not None:
+                self.event_sink.on_fixer_started(attempt, self.config.max_gate_retries)
 
             fixer_success = await self._run_fixer_agent(
                 failure_output=failure_output,
@@ -332,8 +338,8 @@ class RunCoordinator:
             )
 
             if not fixer_success:
-                log("⚠", "Fixer agent did not complete successfully", Colors.YELLOW)
-                # Continue to retry validation anyway
+                # Fixer failure is logged via on_fixer_failed in _run_fixer_agent
+                pass  # Continue to retry validation anyway
 
             # Update commit hash for next validation attempt
             new_commit = await get_git_commit_async(self.config.repo_path)
@@ -506,19 +512,20 @@ class RunCoordinator:
                                         if not getattr(block, "is_error", False):
                                             lint_cache.mark_success(lint_type, cmd)
                         elif isinstance(message, ResultMessage):
-                            log(
-                                "◐",
-                                f"Fixer completed: {truncate_text(message.result or '', 50)}",
-                                Colors.MUTED,
-                            )
+                            if self.event_sink is not None:
+                                self.event_sink.on_fixer_completed(
+                                    truncate_text(message.result or "", 50)
+                                )
 
             return True
 
         except TimeoutError:
-            log("⚠", "Fixer agent timed out", Colors.YELLOW)
+            if self.event_sink is not None:
+                self.event_sink.on_fixer_failed("timeout")
             return False
         except Exception as e:
-            log("⚠", f"Fixer agent error: {e}", Colors.YELLOW)
+            if self.event_sink is not None:
+                self.event_sink.on_fixer_failed(str(e))
             return False
         finally:
             self._active_fixer_ids.remove(agent_id)

@@ -689,3 +689,337 @@ class TestAgentSessionRunnerStreamingCallbacks:
         # Should succeed without raising errors
         output = await runner.run_session(input)
         assert output.success is True
+
+
+class FakeEventSink:
+    """Fake event sink for testing that records all event calls."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    def _record(self, name: str, *args: object, **kwargs: object) -> None:
+        self.events.append((name, args, dict(kwargs)))
+
+    def on_gate_started(
+        self, agent_id: str | None, attempt: int, max_attempts: int
+    ) -> None:
+        self._record("on_gate_started", agent_id, attempt, max_attempts)
+
+    def on_gate_passed(self, agent_id: str | None) -> None:
+        self._record("on_gate_passed", agent_id)
+
+    def on_gate_failed(
+        self, agent_id: str | None, attempt: int, max_attempts: int
+    ) -> None:
+        self._record("on_gate_failed", agent_id, attempt, max_attempts)
+
+    def on_gate_retry(self, agent_id: str, attempt: int, max_attempts: int) -> None:
+        self._record("on_gate_retry", agent_id, attempt, max_attempts)
+
+    def on_gate_result(
+        self,
+        agent_id: str | None,
+        passed: bool,
+        failure_reasons: list[str] | None = None,
+    ) -> None:
+        self._record(
+            "on_gate_result", agent_id, passed=passed, failure_reasons=failure_reasons
+        )
+
+    def on_review_started(self, agent_id: str, attempt: int, max_attempts: int) -> None:
+        self._record("on_review_started", agent_id, attempt, max_attempts)
+
+    def on_review_passed(self, agent_id: str) -> None:
+        self._record("on_review_passed", agent_id)
+
+    def on_review_retry(
+        self,
+        agent_id: str,
+        attempt: int,
+        max_attempts: int,
+        error_count: int | None = None,
+        parse_error: str | None = None,
+    ) -> None:
+        self._record(
+            "on_review_retry",
+            agent_id,
+            attempt,
+            max_attempts,
+            error_count=error_count,
+            parse_error=parse_error,
+        )
+
+
+class TestAgentSessionRunnerEventSink:
+    """Test event sink integration for gate/review events."""
+
+    @pytest.fixture
+    def tmp_log_path(self, tmp_path: Path) -> Path:
+        """Create a temporary log file path."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+        return log_path
+
+    @pytest.fixture
+    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=3,
+            max_review_retries=2,
+            morph_enabled=False,
+            codex_review_enabled=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_gate_passed_emits_sink_events(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """Runner should emit on_gate_started and on_gate_passed when gate passes."""
+        fake_client = FakeSDKClient()
+        fake_factory = FakeSDKClientFactory(fake_client)
+        fake_sink = FakeEventSink()
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        input = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input)
+
+        assert output.success is True
+
+        # Check that gate events were emitted
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_gate_started" in event_names
+        assert "on_gate_passed" in event_names
+
+        # Verify on_gate_started was called with correct args
+        gate_started = next(e for e in fake_sink.events if e[0] == "on_gate_started")
+        assert gate_started[1][0] == "test-123"  # agent_id
+        assert gate_started[1][1] == 1  # attempt
+        assert gate_started[1][2] == 3  # max_attempts
+
+        # Verify on_gate_passed was called with correct agent_id
+        gate_passed = next(e for e in fake_sink.events if e[0] == "on_gate_passed")
+        assert gate_passed[1][0] == "test-123"
+
+    @pytest.mark.asyncio
+    async def test_gate_failed_emits_sink_events(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Runner should emit on_gate_started, on_gate_failed, and on_gate_result when gate fails."""
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=1,  # Fail immediately
+            morph_enabled=False,
+            codex_review_enabled=False,
+        )
+
+        fake_client = FakeSDKClient()
+        fake_factory = FakeSDKClientFactory(fake_client)
+        fake_sink = FakeEventSink()
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(
+                    passed=False,
+                    failure_reasons=["Missing commit", "Tests failed"],
+                    commit_hash=None,
+                ),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        input = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input)
+
+        assert output.success is False
+
+        # Check that gate events were emitted
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_gate_started" in event_names
+        assert "on_gate_failed" in event_names
+        assert "on_gate_result" in event_names
+
+        # Verify on_gate_failed was called with correct args
+        gate_failed = next(e for e in fake_sink.events if e[0] == "on_gate_failed")
+        assert gate_failed[1][0] == "test-123"  # agent_id
+        assert gate_failed[1][1] == 1  # attempt
+        assert gate_failed[1][2] == 1  # max_attempts
+
+        # Verify on_gate_result was called with failure reasons
+        gate_result = next(e for e in fake_sink.events if e[0] == "on_gate_result")
+        assert gate_result[1][0] == "test-123"  # agent_id
+        assert gate_result[2]["passed"] is False
+        assert "Missing commit" in gate_result[2]["failure_reasons"]
+        assert "Tests failed" in gate_result[2]["failure_reasons"]
+
+    @pytest.mark.asyncio
+    async def test_gate_retry_emits_sink_events(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Runner should emit on_gate_retry when gate fails and retries are available."""
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=2,  # Allow 1 retry
+            morph_enabled=False,
+            codex_review_enabled=False,
+        )
+
+        fake_client = FakeSDKClient()
+        fake_factory = FakeSDKClientFactory(fake_client)
+        fake_sink = FakeEventSink()
+
+        gate_check_count = 0
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            nonlocal gate_check_count
+            gate_check_count += 1
+            if gate_check_count == 1:
+                # First check fails, triggers retry
+                return (
+                    GateResult(
+                        passed=False,
+                        failure_reasons=["Tests failed"],
+                        commit_hash=None,
+                    ),
+                    1000,
+                )
+            else:
+                # Second check passes
+                return (
+                    GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                    2000,
+                )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        input = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input)
+
+        assert output.success is True
+
+        # Check that gate retry event was emitted
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_gate_started" in event_names
+        assert "on_gate_retry" in event_names
+        assert "on_gate_result" in event_names  # For the failed attempt
+        assert "on_gate_passed" in event_names
+
+        # Verify on_gate_retry was called
+        gate_retry = next(e for e in fake_sink.events if e[0] == "on_gate_retry")
+        assert gate_retry[1][0] == "test-123"  # agent_id
+
+    @pytest.mark.asyncio
+    async def test_no_sink_events_when_sink_is_none(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """Runner should work without event sink (sink is None)."""
+        fake_client = FakeSDKClient()
+        fake_factory = FakeSDKClientFactory(fake_client)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+            event_sink=None,  # No event sink
+        )
+
+        input = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        # Should succeed without errors
+        output = await runner.run_session(input)
+        assert output.success is True
