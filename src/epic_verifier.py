@@ -33,6 +33,7 @@ from src.tools.command_runner import CommandRunner
 
 if TYPE_CHECKING:
     from src.beads_client import BeadsClient
+    from src.event_sink import MalaEventSink
     from src.protocols import EpicVerificationModel
 
 # Spec path patterns from docs (case-insensitive)
@@ -227,6 +228,7 @@ class EpicVerifier:
         max_diff_size_kb: int = DEFAULT_MAX_DIFF_SIZE_KB,
         retry_config: RetryConfig | None = None,
         lock_manager: object | None = None,
+        event_sink: MalaEventSink | None = None,
     ):
         """Initialize EpicVerifier.
 
@@ -237,6 +239,7 @@ class EpicVerifier:
             max_diff_size_kb: Maximum diff size in KB before truncation.
             retry_config: Configuration for retry behavior.
             lock_manager: Optional lock manager for sequential processing.
+            event_sink: Optional event sink for emitting verification lifecycle events.
         """
         self.beads = beads
         self.model = model
@@ -244,6 +247,7 @@ class EpicVerifier:
         self.max_diff_size_kb = max_diff_size_kb
         self.retry_config = retry_config or RetryConfig()
         self.lock_manager = lock_manager
+        self.event_sink = event_sink
         self._runner = CommandRunner(cwd=repo_path)
 
     async def verify_and_close_eligible(
@@ -306,6 +310,10 @@ class EpicVerifier:
                     pass  # No locking available
 
             try:
+                # Emit verification started event
+                if self.event_sink is not None:
+                    self.event_sink.on_epic_verification_started(epic_id)
+
                 verdict = await self.verify_epic(epic_id)
                 verdicts[epic_id] = verdict
 
@@ -313,21 +321,37 @@ class EpicVerifier:
                     # Verification passed, close the epic
                     await self.beads.close_async(epic_id)
                     passed_count += 1
+                    # Emit passed event
+                    if self.event_sink is not None:
+                        self.event_sink.on_epic_verification_passed(
+                            epic_id, verdict.confidence
+                        )
                 elif verdict.confidence < LOW_CONFIDENCE_THRESHOLD:
                     # Low confidence, flag for human review
+                    reason = f"Low confidence ({verdict.confidence:.2f})"
                     review_id = await self.request_human_review(
                         epic_id,
-                        f"Low confidence ({verdict.confidence:.2f})",
+                        reason,
                         verdict,
                     )
                     remediation_issues.append(review_id)
                     human_review_count += 1
+                    # Emit human review event
+                    if self.event_sink is not None:
+                        self.event_sink.on_epic_verification_human_review(
+                            epic_id, reason, review_id
+                        )
                 else:
                     # Verification failed, create remediation issues
                     issue_ids = await self.create_remediation_issues(epic_id, verdict)
                     remediation_issues.extend(issue_ids)
                     await self.add_epic_blockers(epic_id, issue_ids)
                     failed_count += 1
+                    # Emit failed event
+                    if self.event_sink is not None:
+                        self.event_sink.on_epic_verification_failed(
+                            epic_id, len(verdict.unmet_criteria), issue_ids
+                        )
             finally:
                 # Release lock if we acquired one
                 if self.lock_manager is not None and lock_key is not None:
@@ -659,6 +683,11 @@ Address this criterion to unblock epic closure. When complete, close this issue.
             )
             if issue_id:
                 issue_ids.append(issue_id)
+                # Emit remediation created event
+                if self.event_sink is not None:
+                    self.event_sink.on_epic_remediation_created(
+                        epic_id, issue_id, criterion.criterion
+                    )
 
         return issue_ids
 

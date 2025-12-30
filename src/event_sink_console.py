@@ -455,6 +455,62 @@ class ConsoleEventSink:
         """Log when active tasks are being aborted."""
         log("✗", f"Aborting {count} active task(s): {reason}", Colors.RED)
 
+    # -------------------------------------------------------------------------
+    # Epic verification lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_epic_verification_started(self, epic_id: str) -> None:
+        """Log epic verification start."""
+        log("🔍", f"Verifying epic {epic_id}", Colors.CYAN)
+
+    def on_epic_verification_passed(self, epic_id: str, confidence: float) -> None:
+        """Log epic verification passed."""
+        log(
+            "✓", f"Epic {epic_id} verified (confidence: {confidence:.0%})", Colors.GREEN
+        )
+
+    def on_epic_verification_failed(
+        self,
+        epic_id: str,
+        unmet_count: int,
+        remediation_ids: list[str],
+    ) -> None:
+        """Log epic verification failed with unmet criteria."""
+        ids_str = ", ".join(remediation_ids) if remediation_ids else "none"
+        log(
+            "✗",
+            f"Epic {epic_id} failed verification: {unmet_count} unmet criteria, remediation issues: [{ids_str}]",
+            Colors.RED,
+        )
+
+    def on_epic_verification_human_review(
+        self,
+        epic_id: str,
+        reason: str,
+        review_issue_id: str,
+    ) -> None:
+        """Log epic flagged for human review."""
+        log(
+            "👁",
+            f"Epic {epic_id} requires human review: {reason} (issue: {review_issue_id})",
+            Colors.YELLOW,
+        )
+
+    def on_epic_remediation_created(
+        self,
+        epic_id: str,
+        issue_id: str,
+        criterion: str,
+    ) -> None:
+        """Log remediation issue creation."""
+        # Truncate criterion for display
+        crit_display = criterion[:60] + "..." if len(criterion) > 60 else criterion
+        log_verbose(
+            "◐",
+            f"Created remediation {issue_id} for epic {epic_id}: {crit_display}",
+            Colors.MUTED,
+        )
+
 
 # Verify ConsoleEventSink implements MalaEventSink at import time
 assert isinstance(ConsoleEventSink(), MalaEventSink)

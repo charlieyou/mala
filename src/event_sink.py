@@ -460,6 +460,72 @@ class MalaEventSink(Protocol):
         """
         ...
 
+    # -------------------------------------------------------------------------
+    # Epic verification lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_epic_verification_started(self, epic_id: str) -> None:
+        """Called when epic verification begins.
+
+        Args:
+            epic_id: The epic being verified.
+        """
+        ...
+
+    def on_epic_verification_passed(self, epic_id: str, confidence: float) -> None:
+        """Called when epic verification passes.
+
+        Args:
+            epic_id: The epic that passed verification.
+            confidence: Confidence score (0.0 to 1.0).
+        """
+        ...
+
+    def on_epic_verification_failed(
+        self,
+        epic_id: str,
+        unmet_count: int,
+        remediation_ids: list[str],
+    ) -> None:
+        """Called when epic verification fails with unmet criteria.
+
+        Args:
+            epic_id: The epic that failed verification.
+            unmet_count: Number of unmet criteria.
+            remediation_ids: IDs of created remediation issues.
+        """
+        ...
+
+    def on_epic_verification_human_review(
+        self,
+        epic_id: str,
+        reason: str,
+        review_issue_id: str,
+    ) -> None:
+        """Called when epic verification requires human review.
+
+        Args:
+            epic_id: The epic requiring review.
+            reason: Why human review is needed.
+            review_issue_id: ID of the created review issue.
+        """
+        ...
+
+    def on_epic_remediation_created(
+        self,
+        epic_id: str,
+        issue_id: str,
+        criterion: str,
+    ) -> None:
+        """Called when a remediation issue is created for an unmet criterion.
+
+        Args:
+            epic_id: The epic the remediation is for.
+            issue_id: The created issue ID.
+            criterion: The unmet criterion text (may be truncated).
+        """
+        ...
+
 
 class NullEventSink:
     """No-op event sink for testing.
@@ -639,4 +705,35 @@ class NullEventSink:
         pass
 
     def on_tasks_aborting(self, count: int, reason: str) -> None:
+        pass
+
+    # Epic verification lifecycle
+    def on_epic_verification_started(self, epic_id: str) -> None:
+        pass
+
+    def on_epic_verification_passed(self, epic_id: str, confidence: float) -> None:
+        pass
+
+    def on_epic_verification_failed(
+        self,
+        epic_id: str,
+        unmet_count: int,
+        remediation_ids: list[str],
+    ) -> None:
+        pass
+
+    def on_epic_verification_human_review(
+        self,
+        epic_id: str,
+        reason: str,
+        review_issue_id: str,
+    ) -> None:
+        pass
+
+    def on_epic_remediation_created(
+        self,
+        epic_id: str,
+        issue_id: str,
+        criterion: str,
+    ) -> None:
         pass
