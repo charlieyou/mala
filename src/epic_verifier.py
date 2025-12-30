@@ -42,7 +42,7 @@ SPEC_PATH_PATTERNS = [
     r"[Ss]ee\s+(specs/[\w/-]+\.(?:md|MD))",  # "See specs/foo/bar.md"
     r"[Ss]pec:\s*(specs/[\w/-]+\.(?:md|MD))",  # "Spec: specs/foo.md"
     r"\[(specs/[\w/-]+\.(?:md|MD))\]",  # "[specs/foo.md]"
-    r"(?:^|\s)(specs/[\w/-]+\.(?:md|MD))(?:\s|[.,;:!?)]|$)",  # Bare "specs/foo.md"
+    r"(?:^|[\s(])(specs/[\w/-]+\.(?:md|MD))(?:\s|[.,;:!?)]|$)",  # Bare "specs/foo.md" or "(specs/foo.md)"
 ]
 
 
@@ -227,7 +227,7 @@ class ClaudeEpicVerificationModel:
         """
         # Extract JSON from response (may be wrapped in markdown code blocks)
         json_match = re.search(
-            r"```(?:json)?\s*(\{.*?\})\s*```", response_text, re.DOTALL
+            r"```(?:json)?\s*(\{.*\})\s*```", response_text, re.DOTALL
         )
         if json_match:
             json_str = json_match.group(1)
@@ -382,11 +382,13 @@ class EpicVerifier:
                     # Try to acquire lock with timeout
                     from src.tools.locking import wait_for_lock
 
-                    if not wait_for_lock(
+                    acquired = await asyncio.to_thread(
+                        wait_for_lock,
                         lock_key,
                         "epic_verifier",
                         timeout_seconds=EPIC_VERIFY_LOCK_TIMEOUT_SECONDS,
-                    ):
+                    )
+                    if not acquired:
                         # Could not acquire lock, skip this epic
                         continue
                 except ImportError:
@@ -503,8 +505,11 @@ class EpicVerifier:
                 reasoning="No child issues found for epic",
             )
 
-        # Compute scoped diff from child commits
-        diff = await self._compute_scoped_diff(child_ids)
+        # Get blocker issue IDs (remediation issues from previous verification runs)
+        blocker_ids = await self.beads.get_epic_blockers_async(epic_id)
+
+        # Compute scoped diff from child and blocker commits
+        diff = await self._compute_scoped_diff(child_ids, blocker_ids)
         if not diff:
             # No commits found - flag for human review
             return EpicVerdict(
@@ -524,7 +529,7 @@ class EpicVerifier:
             full_path = self.repo_path / spec_path
             if full_path.exists():
                 try:
-                    spec_content = full_path.read_text()
+                    spec_content = await asyncio.to_thread(full_path.read_text)
                     break  # Use first found spec
                 except OSError:
                     pass
@@ -562,29 +567,40 @@ class EpicVerifier:
         except json.JSONDecodeError:
             return []
 
-    async def _compute_scoped_diff(self, child_ids: set[str]) -> str:
-        """Compute scoped diff from child issue commits only.
+    async def _compute_scoped_diff(
+        self, child_ids: set[str], blocker_ids: set[str] | None = None
+    ) -> str:
+        """Compute scoped diff from child issue and blocker issue commits.
 
-        Collects all commits matching bd-<child_id>: prefix for each child,
-        skips merge commits, and generates a combined diff.
+        Collects all commits matching bd-<issue_id>: prefix for each child
+        issue and blocker issue (remediation issues), skips merge commits,
+        and generates a combined diff.
 
         Args:
             child_ids: Set of child issue IDs.
+            blocker_ids: Optional set of blocker issue IDs (e.g., remediation
+                issues). Commits from these issues are also included in the
+                diff to capture work done to address epic verification failures.
 
         Returns:
             Combined diff string, or empty string if no commits found.
         """
+        # Combine child IDs and blocker IDs
+        all_issue_ids = child_ids.copy()
+        if blocker_ids:
+            all_issue_ids.update(blocker_ids)
+
         all_commits: list[str] = []
 
-        for child_id in child_ids:
-            # Find commits matching bd-<child_id>: prefix
+        for issue_id in all_issue_ids:
+            # Find commits matching bd-<issue_id>: prefix
             result = await self._runner.run_async(
                 [
                     "git",
                     "log",
                     "--oneline",
                     "--no-merges",  # Skip merge commits
-                    f"--grep=^bd-{child_id}:",
+                    f"--grep=^bd-{issue_id}:",
                     "--format=%H",
                 ]
             )

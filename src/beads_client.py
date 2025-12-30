@@ -646,6 +646,41 @@ class BeadsClient:
         # Return mapping for all input issue_ids (including duplicates)
         return {issue_id: unique_results[issue_id] for issue_id in issue_ids}
 
+    async def get_epic_blockers_async(self, epic_id: str) -> set[str]:
+        """Get the set of issue IDs that are blocking an epic.
+
+        Retrieves the blocked_by field from the epic and returns it as a set.
+        These are typically remediation issues created by epic verification
+        that must be resolved before the epic can be closed.
+
+        Args:
+            epic_id: The epic ID to get blockers for.
+
+        Returns:
+            Set of issue IDs that are blocking the epic.
+        """
+        result = await self._run_subprocess_async(["bd", "show", epic_id, "--json"])
+        if result.returncode != 0:
+            return set()
+
+        try:
+            issue_data = json.loads(result.stdout)
+            if isinstance(issue_data, list) and issue_data:
+                issue_data = issue_data[0]
+            if isinstance(issue_data, dict):
+                blocked_by = issue_data.get("blocked_by")
+                if blocked_by is None:
+                    return set()
+                # blocked_by can be a string or a list
+                if isinstance(blocked_by, str):
+                    return {blocked_by} if blocked_by else set()
+                if isinstance(blocked_by, list):
+                    return {str(b) for b in blocked_by if b}
+        except json.JSONDecodeError:
+            pass
+
+        return set()
+
     async def _is_epic_blocked_async(self, epic_id: str) -> bool:
         """Check if an epic is blocked (has blocked_by or status=blocked).
 

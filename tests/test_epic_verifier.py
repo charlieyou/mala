@@ -38,6 +38,7 @@ def mock_beads() -> MagicMock:
     beads = MagicMock()
     beads.get_issue_description_async = AsyncMock(return_value="Epic description")
     beads.get_epic_children_async = AsyncMock(return_value={"child-1", "child-2"})
+    beads.get_epic_blockers_async = AsyncMock(return_value=set())
     beads.close_async = AsyncMock(return_value=True)
     return beads
 
@@ -1308,6 +1309,7 @@ class TestEpicVerifierOrchestratorIntegration:
         mock_beads = MagicMock()
         mock_beads.get_issue_description_async = AsyncMock(return_value="Epic desc")
         mock_beads.get_epic_children_async = AsyncMock(return_value={"child-1"})
+        mock_beads.get_epic_blockers_async = AsyncMock(return_value=set())
         mock_beads.close_async = AsyncMock(return_value=True)
 
         mock_model = MagicMock()
@@ -1409,6 +1411,7 @@ class TestEpicVerifierOrchestratorIntegration:
         mock_beads = MagicMock()
         mock_beads.get_issue_description_async = AsyncMock(return_value="Epic desc")
         mock_beads.get_epic_children_async = AsyncMock(return_value={"child-1"})
+        mock_beads.get_epic_blockers_async = AsyncMock(return_value=set())
         mock_beads.close_async = AsyncMock(return_value=True)
 
         mock_model = MagicMock()

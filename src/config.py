@@ -19,6 +19,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def _safe_int(value: str | None, default: int) -> int:
+    """Safely parse an integer with fallback to default."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 class ConfigurationError(Exception):
     """Raised when configuration validation fails."""
 
@@ -161,11 +171,15 @@ class MalaConfig:
         morph_api_key = os.environ.get("MORPH_API_KEY") or None
 
         # Get epic verification settings
-        max_diff_size_kb_str = os.environ.get("MALA_MAX_DIFF_SIZE_KB")
-        max_diff_size_kb = int(max_diff_size_kb_str) if max_diff_size_kb_str else 100
+        max_diff_size_kb = _safe_int(
+            os.environ.get("MALA_MAX_DIFF_SIZE_KB"), default=100
+        )
 
         # Get LLM configuration (for epic verification and other direct API calls)
-        llm_api_key = os.environ.get("LLM_API_KEY") or None
+        # Falls back to ANTHROPIC_API_KEY if LLM_API_KEY is not set
+        llm_api_key = (
+            os.environ.get("LLM_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or None
+        )
         llm_base_url = os.environ.get("LLM_BASE_URL") or None
 
         config = cls(
