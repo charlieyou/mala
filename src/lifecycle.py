@@ -447,13 +447,28 @@ class ImplementerLifecycle:
 
         ctx.last_review_result = review_result
 
-        if review_result.passed:
+        # Check for blocking issues (P0/P1 only). P2/P3 issues are acceptable
+        # and can be tracked as beads issues later.
+        blocking_issues = [
+            i for i in review_result.issues if i.priority is not None and i.priority <= 1
+        ]
+
+        # Parse errors are always blocking - we can't determine if there are issues
+        has_parse_error = review_result.parse_error is not None
+
+        if review_result.passed or (not blocking_issues and not has_parse_error):
             ctx.success = True
             self._state = LifecycleState.SUCCESS
+            # Include P2/P3 count in message if any exist
+            low_pri_count = len(review_result.issues) - len(blocking_issues)
+            if low_pri_count > 0:
+                msg = f"Review passed ({low_pri_count} P2/P3 issues noted for later)"
+            else:
+                msg = "Review passed"
             return TransitionResult(
                 state=self._state,
                 effect=Effect.COMPLETE_SUCCESS,
-                message="Review passed",
+                message=msg,
             )
 
         if review_result.parse_error and review_result.fatal_error:
@@ -493,23 +508,14 @@ class ImplementerLifecycle:
             ctx.final_result = f"Codex review failed: {review_result.parse_error}"
             failure_message = "Review failed, no retries left"
         else:
-            # Format issues with priority P0/P1 as the most critical
+            # Format P0/P1 issues (these are blocking)
             critical_msgs = [
-                f"{i.file}:{i.line_start}: {i.title}"
-                for i in review_result.issues
-                if i.priority is not None and i.priority <= 1  # P0 and P1 are critical
+                f"{i.file}:{i.line_start}: {i.title}" for i in blocking_issues[:3]
             ]
             if critical_msgs:
                 ctx.final_result = (
-                    f"Codex review failed: {'; '.join(critical_msgs[:3])}"
+                    f"Codex review failed: {'; '.join(critical_msgs)}"
                 )
-            elif review_result.issues:
-                # Only lower-priority issues found - include them in the summary
-                other_msgs = [
-                    f"{i.file}:{i.line_start}: {i.title}"
-                    for i in review_result.issues[:3]
-                ]
-                ctx.final_result = f"Codex review failed: {'; '.join(other_msgs)}"
             else:
                 ctx.final_result = "Codex review failed: Unknown reason"
             failure_message = "Review failed, no retries left"
