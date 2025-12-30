@@ -58,7 +58,7 @@ from .pipeline.run_coordinator import (
     RunCoordinatorConfig,
     RunLevelValidationInput,
 )
-from .quality_gate import QualityGate
+from .quality_gate import QUALITY_GATE_IGNORED_COMMANDS, QualityGate
 from .session_log_parser import FileSystemLogProvider
 from .tools.env import (
     USER_CONFIG_DIR,
@@ -234,7 +234,7 @@ class MalaOrchestrator:
         only_ids: set[str] | None = None,
         braintrust_enabled: bool | None = None,
         max_gate_retries: int = 3,
-        max_review_retries: int = 2,
+        max_review_retries: int = 3,
         disable_validations: set[str] | None = None,
         coverage_threshold: float | None = None,
         morph_enabled: bool | None = None,
@@ -521,10 +521,17 @@ class MalaOrchestrator:
                     commands_run = [
                         kind.value for kind, ran in evidence.commands_ran.items() if ran
                     ]
+                    # Filter to only show commands that affected the gate decision
+                    # (exclude ignored commands like 'uv sync')
+                    gate_failed_commands = [
+                        cmd
+                        for cmd in evidence.failed_commands
+                        if cmd not in QUALITY_GATE_IGNORED_COMMANDS
+                    ]
                     validation_result = MetaValidationResult(
                         passed=True,
                         commands_run=commands_run,
-                        commands_failed=list(evidence.failed_commands),
+                        commands_failed=gate_failed_commands,
                     )
 
         elif not result.success and stored_gate_result is not None:
@@ -551,12 +558,17 @@ class MalaOrchestrator:
                 commands_run = [
                     kind.value for kind, ran in evidence.commands_ran.items() if ran
                 ]
-                # Use gate result directly - it already accounts for disable_validations
-                # and QUALITY_GATE_IGNORED_COMMANDS, ensuring metadata matches gate decision
+                # Filter to only show commands that affected the gate decision
+                # (exclude ignored commands like 'uv sync')
+                gate_failed_commands = [
+                    cmd
+                    for cmd in evidence.failed_commands
+                    if cmd not in QUALITY_GATE_IGNORED_COMMANDS
+                ]
                 validation_result = MetaValidationResult(
                     passed=stored_gate_result.passed,
                     commands_run=commands_run,
-                    commands_failed=list(evidence.failed_commands),
+                    commands_failed=gate_failed_commands,
                 )
 
         elif not result.success and log_path and log_path.exists():
