@@ -185,7 +185,7 @@ class AgentSessionConfig:
     max_review_retries: int = 3
     morph_enabled: bool = False
     morph_api_key: str | None = None
-    review_enabled: bool = False
+    review_enabled: bool = True
 
 
 @dataclass

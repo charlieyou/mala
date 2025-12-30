@@ -440,7 +440,7 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | `--epic`, `-e` | - | Only process tasks that are children of this epic |
 | `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
 | `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
-| `--max-review-retries` | 2 | Maximum external review retry attempts per issue |
+| `--max-review-retries` | 3 | Maximum external review retry attempts per issue |
 | `--disable-validations` | - | Comma-separated list (see below) |
 | `--coverage-threshold` | 85.0 | Minimum coverage percentage (0-100) |
 | `--wip` | false | Include and prioritize in_progress issues (without this flag, only open issues are fetched) |

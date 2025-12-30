@@ -370,7 +370,6 @@ class MalaOrchestrator:
         prioritize_wip: bool = False,
         focus: bool = True,
         cli_args: dict[str, object] | None = None,
-        codex_thinking_mode: str | None = None,
         # Protocol-based dependency injection for testability
         issue_provider: IssueProvider | None = None,
         code_reviewer: CodeReviewer | None = None,
@@ -417,7 +416,6 @@ class MalaOrchestrator:
         self.prioritize_wip = prioritize_wip
         self.focus = focus
         self.cli_args = cli_args
-        self.codex_thinking_mode = codex_thinking_mode
 
         self.active_tasks: dict[str, asyncio.Task] = {}
         self.agent_ids: dict[str, str] = {}
@@ -500,7 +498,6 @@ class MalaOrchestrator:
         # Note: capture_session_log depends on verbose mode, set per-issue
         review_runner_config = ReviewRunnerConfig(
             max_review_retries=self.max_review_retries,
-            thinking_mode=self.codex_thinking_mode,
             capture_session_log=False,  # Set per-issue based on verbose
             review_timeout=self._config.review_timeout,
         )

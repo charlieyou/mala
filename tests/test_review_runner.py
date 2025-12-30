@@ -251,7 +251,7 @@ class TestReviewRunnerBasics:
         config: ReviewRunnerConfig,
         tmp_path: Path,
     ) -> None:
-        """Runner should use HEAD~1 as baseline when not provided."""
+        """Runner should use commit's parent as baseline when not provided."""
         runner = ReviewRunner(
             code_reviewer=fake_reviewer,
             config=config,
@@ -268,7 +268,8 @@ class TestReviewRunnerBasics:
 
         assert len(fake_reviewer.calls) == 1
         call = fake_reviewer.calls[0]
-        assert call["diff_range"] == "HEAD~1..abc123"
+        # Uses commit's own parent, not HEAD~1, for correct historical reviews
+        assert call["diff_range"] == "abc123~1..abc123"
 
 
 class TestReviewRunnerResults:

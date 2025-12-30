@@ -143,7 +143,9 @@ class ReviewRunner:
         import tempfile
 
         # Build diff range
-        baseline = input.baseline_commit or "HEAD~1"
+        # Use commit's own parent as default baseline, not HEAD~1
+        # This ensures historical reviews compare against the correct base
+        baseline = input.baseline_commit or f"{input.commit_sha}~1"
         diff_range = f"{baseline}..{input.commit_sha}"
 
         # Create context file if issue_description provided

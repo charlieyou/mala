@@ -312,37 +312,39 @@ class TestMapExitCodeToResult:
 
         assert result.review_log_path == log_path
 
-    def test_logs_warning_when_exit_code_and_verdict_disagree(
-        self, capsys: object
-    ) -> None:
-        """Logs a warning when exit code 0 but JSON verdict is FAIL."""
-        # Exit code 0 but JSON says FAIL - should warn
+    def test_exit_0_with_json_fail_fails_closed(self, capsys: object) -> None:
+        """Exit code 0 but JSON verdict FAIL should fail (fail-closed security)."""
+        # Exit code 0 but JSON says FAIL - should FAIL (fail-closed)
         output = _make_valid_response(verdict="FAIL")
         result = map_exit_code_to_result(0, output, "")
 
-        # Exit code is authoritative, so should still pass
-        assert result.passed is True
+        # Fail-closed: review must fail because JSON verdict is not PASS
+        assert result.passed is False
         assert result.parse_error is None
+        assert result.fatal_error is False
 
         # Check that warning was logged (capsys captures stdout)
         captured = capsys.readouterr()  # type: ignore[attr-defined]
         assert "disagree" in captured.out
         assert "FAIL" in captured.out
+        assert "fail-closed" in captured.out
 
-    def test_logs_warning_when_exit_1_but_json_pass(self, capsys: object) -> None:
-        """Logs a warning when exit code 1 but JSON verdict is PASS."""
-        # Exit code 1 but JSON says PASS - should warn
+    def test_exit_1_with_json_pass_fails_closed(self, capsys: object) -> None:
+        """Exit code 1 but JSON verdict PASS should fail (fail-closed security)."""
+        # Exit code 1 but JSON says PASS - should FAIL (fail-closed)
         output = _make_valid_response(verdict="PASS")
         result = map_exit_code_to_result(1, output, "")
 
-        # Exit code is authoritative, so should fail
+        # Fail-closed: review must fail because exit code is not 0
         assert result.passed is False
         assert result.parse_error is None
+        assert result.fatal_error is False
 
         # Check that warning was logged
         captured = capsys.readouterr()  # type: ignore[attr-defined]
         assert "disagree" in captured.out
         assert "PASS" in captured.out
+        assert "fail-closed" in captured.out
 
     def test_no_warning_when_exit_code_and_verdict_agree(self, capsys: object) -> None:
         """No warning when exit code and JSON verdict agree."""
@@ -354,6 +356,26 @@ class TestMapExitCodeToResult:
 
         captured = capsys.readouterr()  # type: ignore[attr-defined]
         assert "disagree" not in captured.out
+
+    def test_exit_0_with_needs_work_fails_closed(self) -> None:
+        """Exit code 0 with NEEDS_WORK verdict should fail (fail-closed security)."""
+        output = _make_valid_response(verdict="NEEDS_WORK")
+        result = map_exit_code_to_result(0, output, "")
+
+        # Fail-closed: NEEDS_WORK is not PASS, so must fail
+        assert result.passed is False
+        assert result.parse_error is None
+        assert result.fatal_error is False
+
+    def test_exit_0_with_no_reviewers_fails_closed(self) -> None:
+        """Exit code 0 with no_reviewers verdict should fail (fail-closed security)."""
+        output = _make_valid_response(verdict="no_reviewers")
+        result = map_exit_code_to_result(0, output, "")
+
+        # Fail-closed: no_reviewers is not PASS, so must fail
+        assert result.passed is False
+        assert result.parse_error is None
+        assert result.fatal_error is False
 
 
 class TestFormatReviewIssues:

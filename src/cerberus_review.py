@@ -221,7 +221,7 @@ def map_exit_code_to_result(
             review_log_path=review_log_path,
         )
 
-    # Derive passed status from exit code (authoritative source)
+    # Derive passed status from exit code
     exit_passed = exit_code == 0
 
     # Warn if exit code and JSON verdict disagree
@@ -232,23 +232,17 @@ def map_exit_code_to_result(
             "!",
             f"Exit code ({exit_code}) and JSON verdict "
             f"({'PASS' if json_passed else 'FAIL'}) disagree; "
-            f"using exit code as authoritative",
+            f"fail-closed: requiring both to pass",
             color=Colors.YELLOW,
         )
 
-    # Success case (exit 0) or failure with issues (exit 1)
-    if exit_passed:
-        return ReviewResult(
-            passed=True,
-            issues=issues,
-            parse_error=None,
-            fatal_error=False,
-            review_log_path=review_log_path,
-        )
+    # Security: fail-closed - BOTH exit code AND JSON verdict must pass
+    # This prevents a review from passing when the consensus verdict is
+    # FAIL, NEEDS_WORK, or no_reviewers even if exit code is 0
+    final_passed = exit_passed and json_passed
 
-    # Exit code 1: legitimate failure
     return ReviewResult(
-        passed=False,
+        passed=final_passed,
         issues=issues,
         parse_error=None,
         fatal_error=False,
