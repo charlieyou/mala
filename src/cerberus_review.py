@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -106,13 +105,11 @@ class DefaultReviewer:
 
     def _build_env(self) -> dict[str, str]:
         merged = dict(self.env)
-        if (
-            "REVIEW_GATE_SESSION_ID" not in merged
-            and "CLAUDE_SESSION_ID" not in merged
-            and "REVIEW_GATE_SESSION_ID" not in os.environ
-            and "CLAUDE_SESSION_ID" not in os.environ
-        ):
-            merged["REVIEW_GATE_SESSION_ID"] = f"mala-{uuid.uuid4().hex}"
+        claude_session = merged.get("CLAUDE_SESSION_ID") or os.environ.get(
+            "CLAUDE_SESSION_ID"
+        )
+        if claude_session:
+            merged["CLAUDE_SESSION_ID"] = claude_session
         return merged
 
     async def _is_diff_empty(self, diff_range: str, runner: CommandRunner) -> bool:
@@ -188,6 +185,14 @@ class DefaultReviewer:
 
         runner = CommandRunner(cwd=self.repo_path)
         env = self._build_env()
+        if "CLAUDE_SESSION_ID" not in env:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error="CLAUDE_SESSION_ID missing; must be provided by agent session id",
+                fatal_error=True,
+                review_log_path=None,
+            )
 
         # Check for empty diff (short-circuit without spawning review-gate)
         # This avoids parse errors or failures when there's nothing to review
