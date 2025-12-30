@@ -189,16 +189,13 @@ class DefaultReviewer:
                 review_log_path=None,
             )
 
-        spawn_cmd = [
-            self._review_gate_bin(),
-            "spawn-code-review",
-            "--diff",
-            diff_range,
-        ]
+        spawn_cmd = [self._review_gate_bin(), "spawn-code-review"]
         if context_file is not None:
             spawn_cmd.extend(["--context-file", str(context_file)])
         if self.spawn_args:
             spawn_cmd.extend(self.spawn_args)
+        # Diff range is a positional argument (review-gate does not accept --diff).
+        spawn_cmd.append(diff_range)
 
         spawn_result = await runner.run_async(spawn_cmd, env=env, timeout=timeout)
         if spawn_result.timed_out:

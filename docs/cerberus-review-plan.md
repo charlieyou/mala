@@ -16,13 +16,13 @@ Replace the custom Codex-only review flow in mala with Cerberus review-gate, usi
 
 #### 1. Spawn command
 ```bash
-review-gate spawn-code-review --diff <baseline>..<head> \
+review-gate spawn-code-review <baseline>..<head> \
   [--context-file <path>] \
   [--codex-reasoning <low|medium|high>]
 ```
 
 **Inputs:**
-- `--diff <baseline>..<head>` (required): Git diff range to review
+- `<baseline>..<head>` (required): Git diff range to review (positional)
 - `--context-file <path>` (optional): File containing issue description for reviewer context
 - `--codex-reasoning <level>` (optional): Reasoning effort for Codex reviewer (default: high)
 
@@ -215,7 +215,7 @@ class DefaultReviewer:
 
 **Updated implementation flow:**
 1. Write issue description to unique temp context file: `/tmp/claude/review-context-{issue_id}.txt`
-2. Call `review-gate spawn-code-review --diff baseline..HEAD --context-file <path>` (in `repo_path` directory)
+2. Call `review-gate spawn-code-review baseline..HEAD --context-file <path>` (in `repo_path` directory)
 3. Parse spawn output JSON to get `session_key`
 4. **Spawn error handling:** If spawn exits with code 1, return `ReviewResult(passed=False, issues=[], parse_error="spawn failed: <stderr>", fatal_error=False)`
 5. Call `review-gate wait --json --session-key <key> --timeout <sec>`
