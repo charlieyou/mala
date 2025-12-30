@@ -135,8 +135,17 @@ def _load_prompt_template() -> str:
 class ClaudeEpicVerificationModel:
     """Claude-based implementation of EpicVerificationModel protocol.
 
-    Uses the Claude SDK to verify epic acceptance criteria against code diffs.
+    Uses the Anthropic SDK to verify epic acceptance criteria against code diffs.
     Supports configuration via constructor parameters to integrate with MalaConfig.
+
+    Observability:
+        When Braintrust is configured (BRAINTRUST_API_KEY set), LLM calls are
+        automatically traced via braintrust.wrap_anthropic. This provides
+        consistent observability with other components in the orchestrator.
+
+    MorphLLM routing:
+        When base_url is set (e.g., to MorphLLM proxy), requests are routed
+        through the proxy for centralized LLM management.
     """
 
     # Default model for epic verification
@@ -204,6 +213,15 @@ class ClaudeEpicVerificationModel:
             client_kwargs["base_url"] = self.base_url
 
         client = Anthropic(**client_kwargs)
+
+        # Wrap with Braintrust for observability (no-op if Braintrust not configured)
+        try:
+            from braintrust import wrap_anthropic
+
+            client = wrap_anthropic(client)
+        except ImportError:
+            pass  # Braintrust not installed, proceed without tracing
+
         # Use asyncio.to_thread to avoid blocking the event loop during API calls
         response = await asyncio.to_thread(
             client.messages.create,
