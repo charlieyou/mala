@@ -15,6 +15,7 @@ from pathlib import Path
 from src.cerberus_review import (
     ReviewIssue,
     ReviewResult,
+    _to_relative_path,
     format_review_issues,
     map_exit_code_to_result,
     parse_cerberus_json,
@@ -474,3 +475,46 @@ class TestReviewIssueProtocol:
         assert hasattr(issue, "title")
         assert hasattr(issue, "body")
         assert hasattr(issue, "reviewer")
+
+
+class TestToRelativePath:
+    """Tests for path relativization helper."""
+
+    def test_relative_path_unchanged(self) -> None:
+        """Relative paths are returned unchanged."""
+        assert _to_relative_path("src/main.py") == "src/main.py"
+        assert _to_relative_path("test.py") == "test.py"
+        assert _to_relative_path("./foo/bar.py") == "./foo/bar.py"
+
+    def test_absolute_path_with_base_path(self) -> None:
+        """Absolute paths are relativized against base_path."""
+        base = Path("/home/user/project")
+        assert (
+            _to_relative_path("/home/user/project/src/main.py", base) == "src/main.py"
+        )
+        assert _to_relative_path("/home/user/project/test.py", base) == "test.py"
+
+    def test_absolute_path_outside_base_preserved(self) -> None:
+        """Absolute paths outside base_path are preserved (not stripped to filename)."""
+        base = Path("/home/user/project")
+        # Path outside base_path should be preserved fully
+        result = _to_relative_path("/other/path/to/file.py", base)
+        assert result == "/other/path/to/file.py"
+
+    def test_absolute_path_no_base_uses_cwd(self) -> None:
+        """Without base_path, falls back to cwd."""
+        # This test checks that relative paths in cwd work
+        cwd = Path.cwd()
+        # Create a path that is inside cwd
+        test_path = str(cwd / "src" / "test.py")
+        result = _to_relative_path(test_path)
+        assert result == "src/test.py"
+
+    def test_preserves_directory_context_on_failure(self) -> None:
+        """When relativization fails, full path is preserved (not just filename)."""
+        base = Path("/home/user/project")
+        # A path that cannot be relativized should keep full directory context
+        result = _to_relative_path("/completely/different/path/important/file.py", base)
+        # Should NOT be stripped to just "file.py"
+        assert "important" in result
+        assert result == "/completely/different/path/important/file.py"

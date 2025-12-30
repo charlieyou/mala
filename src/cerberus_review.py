@@ -241,40 +241,46 @@ def map_exit_code_to_result(
     )
 
 
-def _to_relative_path(file_path: str) -> str:
+def _to_relative_path(file_path: str, base_path: Path | None = None) -> str:
     """Convert an absolute file path to a relative path for display.
 
-    Strips the home directory prefix or common path prefixes to avoid
-    leaking system information in logs and output.
+    Strips the base path prefix to show paths relative to the repository root.
 
     Args:
         file_path: Absolute or relative file path.
+        base_path: Base path (typically repository root) for relativization.
+            If None, uses Path.cwd() as fallback.
 
     Returns:
-        Relative path suitable for display.
+        Relative path suitable for display. If relativization fails,
+        returns the original path to preserve directory context.
     """
     # If already relative, return as-is
     if not file_path.startswith("/"):
         return file_path
 
-    # Try to make it relative to cwd
-    cwd = Path.cwd()
+    # Use provided base_path or fall back to cwd
+    base = base_path.resolve() if base_path else Path.cwd()
     try:
         abs_path = Path(file_path)
-        if abs_path.is_relative_to(cwd):
-            return str(abs_path.relative_to(cwd))
+        if abs_path.is_relative_to(base):
+            return str(abs_path.relative_to(base))
     except (ValueError, OSError):
         pass
 
-    # Fall back to just the filename if all else fails
-    return Path(file_path).name
+    # Preserve original path if relativization fails (don't strip to filename)
+    return file_path
 
 
-def format_review_issues(issues: list[ReviewIssue]) -> str:
+def format_review_issues(
+    issues: list[ReviewIssue], base_path: Path | None = None
+) -> str:
     """Format review issues as a human-readable string for follow-up prompts.
 
     Args:
         issues: List of ReviewIssue objects to format.
+        base_path: Base path (typically repository root) for path relativization.
+            If None, uses Path.cwd() as fallback.
 
     Returns:
         Formatted string with issues grouped by file.
@@ -297,7 +303,7 @@ def format_review_issues(issues: list[ReviewIssue]) -> str:
 
     for issue in sorted_issues:
         # Convert absolute paths to relative for cleaner display
-        display_file = _to_relative_path(issue.file)
+        display_file = _to_relative_path(issue.file, base_path)
         if display_file != current_file:
             if current_file is not None:
                 lines.append("")  # Blank line between files

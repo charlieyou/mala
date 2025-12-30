@@ -812,7 +812,8 @@ class AgentSessionRunner:
                                 from src.cerberus_review import format_review_issues
 
                                 review_issues_text = format_review_issues(
-                                    review_result.issues  # type: ignore[arg-type]
+                                    review_result.issues,  # type: ignore[arg-type]
+                                    base_path=self.config.repo_path,
                                 )
                                 followup = _get_review_followup_prompt().format(
                                     attempt=lifecycle_ctx.retry_state.review_attempt,

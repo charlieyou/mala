@@ -255,11 +255,13 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert verbose_calls["enabled"] is True
     assert DummyOrchestrator.last_kwargs is not None
     assert DummyOrchestrator.last_kwargs["only_ids"] == {"id-1", "id-2"}
-    # review_timeout is passed via cli_args (not direct kwarg) until orchestrator supports it
+    # review_timeout is passed via cli_args for logging/metadata
     assert DummyOrchestrator.last_kwargs["cli_args"]["review_timeout"] == 600
     # CLI now passes config instead of morph_enabled
     config = DummyOrchestrator.last_kwargs["config"]
     assert config.morph_enabled is True
+    # review_timeout is also applied to config for orchestrator use
+    assert config.review_timeout == 600
     assert config_dir.exists()
 
 
@@ -778,8 +780,11 @@ def test_run_review_timeout_default(
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_kwargs is not None
-    # review_timeout is passed via cli_args until orchestrator supports it
+    # review_timeout is passed via cli_args for logging/metadata
     assert DummyOrchestrator.last_kwargs["cli_args"]["review_timeout"] == 300
+    # review_timeout is also applied to config for orchestrator use
+    config = DummyOrchestrator.last_kwargs["config"]
+    assert config.review_timeout == 300
 
 
 def test_run_review_timeout_custom(
@@ -799,8 +804,11 @@ def test_run_review_timeout_custom(
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_kwargs is not None
-    # review_timeout is passed via cli_args until orchestrator supports it
+    # review_timeout is passed via cli_args for logging/metadata
     assert DummyOrchestrator.last_kwargs["cli_args"]["review_timeout"] == 600
+    # review_timeout is also applied to config for orchestrator use
+    config = DummyOrchestrator.last_kwargs["config"]
+    assert config.review_timeout == 600
 
 
 def test_run_no_codex_thinking_mode_flag(

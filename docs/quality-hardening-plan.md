@@ -318,7 +318,7 @@ Per-issue retries (same session):
 
 Retry limits:
 - `max_gate_retries` for EvidenceGate (default 3)
-- `max_review_retries` for external review (default 2)
+- `max_review_retries` for external review (default 3)
 
 Retry exhaustion behavior:
 - If a per-issue retry limit is hit, mark the issue failed and continue.

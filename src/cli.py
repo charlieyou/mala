@@ -441,6 +441,11 @@ def run(
     # Construct config from environment (orchestrator uses this for API keys and feature flags)
     config = _lazy("MalaConfig").from_env(validate=False)
 
+    # Apply CLI overrides to config (frozen dataclass requires replace)
+    from dataclasses import replace
+
+    config = replace(config, review_timeout=review_timeout)
+
     # Determine morph_enabled: disabled if --no-morph flag set, otherwise use config default
     morph_enabled = (
         False if no_morph else None

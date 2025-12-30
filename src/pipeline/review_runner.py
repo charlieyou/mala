@@ -114,7 +114,7 @@ class ReviewRunner:
     Usage:
         runner = ReviewRunner(
             code_reviewer=reviewer,
-            config=ReviewRunnerConfig(max_review_retries=2),
+            config=ReviewRunnerConfig(max_review_retries=3),
         )
         output = await runner.run_review(input)
 
@@ -147,27 +147,39 @@ class ReviewRunner:
         diff_range = f"{baseline}..{input.commit_sha}"
 
         # Create context file if issue_description provided
+        # Use NamedTemporaryFile to avoid permission issues on shared systems
         context_file: Path | None = None
+        temp_file = None
         if input.issue_description:
-            context_dir = Path(tempfile.gettempdir()) / "claude"
-            context_dir.mkdir(parents=True, exist_ok=True)
-            context_file = context_dir / f"review-context-{input.issue_id}.txt"
-            context_file.write_text(input.issue_description)
+            temp_file = tempfile.NamedTemporaryFile(
+                mode="w",
+                prefix=f"review-context-{input.issue_id}-",
+                suffix=".txt",
+                delete=False,
+            )
+            temp_file.write(input.issue_description)
+            temp_file.close()
+            context_file = Path(temp_file.name)
 
-        result = await self.code_reviewer(
-            diff_range=diff_range,
-            context_file=context_file,
-            timeout=self.config.review_timeout,
-        )
+        try:
+            result = await self.code_reviewer(
+                diff_range=diff_range,
+                context_file=context_file,
+                timeout=self.config.review_timeout,
+            )
 
-        session_log_path = None
-        if result.review_log_path:
-            session_log_path = str(result.review_log_path)
+            session_log_path = None
+            if result.review_log_path:
+                session_log_path = str(result.review_log_path)
 
-        return ReviewOutput(
-            result=result,
-            session_log_path=session_log_path,
-        )
+            return ReviewOutput(
+                result=result,
+                session_log_path=session_log_path,
+            )
+        finally:
+            # Clean up context file after review completes (success or failure)
+            if context_file is not None and context_file.exists():
+                context_file.unlink()
 
     def check_no_progress(self, input: NoProgressInput) -> bool:
         """Check if no progress was made since the last review attempt.

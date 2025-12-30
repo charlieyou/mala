@@ -245,9 +245,13 @@ class DefaultReviewer:
             str(timeout),
         ]
 
-        # Run wait command
+        # Run wait command with subprocess timeout slightly longer than CLI timeout
+        # This allows the CLI's internal timeout to trigger first with a proper error message
+        subprocess_timeout = timeout + 30
         try:
-            wait_result = await asyncio.to_thread(self._run_command, wait_cmd)
+            wait_result = await asyncio.to_thread(
+                self._run_command, wait_cmd, subprocess_timeout
+            )
         except Exception as e:
             return ReviewResult(
                 passed=False,
@@ -265,11 +269,14 @@ class DefaultReviewer:
             review_log_path=None,  # Cerberus logs handled internally
         )
 
-    def _run_command(self, cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    def _run_command(
+        self, cmd: list[str], timeout: int | None = None
+    ) -> subprocess.CompletedProcess[str]:
         """Run a subprocess command in repo_path directory.
 
         Args:
             cmd: Command and arguments to run.
+            timeout: Timeout in seconds for the subprocess. Defaults to 600 (10 minutes).
 
         Returns:
             CompletedProcess with stdout, stderr, and returncode.
@@ -281,7 +288,7 @@ class DefaultReviewer:
             cwd=self.repo_path,
             capture_output=True,
             text=True,
-            timeout=600,  # 10 minute timeout for review operations
+            timeout=timeout if timeout is not None else 600,
         )
 
 

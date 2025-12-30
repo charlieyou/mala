@@ -543,3 +543,109 @@ class TestReviewOutput:
         )
 
         assert output.session_log_path == "/path/to/log.jsonl"
+
+
+class TestContextFileCleanup:
+    """Test context file cleanup after review completes."""
+
+    @pytest.mark.asyncio
+    async def test_context_file_cleaned_up_after_success(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Context file should be deleted after successful review."""
+        context_file_path: Path | None = None
+
+        @dataclass
+        class CapturingReviewer:
+            """Reviewer that captures the context file path."""
+
+            async def __call__(
+                self,
+                diff_range: str,
+                context_file: Path | None = None,
+                timeout: int = 300,
+            ) -> ReviewResult:
+                nonlocal context_file_path
+                context_file_path = context_file
+                # Verify file exists during review
+                assert context_file is not None
+                assert context_file.exists()
+                return ReviewResult(passed=True, issues=[])
+
+        runner = ReviewRunner(code_reviewer=CapturingReviewer())
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_sha="abc123",
+            issue_description="Fix the bug",
+        )
+
+        await runner.run_review(review_input)
+
+        # Context file should be cleaned up after review
+        assert context_file_path is not None
+        assert not context_file_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_context_file_cleaned_up_after_failure(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Context file should be deleted even when review raises exception."""
+        context_file_path: Path | None = None
+
+        @dataclass
+        class FailingReviewer:
+            """Reviewer that raises an exception."""
+
+            async def __call__(
+                self,
+                diff_range: str,
+                context_file: Path | None = None,
+                timeout: int = 300,
+            ) -> ReviewResult:
+                nonlocal context_file_path
+                context_file_path = context_file
+                # Verify file exists during review
+                assert context_file is not None
+                assert context_file.exists()
+                raise RuntimeError("Review failed")
+
+        runner = ReviewRunner(code_reviewer=FailingReviewer())
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_sha="abc123",
+            issue_description="Fix the bug",
+        )
+
+        with pytest.raises(RuntimeError, match="Review failed"):
+            await runner.run_review(review_input)
+
+        # Context file should still be cleaned up even after exception
+        assert context_file_path is not None
+        assert not context_file_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_no_cleanup_needed_without_description(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """No cleanup needed when no issue_description provided."""
+        fake_reviewer = FakeCodeReviewer()
+        runner = ReviewRunner(code_reviewer=fake_reviewer)
+
+        review_input = ReviewInput(
+            issue_id="test-123",
+            repo_path=tmp_path,
+            commit_sha="abc123",
+            issue_description=None,  # No description
+        )
+
+        # Should not raise any errors
+        await runner.run_review(review_input)
+
+        assert fake_reviewer.calls[0]["context_file"] is None
