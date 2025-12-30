@@ -450,7 +450,9 @@ class ImplementerLifecycle:
         # Check for blocking issues (P0/P1 only). P2/P3 issues are acceptable
         # and can be tracked as beads issues later.
         blocking_issues = [
-            i for i in review_result.issues if i.priority is not None and i.priority <= 1
+            i
+            for i in review_result.issues
+            if i.priority is not None and i.priority <= 1
         ]
 
         # Parse errors are always blocking - we can't determine if there are issues
@@ -513,9 +515,7 @@ class ImplementerLifecycle:
                 f"{i.file}:{i.line_start}: {i.title}" for i in blocking_issues[:3]
             ]
             if critical_msgs:
-                ctx.final_result = (
-                    f"Codex review failed: {'; '.join(critical_msgs)}"
-                )
+                ctx.final_result = f"Codex review failed: {'; '.join(critical_msgs)}"
             else:
                 ctx.final_result = "Codex review failed: Unknown reason"
             failure_message = "Review failed, no retries left"
