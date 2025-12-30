@@ -1,0 +1,107 @@
+{
+  "{\"command_name\": \"ruff format\", \"working_dir\": \"/tmp/mala-validation-logs-_6yvwi0c/worktrees/run-1d8c9928/mala-3qp.6.2/1\"}": {
+    "head_sha": "3b98c9d2a90c780fc003105db562ce10e73ceddd",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff check\", \"working_dir\": \"/tmp/mala-validation-logs-_6yvwi0c/worktrees/run-1d8c9928/mala-3qp.6.2/1\"}": {
+    "head_sha": "3b98c9d2a90c780fc003105db562ce10e73ceddd",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ty check\", \"working_dir\": \"/tmp/mala-validation-logs-_6yvwi0c/worktrees/run-1d8c9928/mala-3qp.6.2/1\"}": {
+    "head_sha": "3b98c9d2a90c780fc003105db562ce10e73ceddd",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff format\", \"working_dir\": \"/tmp/mala-validation-logs-ls40ls_h/worktrees/run-9714b22b/mala-3qp.12.2/1\"}": {
+    "head_sha": "1ee220831e65389c6a234f2b1742fdacd3d040b9",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff check\", \"working_dir\": \"/tmp/mala-validation-logs-ls40ls_h/worktrees/run-9714b22b/mala-3qp.12.2/1\"}": {
+    "head_sha": "1ee220831e65389c6a234f2b1742fdacd3d040b9",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ty check\", \"working_dir\": \"/tmp/mala-validation-logs-ls40ls_h/worktrees/run-9714b22b/mala-3qp.12.2/1\"}": {
+    "head_sha": "1ee220831e65389c6a234f2b1742fdacd3d040b9",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff format\", \"working_dir\": \"/tmp/mala-validation-logs-78_dip6b/worktrees/run-5dcba27f/mala-3qp.6.3/1\"}": {
+    "head_sha": "578ec64e2dfc9fc7730391783c97afa6231d5a9b",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff check\", \"working_dir\": \"/tmp/mala-validation-logs-78_dip6b/worktrees/run-5dcba27f/mala-3qp.6.3/1\"}": {
+    "head_sha": "578ec64e2dfc9fc7730391783c97afa6231d5a9b",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ty check\", \"working_dir\": \"/tmp/mala-validation-logs-78_dip6b/worktrees/run-5dcba27f/mala-3qp.6.3/1\"}": {
+    "head_sha": "578ec64e2dfc9fc7730391783c97afa6231d5a9b",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff format\", \"working_dir\": \"/tmp/mala-validation-logs-razx6vcq/worktrees/run-790b0f63/mala-3qp.12.3/1\"}": {
+    "head_sha": "e891e1c74bf9783166a9cd97f4bf1bfc3ee2d260",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff check\", \"working_dir\": \"/tmp/mala-validation-logs-razx6vcq/worktrees/run-790b0f63/mala-3qp.12.3/1\"}": {
+    "head_sha": "e891e1c74bf9783166a9cd97f4bf1bfc3ee2d260",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ty check\", \"working_dir\": \"/tmp/mala-validation-logs-razx6vcq/worktrees/run-790b0f63/mala-3qp.12.3/1\"}": {
+    "head_sha": "e891e1c74bf9783166a9cd97f4bf1bfc3ee2d260",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff format\", \"working_dir\": \"/tmp/mala-validation-logs-9i6ol6c5/worktrees/run-aaf0b4ab/mala-3qp.6.4/1\"}": {
+    "head_sha": "e8830d8f8e35a1e98dc09c8de69d8bf6e51beb24",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff check\", \"working_dir\": \"/tmp/mala-validation-logs-9i6ol6c5/worktrees/run-aaf0b4ab/mala-3qp.6.4/1\"}": {
+    "head_sha": "e8830d8f8e35a1e98dc09c8de69d8bf6e51beb24",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ty check\", \"working_dir\": \"/tmp/mala-validation-logs-9i6ol6c5/worktrees/run-aaf0b4ab/mala-3qp.6.4/1\"}": {
+    "head_sha": "e8830d8f8e35a1e98dc09c8de69d8bf6e51beb24",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff format\", \"working_dir\": \"/tmp/mala-validation-logs-k1tuh3kb/worktrees/run-cde4506e/mala-7si.1.1/1\"}": {
+    "head_sha": "227d73d9a17acc63c703fa69e176bb2373d3aeac",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff check\", \"working_dir\": \"/tmp/mala-validation-logs-k1tuh3kb/worktrees/run-cde4506e/mala-7si.1.1/1\"}": {
+    "head_sha": "227d73d9a17acc63c703fa69e176bb2373d3aeac",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ty check\", \"working_dir\": \"/tmp/mala-validation-logs-k1tuh3kb/worktrees/run-cde4506e/mala-7si.1.1/1\"}": {
+    "head_sha": "227d73d9a17acc63c703fa69e176bb2373d3aeac",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff format\", \"working_dir\": \"/tmp/mala-validation-logs-zni2202u/worktrees/run-54bce799/run-level/1\"}": {
+    "head_sha": "cf702d9bc5ec0cbba33121b2be5ceec412bb0b68",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ruff check\", \"working_dir\": \"/tmp/mala-validation-logs-zni2202u/worktrees/run-54bce799/run-level/1\"}": {
+    "head_sha": "cf702d9bc5ec0cbba33121b2be5ceec412bb0b68",
+    "has_uncommitted": false,
+    "files_hash": null
+  },
+  "{\"command_name\": \"ty check\", \"working_dir\": \"/tmp/mala-validation-logs-zni2202u/worktrees/run-54bce799/run-level/1\"}": {
+    "head_sha": "cf702d9bc5ec0cbba33121b2be5ceec412bb0b68",
+    "has_uncommitted": false,
+    "files_hash": null
+  }
+}

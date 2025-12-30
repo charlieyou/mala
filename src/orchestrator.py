@@ -101,7 +101,7 @@ FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
 # Default timeout for agent execution (protects against hung MCP server subprocesses)
 # This ensures stuck subprocesses (e.g., ripgrep searching from wrong directory)
 # don't hang indefinitely even when cwd is misconfigured.
-DEFAULT_AGENT_TIMEOUT_MINUTES = 60
+DEFAULT_AGENT_TIMEOUT_MINUTES = 30
 
 # Bounded wait for log file (seconds) - used by AgentSessionRunner
 # Re-exported here for backwards compatibility with tests
