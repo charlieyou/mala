@@ -543,7 +543,7 @@ class MalaOrchestrator:
             evidence_dict["commit_found"] = commit_hash is not None
 
             quality_gate_result = QualityGateResult(
-                passed=False,
+                passed=stored_gate_result.passed,
                 evidence=evidence_dict,
                 failure_reasons=list(stored_gate_result.failure_reasons),
             )
@@ -555,9 +555,10 @@ class MalaOrchestrator:
                 commands_run = [
                     kind.value for kind, ran in evidence.commands_ran.items() if ran
                 ]
-                # Validation passed if gate passed (no failed commands)
+                # Validation passed if required commands ran AND no commands failed
                 validation_passed = (
-                    stored_gate_result.passed or len(evidence.failed_commands) == 0
+                    evidence.has_minimum_validation()
+                    and len(evidence.failed_commands) == 0
                 )
                 validation_result = MetaValidationResult(
                     passed=validation_passed,
