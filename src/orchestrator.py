@@ -555,13 +555,10 @@ class MalaOrchestrator:
                 commands_run = [
                     kind.value for kind, ran in evidence.commands_ran.items() if ran
                 ]
-                # Validation passed if required commands ran AND no commands failed
-                validation_passed = (
-                    evidence.has_minimum_validation()
-                    and len(evidence.failed_commands) == 0
-                )
+                # Use gate result directly - it already accounts for disable_validations
+                # and QUALITY_GATE_IGNORED_COMMANDS, ensuring metadata matches gate decision
                 validation_result = MetaValidationResult(
-                    passed=validation_passed,
+                    passed=stored_gate_result.passed,
                     commands_run=commands_run,
                     commands_failed=list(evidence.failed_commands),
                 )

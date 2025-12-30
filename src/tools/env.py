@@ -83,7 +83,8 @@ def encode_repo_path(repo_path: Path) -> str:
     """Encode repo path to match Claude SDK project directory naming.
 
     Claude SDK stores session logs in ~/.claude/projects/{encoded-path}/.
-    The encoding replaces path separators with hyphens and prefixes with hyphen.
+    The encoding replaces path separators with hyphens, normalizes underscores
+    to hyphens, and prefixes with a hyphen.
 
     Example: /home/cyou/mala -> -home-cyou-mala
 
@@ -94,8 +95,10 @@ def encode_repo_path(repo_path: Path) -> str:
         Encoded path string suitable for Claude projects directory.
     """
     resolved = repo_path.resolve()
-    # Skip root and join parts with hyphens, prefix with hyphen
-    return "-" + "-".join(resolved.parts[1:])
+    # Skip root and join parts with hyphens, prefix with hyphen.
+    # Normalize underscores to hyphens to match Claude SDK project dir naming.
+    encoded = "-" + "-".join(resolved.parts[1:])
+    return encoded.replace("_", "-")
 
 
 def get_claude_config_dir() -> Path:
