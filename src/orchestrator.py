@@ -9,9 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-
 from .beads_client import BeadsClient
-from .cerberus_review import ReviewResult, map_exit_code_to_result
 from .config import MalaConfig
 from .event_sink_console import ConsoleEventSink
 from .telemetry import BraintrustProvider, NullTelemetryProvider
@@ -40,6 +38,7 @@ from .pipeline.agent_session_runner import (
     AgentSessionRunner,
     SessionCallbacks,
 )
+from .cerberus_review import DefaultReviewer, ReviewResult, map_exit_code_to_result
 from .pipeline.gate_runner import (
     GateRunner,
     GateRunnerConfig,
@@ -95,7 +94,6 @@ __version__ = pkg_version("mala")
 # Prompt file paths (actual file reads deferred to first use)
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 PROMPT_FILE = _PROMPT_DIR / "implementer_prompt.md"
-GATE_FOLLOWUP_FILE = _PROMPT_DIR / "gate_followup.md"
 REVIEW_FOLLOWUP_FILE = _PROMPT_DIR / "review_followup.md"
 FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
 
@@ -118,12 +116,6 @@ def _get_implementer_prompt() -> str:
 
 
 @functools.cache
-def _get_gate_followup_prompt() -> str:
-    """Load gate follow-up prompt (cached on first use)."""
-    return GATE_FOLLOWUP_FILE.read_text()
-
-
-@functools.cache
 def _get_review_followup_prompt() -> str:
     """Load review follow-up prompt (cached on first use)."""
     return REVIEW_FOLLOWUP_FILE.read_text()
@@ -133,244 +125,6 @@ def _get_review_followup_prompt() -> str:
 def _get_fixer_prompt() -> str:
     """Load fixer prompt (cached on first use)."""
     return FIXER_PROMPT_FILE.read_text()
-
-
-@dataclass
-class DefaultReviewer:
-    """Default CodeReviewer implementation using Cerberus review-gate CLI.
-
-    This class conforms to the CodeReviewer protocol and provides the default
-    behavior for the orchestrator. Tests can inject alternative implementations.
-
-    The reviewer spawns review-gate CLI processes and parses their output.
-    Extra args/env can be provided to customize review-gate behavior.
-    For the initial review, an empty diff short-circuits to PASS without spawning.
-    """
-
-    repo_path: Path
-    bin_path: Path | None = None  # Path to cerberus bin/ directory
-    spawn_args: tuple[str, ...] = field(default_factory=tuple)
-    wait_args: tuple[str, ...] = field(default_factory=tuple)
-    env: dict[str, str] = field(default_factory=dict)
-
-    def _get_review_gate_cmd(self) -> str:
-        """Get the full path to review-gate command."""
-        import os
-
-        if not self.bin_path:
-            raise FileNotFoundError(
-                "review-gate binary not found (cerberus plugin not detected). "
-                "Install the cerberus plugin or ensure Claude's plugin metadata "
-                "is available."
-            )
-        review_gate = self.bin_path / "review-gate"
-        if not review_gate.exists():
-            raise FileNotFoundError(
-                f"review-gate binary missing at {review_gate}. "
-                "Reinstall the cerberus plugin or fix the installPath."
-            )
-        if not review_gate.is_file():
-            raise FileNotFoundError(
-                f"review-gate path is not a file: {review_gate}"
-            )
-        if not os.access(review_gate, os.X_OK):
-            raise PermissionError(
-                f"review-gate is not executable: {review_gate}"
-            )
-        return str(review_gate)
-
-    async def __call__(
-        self,
-        diff_range: str,
-        context_file: Path | None = None,
-        timeout: int = 300,
-    ) -> ReviewResult:
-        """Run review-gate spawn/wait flow and return ReviewResult.
-
-        Args:
-            diff_range: Git diff range to review (e.g., "baseline..HEAD").
-            context_file: Optional path to file with issue description context.
-            timeout: Timeout in seconds for the review operation.
-
-        Returns:
-            ReviewResult with review outcome. On spawn failure, returns
-            parse_error with stderr. On empty diff (initial review), returns passed=True.
-        """
-        import asyncio
-        import json
-
-        # Check for empty diff (short-circuit for initial review only)
-        # This is detected via git diff --stat; if output is empty, no changes
-        try:
-            diff_check = await asyncio.to_thread(
-                self._run_command,
-                ["git", "diff", "--stat", diff_range],
-            )
-            if diff_check.returncode == 0 and not diff_check.stdout.strip():
-                # Empty diff on initial review - pass without spawning
-                return ReviewResult(
-                    passed=True,
-                    issues=[],
-                    parse_error=None,
-                    fatal_error=False,
-                    review_log_path=None,
-                )
-        except Exception:
-            # If diff check fails, proceed with review anyway
-            pass
-
-        # Build spawn command
-        # Note: spawn-code-review takes range as positional arg, not --diff
-        try:
-            review_gate_cmd = self._get_review_gate_cmd()
-        except OSError as e:
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error=str(e),
-                fatal_error=True,
-                review_log_path=None,
-            )
-
-        spawn_cmd = [review_gate_cmd, "spawn-code-review"]
-        if context_file:
-            spawn_cmd.extend(["--context-file", str(context_file)])
-        if self.spawn_args:
-            spawn_cmd.extend(self.spawn_args)
-        # Diff range goes at the end as positional argument
-        spawn_cmd.append(diff_range)
-
-        # Run spawn command
-        try:
-            spawn_result = await asyncio.to_thread(
-                self._run_command, spawn_cmd, env=self.env
-            )
-        except Exception as e:
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error=f"spawn failed: {e}",
-                fatal_error=False,
-                review_log_path=None,
-            )
-
-        if spawn_result.returncode != 0:
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error=f"spawn failed: {spawn_result.stderr.strip() or 'exit code ' + str(spawn_result.returncode)}",
-                fatal_error=False,
-                review_log_path=None,
-            )
-
-        # Parse session_key from spawn output
-        try:
-            spawn_data = json.loads(spawn_result.stdout)
-            session_key = spawn_data.get("session_key")
-        except (json.JSONDecodeError, KeyError) as e:
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error=f"spawn output parse error: {e}",
-                fatal_error=False,
-                review_log_path=None,
-            )
-
-        if not session_key:
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error="spawn output missing session_key",
-                fatal_error=False,
-                review_log_path=None,
-            )
-
-        # Build wait command with timeout
-        wait_timeout = self._extract_wait_timeout(self.wait_args)
-        wait_cmd = [
-            review_gate_cmd,
-            "wait",
-            "--json",
-            "--session-key",
-            session_key,
-        ]
-        if wait_timeout is None:
-            wait_timeout = timeout
-            wait_cmd.extend(["--timeout", str(timeout)])
-        if self.wait_args:
-            wait_cmd.extend(self.wait_args)
-
-        # Run wait command with subprocess timeout slightly longer than CLI timeout
-        # This allows the CLI's internal timeout to trigger first with a proper error message
-        subprocess_timeout = wait_timeout + 30
-        try:
-            wait_result = await asyncio.to_thread(
-                self._run_command, wait_cmd, subprocess_timeout, self.env
-            )
-        except Exception as e:
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error=f"wait failed: {e}",
-                fatal_error=False,
-                review_log_path=None,
-            )
-
-        # Map exit code to ReviewResult using cerberus_review adapter
-        return map_exit_code_to_result(
-            exit_code=wait_result.returncode,
-            stdout=wait_result.stdout,
-            stderr=wait_result.stderr,
-            review_log_path=None,  # Cerberus logs handled internally
-        )
-
-    def _run_command(
-        self,
-        cmd: list[str],
-        timeout: int | None = None,
-        env: dict[str, str] | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        """Run a subprocess command in repo_path directory.
-
-        Args:
-            cmd: Command and arguments to run.
-            timeout: Timeout in seconds for the subprocess. Defaults to 600 (10 minutes).
-
-        Returns:
-            CompletedProcess with stdout, stderr, and returncode.
-        """
-        import os
-        import subprocess
-
-        merged_env = {**os.environ, **env} if env else None
-
-        return subprocess.run(
-            cmd,
-            cwd=self.repo_path,
-            capture_output=True,
-            text=True,
-            timeout=timeout if timeout is not None else 600,
-            env=merged_env,
-        )
-
-    @staticmethod
-    def _extract_wait_timeout(args: tuple[str, ...]) -> int | None:
-        """Extract --timeout value from wait args if provided."""
-        i = 0
-        while i < len(args):
-            arg = args[i]
-            if arg.startswith("--timeout="):
-                value = arg.split("=", 1)[1]
-                if value.isdigit():
-                    return int(value)
-                return None
-            if arg == "--timeout" and i + 1 < len(args):
-                value = args[i + 1]
-                if value.isdigit():
-                    return int(value)
-                return None
-            i += 1
-        return None
 
 
 def get_mcp_servers(
@@ -685,9 +439,8 @@ class MalaOrchestrator:
         """Return whether review should run for this orchestrator instance."""
         if "review" not in self._disabled_validations:
             return True
-        if (
-            self.review_disabled_reason
-            and not isinstance(self.review_runner.code_reviewer, DefaultReviewer)
+        if self.review_disabled_reason and not isinstance(
+            self.review_runner.code_reviewer, DefaultReviewer
         ):
             return True
         return False

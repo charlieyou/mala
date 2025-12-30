@@ -52,6 +52,7 @@ from src.log_output.console import (
     log,
     log_verbose,
 )
+from src.prompts import get_gate_followup_prompt as _get_gate_followup_prompt
 from src.tools.env import SCRIPTS_DIR, get_lock_dir
 
 if TYPE_CHECKING:
@@ -66,14 +67,7 @@ if TYPE_CHECKING:
 
 # Prompt file paths
 _PROMPT_DIR = Path(__file__).parent.parent / "prompts"
-GATE_FOLLOWUP_FILE = _PROMPT_DIR / "gate_followup.md"
 REVIEW_FOLLOWUP_FILE = _PROMPT_DIR / "review_followup.md"
-
-
-@functools.cache
-def _get_gate_followup_prompt() -> str:
-    """Load gate follow-up prompt (cached on first use)."""
-    return GATE_FOLLOWUP_FILE.read_text()
 
 
 @functools.cache

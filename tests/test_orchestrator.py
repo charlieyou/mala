@@ -24,10 +24,10 @@ from src.orchestrator import (
     IssueResult,
     MalaOrchestrator,
     _get_fixer_prompt,
-    _get_gate_followup_prompt,
     _get_implementer_prompt,
     _get_review_followup_prompt,
 )
+from src.prompts import get_gate_followup_prompt as _get_gate_followup_prompt
 from src.tools.command_runner import CommandResult
 
 
