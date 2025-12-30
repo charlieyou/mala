@@ -342,7 +342,11 @@ class MalaOrchestrator:
         # Requires beads to be a BeadsClient for epic operations
         self.epic_override_ids = epic_override_ids or set()
         if isinstance(self.beads, BeadsClient):
-            verification_model = ClaudeEpicVerificationModel()
+            verification_model = ClaudeEpicVerificationModel(
+                api_key=self._config.llm_api_key,
+                base_url=self._config.llm_base_url,
+                timeout_ms=self.timeout_seconds * 1000,
+            )
             self.epic_verifier: EpicVerifier | None = EpicVerifier(
                 beads=self.beads,
                 model=verification_model,
@@ -507,11 +511,11 @@ class MalaOrchestrator:
                 self.event_sink.on_issue_closed(issue_id, issue_id)
                 # Check if this closes any parent epics (with verification)
                 if self.epic_verifier is not None:
-                    epic_result = await self.epic_verifier.verify_and_close_eligible(
+                    # EpicVerifier emits on_epic_verification_passed events
+                    # for each closed epic, so no legacy on_epic_closed needed
+                    await self.epic_verifier.verify_and_close_eligible(
                         human_override_epic_ids=self.epic_override_ids
                     )
-                    if epic_result.passed_count > 0:
-                        self.event_sink.on_epic_closed(issue_id)
                 elif await self.beads.close_eligible_epics_async():
                     # Fallback for mock providers without EpicVerifier
                     self.event_sink.on_epic_closed(issue_id)

@@ -53,6 +53,12 @@ class MalaConfig:
             Derived from braintrust_api_key presence.
         morph_enabled: Whether Morph MCP features are enabled.
             Derived from morph_api_key presence.
+        max_diff_size_kb: Maximum diff size for epic verification (KB).
+            Env: MALA_MAX_DIFF_SIZE_KB (default: 100)
+        llm_api_key: API key for LLM calls (epic verification).
+            Env: LLM_API_KEY (falls back to ANTHROPIC_API_KEY if not set)
+        llm_base_url: Base URL for LLM API requests.
+            Env: LLM_BASE_URL (for proxy/routing, e.g., MorphLLM)
 
     Example:
         # Programmatic construction (no env vars needed):
@@ -85,6 +91,12 @@ class MalaConfig:
     # Epic verification settings
     max_diff_size_kb: int = 100  # Maximum diff size for epic verification (KB)
 
+    # LLM configuration (for epic verification and other direct API calls)
+    llm_api_key: str | None = (
+        None  # API key for LLM calls (falls back to ANTHROPIC_API_KEY)
+    )
+    llm_base_url: str | None = None  # Base URL for LLM API (for proxy/routing)
+
     def __post_init__(self) -> None:
         """Derive feature flags from API key presence.
 
@@ -108,6 +120,9 @@ class MalaConfig:
             - CLAUDE_CONFIG_DIR: Claude SDK config directory (optional)
             - BRAINTRUST_API_KEY: Braintrust API key (optional)
             - MORPH_API_KEY: Morph API key (optional)
+            - MALA_MAX_DIFF_SIZE_KB: Max diff size for epic verification (optional)
+            - LLM_API_KEY: API key for LLM calls (optional)
+            - LLM_BASE_URL: Base URL for LLM API (optional)
 
         Args:
             validate: If True (default), run validation and raise ConfigurationError
@@ -149,6 +164,10 @@ class MalaConfig:
         max_diff_size_kb_str = os.environ.get("MALA_MAX_DIFF_SIZE_KB")
         max_diff_size_kb = int(max_diff_size_kb_str) if max_diff_size_kb_str else 100
 
+        # Get LLM configuration (for epic verification and other direct API calls)
+        llm_api_key = os.environ.get("LLM_API_KEY") or None
+        llm_base_url = os.environ.get("LLM_BASE_URL") or None
+
         config = cls(
             runs_dir=runs_dir,
             lock_dir=lock_dir,
@@ -156,6 +175,8 @@ class MalaConfig:
             braintrust_api_key=braintrust_api_key,
             morph_api_key=morph_api_key,
             max_diff_size_kb=max_diff_size_kb,
+            llm_api_key=llm_api_key,
+            llm_base_url=llm_base_url,
         )
 
         if validate:

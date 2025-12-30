@@ -243,26 +243,31 @@ class TestScopedDiffComputation:
 class TestLargeDiffHandling:
     """Tests for tiered large diff handling."""
 
-    def test_returns_unchanged_under_limit(self, verifier: EpicVerifier) -> None:
+    @pytest.mark.asyncio
+    async def test_returns_unchanged_under_limit(self, verifier: EpicVerifier) -> None:
         """Should return diff unchanged if under size limit."""
         small_diff = "diff --git a/file.py b/file.py\n+some change"
-        result = verifier._handle_large_diff(small_diff)
+        result = await verifier._handle_large_diff(small_diff)
         assert result == small_diff
 
-    def test_file_summary_mode_for_medium_diff(self, verifier: EpicVerifier) -> None:
+    @pytest.mark.asyncio
+    async def test_file_summary_mode_for_medium_diff(
+        self, verifier: EpicVerifier
+    ) -> None:
         """Should use file-summary mode for diffs between limits."""
         # Create a diff larger than 100KB but under 500KB
         verifier.max_diff_size_kb = 1  # Lower limit for testing
         medium_diff = "diff --git a/file.py b/file.py\n" + ("+" * 2000)
-        result = verifier._handle_large_diff(medium_diff)
+        result = await verifier._handle_large_diff(medium_diff)
         assert "file-summary mode" in result
 
-    def test_file_list_mode_for_large_diff(self, verifier: EpicVerifier) -> None:
+    @pytest.mark.asyncio
+    async def test_file_list_mode_for_large_diff(self, verifier: EpicVerifier) -> None:
         """Should use file-list mode for very large diffs."""
         verifier.max_diff_size_kb = 1  # Lower limit
         # Create very large diff (over 500KB equivalent at scale)
         large_diff = "diff --git a/file.py b/file.py\n" + ("x" * 600000)
-        result = verifier._handle_large_diff(large_diff)
+        result = await verifier._handle_large_diff(large_diff)
         assert "file-list mode" in result
 
     def test_file_summary_truncates_per_file(self, verifier: EpicVerifier) -> None:
@@ -272,7 +277,8 @@ class TestLargeDiffHandling:
         result = verifier._to_file_summary_mode(diff)
         assert "more lines" in result  # Count includes the diff header line
 
-    def test_file_list_includes_small_files(
+    @pytest.mark.asyncio
+    async def test_file_list_includes_small_files(
         self, tmp_path: Path, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:
         """Should include contents of small files in file-list mode.
@@ -315,7 +321,7 @@ class TestLargeDiffHandling:
         )
 
         diff = "diff --git a/small.py b/small.py\n+content"
-        result = verifier._to_file_list_mode(diff)
+        result = await verifier._to_file_list_mode(diff)
         assert "small.py" in result
         assert "print('hello')" in result
 
@@ -1096,7 +1102,8 @@ class TestModelErrorHandling:
 class TestBinaryFileHandling:
     """Tests for handling binary/non-UTF8 files in file-list mode."""
 
-    def test_file_list_skips_binary_files(
+    @pytest.mark.asyncio
+    async def test_file_list_skips_binary_files(
         self, tmp_path: Path, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:
         """Should skip binary files without crashing.
@@ -1142,7 +1149,7 @@ class TestBinaryFileHandling:
         )
 
         diff = "diff --git a/binary.bin b/binary.bin\n+content\ndiff --git a/text.py b/text.py\n+code"
-        result = verifier._to_file_list_mode(diff)
+        result = await verifier._to_file_list_mode(diff)
 
         # Should include text file but not crash on binary
         assert "text.py" in result
@@ -1150,7 +1157,8 @@ class TestBinaryFileHandling:
         # Binary file should be listed but content not included
         assert "binary.bin" in result
 
-    def test_file_list_skips_non_utf8_files(
+    @pytest.mark.asyncio
+    async def test_file_list_skips_non_utf8_files(
         self, tmp_path: Path, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:
         """Should skip files with invalid UTF-8 without crashing.
@@ -1194,7 +1202,7 @@ class TestBinaryFileHandling:
 
         diff = "diff --git a/invalid.txt b/invalid.txt\n+content"
         # Should not raise UnicodeDecodeError
-        result = verifier._to_file_list_mode(diff)
+        result = await verifier._to_file_list_mode(diff)
 
         # File should be listed but content not included
         assert "invalid.txt" in result

@@ -21,7 +21,6 @@ import asyncio
 import hashlib
 import json
 import re
-import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,11 +42,11 @@ SPEC_PATH_PATTERNS = [
     r"[Ss]ee\s+(specs/[\w/-]+\.(?:md|MD))",  # "See specs/foo/bar.md"
     r"[Ss]pec:\s*(specs/[\w/-]+\.(?:md|MD))",  # "Spec: specs/foo.md"
     r"\[(specs/[\w/-]+\.(?:md|MD))\]",  # "[specs/foo.md]"
-    r"(?:^|\s)(specs/[\w/-]+\.(?:md|MD))(?:\s|$)",  # Bare "specs/foo.md"
+    r"(?:^|\s)(specs/[\w/-]+\.(?:md|MD))(?:\s|[.,;:!?)]|$)",  # Bare "specs/foo.md"
 ]
 
 
-def _get_file_at_commit(
+async def _get_file_at_commit(
     file_path: str, repo_path: Path, commit: str = "HEAD"
 ) -> str | None:
     """Get file content at a specific commit using git show.
@@ -66,17 +65,18 @@ def _get_file_at_commit(
         at that commit or cannot be read.
     """
     try:
-        result = subprocess.run(
-            ["git", "show", f"{commit}:{file_path}"],
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "show",
+            f"{commit}:{file_path}",
             cwd=repo_path,
-            capture_output=True,
-            text=True,
-            check=True,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        return result.stdout
-    except subprocess.CalledProcessError:
-        # File doesn't exist at this commit or git command failed
-        return None
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return None
+        return stdout.decode()
     except UnicodeDecodeError:
         # Binary file
         return None
@@ -341,15 +341,36 @@ class EpicVerifier:
         for epic_id in eligible_epics:
             # Human override bypasses verification
             if epic_id in human_override_epic_ids:
-                await self.beads.close_async(epic_id)
-                passed_count += 1
+                closed = await self.beads.close_async(epic_id)
                 verified_count += 1  # Human override counts as verified
-                verdicts[epic_id] = EpicVerdict(
-                    passed=True,
-                    unmet_criteria=[],
-                    confidence=1.0,
-                    reasoning="Human override - bypassed verification",
-                )
+                if closed:
+                    passed_count += 1
+                    verdicts[epic_id] = EpicVerdict(
+                        passed=True,
+                        unmet_criteria=[],
+                        confidence=1.0,
+                        reasoning="Human override - bypassed verification",
+                    )
+                else:
+                    # Close failed - flag for human review
+                    human_review_count += 1
+                    reason = "Human override close failed - epic could not be closed"
+                    review_id = await self.request_human_review(
+                        epic_id,
+                        reason,
+                        None,
+                    )
+                    remediation_issues.append(review_id)
+                    verdicts[epic_id] = EpicVerdict(
+                        passed=False,
+                        unmet_criteria=[],
+                        confidence=0.0,
+                        reasoning=reason,
+                    )
+                    if self.event_sink is not None:
+                        self.event_sink.on_epic_verification_human_review(
+                            epic_id, reason, review_id
+                        )
                 continue
 
             # Acquire per-epic lock for sequential processing
@@ -382,13 +403,28 @@ class EpicVerifier:
 
                 if verdict.passed and verdict.confidence >= LOW_CONFIDENCE_THRESHOLD:
                     # Verification passed, close the epic
-                    await self.beads.close_async(epic_id)
-                    passed_count += 1
-                    # Emit passed event
-                    if self.event_sink is not None:
-                        self.event_sink.on_epic_verification_passed(
-                            epic_id, verdict.confidence
+                    closed = await self.beads.close_async(epic_id)
+                    if closed:
+                        passed_count += 1
+                        # Emit passed event
+                        if self.event_sink is not None:
+                            self.event_sink.on_epic_verification_passed(
+                                epic_id, verdict.confidence
+                            )
+                    else:
+                        # Close failed despite verification passing - flag for human review
+                        human_review_count += 1
+                        reason = "Verification passed but epic close failed"
+                        review_id = await self.request_human_review(
+                            epic_id,
+                            reason,
+                            verdict,
                         )
+                        remediation_issues.append(review_id)
+                        if self.event_sink is not None:
+                            self.event_sink.on_epic_verification_human_review(
+                                epic_id, reason, review_id
+                            )
                 elif verdict.confidence < LOW_CONFIDENCE_THRESHOLD:
                     # Low confidence, flag for human review
                     reason = f"Low confidence ({verdict.confidence:.2f})"
@@ -479,7 +515,7 @@ class EpicVerifier:
             )
 
         # Handle large diffs
-        diff = self._handle_large_diff(diff)
+        diff = await self._handle_large_diff(diff)
 
         # Extract and load spec content if referenced
         spec_paths = extract_spec_paths(epic_description)
@@ -573,7 +609,7 @@ class EpicVerifier:
 
         return "\n".join(diffs)
 
-    def _handle_large_diff(self, diff: str) -> str:
+    async def _handle_large_diff(self, diff: str) -> str:
         """Handle large diffs using tiered truncation.
 
         Tier 1: If under max_diff_size_kb, return as-is
@@ -594,7 +630,7 @@ class EpicVerifier:
         if diff_size_kb <= FILE_SUMMARY_MAX_SIZE_KB:
             return self._to_file_summary_mode(diff)
 
-        return self._to_file_list_mode(diff)
+        return await self._to_file_list_mode(diff)
 
     def _to_file_summary_mode(self, diff: str) -> str:
         """Convert diff to file-summary mode.
@@ -639,7 +675,7 @@ class EpicVerifier:
 
         return "\n".join(result_lines)
 
-    def _to_file_list_mode(self, diff: str) -> str:
+    async def _to_file_list_mode(self, diff: str) -> str:
         """Convert diff to file-list mode.
 
         Lists changed files only, with contents for files under 5KB.
@@ -676,7 +712,7 @@ class EpicVerifier:
         for f in files_changed:
             # Read file content from HEAD commit to ensure consistency with
             # the scoped diff (avoids issues with uncommitted working tree changes)
-            file_content = _get_file_at_commit(f, self.repo_path)
+            file_content = await _get_file_at_commit(f, self.repo_path)
             if file_content is not None:
                 if len(file_content.encode()) <= FILE_LIST_MAX_FILE_SIZE_KB * 1024:
                     result_lines.append(f"### {f}")
