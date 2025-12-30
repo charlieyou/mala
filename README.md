@@ -62,11 +62,17 @@ claude login
 
 ### Cerberus Review-Gate (Optional)
 
-[Cerberus](https://github.com/cyouAI/cerberus) provides automated code review via external reviewers (Codex, Gemini, Claude) after agents complete their work. Install if you want automated review:
+[Cerberus](https://github.com/charlieyou/cerberus) provides automated code review via external reviewers (Codex, Gemini, Claude) after agents complete their work. Cerberus is a Claude Code plugin, not a pip package.
 
+**Prerequisites** (at least one required):
+- `codex` - [OpenAI CLI](https://platform.openai.com/docs/guides/command-line)
+- `gemini` - [Gemini CLI](https://ai.google.dev/gemini-api/docs/get-started/cli)
+- `jq` - JSON processor (`apt install jq` or `brew install jq`)
+
+**Installation** (via Claude Code plugin system):
 ```bash
-# Cerberus CLI (optional - for automated code review)
-pip install cerberus-review
+claude /plugin marketplace add charlieyou/cerberus
+claude /plugin install cerberus
 ```
 
 Review can be disabled with `--disable-validations=review`.
@@ -141,18 +147,6 @@ mala status
 
 # Clean up locks and logs
 mala clean
-```
-
-## Architecture
-
-```
-mala (Python Orchestrator)
-├── Event Sink: Decoupled event handling (ConsoleEventSink for terminal output)
-├── Spawns: N agents in parallel (asyncio tasks)
-├── Each agent: ClaudeSDKClient session implementing one issue
-├── Coordination: Filesystem locks prevent edit conflicts
-├── Epic Verifier: AI-powered acceptance criteria verification
-└── Cleanup: Locks released on completion, timeout, or failure
 ```
 
 ## Coordination Layers
