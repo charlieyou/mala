@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from .codex_review import CodexReviewResult
+    from .models import EpicVerdict
     from .quality_gate import CommitResult, GateResult, ValidationEvidence
     from .session_log_parser import JsonlEntry
     from .validation.spec import ValidationSpec
@@ -407,5 +408,38 @@ class GateChecker(Protocol):
 
         Returns:
             CommitResult indicating whether a matching commit exists.
+        """
+        ...
+
+
+@runtime_checkable
+class EpicVerificationModel(Protocol):
+    """Protocol for model-agnostic epic verification.
+
+    Provides an interface for verifying whether code changes satisfy
+    an epic's acceptance criteria. The initial implementation uses
+    Claude via SDK, but this protocol allows swapping to other models
+    (Codex, Gemini, local models) without changing the verifier.
+
+    The canonical implementation is ClaudeEpicVerificationModel in
+    src/epic_verifier.py. Test implementations can return predetermined
+    verdicts for isolation.
+    """
+
+    async def verify(
+        self,
+        epic_criteria: str,
+        diff: str,
+        spec_content: str | None,
+    ) -> EpicVerdict:
+        """Verify if the diff satisfies the epic's acceptance criteria.
+
+        Args:
+            epic_criteria: The epic's acceptance criteria text.
+            diff: Scoped git diff of child issue commits only.
+            spec_content: Optional content of linked spec file.
+
+        Returns:
+            Structured verdict with pass/fail and unmet criteria details.
         """
         ...
