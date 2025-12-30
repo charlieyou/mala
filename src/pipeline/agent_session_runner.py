@@ -459,7 +459,9 @@ class AgentSessionRunner:
         pending_lint_commands: dict[str, tuple[str, str]] = {}
 
         # Log file wait constants
-        log_file_wait_timeout = 30
+        # Allow 60s for log file to appear after session completes.
+        # Claude SDK may have async delays in log writing, especially under load.
+        log_file_wait_timeout = 60
         log_file_poll_interval = 0.5
 
         try:

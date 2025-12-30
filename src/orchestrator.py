@@ -104,8 +104,9 @@ FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
 DEFAULT_AGENT_TIMEOUT_MINUTES = 30
 
 # Bounded wait for log file (seconds) - used by AgentSessionRunner
-# Re-exported here for backwards compatibility with tests
-LOG_FILE_WAIT_TIMEOUT = 30
+# Re-exported here for backwards compatibility with tests.
+# 60s allows time for Claude SDK to flush logs, especially under load.
+LOG_FILE_WAIT_TIMEOUT = 60
 LOG_FILE_POLL_INTERVAL = 0.5
 
 
