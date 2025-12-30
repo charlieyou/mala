@@ -366,8 +366,33 @@ class TestReviewResult:
         assert result.effect == Effect.COMPLETE_FAILURE
         assert "Bug found" in ctx.final_result
 
-    def test_review_failed_with_parse_error_shows_error(self) -> None:
-        """Review failed with parse error shows parse error in result."""
+    def test_review_parse_error_triggers_rerun_when_retries_remain(self) -> None:
+        """Parse error triggers RUN_REVIEW (not SEND_REVIEW_RETRY) when retries remain."""
+        config = LifecycleConfig(max_review_retries=2)
+        lifecycle = ImplementerLifecycle(config)
+        lifecycle.start()
+        ctx = LifecycleContext()
+        lifecycle.on_messages_complete(ctx, has_session_id=True)
+        lifecycle.on_log_ready(ctx)
+        gate_result = GateResult(passed=True, commit_hash="abc123")
+        lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
+        # review_attempt is 1 after gate_result
+
+        review_result = CodexReviewResult(
+            passed=False,
+            parse_error="Invalid JSON response",
+        )
+
+        result = lifecycle.on_review_result(ctx, review_result, new_log_offset=200)
+
+        # Parse error should trigger RUN_REVIEW to re-run the external review tool
+        assert lifecycle.state == LifecycleState.RUNNING_REVIEW
+        assert result.effect == Effect.RUN_REVIEW
+        assert ctx.retry_state.review_attempt == 2
+        assert "parse error" in (result.message or "").lower()
+
+    def test_review_parse_error_fails_when_no_retries_left(self) -> None:
+        """Parse error fails when no retries remain."""
         config = LifecycleConfig(max_review_retries=1)
         lifecycle = ImplementerLifecycle(config)
         lifecycle.start()
@@ -376,15 +401,17 @@ class TestReviewResult:
         lifecycle.on_log_ready(ctx)
         gate_result = GateResult(passed=True, commit_hash="abc123")
         lifecycle.on_gate_result(ctx, gate_result, new_log_offset=100)
+        # review_attempt is 1 after gate_result, max is also 1
 
         review_result = CodexReviewResult(
             passed=False,
             parse_error="Invalid JSON response",
         )
 
-        lifecycle.on_review_result(ctx, review_result, new_log_offset=200)
+        result = lifecycle.on_review_result(ctx, review_result, new_log_offset=200)
 
         assert lifecycle.state == LifecycleState.FAILED
+        assert result.effect == Effect.COMPLETE_FAILURE
         assert "Invalid JSON response" in ctx.final_result
 
     def test_review_failed_with_fatal_error_fails_immediately(self) -> None:
@@ -742,3 +769,35 @@ class TestFullLifecycleScenarios:
         assert result.effect == Effect.COMPLETE_FAILURE
         assert lifecycle.state == LifecycleState.FAILED
         assert "Another bug" in ctx.final_result
+
+
+class TestReviewIssueProtocol:
+    """Tests verifying ReviewIssue protocol compliance."""
+
+    def test_review_issue_has_reviewer_field(self) -> None:
+        """ReviewIssue includes reviewer field for attribution."""
+        issue = ReviewIssue(
+            title="Test bug",
+            body="Description",
+            confidence_score=0.9,
+            priority=1,
+            file="test.py",
+            line_start=10,
+            line_end=10,
+        )
+        # Default reviewer is "codex" for backward compatibility
+        assert issue.reviewer == "codex"
+
+    def test_review_issue_custom_reviewer(self) -> None:
+        """ReviewIssue accepts custom reviewer value."""
+        issue = ReviewIssue(
+            title="Test bug",
+            body="Description",
+            confidence_score=0.9,
+            priority=1,
+            file="test.py",
+            line_start=10,
+            line_end=10,
+            reviewer="cerberus",
+        )
+        assert issue.reviewer == "cerberus"

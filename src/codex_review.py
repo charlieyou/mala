@@ -18,7 +18,7 @@ from src.tools.command_runner import CommandRunner
 
 @dataclass
 class ReviewIssue:
-    """A single issue found during code review."""
+    """A single issue found during external review."""
 
     title: str
     body: str
@@ -27,6 +27,7 @@ class ReviewIssue:
     file: str
     line_start: int
     line_end: int
+    reviewer: str = "codex"  # Reviewer identifier (default for backward compat)
 
 
 @dataclass

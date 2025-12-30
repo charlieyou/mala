@@ -78,7 +78,7 @@ class GateOutcome(Protocol):
 
 
 class ReviewIssue(Protocol):
-    """Protocol for a single issue from a code review.
+    """Protocol for a single issue from an external review.
 
     Matches the fields lifecycle needs from review issues for building
     failure messages. Uses Protocol to allow structural subtyping with
@@ -115,13 +115,19 @@ class ReviewIssue(Protocol):
         """Detailed description of the issue."""
         ...
 
+    @property
+    def reviewer(self) -> str:
+        """Identifier of the reviewer that found this issue."""
+        ...
+
 
 @runtime_checkable
 class ReviewOutcome(Protocol):
-    """Protocol defining what lifecycle needs from a review result.
+    """Protocol defining what lifecycle needs from an external review result.
 
-    Callers (orchestrator) pass infra CodexReviewResult objects that satisfy
-    this protocol. Lifecycle only accesses these fields.
+    Callers (orchestrator) pass infra review result objects (e.g., CodexReviewResult,
+    CerberusReviewResult) that satisfy this protocol. Lifecycle only accesses
+    these fields.
     """
 
     @property
@@ -428,11 +434,12 @@ class ImplementerLifecycle:
         new_log_offset: int,
         no_progress: bool = False,
     ) -> TransitionResult:
-        """Handle Codex review result.
+        """Handle external review result.
 
         Decides whether to:
         - Complete with success (if review passed)
-        - Retry review (if failed but retries remain and progress made)
+        - Re-run review (if parse_error and retries remain)
+        - Retry via agent prompt (if failed with issues but retries remain)
         - Fail (if no retries left or no progress)
 
         Args:
@@ -474,7 +481,7 @@ class ImplementerLifecycle:
             )
 
         if review_result.parse_error and review_result.fatal_error:
-            ctx.final_result = f"Codex review failed: {review_result.parse_error}"
+            ctx.final_result = f"External review failed: {review_result.parse_error}"
             ctx.success = False
             self._state = LifecycleState.FAILED
             return TransitionResult(
@@ -483,7 +490,29 @@ class ImplementerLifecycle:
                 message="Review failed, unrecoverable error",
             )
 
-        # Review failed - can we retry?
+        # Parse error (non-fatal): re-run review tool directly, not agent prompt.
+        # This handles infrastructure issues with the reviewer (e.g., malformed JSON).
+        if review_result.parse_error:
+            can_retry = ctx.retry_state.review_attempt < self.config.max_review_retries
+            if can_retry:
+                ctx.retry_state.review_attempt += 1
+                # Stay in RUNNING_REVIEW state - orchestrator re-runs external review
+                return TransitionResult(
+                    state=self._state,
+                    effect=Effect.RUN_REVIEW,
+                    message=f"Review parse error, re-running review (attempt {ctx.retry_state.review_attempt}/{self.config.max_review_retries})",
+                )
+            # No retries left
+            ctx.final_result = f"External review failed: {review_result.parse_error}"
+            ctx.success = False
+            self._state = LifecycleState.FAILED
+            return TransitionResult(
+                state=self._state,
+                effect=Effect.COMPLETE_FAILURE,
+                message="Review failed, no retries left",
+            )
+
+        # Review failed with blocking issues - can we retry via agent prompt?
         can_retry = (
             ctx.retry_state.review_attempt < self.config.max_review_retries
             and not no_progress
@@ -504,20 +533,17 @@ class ImplementerLifecycle:
 
         # No retries left - fail with review error details
         if no_progress:
-            ctx.final_result = "Codex review failed: No progress (commit unchanged, no working tree changes)"
+            ctx.final_result = "External review failed: No progress (commit unchanged, no working tree changes)"
             failure_message = "Review failed, no progress detected"
-        elif review_result.parse_error:
-            ctx.final_result = f"Codex review failed: {review_result.parse_error}"
-            failure_message = "Review failed, no retries left"
         else:
             # Format P0/P1 issues (these are blocking)
             critical_msgs = [
                 f"{i.file}:{i.line_start}: {i.title}" for i in blocking_issues[:3]
             ]
             if critical_msgs:
-                ctx.final_result = f"Codex review failed: {'; '.join(critical_msgs)}"
+                ctx.final_result = f"External review failed: {'; '.join(critical_msgs)}"
             else:
-                ctx.final_result = "Codex review failed: Unknown reason"
+                ctx.final_result = "External review failed: Unknown reason"
             failure_message = "Review failed, no retries left"
         ctx.success = False
         self._state = LifecycleState.FAILED
