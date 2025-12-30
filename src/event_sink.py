@@ -526,6 +526,67 @@ class MalaEventSink(Protocol):
         """
         ...
 
+    # -------------------------------------------------------------------------
+    # Pipeline module events
+    # -------------------------------------------------------------------------
+
+    def on_lifecycle_state(self, agent_id: str, state: str) -> None:
+        """Called when lifecycle state changes (verbose/debug).
+
+        Args:
+            agent_id: Agent whose lifecycle changed.
+            state: New lifecycle state name.
+        """
+        ...
+
+    def on_log_waiting(self, agent_id: str) -> None:
+        """Called when waiting for session log file.
+
+        Args:
+            agent_id: Agent waiting for log.
+        """
+        ...
+
+    def on_log_ready(self, agent_id: str) -> None:
+        """Called when session log file is ready.
+
+        Args:
+            agent_id: Agent whose log is ready.
+        """
+        ...
+
+    def on_review_skipped_no_progress(self, agent_id: str) -> None:
+        """Called when review is skipped due to no progress.
+
+        Args:
+            agent_id: Agent whose review was skipped.
+        """
+        ...
+
+    def on_fixer_text(self, attempt: int, text: str) -> None:
+        """Called when fixer agent emits text output.
+
+        Args:
+            attempt: Current fixer attempt number.
+            text: Text content.
+        """
+        ...
+
+    def on_fixer_tool_use(
+        self,
+        attempt: int,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> None:
+        """Called when fixer agent invokes a tool.
+
+        Args:
+            attempt: Current fixer attempt number.
+            tool_name: Name of the tool being called.
+            arguments: Tool arguments.
+        """
+        ...
+
 
 class NullEventSink:
     """No-op event sink for testing.
@@ -735,5 +796,29 @@ class NullEventSink:
         epic_id: str,
         issue_id: str,
         criterion: str,
+    ) -> None:
+        pass
+
+    # Pipeline module events
+    def on_lifecycle_state(self, agent_id: str, state: str) -> None:
+        pass
+
+    def on_log_waiting(self, agent_id: str) -> None:
+        pass
+
+    def on_log_ready(self, agent_id: str) -> None:
+        pass
+
+    def on_review_skipped_no_progress(self, agent_id: str) -> None:
+        pass
+
+    def on_fixer_text(self, attempt: int, text: str) -> None:
+        pass
+
+    def on_fixer_tool_use(
+        self,
+        attempt: int,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
     ) -> None:
         pass

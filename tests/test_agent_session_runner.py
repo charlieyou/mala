@@ -749,6 +749,25 @@ class FakeEventSink:
             parse_error=parse_error,
         )
 
+    # Pipeline module events
+    def on_lifecycle_state(self, agent_id: str, state: str) -> None:
+        self._record("on_lifecycle_state", agent_id, state)
+
+    def on_log_waiting(self, agent_id: str) -> None:
+        self._record("on_log_waiting", agent_id)
+
+    def on_log_ready(self, agent_id: str) -> None:
+        self._record("on_log_ready", agent_id)
+
+    def on_log_timeout(self, agent_id: str, log_path: str) -> None:
+        self._record("on_log_timeout", agent_id, log_path)
+
+    def on_review_skipped_no_progress(self, agent_id: str) -> None:
+        self._record("on_review_skipped_no_progress", agent_id)
+
+    def on_warning(self, message: str, agent_id: str | None = None) -> None:
+        self._record("on_warning", message, agent_id=agent_id)
+
 
 class TestAgentSessionRunnerEventSink:
     """Test event sink integration for gate/review events."""

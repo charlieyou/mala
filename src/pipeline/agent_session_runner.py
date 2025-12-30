@@ -47,11 +47,6 @@ from src.lifecycle import (
     LifecycleContext,
     LifecycleState,
 )
-from src.log_output.console import (
-    Colors,
-    log,
-    log_verbose,
-)
 from src.prompts import get_gate_followup_prompt as _get_gate_followup_prompt
 from src.tools.env import SCRIPTS_DIR, get_lock_dir
 
@@ -454,11 +449,10 @@ class AgentSessionRunner:
                 async with client:
                     # Start lifecycle
                     lifecycle.start()
-                    log_verbose(
-                        "->",
-                        f"State: {lifecycle.state.name}",
-                        agent_id=input.issue_id,
-                    )
+                    if self.event_sink is not None:
+                        self.event_sink.on_lifecycle_state(
+                            input.issue_id, lifecycle.state.name
+                        )
 
                     # Initial query
                     await client.query(input.prompt)
@@ -515,11 +509,10 @@ class AgentSessionRunner:
                         result = lifecycle.on_messages_complete(
                             lifecycle_ctx, has_session_id=bool(session_id)
                         )
-                        log_verbose(
-                            "->",
-                            f"State: {lifecycle.state.name}",
-                            agent_id=input.issue_id,
-                        )
+                        if self.event_sink is not None:
+                            self.event_sink.on_lifecycle_state(
+                                input.issue_id, lifecycle.state.name
+                            )
 
                         if result.effect == Effect.COMPLETE_FAILURE:
                             final_result = lifecycle_ctx.final_result
@@ -530,12 +523,8 @@ class AgentSessionRunner:
                             if self.callbacks.get_log_path is None:
                                 raise ValueError("get_log_path callback must be set")
                             log_path = self.callbacks.get_log_path(session_id)  # type: ignore[arg-type]
-                            log(
-                                "o",
-                                "Waiting for session log...",
-                                Colors.MUTED,
-                                agent_id=input.issue_id,
-                            )
+                            if self.event_sink is not None:
+                                self.event_sink.on_log_waiting(input.issue_id)
 
                             # Wait for log file
                             wait_elapsed = 0.0
@@ -544,12 +533,10 @@ class AgentSessionRunner:
                                     result = lifecycle.on_log_timeout(
                                         lifecycle_ctx, str(log_path)
                                     )
-                                    log(
-                                        "!",
-                                        f"Log file not found: {log_path.name}",
-                                        Colors.YELLOW,
-                                        agent_id=input.issue_id,
-                                    )
+                                    if self.event_sink is not None:
+                                        self.event_sink.on_log_timeout(
+                                            input.issue_id, str(log_path)
+                                        )
                                     break
                                 await asyncio.sleep(log_file_poll_interval)
                                 wait_elapsed += log_file_poll_interval
@@ -559,12 +546,8 @@ class AgentSessionRunner:
                                 break
 
                             if log_path.exists():
-                                log(
-                                    "v",
-                                    "Log file ready",
-                                    Colors.GREEN,
-                                    agent_id=input.issue_id,
-                                )
+                                if self.event_sink is not None:
+                                    self.event_sink.on_log_ready(input.issue_id)
                             result = lifecycle.on_log_ready(lifecycle_ctx)
 
                         # Handle RUN_GATE
@@ -661,12 +644,10 @@ class AgentSessionRunner:
                                     current_commit,
                                 )
                                 if no_progress:
-                                    log(
-                                        "x",
-                                        "Review skipped: No progress (commit unchanged, no working tree changes)",
-                                        Colors.RED,
-                                        agent_id=input.issue_id,
-                                    )
+                                    if self.event_sink is not None:
+                                        self.event_sink.on_review_skipped_no_progress(
+                                            input.issue_id
+                                        )
                                     # Create synthetic failed review
                                     from src.cerberus_review import ReviewResult
 
@@ -746,12 +727,11 @@ class AgentSessionRunner:
                             # parse_error retry: lifecycle returns RUN_REVIEW to re-run
                             # review without prompting agent (no code changes needed)
                             if result.effect == Effect.RUN_REVIEW:
-                                log(
-                                    "!",
-                                    f"Review tool error: {review_result.parse_error}; retrying",
-                                    Colors.YELLOW,
-                                    agent_id=input.issue_id,
-                                )
+                                if self.event_sink is not None:
+                                    self.event_sink.on_warning(
+                                        f"Review tool error: {review_result.parse_error}; retrying",
+                                        agent_id=input.issue_id,
+                                    )
                                 continue
 
                             if result.effect == Effect.SEND_REVIEW_RETRY:

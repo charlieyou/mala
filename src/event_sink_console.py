@@ -14,6 +14,7 @@ from .log_output.console import (
     log_agent_text,
     log_tool,
     log_verbose,
+    truncate_text,
 )
 
 
@@ -382,7 +383,7 @@ class ConsoleEventSink:
 
     def on_fixer_completed(self, result: str) -> None:
         """Log fixer agent completion."""
-        log("✓", f"Fixer completed: {result}", Colors.GREEN)
+        log("✓", f"Fixer completed: {truncate_text(result, 50)}", Colors.GREEN)
 
     def on_fixer_failed(self, reason: str) -> None:
         """Log fixer agent failure."""
@@ -535,6 +536,44 @@ class ConsoleEventSink:
             f"Created remediation {issue_id} for epic {epic_id}: {crit_display}",
             Colors.MUTED,
         )
+
+    # -------------------------------------------------------------------------
+    # Pipeline module events
+    # -------------------------------------------------------------------------
+
+    def on_lifecycle_state(self, agent_id: str, state: str) -> None:
+        """Log lifecycle state change (verbose)."""
+        log_verbose("->", f"State: {state}", agent_id=agent_id)
+
+    def on_log_waiting(self, agent_id: str) -> None:
+        """Log waiting for session log."""
+        log("o", "Waiting for session log...", Colors.MUTED, agent_id=agent_id)
+
+    def on_log_ready(self, agent_id: str) -> None:
+        """Log session log ready."""
+        log("v", "Log file ready", Colors.GREEN, agent_id=agent_id)
+
+    def on_review_skipped_no_progress(self, agent_id: str) -> None:
+        """Log review skipped due to no progress."""
+        log(
+            "x",
+            "Review skipped: No progress (commit unchanged, no working tree changes)",
+            Colors.RED,
+            agent_id=agent_id,
+        )
+
+    def on_fixer_text(self, attempt: int, text: str) -> None:
+        """Log fixer agent text output."""
+        log_agent_text(text, f"fixer-{attempt}")
+
+    def on_fixer_tool_use(
+        self,
+        attempt: int,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> None:
+        """Log fixer agent tool usage."""
+        log_tool(tool_name, agent_id=f"fixer-{attempt}", arguments=arguments)
 
 
 # Verify ConsoleEventSink implements MalaEventSink at import time

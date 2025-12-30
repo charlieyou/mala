@@ -37,11 +37,6 @@ from src.hooks import (
     make_stop_hook,
 )
 from src.mcp import get_disallowed_tools, get_mcp_servers
-from src.log_output.console import (
-    log_agent_text,
-    log_tool,
-    truncate_text,
-)
 from src.tools.env import SCRIPTS_DIR, get_lock_dir
 from src.tools.locking import cleanup_agent_locks
 from src.validation.e2e import E2EStatus
@@ -457,13 +452,15 @@ class RunCoordinator:
                         if isinstance(message, AssistantMessage):
                             for block in message.content:
                                 if isinstance(block, TextBlock):
-                                    log_agent_text(block.text, f"fixer-{attempt}")
+                                    if self.event_sink is not None:
+                                        self.event_sink.on_fixer_text(
+                                            attempt, block.text
+                                        )
                                 elif isinstance(block, ToolUseBlock):
-                                    log_tool(
-                                        block.name,
-                                        agent_id=f"fixer-{attempt}",
-                                        arguments=block.input,
-                                    )
+                                    if self.event_sink is not None:
+                                        self.event_sink.on_fixer_tool_use(
+                                            attempt, block.name, block.input
+                                        )
                                     if block.name.lower() == "bash":
                                         cmd = block.input.get("command", "")
                                         lint_type = _detect_lint_command(cmd)
@@ -482,9 +479,7 @@ class RunCoordinator:
                                             lint_cache.mark_success(lint_type, cmd)
                         elif isinstance(message, ResultMessage):
                             if self.event_sink is not None:
-                                self.event_sink.on_fixer_completed(
-                                    truncate_text(message.result or "", 50)
-                                )
+                                self.event_sink.on_fixer_completed(message.result or "")
 
             return True
 
