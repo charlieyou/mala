@@ -1,9 +1,6 @@
-"""Unit tests for src/validation/e2e.py - E2E fixture runner.
+"""Unit tests for src/validation/e2e.py - E2E fixture runner."""
 
-These tests mock subprocess and shutil.which to test E2E logic
-without actually running commands or creating fixture repos.
-"""
-
+import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -340,6 +337,29 @@ class TestE2ERunnerRun:
             assert result.returncode == 124
 
 
+class TestE2ERunnerIntegration:
+    """Integration coverage for real E2E runs."""
+
+    @pytest.mark.e2e
+    def test_run_real_fixture(self, tmp_path: Path) -> None:
+        if shutil.which("mala") is None or shutil.which("bd") is None:
+            pytest.skip("E2E requires mala and bd CLIs")
+
+        config = E2EConfig(keep_fixture=True, timeout_seconds=300.0)
+        runner = E2ERunner(config)
+
+        result = runner.run(cwd=tmp_path)
+
+        try:
+            assert result.passed is True
+            assert result.status == E2EStatus.PASSED
+            assert result.fixture_path is not None
+            assert (result.fixture_path / "coverage.xml").exists()
+        finally:
+            if result.fixture_path and result.fixture_path.exists():
+                shutil.rmtree(result.fixture_path, ignore_errors=True)
+
+
 class TestTailFunction:
     """Test the tail helper function."""
 
@@ -385,7 +405,7 @@ class TestWriteFixtureFiles:
     def test_creates_expected_files(self, tmp_path: Path) -> None:
         write_fixture_repo(tmp_path)
 
-        assert (tmp_path / "app.py").exists()
+        assert (tmp_path / "src" / "app.py").exists()
         assert (tmp_path / "tests").is_dir()
         assert (tmp_path / "tests" / "test_app.py").exists()
         assert (tmp_path / "pyproject.toml").exists()
@@ -393,7 +413,7 @@ class TestWriteFixtureFiles:
     def test_app_py_has_bug(self, tmp_path: Path) -> None:
         write_fixture_repo(tmp_path)
 
-        content = (tmp_path / "app.py").read_text()
+        content = (tmp_path / "src" / "app.py").read_text()
         assert "return a - b" in content  # The bug
 
 

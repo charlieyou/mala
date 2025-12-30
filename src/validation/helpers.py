@@ -112,8 +112,9 @@ def write_fixture_repo(repo_path: Path) -> None:
     Args:
         repo_path: Path to create the fixture repository in.
     """
+    (repo_path / "src").mkdir(parents=True, exist_ok=True)
     (repo_path / "tests").mkdir(parents=True, exist_ok=True)
-    (repo_path / "app.py").write_text(
+    (repo_path / "src" / "app.py").write_text(
         "def add(a: int, b: int) -> int:\n    return a - b\n"
     )
     (repo_path / "tests" / "test_app.py").write_text(
@@ -131,6 +132,9 @@ def write_fixture_repo(repo_path: Path) -> None:
                 "",
                 "[project.optional-dependencies]",
                 'dev = ["pytest>=8.0.0", "pytest-cov>=4.1.0"]',
+                "",
+                "[tool.pytest.ini_options]",
+                'pythonpath = ["src"]',
             ]
         )
         + "\n"
