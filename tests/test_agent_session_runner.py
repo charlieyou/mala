@@ -1023,3 +1023,170 @@ class TestAgentSessionRunnerEventSink:
         # Should succeed without errors
         output = await runner.run_session(input)
         assert output.success is True
+
+    @pytest.mark.asyncio
+    async def test_review_passed_emits_sink_events(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Runner should emit on_review_started and on_review_passed when review passes."""
+        from src.codex_review import CodexReviewResult
+
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=3,
+            max_review_retries=2,
+            morph_enabled=False,
+            codex_review_enabled=True,  # Enable review
+        )
+
+        fake_client = FakeSDKClient()
+        fake_factory = FakeSDKClientFactory(fake_client)
+        fake_sink = FakeEventSink()
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        async def on_review_check(
+            issue_id: str, description: str | None, baseline: str | None
+        ) -> CodexReviewResult:
+            return CodexReviewResult(passed=True, issues=[], parse_error=None)
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+            on_review_check=on_review_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        input = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input)
+
+        assert output.success is True
+
+        # Check that review events were emitted
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_review_started" in event_names
+        assert "on_review_passed" in event_names
+
+        # Verify on_review_started was called with correct args
+        review_started = next(
+            e for e in fake_sink.events if e[0] == "on_review_started"
+        )
+        assert review_started[1][0] == "test-123"  # agent_id
+        assert review_started[1][1] == 1  # attempt
+        assert review_started[1][2] == 2  # max_attempts
+
+    @pytest.mark.asyncio
+    async def test_review_retry_emits_sink_events(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Runner should emit on_review_retry when review fails and retries are available."""
+        from src.codex_review import CodexReviewResult, ReviewIssue
+
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=3,
+            max_review_retries=2,  # Allow 1 retry
+            morph_enabled=False,
+            codex_review_enabled=True,  # Enable review
+        )
+
+        fake_client = FakeSDKClient()
+        fake_factory = FakeSDKClientFactory(fake_client)
+        fake_sink = FakeEventSink()
+
+        review_check_count = 0
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        async def on_review_check(
+            issue_id: str, description: str | None, baseline: str | None
+        ) -> CodexReviewResult:
+            nonlocal review_check_count
+            review_check_count += 1
+            if review_check_count == 1:
+                # First check fails with errors
+                return CodexReviewResult(
+                    passed=False,
+                    issues=[
+                        ReviewIssue(
+                            title="Bug found",
+                            body="A bug was found in the code",
+                            confidence_score=0.9,
+                            priority=1,
+                            file="test.py",
+                            line_start=10,
+                            line_end=15,
+                        )
+                    ],
+                    parse_error=None,
+                )
+            else:
+                # Second check passes
+                return CodexReviewResult(passed=True, issues=[], parse_error=None)
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+            on_review_check=on_review_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        input = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input)
+
+        assert output.success is True
+
+        # Check that review retry event was emitted
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_review_started" in event_names
+        assert "on_review_retry" in event_names
+        assert "on_review_passed" in event_names
+
+        # Verify on_review_retry was called with error_count
+        review_retry = next(e for e in fake_sink.events if e[0] == "on_review_retry")
+        assert review_retry[1][0] == "test-123"  # agent_id
+        assert review_retry[2]["error_count"] == 1  # one P1 error

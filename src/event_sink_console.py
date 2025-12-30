@@ -289,12 +289,18 @@ class ConsoleEventSink:
         passed: bool,
         failure_reasons: list[str] | None = None,
     ) -> None:
-        """Log detailed gate result."""
+        """Log detailed gate result.
+
+        For failures, logs the failure reasons at normal log level so users
+        can see what went wrong without needing verbose mode.
+        """
         if passed:
             return  # on_gate_passed already handles success
         if failure_reasons:
-            for reason in failure_reasons:
-                log_verbose("  •", reason, Colors.RED, agent_id=agent_id)
+            # Log failure reasons at normal level (not verbose) so users can
+            # see what went wrong - this matches the previous inline logging
+            reasons_str = "; ".join(failure_reasons)
+            log("  ", f"Failures: {reasons_str}", Colors.RED, agent_id=agent_id)
 
     # -------------------------------------------------------------------------
     # Codex review events
