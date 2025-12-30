@@ -3419,19 +3419,19 @@ class TestBaselineCommitSelection:
 
         # Mock to capture the baseline passed to review
         async def mock_run_review(
-            repo_path: Path,
-            commit_hash: str | None,
-            max_retries: int = 2,
-            issue_description: str | None = None,
-            baseline_commit: str | None = None,
-            capture_session_log: bool = False,
-            thinking_mode: str | None = None,
+            diff_range: str,
+            context_file: Path | None = None,
+            timeout: int = 300,
         ) -> MagicMock:
-            captured_baseline.append(baseline_commit)
+            # Extract baseline from diff_range (format: "baseline..HEAD")
+            baseline = diff_range.split("..")[0] if ".." in diff_range else None
+            captured_baseline.append(baseline)
             result = MagicMock()
+            result.passed = True
             result.issues = []
             result.parse_error = None
-            result.session_log_path = None
+            result.fatal_error = False
+            result.review_log_path = None
             return result
 
         mock_client = AsyncMock()
@@ -3499,19 +3499,19 @@ class TestBaselineCommitSelection:
         captured_baseline: list[str | None] = []
 
         async def mock_run_review(
-            repo_path: Path,
-            commit_hash: str | None,
-            max_retries: int = 2,
-            issue_description: str | None = None,
-            baseline_commit: str | None = None,
-            capture_session_log: bool = False,
-            thinking_mode: str | None = None,
+            diff_range: str,
+            context_file: Path | None = None,
+            timeout: int = 300,
         ) -> MagicMock:
-            captured_baseline.append(baseline_commit)
+            # Extract baseline from diff_range (format: "baseline..HEAD")
+            baseline = diff_range.split("..")[0] if ".." in diff_range else None
+            captured_baseline.append(baseline)
             result = MagicMock()
+            result.passed = True
             result.issues = []
             result.parse_error = None
-            result.session_log_path = None
+            result.fatal_error = False
+            result.review_log_path = None
             return result
 
         mock_client = AsyncMock()

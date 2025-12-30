@@ -209,7 +209,7 @@ def map_exit_code_to_result(
         )
 
     # Exit codes 0 and 1: parse JSON output
-    _passed, issues, parse_error = parse_cerberus_json(stdout)
+    json_passed, issues, parse_error = parse_cerberus_json(stdout)
 
     if parse_error:
         # JSON parsing failed - treat as parse error (exit code 2 equivalent)
@@ -221,8 +221,23 @@ def map_exit_code_to_result(
             review_log_path=review_log_path,
         )
 
+    # Derive passed status from exit code (authoritative source)
+    exit_passed = exit_code == 0
+
+    # Warn if exit code and JSON verdict disagree
+    if json_passed != exit_passed:
+        from src.logging.console import Colors, log
+
+        log(
+            "!",
+            f"Exit code ({exit_code}) and JSON verdict "
+            f"({'PASS' if json_passed else 'FAIL'}) disagree; "
+            f"using exit code as authoritative",
+            color=Colors.YELLOW,
+        )
+
     # Success case (exit 0) or failure with issues (exit 1)
-    if exit_code == 0:
+    if exit_passed:
         return ReviewResult(
             passed=True,
             issues=issues,

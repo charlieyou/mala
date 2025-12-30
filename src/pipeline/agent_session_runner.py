@@ -776,6 +776,17 @@ class AgentSessionRunner:
                                 final_result = lifecycle_ctx.final_result
                                 break
 
+                            # parse_error retry: lifecycle returns RUN_REVIEW to re-run
+                            # review without prompting agent (no code changes needed)
+                            if result.effect == Effect.RUN_REVIEW:
+                                log(
+                                    "!",
+                                    f"Review tool error: {review_result.parse_error}; retrying",
+                                    Colors.YELLOW,
+                                    agent_id=input.issue_id,
+                                )
+                                continue
+
                             if result.effect == Effect.SEND_REVIEW_RETRY:
                                 # Emit review retry event
                                 if self.event_sink is not None:
@@ -796,17 +807,6 @@ class AgentSessionRunner:
                                         error_count=error_count,
                                         parse_error=review_result.parse_error,
                                     )
-
-                                # parse_error indicates review tool failure; re-run
-                                # review without prompting agent (no code changes needed)
-                                if review_result.parse_error:
-                                    log(
-                                        "!",
-                                        f"Review tool error: {review_result.parse_error}; retrying",
-                                        Colors.YELLOW,
-                                        agent_id=input.issue_id,
-                                    )
-                                    continue
 
                                 # Build follow-up prompt for legitimate review issues
                                 from src.cerberus_review import format_review_issues

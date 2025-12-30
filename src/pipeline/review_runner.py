@@ -157,11 +157,14 @@ class ReviewRunner:
                 suffix=".txt",
                 delete=False,
             )
-            temp_file.write(input.issue_description)
-            temp_file.close()
+            # Set context_file immediately so cleanup happens even if write/close fails
             context_file = Path(temp_file.name)
 
         try:
+            # Write and close inside try block to ensure cleanup on failure
+            if temp_file is not None and input.issue_description is not None:
+                temp_file.write(input.issue_description)
+                temp_file.close()
             result = await self.code_reviewer(
                 diff_range=diff_range,
                 context_file=context_file,

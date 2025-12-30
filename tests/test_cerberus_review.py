@@ -312,6 +312,49 @@ class TestMapExitCodeToResult:
 
         assert result.review_log_path == log_path
 
+    def test_logs_warning_when_exit_code_and_verdict_disagree(
+        self, capsys: object
+    ) -> None:
+        """Logs a warning when exit code 0 but JSON verdict is FAIL."""
+        # Exit code 0 but JSON says FAIL - should warn
+        output = _make_valid_response(verdict="FAIL")
+        result = map_exit_code_to_result(0, output, "")
+
+        # Exit code is authoritative, so should still pass
+        assert result.passed is True
+        assert result.parse_error is None
+
+        # Check that warning was logged (capsys captures stdout)
+        captured = capsys.readouterr()  # type: ignore[attr-defined]
+        assert "disagree" in captured.out
+        assert "FAIL" in captured.out
+
+    def test_logs_warning_when_exit_1_but_json_pass(self, capsys: object) -> None:
+        """Logs a warning when exit code 1 but JSON verdict is PASS."""
+        # Exit code 1 but JSON says PASS - should warn
+        output = _make_valid_response(verdict="PASS")
+        result = map_exit_code_to_result(1, output, "")
+
+        # Exit code is authoritative, so should fail
+        assert result.passed is False
+        assert result.parse_error is None
+
+        # Check that warning was logged
+        captured = capsys.readouterr()  # type: ignore[attr-defined]
+        assert "disagree" in captured.out
+        assert "PASS" in captured.out
+
+    def test_no_warning_when_exit_code_and_verdict_agree(self, capsys: object) -> None:
+        """No warning when exit code and JSON verdict agree."""
+        # Exit code 0 and JSON says PASS - should not warn
+        output = _make_valid_response(verdict="PASS")
+        result = map_exit_code_to_result(0, output, "")
+
+        assert result.passed is True
+
+        captured = capsys.readouterr()  # type: ignore[attr-defined]
+        assert "disagree" not in captured.out
+
 
 class TestFormatReviewIssues:
     """Tests for formatting review issues for follow-up prompts."""
