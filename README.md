@@ -147,9 +147,11 @@ mala clean
 
 ```
 mala (Python Orchestrator)
+├── Event Sink: Decoupled event handling (ConsoleEventSink for terminal output)
 ├── Spawns: N agents in parallel (asyncio tasks)
 ├── Each agent: ClaudeSDKClient session implementing one issue
 ├── Coordination: Filesystem locks prevent edit conflicts
+├── Epic Verifier: AI-powered acceptance criteria verification
 └── Cleanup: Locks released on completion, timeout, or failure
 ```
 
@@ -177,6 +179,7 @@ mala (Python Orchestrator)
 9. **On success**: Orchestrator closes the issue via `bd close`
 10. **On failure**: After retries exhausted, orchestrator marks issue with `needs-followup` label and records log path in notes
 11. **Run-level validation**: After all issues complete, a final validation pass catches cross-issue regressions (see [Run-Level Validation](#run-level-validation))
+12. **Epic verification**: When all children of an epic are closed, the orchestrator verifies acceptance criteria before closing the epic (see [Epic Verification](#epic-verification))
 
 ### Epics and Parent-Child Issues
 
@@ -184,7 +187,7 @@ The orchestrator handles epics as follows:
 
 - **Epics are skipped**: Issues with `issue_type: "epic"` are never assigned to agents
 - **Parent-child is non-blocking**: Use `bd dep add <child> <epic> --type parent-child` to link tasks to epics without blocking
-- **Immediate auto-close**: Epics are closed immediately after each child completes (not deferred to end of run)
+- **Verification before close**: When all children complete, the epic is verified against its acceptance criteria before closing
 
 **Workflow:**
 ```bash
@@ -198,7 +201,40 @@ bd dep add proj-def proj-abc --type parent-child
 # Check epic progress
 bd epic status
 
-# Orchestrator auto-closes epics when all children complete
+# Orchestrator verifies and closes epics when all children complete
+```
+
+### Epic Verification
+
+When all children of an epic are closed, the orchestrator automatically verifies that the collective work satisfies the epic's acceptance criteria before closing.
+
+**Verification process:**
+1. **Scoped diff**: Computes a diff from child issue commits only (matches `bd-<issue_id>:` prefixes)
+2. **Spec extraction**: Automatically loads spec files referenced in the epic description
+3. **AI verification**: Claude evaluates whether acceptance criteria are met
+4. **Outcome handling**:
+   - **Pass (confidence ≥ 0.5)**: Epic is closed automatically
+   - **Fail**: Remediation issues are created for unmet criteria
+   - **Uncertain (confidence < 0.5)**: Flagged for human review
+
+**Large diff handling** (tiered approach):
+| Size | Mode | Content |
+|------|------|---------|
+| < 100KB | Full | Complete diff |
+| < 500KB | File-summary | 50 lines per file |
+| ≥ 500KB | File-list | Changed files + small files under 5KB |
+
+The diff size threshold is configurable via `MALA_MAX_DIFF_SIZE_KB` (default: 100).
+
+**Remediation issues:**
+- Created automatically for unmet acceptance criteria
+- Deduplicated via criterion hash tags (won't recreate for same criterion)
+- Linked as blockers to the epic
+
+**Human override:**
+```bash
+# Force-close epics without verification
+mala run --epic-override proj-abc,proj-def /path/to/repo
 ```
 
 ## Agent Workflow
@@ -417,6 +453,7 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 
 ## Key Design Decisions
 
+- **Event sink architecture** decouples orchestration from presentation (testable, swappable output)
 - **Filesystem locks** via atomic hardlink (sandbox-compatible, no external deps)
 - **Canonical lock keys** with path normalization and repo namespace support
 - **60-second lock timeout** with 1s polling (fail fast on conflicts)
@@ -424,6 +461,7 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 - **Lock ownership tracking**: Each run only releases its own locks on shutdown (supports concurrent mala instances)
 - **Orchestrator claims issues** before spawning (agents don't claim)
 - **Quality gate** verifies commits and validation before accepting work
+- **Epic verification** uses AI to validate collective work against acceptance criteria
 - **Process group management**: Subprocesses (bd/git) run in new sessions for clean termination on timeout
 - **JSONL logs** in `~/.config/mala/logs/` for debugging
 - **asyncio.wait** for efficient parallel task management
@@ -435,7 +473,7 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--max-agents`, `-n` | unlimited | Maximum concurrent agents |
-| `--timeout`, `-t` | none | Timeout per agent in minutes |
+| `--timeout`, `-t` | 60 | Timeout per agent in minutes |
 | `--max-issues`, `-i` | unlimited | Maximum total issues to process |
 | `--epic`, `-e` | - | Only process tasks that are children of this epic |
 | `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
@@ -446,10 +484,13 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | `--cerberus-wait-args` | - | Extra args appended to `review-gate wait` |
 | `--cerberus-env` | - | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
 | `--disable-validations` | - | Comma-separated list (see below) |
-| `--coverage-threshold` | 85.0 | Minimum coverage percentage (0-100) |
-| `--wip` | false | Include and prioritize in_progress issues (without this flag, only open issues are fetched) |
-| `--verbose/-q` | verbose | Verbose shows full tool args; quiet (`-q`) shows single line per tool call |
+| `--coverage-threshold` | - | Minimum coverage percentage (0-100); if not set, uses 'no decrease' mode |
+| `--wip` | false | Prioritize in_progress issues before open issues |
+| `--focus/--no-focus` | focus | Group tasks by epic for focused work; `--no-focus` uses priority-only ordering |
+| `--dry-run` | false | Preview task order without processing |
+| `--verbose`, `-v` | false | Enable verbose output; shows full tool arguments |
 | `--no-morph` | false | Disable MorphLLM routing; use built-in tools directly |
+| `--epic-override` | - | Comma-separated epic IDs to close without verification (human bypass) |
 
 **Disable validation flags:**
 
@@ -481,8 +522,16 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MALA_RUNS_DIR` | `~/.config/mala/runs` | Directory for run metadata |
-| `MALA_LOCK_DIR` | `~/.config/mala/locks` | Directory for filesystem locks |
+| `MALA_LOCK_DIR` | `/tmp/mala-locks` | Directory for filesystem locks |
 | `MALA_REVIEW_TIMEOUT` | `300` | Review-gate wait timeout in seconds |
+
+**Epic verification** (set in `.env` or environment):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MALA_MAX_DIFF_SIZE_KB` | `100` | Maximum diff size before truncation (KB) |
+| `LLM_API_KEY` | - | API key for LLM calls (falls back to `ANTHROPIC_API_KEY`) |
+| `LLM_BASE_URL` | - | Base URL for LLM API (for proxy/routing) |
 
 **Cerberus overrides** (set in `.env` or environment):
 
@@ -542,16 +591,16 @@ mala status    # Shows recent logs and their timestamps
 
 ### Output Verbosity
 
-mala supports three output modes controlled by `--verbose/-q`:
+mala supports two output modes controlled by `--verbose`:
 
 | Mode | Flag | Description |
 |------|------|-------------|
-| **Verbose** | `--verbose` (default) | Full tool arguments in key=value format |
-| **Quiet** | `-q` | Single line per tool call (tool name + abbreviated args) |
+| **Normal** | (default) | Single line per tool call |
+| **Verbose** | `--verbose` / `-v` | Full tool arguments in key=value format |
 
 ```bash
-mala run /path/to/repo          # Verbose output (default)
-mala run -q /path/to/repo       # Quiet mode - single line per tool
+mala run /path/to/repo          # Normal output (default)
+mala run -v /path/to/repo       # Verbose mode - full tool args
 ```
 
 ## Terminal Output
