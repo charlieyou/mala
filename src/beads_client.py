@@ -498,19 +498,27 @@ class BeadsClient:
         return None
 
     async def commit_issues_async(self) -> bool:
-        """Commit .beads/issues.jsonl if it has changes (async version).
+        """Export and commit .beads/issues.jsonl if it has changes (async version).
+
+        Uses `bd sync --no-pull --no-push` to ensure the JSONL is exported from
+        SQLite before committing. This handles cases where epic closures are
+        persisted in SQLite but not yet exported to JSONL (e.g., when the bd
+        daemon is slow or not running).
 
         Returns:
-            True if commit succeeded, False otherwise.
+            True if sync succeeded (or no changes to commit), False otherwise.
         """
-        result = await self._run_subprocess_async(["git", "add", ".beads/issues.jsonl"])
-        if result.returncode != 0:
-            return False
-
-        commit_result = await self._run_subprocess_async(
-            ["git", "commit", "-m", "beads: close completed issues"]
+        result = await self._run_subprocess_async(
+            [
+                "bd",
+                "sync",
+                "--no-pull",
+                "--no-push",
+                "-m",
+                "beads: close completed issues",
+            ]
         )
-        return commit_result.returncode == 0
+        return result.returncode == 0
 
     async def close_eligible_epics_async(self) -> bool:
         """Auto-close epics where all children are complete (async version).
