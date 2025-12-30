@@ -177,7 +177,7 @@ class TestRunConfig:
         )
         assert config.max_gate_retries is None
         assert config.max_review_retries is None
-        assert config.codex_review is None
+        assert config.review_enabled is None
 
 
 class TestRunMetadata:
@@ -245,7 +245,7 @@ class TestRunMetadataSerialization:
             braintrust_enabled=True,
             max_gate_retries=3,
             max_review_retries=2,
-            codex_review=True,
+            review_enabled=True,
         )
 
     @pytest.fixture
@@ -377,7 +377,7 @@ class TestRunMetadataSerialization:
                 # Verify config
                 assert loaded.config.max_agents == 4
                 assert loaded.config.braintrust_enabled is True
-                assert loaded.config.codex_review is True
+                assert loaded.config.review_enabled is True
 
                 # Verify issue with validation
                 assert "test-1" in loaded.issues

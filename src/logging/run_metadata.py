@@ -68,8 +68,8 @@ class IssueRun:
     # Validation results and resolution (from mala-e0i)
     validation: ValidationResult | None = None
     resolution: IssueResolution | None = None
-    # Codex review session log path (verbose mode only)
-    codex_review_log_path: str | None = None
+    # Cerberus review session log path (verbose mode only)
+    review_log_path: str | None = None
 
 
 @dataclass
@@ -85,7 +85,7 @@ class RunConfig:
     # Retry/review config (optional for backward compatibility)
     max_gate_retries: int | None = None
     max_review_retries: int | None = None
-    codex_review: bool | None = None
+    review_enabled: bool | None = None
     # CLI args for debugging/auditing (optional for backward compatibility)
     cli_args: dict[str, object] | None = None
 
@@ -279,7 +279,7 @@ class RunMetadata:
             braintrust_enabled=config_data.get("braintrust_enabled", False),
             max_gate_retries=config_data.get("max_gate_retries"),
             max_review_retries=config_data.get("max_review_retries"),
-            codex_review=config_data.get("codex_review"),
+            review_enabled=config_data.get("review_enabled"),
             cli_args=config_data.get("cli_args"),
         )
 
@@ -327,7 +327,7 @@ class RunMetadata:
                 review_attempts=issue_data.get("review_attempts", 0),
                 validation=validation,
                 resolution=resolution,
-                codex_review_log_path=issue_data.get("codex_review_log_path"),
+                review_log_path=issue_data.get("review_log_path"),
             )
             metadata.issues[issue_id] = issue
 
