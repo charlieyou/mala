@@ -31,7 +31,7 @@ class EventRunConfig:
     only_ids: list[str] | None = None
     braintrust_enabled: bool = False
     braintrust_disabled_reason: str | None = None  # e.g., "add BRAINTRUST_API_KEY..."
-    review_enabled: bool = True
+    review_enabled: bool = True  # Cerberus code review enabled
     morph_enabled: bool = True
     morph_disallowed_tools: list[str] | None = None
     morph_disabled_reason: str | None = (
