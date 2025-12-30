@@ -2473,21 +2473,28 @@ class TestRunLevelValidation:
 
 
 class TestValidationResultMetadata:
-    """Test validation execution and metadata population after commit detection.
+    """Test validation metadata population from gate evidence.
 
-    Verifies mala-yg9.2.4: SpecValidationRunner.run_spec should be invoked after
-    commit detection and ValidationResult should be recorded in IssueRun.
+    Verifies mala-3qp.8: Gate and metadata share the same validation result.
+    Validation evidence parsed during gate check is reused for metadata,
+    eliminating duplicate validation runs.
     """
 
     @pytest.mark.asyncio
-    async def test_validation_result_populated_in_issue_run(
+    async def test_validation_result_populated_from_gate_evidence(
         self, tmp_path: Path
     ) -> None:
-        """Successful gate should populate validation result in IssueRun metadata."""
+        """Validation metadata should be derived from gate result's validation_evidence.
+
+        This tests mala-3qp.8: Gate and metadata share the same validation result,
+        avoiding duplicate validation parsing.
+        """
         from src.logging.run_metadata import IssueRun, RunMetadata
-        from src.validation.result import ValidationResult
-        from src.validation.spec_runner import SpecValidationRunner
-        from src.validation.spec import ValidationArtifacts
+        from src.quality_gate import (
+            CommandKind,
+            GateResult,
+            ValidationEvidence,
+        )
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -2499,11 +2506,24 @@ class TestValidationResultMetadata:
             recorded_issues.append(issue)
             original_record(self, issue)
 
+        # Create gate result with validation evidence
+        evidence = ValidationEvidence()
+        evidence.commands_ran[CommandKind.TEST] = True
+        evidence.commands_ran[CommandKind.LINT] = True
+        evidence.commands_ran[CommandKind.FORMAT] = True
+        evidence.commands_ran[CommandKind.TYPECHECK] = True
+        evidence.failed_commands = []
+
+        gate_result = GateResult(
+            passed=True,
+            failure_reasons=[],
+            commit_hash="abc1234",
+            validation_evidence=evidence,
+        )
+
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            # Populate log path so quality gate runs
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator.session_log_paths[issue_id] = log_path
+            # Simulate gate result being stored (as done by _run_quality_gate_sync)
+            orchestrator.last_gate_results[issue_id] = gate_result
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -2530,15 +2550,6 @@ class TestValidationResultMetadata:
         async def mock_claim_async(issue_id: str) -> bool:
             return True
 
-        async def mock_run_spec(
-            spec: object, context: object, log_dir: object = None
-        ) -> ValidationResult:
-            return ValidationResult(
-                passed=True,
-                steps=[],
-                artifacts=ValidationArtifacts(log_dir=tmp_path),
-            )
-
         with (
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
@@ -2555,16 +2566,9 @@ class TestValidationResultMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch.object(SpecValidationRunner, "run_spec", mock_run_spec),
             patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
-            patch(
-                "src.quality_gate.run_command",
-                return_value=make_command_result(
-                    stdout="abc1234 bd-issue-with-validation: Implement feature\n"
-                ),
-            ),
         ):
             await orchestrator.run()
 
@@ -2572,24 +2576,38 @@ class TestValidationResultMetadata:
         assert len(recorded_issues) == 1
         issue_run = recorded_issues[0]
         assert issue_run.issue_id == "issue-with-validation"
-        # validation field should be populated when validation runs
+
+        # Validation field should be populated from gate evidence
         assert issue_run.validation is not None
         assert issue_run.validation.passed is True
+        # Commands run should match what was in evidence
+        assert set(issue_run.validation.commands_run) == {
+            "test",
+            "lint",
+            "format",
+            "typecheck",
+        }
+        assert issue_run.validation.commands_failed == []
 
     @pytest.mark.asyncio
-    async def test_validation_runner_invoked_after_commit_detection(
+    async def test_gate_and_metadata_share_same_validation_evidence(
         self, tmp_path: Path
     ) -> None:
-        """SpecValidationRunner.run_spec should be invoked after commit is detected."""
+        """Gate decisions and metadata should derive from the same validation result.
+
+        This tests mala-3qp.8: No duplicate validation parsing - both gate decisions
+        and metadata use the same ValidationEvidence object stored in gate result.
+        """
         from src.logging.run_metadata import IssueRun, RunMetadata
-        from src.validation.result import ValidationResult
-        from src.validation.spec_runner import SpecValidationRunner
-        from src.validation.spec import ValidationArtifacts
+        from src.quality_gate import (
+            CommandKind,
+            GateResult,
+            ValidationEvidence,
+        )
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
-        run_spec_calls: list[str] = []
 
-        # Track recorded issues to verify validation field
+        # Track recorded issues
         recorded_issues: list[IssueRun] = []
         original_record = RunMetadata.record_issue
 
@@ -2597,25 +2615,29 @@ class TestValidationResultMetadata:
             recorded_issues.append(issue)
             original_record(self, issue)
 
-        async def mock_run_spec(
-            spec: object, context: object, log_dir: object = None
-        ) -> ValidationResult:
-            run_spec_calls.append("called")
-            return ValidationResult(
-                passed=True,
-                steps=[],
-                artifacts=ValidationArtifacts(log_dir=tmp_path),
-            )
+        # Create gate result with specific evidence
+        evidence = ValidationEvidence()
+        evidence.commands_ran[CommandKind.TEST] = True
+        evidence.commands_ran[CommandKind.LINT] = True
+        evidence.commands_ran[CommandKind.FORMAT] = True
+        evidence.commands_ran[CommandKind.TYPECHECK] = True
+        evidence.failed_commands = ["ruff check"]  # One command failed
+
+        gate_result = GateResult(
+            passed=False,  # Gate failed due to validation failure
+            failure_reasons=["Validation commands failed (non-zero exit): ruff check"],
+            commit_hash="abc1234",
+            validation_evidence=evidence,
+        )
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator.session_log_paths[issue_id] = log_path
+            # Simulate gate result being stored
+            orchestrator.last_gate_results[issue_id] = gate_result
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
-                success=True,
-                summary="Completed successfully",
+                success=False,  # Failed because gate failed
+                summary="Quality gate failed: Validation commands failed",
             )
 
         first_call = True
@@ -2631,13 +2653,12 @@ class TestValidationResultMetadata:
             nonlocal first_call
             if first_call:
                 first_call = False
-                return ["issue-run-spec"]
+                return ["issue-failed-validation"]
             return []
 
         async def mock_claim_async(issue_id: str) -> bool:
             return True
 
-        # Mock the validation runner's run_spec method
         with (
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
@@ -2653,25 +2674,34 @@ class TestValidationResultMetadata:
             patch.object(
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
-            patch.object(SpecValidationRunner, "run_spec", mock_run_spec),
             patch.object(RunMetadata, "record_issue", capture_record),
             patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
             patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestrator.release_run_locks"),
-            patch(
-                "src.quality_gate.run_command",
-                return_value=make_command_result(
-                    stdout="abc1234 bd-issue-run-spec: Implement feature\n"
-                ),
-            ),
         ):
             await orchestrator.run()
 
-        # run_spec should have been called for the successful issue
-        assert len(run_spec_calls) == 1
-        # The recorded issue should have validation populated
+        # Verify an issue was recorded
         assert len(recorded_issues) == 1
-        assert recorded_issues[0].validation is not None
+        issue_run = recorded_issues[0]
+        assert issue_run.issue_id == "issue-failed-validation"
+
+        # Quality gate result should match gate evidence
+        assert issue_run.quality_gate is not None
+        assert issue_run.quality_gate.passed is False
+        assert "ruff check" in issue_run.quality_gate.failure_reasons[0]
+
+        # Validation metadata should derive from same evidence
+        assert issue_run.validation is not None
+        assert issue_run.validation.passed is False
+        assert set(issue_run.validation.commands_run) == {
+            "test",
+            "lint",
+            "format",
+            "typecheck",
+        }
+        # Failed commands should match gate evidence
+        assert issue_run.validation.commands_failed == ["ruff check"]
 
 
 class TestResolutionRecordingInMetadata:

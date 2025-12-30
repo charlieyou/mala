@@ -70,19 +70,17 @@ from .tools.locking import (
     cleanup_agent_locks,
 )
 from .validation.spec import (
-    ValidationContext,
     ValidationScope,
     build_validation_spec,
 )
-from .validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
     from .codex_review import CodexReviewResult
     from .lifecycle import RetryState
+    from .models import IssueResolution
     from .protocols import CodeReviewer, GateChecker, IssueProvider, LogProvider
     from .quality_gate import GateResult
     from .telemetry import TelemetryProvider
-    from .models import IssueResolution
     from .validation.spec import ValidationSpec
 
 
@@ -301,6 +299,10 @@ class MalaOrchestrator:
         # Track codex review session log paths (issue_id -> log_path)
         self.codex_review_log_paths: dict[str, str] = {}
 
+        # Track last gate results per issue to avoid duplicate validation
+        # Gate result includes validation_evidence parsed from logs
+        self.last_gate_results: dict[str, GateResult] = {}
+
         # Initialize pipeline stage implementations (use defaults if not provided)
         # LogProvider: FileSystemLogProvider for reading Claude SDK logs
         self.log_provider: LogProvider = (
@@ -426,6 +428,10 @@ class MalaOrchestrator:
         if self.per_issue_spec is None:
             self.per_issue_spec = self.gate_runner.get_cached_spec()
 
+        # Store gate result to avoid duplicate validation in _finalize_issue_result
+        # The gate result includes validation_evidence parsed from logs
+        self.last_gate_results[issue_id] = output.gate_result
+
         return (output.gate_result, output.new_log_offset)
 
     async def _run_quality_gate_async(
@@ -457,76 +463,21 @@ class MalaOrchestrator:
         result: IssueResult,
         run_metadata: RunMetadata,
     ) -> None:
-        """Record an issue result, update metadata, and emit logs."""
+        """Record an issue result, update metadata, and emit logs.
+
+        Uses stored gate result to derive metadata, avoiding duplicate
+        validation parsing. Gate result includes validation_evidence
+        already parsed during quality gate check.
+        """
         quality_gate_result: QualityGateResult | None = None
         validation_result: MetaValidationResult | None = None
         log_path = self.session_log_paths.get(issue_id)
 
-        if result.success and log_path and log_path.exists():
-            # Use cached per-issue validation spec
-            assert self.per_issue_spec is not None
-            spec = self.per_issue_spec
-            # Parse final evidence for metadata (full session) using spec-driven parsing
-            evidence = self.quality_gate.parse_validation_evidence_with_spec(
-                log_path, spec
-            )
-            commit_result = self.quality_gate.check_commit_exists(issue_id)
-            # Build spec-driven evidence dict
-            evidence_dict = evidence.to_evidence_dict()
-            evidence_dict["commit_found"] = commit_result.exists
-            quality_gate_result = QualityGateResult(
-                passed=True,
-                evidence=evidence_dict,
-                failure_reasons=[],
-            )
+        # Get stored gate result (set by _run_quality_gate_sync)
+        stored_gate_result = self.last_gate_results.get(issue_id)
 
-            # Run SpecValidationRunner.run_spec after commit detection
-            if commit_result.exists and commit_result.commit_hash:
-                try:
-                    # Reuse spec built above
-                    context = ValidationContext(
-                        issue_id=issue_id,
-                        repo_path=self.repo_path,
-                        commit_hash=commit_result.commit_hash,
-                        changed_files=[],  # Not needed for per-issue
-                        scope=ValidationScope.PER_ISSUE,
-                        log_path=log_path,
-                    )
-                    runner = SpecValidationRunner(self.repo_path)
-                    runner_result = await runner.run_spec(spec, context)
-                    # Convert runner result to metadata result
-                    validation_result = MetaValidationResult(
-                        passed=runner_result.passed,
-                        commands_run=[s.name for s in runner_result.steps],
-                        commands_failed=[
-                            s.name for s in runner_result.steps if not s.ok
-                        ],
-                        artifacts=runner_result.artifacts,
-                        coverage_percent=runner_result.coverage_result.percent
-                        if runner_result.coverage_result
-                        else None,
-                    )
-                    log(
-                        "◐",
-                        f"Validation: {validation_result.passed}",
-                        Colors.CYAN if validation_result.passed else Colors.YELLOW,
-                        agent_id=issue_id,
-                    )
-                except Exception as e:
-                    log(
-                        "⚠",
-                        f"Validation runner error: {e}",
-                        Colors.YELLOW,
-                        agent_id=issue_id,
-                    )
-                    # Still populate a failed validation result
-                    validation_result = MetaValidationResult(
-                        passed=False,
-                        commands_run=[],
-                        commands_failed=[],
-                    )
-
-            # Gate passed - close the issue
+        if result.success:
+            # Gate passed - close the issue and check epic closure
             if await self.beads.close_async(issue_id):
                 log(
                     "◐",
@@ -543,8 +494,71 @@ class MalaOrchestrator:
                         agent_id=issue_id,
                     )
 
+            # Populate metadata from stored gate result (if available)
+            if stored_gate_result is not None:
+                evidence = stored_gate_result.validation_evidence
+                commit_hash = stored_gate_result.commit_hash
+
+                # Build evidence dict from stored evidence
+                evidence_dict: dict[str, bool] = {}
+                if evidence is not None:
+                    evidence_dict = evidence.to_evidence_dict()
+                evidence_dict["commit_found"] = commit_hash is not None
+
+                quality_gate_result = QualityGateResult(
+                    passed=True,
+                    evidence=evidence_dict,
+                    failure_reasons=[],
+                )
+
+                # Derive validation metadata from gate evidence (no re-running)
+                if evidence is not None:
+                    commands_run = [
+                        kind.value for kind, ran in evidence.commands_ran.items() if ran
+                    ]
+                    validation_result = MetaValidationResult(
+                        passed=True,
+                        commands_run=commands_run,
+                        commands_failed=list(evidence.failed_commands),
+                    )
+
+        elif not result.success and stored_gate_result is not None:
+            # Failed run - use evidence from stored gate result
+            evidence = stored_gate_result.validation_evidence
+            commit_hash = stored_gate_result.commit_hash
+
+            # Build evidence dict from stored evidence
+            evidence_dict = {}
+            if evidence is not None:
+                evidence_dict = evidence.to_evidence_dict()
+            evidence_dict["commit_found"] = commit_hash is not None
+
+            quality_gate_result = QualityGateResult(
+                passed=False,
+                evidence=evidence_dict,
+                failure_reasons=list(stored_gate_result.failure_reasons),
+            )
+
+            # Derive validation metadata from gate evidence
+            # validation_result.passed reflects gate's validation status, not overall run
+            # (run may fail due to review even if validation passed)
+            if evidence is not None:
+                commands_run = [
+                    kind.value for kind, ran in evidence.commands_ran.items() if ran
+                ]
+                # Validation passed if gate passed (no failed commands)
+                validation_passed = (
+                    stored_gate_result.passed or len(evidence.failed_commands) == 0
+                )
+                validation_result = MetaValidationResult(
+                    passed=validation_passed,
+                    commands_run=commands_run,
+                    commands_failed=list(evidence.failed_commands),
+                )
+
         elif not result.success and log_path and log_path.exists():
-            # Failed run - record evidence for metadata using cached spec
+            # Fallback: no stored gate result, parse logs directly
+            # This happens in tests that mock run_implementer or edge cases
             assert self.per_issue_spec is not None
             spec = self.per_issue_spec
             evidence = self.quality_gate.parse_validation_evidence_with_spec(
