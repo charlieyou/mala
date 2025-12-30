@@ -53,6 +53,10 @@ class MalaConfig:
             Derived from braintrust_api_key presence.
         morph_enabled: Whether Morph MCP features are enabled.
             Derived from morph_api_key presence.
+        review_enabled: Whether automated code review is enabled.
+            Defaults to True.
+        review_timeout: Timeout in seconds for review operations.
+            Defaults to 300.
 
     Example:
         # Programmatic construction (no env vars needed):
@@ -81,6 +85,10 @@ class MalaConfig:
     # Feature flags (derived from API key presence)
     braintrust_enabled: bool = field(default=False)
     morph_enabled: bool = field(default=False)
+
+    # Review settings
+    review_enabled: bool = field(default=True)
+    review_timeout: int = field(default=300)
 
     def __post_init__(self) -> None:
         """Derive feature flags from API key presence.

@@ -247,6 +247,7 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
             only="id-1,id-2",
             max_gate_retries=4,
             max_review_retries=5,
+            review_timeout=600,
             verbose=True,
         )
 
@@ -254,6 +255,8 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert verbose_calls["enabled"] is True
     assert DummyOrchestrator.last_kwargs is not None
     assert DummyOrchestrator.last_kwargs["only_ids"] == {"id-1", "id-2"}
+    # review_timeout is passed via cli_args (not direct kwarg) until orchestrator supports it
+    assert DummyOrchestrator.last_kwargs["cli_args"]["review_timeout"] == 600
     # CLI now passes config instead of morph_enabled
     config = DummyOrchestrator.last_kwargs["config"]
     assert config.morph_enabled is True
@@ -706,10 +709,10 @@ def test_run_focus_composes_with_wip(
     assert DummyOrchestrator.last_kwargs["prioritize_wip"] is True
 
 
-def test_run_codex_review_disabled_via_disable_validations(
+def test_run_review_disabled_via_disable_validations(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that codex-review can be disabled via --disable-validations."""
+    """Test that review can be disabled via --disable-validations=review."""
     cli = _reload_cli(monkeypatch)
     monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
@@ -721,12 +724,95 @@ def test_run_codex_review_disabled_via_disable_validations(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations="codex-review",
+            disable_validations="review",
         )
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_kwargs is not None
-    assert DummyOrchestrator.last_kwargs["disable_validations"] == {"codex-review"}
+    assert DummyOrchestrator.last_kwargs["disable_validations"] == {"review"}
+
+
+def test_run_codex_review_value_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that codex-review value is no longer valid (renamed to review)."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    logs: list[tuple[object, ...]] = []
+
+    def _log(*args: object, **_kwargs: object) -> None:
+        logs.append(args)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "log", _log)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            disable_validations="codex-review",
+        )
+
+    assert excinfo.value.exit_code == 1
+    error_msg = str(logs[-1])
+    assert "Unknown --disable-validations" in error_msg
+    assert "codex-review" in error_msg
+
+
+def test_run_review_timeout_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --review-timeout defaults to 300."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path)
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_kwargs is not None
+    # review_timeout is passed via cli_args until orchestrator supports it
+    assert DummyOrchestrator.last_kwargs["cli_args"]["review_timeout"] == 300
+
+
+def test_run_review_timeout_custom(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --review-timeout accepts custom value."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path, review_timeout=600)
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_kwargs is not None
+    # review_timeout is passed via cli_args until orchestrator supports it
+    assert DummyOrchestrator.last_kwargs["cli_args"]["review_timeout"] == 600
+
+
+def test_run_no_codex_thinking_mode_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --codex-thinking-mode flag is removed."""
+    cli = _reload_cli(monkeypatch)
+    # The run function should not have a codex_thinking_mode parameter
+    import inspect
+
+    sig = inspect.signature(cli.run)
+    assert "codex_thinking_mode" not in sig.parameters
 
 
 def test_run_coverage_threshold_invalid_negative(

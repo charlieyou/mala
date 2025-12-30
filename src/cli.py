@@ -212,7 +212,7 @@ def _print_task_line(
 #   integration-tests: Exclude @pytest.mark.integration tests from pytest runs
 #   coverage: Disable code coverage enforcement (threshold check)
 #   e2e: Disable end-to-end fixture repo tests (run-level only)
-#   codex-review: Disable automated LLM code review after quality gate passes
+#   review: Disable automated LLM code review after quality gate passes
 #   followup-on-run-validate-fail: Disable auto-retry on run validation failures (reserved)
 VALID_DISABLE_VALUES = frozenset(
     {
@@ -221,7 +221,7 @@ VALID_DISABLE_VALUES = frozenset(
         "integration-tests",
         "coverage",
         "e2e",
-        "codex-review",
+        "review",
         "followup-on-run-validate-fail",
     }
 )
@@ -298,7 +298,7 @@ def run(
                 "integration-tests (exclude @pytest.mark.integration tests), "
                 "coverage (disable coverage threshold check), "
                 "e2e (skip end-to-end fixture tests), "
-                "codex-review (skip LLM code review)"
+                "review (skip LLM code review)"
             ),
         ),
     ] = None,
@@ -338,13 +338,13 @@ def run(
             help="Enable verbose output; shows full tool arguments instead of single line per tool call",
         ),
     ] = False,
-    codex_thinking_mode: Annotated[
-        str | None,
+    review_timeout: Annotated[
+        int,
         typer.Option(
-            "--codex-thinking-mode",
-            help="Reasoning effort level for Codex reviews (e.g., 'high', 'medium', 'low', 'xhigh')",
+            "--review-timeout",
+            help="Timeout in seconds for review operations (default: 300)",
         ),
-    ] = "high",
+    ] = 300,
     no_morph: Annotated[
         bool,
         typer.Option(
@@ -434,7 +434,7 @@ def run(
         "max_gate_retries": max_gate_retries,
         "max_review_retries": max_review_retries,
         "braintrust": _braintrust_enabled,
-        "codex_thinking_mode": codex_thinking_mode,
+        "review_timeout": review_timeout,
         "no_morph": no_morph,
     }
 
@@ -462,7 +462,6 @@ def run(
         prioritize_wip=wip,
         focus=focus,
         cli_args=cli_args,
-        codex_thinking_mode=codex_thinking_mode,
         config=config,
     )
 
