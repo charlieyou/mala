@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -198,6 +199,33 @@ class TestMalaConfigFromEnv:
         monkeypatch.setenv("MALA_CERBERUS_ENV", "FOO=bar,BAZ=qux")
         config = MalaConfig.from_env(validate=False)
         assert dict(config.cerberus_env) == {"FOO": "bar", "BAZ": "qux"}
+
+    def test_from_env_detects_cerberus_bin_path_schema_v2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() detects cerberus bin path with v2 plugins schema."""
+        plugins_dir = tmp_path / "plugins"
+        install_dir = plugins_dir / "cache" / "cerberus" / "cerberus" / "1.1.5"
+        bin_dir = install_dir / "bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "review-gate").write_text("#!/usr/bin/env bash\n")
+
+        installed = {
+            "version": 2,
+            "plugins": {
+                "cerberus@cerberus": [
+                    {
+                        "installPath": str(install_dir),
+                        "version": "1.1.5",
+                    }
+                ]
+            },
+        }
+        (plugins_dir / "installed_plugins.json").write_text(json.dumps(installed))
+
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+        config = MalaConfig.from_env(validate=False)
+        assert config.cerberus_bin_path == bin_dir
 
     def test_from_env_rejects_invalid_cerberus_env(
         self, monkeypatch: pytest.MonkeyPatch

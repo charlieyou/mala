@@ -155,9 +155,29 @@ class DefaultReviewer:
 
     def _get_review_gate_cmd(self) -> str:
         """Get the full path to review-gate command."""
-        if self.bin_path:
-            return str(self.bin_path / "review-gate")
-        return "review-gate"
+        import os
+
+        if not self.bin_path:
+            raise FileNotFoundError(
+                "review-gate binary not found (cerberus plugin not detected). "
+                "Install the cerberus plugin or ensure Claude's plugin metadata "
+                "is available."
+            )
+        review_gate = self.bin_path / "review-gate"
+        if not review_gate.exists():
+            raise FileNotFoundError(
+                f"review-gate binary missing at {review_gate}. "
+                "Reinstall the cerberus plugin or fix the installPath."
+            )
+        if not review_gate.is_file():
+            raise FileNotFoundError(
+                f"review-gate path is not a file: {review_gate}"
+            )
+        if not os.access(review_gate, os.X_OK):
+            raise PermissionError(
+                f"review-gate is not executable: {review_gate}"
+            )
+        return str(review_gate)
 
     async def __call__(
         self,
@@ -201,7 +221,18 @@ class DefaultReviewer:
 
         # Build spawn command
         # Note: spawn-code-review takes range as positional arg, not --diff
-        spawn_cmd = [self._get_review_gate_cmd(), "spawn-code-review"]
+        try:
+            review_gate_cmd = self._get_review_gate_cmd()
+        except OSError as e:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=str(e),
+                fatal_error=True,
+                review_log_path=None,
+            )
+
+        spawn_cmd = [review_gate_cmd, "spawn-code-review"]
         if context_file:
             spawn_cmd.extend(["--context-file", str(context_file)])
         if self.spawn_args:
@@ -257,7 +288,7 @@ class DefaultReviewer:
         # Build wait command with timeout
         wait_timeout = self._extract_wait_timeout(self.wait_args)
         wait_cmd = [
-            self._get_review_gate_cmd(),
+            review_gate_cmd,
             "wait",
             "--json",
             "--session-key",
@@ -464,6 +495,9 @@ class MalaOrchestrator:
         self.max_gate_retries = max_gate_retries
         self.max_review_retries = max_review_retries
         self.disable_validations = disable_validations
+        self._disabled_validations = (
+            set(disable_validations) if disable_validations else set()
+        )
         self.coverage_threshold = coverage_threshold
         self.prioritize_wip = prioritize_wip
         self.focus = focus
@@ -538,6 +572,36 @@ class MalaOrchestrator:
             # When using a mock issue_provider, skip EpicVerifier
             self.epic_verifier = None
 
+        # Disable review if review-gate is not available.
+        self.review_disabled_reason: str | None = None
+        if code_reviewer is None and "review" not in self._disabled_validations:
+            import os
+
+            review_gate_path = (
+                self._config.cerberus_bin_path / "review-gate"
+                if self._config.cerberus_bin_path
+                else None
+            )
+            if review_gate_path is None:
+                self.review_disabled_reason = (
+                    "cerberus plugin not detected (review-gate unavailable)"
+                )
+            elif not review_gate_path.exists():
+                self.review_disabled_reason = (
+                    f"review-gate missing at {review_gate_path}"
+                )
+            elif not review_gate_path.is_file():
+                self.review_disabled_reason = (
+                    f"review-gate path is not a file: {review_gate_path}"
+                )
+            elif not os.access(review_gate_path, os.X_OK):
+                self.review_disabled_reason = (
+                    f"review-gate not executable at {review_gate_path}"
+                )
+
+            if self.review_disabled_reason:
+                self._disabled_validations.add("review")
+
         # CodeReviewer: DefaultReviewer using Cerberus review-gate
         self.code_reviewer: CodeReviewer = (
             DefaultReviewer(
@@ -565,7 +629,7 @@ class MalaOrchestrator:
         # GateRunner: Extracted gate checking logic
         gate_runner_config = GateRunnerConfig(
             max_gate_retries=self.max_gate_retries,
-            disable_validations=self.disable_validations,
+            disable_validations=self._disabled_validations,
             coverage_threshold=self.coverage_threshold,
         )
         self.gate_runner = GateRunner(
@@ -592,7 +656,7 @@ class MalaOrchestrator:
             repo_path=self.repo_path,
             timeout_seconds=self.timeout_seconds,
             max_gate_retries=self.max_gate_retries,
-            disable_validations=self.disable_validations,
+            disable_validations=self._disabled_validations,
             coverage_threshold=self.coverage_threshold,
             morph_enabled=self.morph_enabled,
             morph_api_key=self._config.morph_api_key,
@@ -616,6 +680,17 @@ class MalaOrchestrator:
         self.abort_run = True
         self.abort_reason = reason
         self.event_sink.on_abort_requested(reason)
+
+    def _is_review_enabled(self) -> bool:
+        """Return whether review should run for this orchestrator instance."""
+        if "review" not in self._disabled_validations:
+            return True
+        if (
+            self.review_disabled_reason
+            and not isinstance(self.review_runner.code_reviewer, DefaultReviewer)
+        ):
+            return True
+        return False
 
     def _run_quality_gate_sync(
         self,
@@ -986,7 +1061,7 @@ class MalaOrchestrator:
             agent_id=temp_agent_id,
         )
 
-        review_enabled = "review" not in (self.disable_validations or set())
+        review_enabled = self._is_review_enabled()
         session_config = AgentSessionConfig(
             repo_path=self.repo_path,
             timeout_seconds=self.timeout_seconds,
@@ -1061,7 +1136,7 @@ class MalaOrchestrator:
         """Build EventRunConfig for on_run_started event."""
         from .event_sink import EventRunConfig
 
-        review_enabled = "review" not in (self.disable_validations or set())
+        review_enabled = self._is_review_enabled()
 
         # Compute morph disabled reason
         morph_disabled_reason: str | None = None
@@ -1094,6 +1169,7 @@ class MalaOrchestrator:
             braintrust_enabled=self.braintrust_enabled,
             braintrust_disabled_reason=braintrust_disabled_reason,
             review_enabled=review_enabled,
+            review_disabled_reason=self.review_disabled_reason,
             morph_enabled=self.morph_enabled,
             morph_disallowed_tools=list(MORPH_DISALLOWED_TOOLS)
             if self.morph_enabled
@@ -1116,7 +1192,7 @@ class MalaOrchestrator:
             braintrust_enabled=self.braintrust_enabled,
             max_gate_retries=self.max_gate_retries,
             max_review_retries=self.max_review_retries,
-            review_enabled="review" not in (self.disable_validations or set()),
+            review_enabled=self._is_review_enabled(),
             cli_args=self.cli_args,
         )
         return RunMetadata(self.repo_path, run_config, __version__)
@@ -1263,7 +1339,7 @@ class MalaOrchestrator:
         run_metadata = self._create_run_metadata()
         self.per_issue_spec = build_validation_spec(
             scope=ValidationScope.PER_ISSUE,
-            disable_validations=self.disable_validations,
+            disable_validations=self._disabled_validations,
             coverage_threshold=self.coverage_threshold,
             repo_path=self.repo_path,
         )

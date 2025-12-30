@@ -61,6 +61,12 @@ class ConsoleEventSink:
                 f"review: enabled (max-retries: {config.max_review_retries})",
                 Colors.CYAN,
             )
+        elif config.review_disabled_reason:
+            log(
+                "◐",
+                f"review: disabled ({config.review_disabled_reason})",
+                Colors.YELLOW,
+            )
 
         # Filters
         if config.epic_id:
