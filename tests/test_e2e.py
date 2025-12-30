@@ -405,6 +405,7 @@ class TestWriteFixtureFiles:
     def test_creates_expected_files(self, tmp_path: Path) -> None:
         write_fixture_repo(tmp_path)
 
+        assert (tmp_path / "src").is_dir()
         assert (tmp_path / "src" / "app.py").exists()
         assert (tmp_path / "tests").is_dir()
         assert (tmp_path / "tests" / "test_app.py").exists()

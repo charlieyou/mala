@@ -107,7 +107,8 @@ def write_fixture_repo(repo_path: Path) -> None:
     """Create a minimal fixture repository for E2E testing.
 
     Creates a simple Python project with a failing test that the
-    implementer agent needs to fix.
+    implementer agent needs to fix. Uses src/ layout for compatibility
+    with mala's coverage checking (--cov=src).
 
     Args:
         repo_path: Path to create the fixture repository in.
