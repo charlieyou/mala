@@ -86,7 +86,7 @@ def _find_cerberus_bin_path(claude_config_dir: Path) -> Path | None:
 
     def _iter_plugin_entries(data: object) -> list[tuple[str, object]]:
         if isinstance(data, dict):
-            plugins = data.get("plugins")
+            plugins = dict.get(data, "plugins")
             if isinstance(plugins, dict):
                 return list(plugins.items())
         return []
@@ -100,7 +100,7 @@ def _find_cerberus_bin_path(claude_config_dir: Path) -> Path | None:
                     for install in installs:
                         if not isinstance(install, dict):
                             continue
-                        install_path = install.get("installPath")
+                        install_path = dict.get(install, "installPath")
                         if install_path:
                             bin_path = Path(install_path) / "bin"
                             if bin_path.exists():
