@@ -6,15 +6,19 @@ It handles:
 - JSON parsing of review output
 - Issue formatting for follow-up prompts
 
-The adapter focuses on parsing and mapping; CLI execution in repo_path
-is handled by the caller.
+The adapter includes DefaultReviewer for CLI execution in the repo_path.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from src.tools.command_runner import CommandRunner
 
 
 @dataclass
@@ -45,6 +49,252 @@ class ReviewResult:
     parse_error: str | None = None
     fatal_error: bool = False
     review_log_path: Path | None = None
+
+
+@dataclass
+class DefaultReviewer:
+    """Default CodeReviewer implementation using Cerberus review-gate CLI.
+
+    This class conforms to the CodeReviewer protocol and provides the default
+    behavior for the orchestrator. Tests can inject alternative implementations.
+
+    The reviewer spawns review-gate CLI processes and parses their output.
+    Extra args/env can be provided to customize review-gate behavior.
+    For initial review with an empty diff, short-circuits to PASS without spawning.
+    """
+
+    repo_path: Path
+    bin_path: Path | None = None
+    spawn_args: tuple[str, ...] = field(default_factory=tuple)
+    wait_args: tuple[str, ...] = field(default_factory=tuple)
+    env: dict[str, str] = field(default_factory=dict)
+
+    def _review_gate_bin(self) -> str:
+        if self.bin_path is not None:
+            return str(self.bin_path / "review-gate")
+        return "review-gate"
+
+    def _validate_review_gate_bin(self) -> str | None:
+        """Validate that the review-gate binary exists and is executable.
+
+        Returns:
+            None if the binary is valid, or an error message if not.
+        """
+        if self.bin_path is not None:
+            # Explicit bin_path provided - check that the binary exists and is executable
+            binary_path = self.bin_path / "review-gate"
+            if not binary_path.exists():
+                return f"review-gate binary not found at {binary_path}"
+            if not os.access(binary_path, os.X_OK):
+                return f"review-gate binary at {binary_path} is not executable"
+        else:
+            # Bare "review-gate" - check if it's in PATH
+            if shutil.which("review-gate") is None:
+                return "review-gate binary not found in PATH"
+        return None
+
+    def _build_env(self) -> dict[str, str]:
+        merged = dict(self.env)
+        if (
+            "REVIEW_GATE_SESSION_ID" not in merged
+            and "CLAUDE_SESSION_ID" not in merged
+            and "REVIEW_GATE_SESSION_ID" not in os.environ
+            and "CLAUDE_SESSION_ID" not in os.environ
+        ):
+            merged["REVIEW_GATE_SESSION_ID"] = f"mala-{uuid.uuid4().hex}"
+        return merged
+
+    async def _is_diff_empty(self, diff_range: str, runner: CommandRunner) -> bool:
+        """Check if the diff range has no changes.
+
+        Uses git diff --stat to check if there are any changes in the range.
+        If the command fails, returns False to proceed with review (fail-open).
+
+        Args:
+            diff_range: Git diff range to check (e.g., "baseline..HEAD").
+            runner: CommandRunner instance to execute git command.
+
+        Returns:
+            True if the diff is empty (no changes), False otherwise.
+        """
+        try:
+            result = await runner.run_async(
+                ["git", "diff", "--stat", diff_range],
+                timeout=30,
+            )
+            if result.returncode == 0 and not result.stdout.strip():
+                return True
+        except Exception:
+            # If diff check fails, proceed with review anyway (fail-open)
+            pass
+        return False
+
+    @staticmethod
+    def _extract_wait_timeout(args: tuple[str, ...]) -> int | None:
+        """Extract --timeout value from wait args if provided.
+
+        Parses args to detect if a --timeout flag is already specified.
+        Supports both '--timeout VALUE' and '--timeout=VALUE' formats.
+
+        Args:
+            args: Tuple of command-line arguments to search.
+
+        Returns:
+            The timeout value as int if found and valid, None otherwise.
+        """
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg.startswith("--timeout="):
+                value = arg.split("=", 1)[1]
+                if value.isdigit():
+                    return int(value)
+                return None
+            if arg == "--timeout" and i + 1 < len(args):
+                value = args[i + 1]
+                if value.isdigit():
+                    return int(value)
+                return None
+            i += 1
+        return None
+
+    async def __call__(
+        self,
+        diff_range: str,
+        context_file: Path | None = None,
+        timeout: int = 300,
+    ) -> ReviewResult:
+        # Validate review-gate binary exists and is executable before proceeding
+        validation_error = self._validate_review_gate_bin()
+        if validation_error is not None:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=validation_error,
+                fatal_error=True,
+                review_log_path=None,
+            )
+
+        runner = CommandRunner(cwd=self.repo_path)
+        env = self._build_env()
+
+        # Check for empty diff (short-circuit without spawning review-gate)
+        # This avoids parse errors or failures when there's nothing to review
+        if await self._is_diff_empty(diff_range, runner):
+            return ReviewResult(
+                passed=True,
+                issues=[],
+                parse_error=None,
+                fatal_error=False,
+                review_log_path=None,
+            )
+
+        spawn_cmd = [
+            self._review_gate_bin(),
+            "spawn-code-review",
+            "--diff",
+            diff_range,
+        ]
+        if context_file is not None:
+            spawn_cmd.extend(["--context-file", str(context_file)])
+        if self.spawn_args:
+            spawn_cmd.extend(self.spawn_args)
+
+        spawn_result = await runner.run_async(spawn_cmd, env=env, timeout=timeout)
+        if spawn_result.timed_out:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error="spawn timeout",
+                fatal_error=False,
+            )
+        if spawn_result.returncode != 0:
+            stderr = spawn_result.stderr_tail()
+            stdout = spawn_result.stdout_tail()
+            detail = stderr or stdout or "spawn failed"
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=f"spawn failed: {detail}",
+                fatal_error=False,
+            )
+
+        try:
+            spawn_payload = json.loads(spawn_result.stdout)
+        except json.JSONDecodeError as e:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error=f"spawn parse error: {e}",
+                fatal_error=False,
+            )
+
+        if not isinstance(spawn_payload, dict):
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error="spawn output is not a JSON object",
+                fatal_error=False,
+            )
+
+        session_key = spawn_payload.get("session_key")
+        if not isinstance(session_key, str) or not session_key:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error="spawn output missing session_key",
+                fatal_error=False,
+            )
+
+        # Check if wait_args already specifies --timeout to avoid duplicates
+        user_timeout = self._extract_wait_timeout(self.wait_args)
+        cli_timeout = user_timeout if user_timeout is not None else timeout
+
+        wait_cmd = [
+            self._review_gate_bin(),
+            "wait",
+            "--json",
+            "--session-key",
+            session_key,
+        ]
+        # Only add --timeout if not already specified in wait_args
+        if user_timeout is None:
+            wait_cmd.extend(["--timeout", str(timeout)])
+        if self.wait_args:
+            wait_cmd.extend(self.wait_args)
+
+        # Use CLI timeout + grace period for subprocess timeout
+        # This allows the CLI's internal timeout to trigger first with a proper error message
+        subprocess_timeout = cli_timeout + 30
+        wait_result = await runner.run_async(
+            wait_cmd, env=env, timeout=subprocess_timeout
+        )
+        if wait_result.timed_out:
+            return ReviewResult(
+                passed=False,
+                issues=[],
+                parse_error="timeout",
+                fatal_error=False,
+            )
+
+        # Try to extract session_dir from wait output for review_log_path
+        review_log_path: Path | None = None
+        try:
+            wait_data = json.loads(wait_result.stdout)
+            if isinstance(wait_data, dict):
+                session_dir = wait_data.get("session_dir")
+                if isinstance(session_dir, str) and session_dir:
+                    review_log_path = Path(session_dir)
+        except (json.JSONDecodeError, TypeError):
+            # If we can't parse, let map_exit_code_to_result handle it
+            pass
+
+        return map_exit_code_to_result(
+            wait_result.returncode,
+            wait_result.stdout,
+            wait_result.stderr,
+            review_log_path=review_log_path,
+        )
 
 
 def parse_cerberus_json(output: str) -> tuple[bool, list[ReviewIssue], str | None]:

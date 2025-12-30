@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -38,7 +38,7 @@ from .pipeline.agent_session_runner import (
     AgentSessionRunner,
     SessionCallbacks,
 )
-from .cerberus_review import DefaultReviewer, ReviewResult, map_exit_code_to_result
+from .cerberus_review import DefaultReviewer
 from .pipeline.gate_runner import (
     GateRunner,
     GateRunnerConfig,
@@ -75,8 +75,7 @@ from .epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
 from .models import RetryConfig
 
 if TYPE_CHECKING:
-    import subprocess
-
+    from .cerberus_review import ReviewResult
     from .event_sink import EventRunConfig, MalaEventSink
     from .lifecycle import RetryState
     from .models import IssueResolution

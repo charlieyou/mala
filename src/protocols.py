@@ -252,7 +252,7 @@ class CodeReviewer(Protocol):
     structured results. The orchestrator uses this to run post-commit
     code reviews via the Cerberus review-gate CLI.
 
-    The canonical implementation is DefaultReviewer in orchestrator.py.
+    The canonical implementation is DefaultReviewer in cerberus_review.py.
     Test implementations can return predetermined results for isolation.
     """
 

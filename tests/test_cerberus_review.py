@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 from src.cerberus_review import (
+    DefaultReviewer,
     ReviewIssue,
     ReviewResult,
     _to_relative_path,
@@ -583,3 +584,51 @@ class TestToRelativePath:
         # Should NOT be stripped to just "file.py"
         assert "important" in result
         assert result == "/completely/different/path/important/file.py"
+
+
+class TestExtractWaitTimeout:
+    """Tests for DefaultReviewer._extract_wait_timeout method."""
+
+    def test_returns_none_for_empty_args(self) -> None:
+        """Returns None when args is empty."""
+        assert DefaultReviewer._extract_wait_timeout(()) is None
+
+    def test_returns_none_when_no_timeout_flag(self) -> None:
+        """Returns None when --timeout is not present."""
+        args = ("--json", "--session-key", "abc123")
+        assert DefaultReviewer._extract_wait_timeout(args) is None
+
+    def test_extracts_timeout_with_equals_format(self) -> None:
+        """Extracts timeout from --timeout=VALUE format."""
+        args = ("--json", "--timeout=600", "--session-key", "abc123")
+        assert DefaultReviewer._extract_wait_timeout(args) == 600
+
+    def test_extracts_timeout_with_space_format(self) -> None:
+        """Extracts timeout from --timeout VALUE format."""
+        args = ("--json", "--timeout", "300", "--session-key", "abc123")
+        assert DefaultReviewer._extract_wait_timeout(args) == 300
+
+    def test_returns_none_for_non_numeric_equals_value(self) -> None:
+        """Returns None when --timeout=VALUE has non-numeric value."""
+        args = ("--timeout=abc",)
+        assert DefaultReviewer._extract_wait_timeout(args) is None
+
+    def test_returns_none_for_non_numeric_space_value(self) -> None:
+        """Returns None when --timeout VALUE has non-numeric value."""
+        args = ("--timeout", "abc")
+        assert DefaultReviewer._extract_wait_timeout(args) is None
+
+    def test_returns_none_for_timeout_at_end_without_value(self) -> None:
+        """Returns None when --timeout is at end without value."""
+        args = ("--json", "--timeout")
+        assert DefaultReviewer._extract_wait_timeout(args) is None
+
+    def test_timeout_at_beginning_of_args(self) -> None:
+        """Extracts timeout when it's the first argument."""
+        args = ("--timeout", "120", "--json")
+        assert DefaultReviewer._extract_wait_timeout(args) == 120
+
+    def test_timeout_at_end_of_args_with_value(self) -> None:
+        """Extracts timeout when it's the last argument pair."""
+        args = ("--json", "--timeout", "450")
+        assert DefaultReviewer._extract_wait_timeout(args) == 450
