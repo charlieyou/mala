@@ -135,17 +135,15 @@ def _load_prompt_template() -> str:
 class ClaudeEpicVerificationModel:
     """Claude-based implementation of EpicVerificationModel protocol.
 
-    Uses the Anthropic SDK to verify epic acceptance criteria against code diffs.
-    Supports configuration via constructor parameters to integrate with MalaConfig.
+    Uses the shared Anthropic client factory to verify epic acceptance criteria
+    against code diffs. This ensures consistent configuration, observability,
+    and routing behavior across all LLM calls in the orchestrator.
 
-    Observability:
-        When Braintrust is configured (BRAINTRUST_API_KEY set), LLM calls are
-        automatically traced via braintrust.wrap_anthropic. This provides
-        consistent observability with other components in the orchestrator.
-
-    MorphLLM routing:
-        When base_url is set (e.g., to MorphLLM proxy), requests are routed
-        through the proxy for centralized LLM management.
+    LLM Infrastructure:
+        Uses create_anthropic_client() from src.anthropic_client, which provides:
+        - Consistent configuration from MalaConfig (api_key, base_url)
+        - Automatic Braintrust tracing when BRAINTRUST_API_KEY is set
+        - MorphLLM routing when base_url is configured
     """
 
     # Default model for epic verification
@@ -191,13 +189,7 @@ class ClaudeEpicVerificationModel:
         Returns:
             Structured verdict with pass/fail and unmet criteria details.
         """
-        # Import here to avoid circular imports and allow testing without SDK
-        try:
-            from anthropic import Anthropic  # type: ignore[import-untyped]
-        except ImportError as e:
-            raise RuntimeError(
-                "anthropic package required for ClaudeEpicVerificationModel"
-            ) from e
+        from src.anthropic_client import create_anthropic_client
 
         prompt = self._prompt_template.format(
             epic_criteria=epic_criteria,
@@ -205,22 +197,12 @@ class ClaudeEpicVerificationModel:
             diff_content=diff,
         )
 
-        # Build client kwargs, only including non-None values
-        client_kwargs: dict[str, object] = {"timeout": self.timeout_ms / 1000}
-        if self.api_key is not None:
-            client_kwargs["api_key"] = self.api_key
-        if self.base_url is not None:
-            client_kwargs["base_url"] = self.base_url
-
-        client = Anthropic(**client_kwargs)
-
-        # Wrap with Braintrust for observability (no-op if Braintrust not configured)
-        try:
-            from braintrust import wrap_anthropic
-
-            client = wrap_anthropic(client)
-        except ImportError:
-            pass  # Braintrust not installed, proceed without tracing
+        # Use the shared client factory for consistent configuration and tracing
+        client = create_anthropic_client(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=self.timeout_ms / 1000,
+        )
 
         # Use asyncio.to_thread to avoid blocking the event loop during API calls
         response = await asyncio.to_thread(
