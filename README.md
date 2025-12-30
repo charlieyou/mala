@@ -441,6 +441,10 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
 | `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
 | `--max-review-retries` | 3 | Maximum external review retry attempts per issue |
+| `--review-timeout` | 300 | Timeout in seconds for Cerberus review operations |
+| `--cerberus-spawn-args` | - | Extra args appended to `review-gate spawn-code-review` |
+| `--cerberus-wait-args` | - | Extra args appended to `review-gate wait` |
+| `--cerberus-env` | - | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
 | `--disable-validations` | - | Comma-separated list (see below) |
 | `--coverage-threshold` | 85.0 | Minimum coverage percentage (0-100) |
 | `--wip` | false | Include and prioritize in_progress issues (without this flag, only open issues are fetched) |
@@ -470,6 +474,7 @@ mala uses a global config directory at `~/.config/mala/`:
 ```
 
 Environment variables are loaded from `~/.config/mala/.env` (global config).
+Precedence: CLI flags override global config, which overrides program defaults.
 
 **Directory overrides** (set in `.env` or environment):
 
@@ -477,6 +482,15 @@ Environment variables are loaded from `~/.config/mala/.env` (global config).
 |----------|---------|-------------|
 | `MALA_RUNS_DIR` | `~/.config/mala/runs` | Directory for run metadata |
 | `MALA_LOCK_DIR` | `~/.config/mala/locks` | Directory for filesystem locks |
+| `MALA_REVIEW_TIMEOUT` | `300` | Review-gate wait timeout in seconds |
+
+**Cerberus overrides** (set in `.env` or environment):
+
+| Variable | Description |
+|----------|-------------|
+| `MALA_CERBERUS_SPAWN_ARGS` | Extra args for `review-gate spawn-code-review` |
+| `MALA_CERBERUS_WAIT_ARGS` | Extra args for `review-gate wait` |
+| `MALA_CERBERUS_ENV` | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
 
 Note: The repo's `.env` file is for testing only and is not loaded by the program.
 

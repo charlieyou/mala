@@ -10,13 +10,59 @@ Environment Variables:
     CLAUDE_CONFIG_DIR: Claude SDK config directory (default: ~/.claude)
     BRAINTRUST_API_KEY: Braintrust API key (required when braintrust_enabled=True)
     MORPH_API_KEY: Morph API key (required when morph_enabled=True)
+    MALA_REVIEW_TIMEOUT: Timeout in seconds for review-gate wait
+    MALA_CERBERUS_SPAWN_ARGS: Extra args for `review-gate spawn-code-review`
+    MALA_CERBERUS_WAIT_ARGS: Extra args for `review-gate wait`
+    MALA_CERBERUS_ENV: Extra env for review-gate (JSON dict or comma KEY=VALUE list)
 """
 
 from __future__ import annotations
 
+import json
 import os
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+def _parse_cerberus_args(raw: str | None, *, source: str) -> list[str]:
+    if not raw or not raw.strip():
+        return []
+    try:
+        return shlex.split(raw)
+    except ValueError as exc:
+        raise ValueError(f"{source}: {exc}") from exc
+
+
+def _parse_cerberus_env(raw: str | None, *, source: str) -> dict[str, str]:
+    if not raw or not raw.strip():
+        return {}
+
+    stripped = raw.strip()
+    if stripped.startswith("{"):
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{source}: invalid JSON ({exc})") from exc
+        if not isinstance(data, dict):
+            raise ValueError(f"{source}: JSON must be an object")
+        return {str(key): str(value) for key, value in data.items()}
+
+    env: dict[str, str] = {}
+    for part in [item.strip() for item in raw.split(",") if item.strip()]:
+        if "=" not in part:
+            raise ValueError(f"{source}: invalid entry '{part}' (expected KEY=VALUE)")
+        key, value = part.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"{source}: invalid entry '{part}' (empty key)")
+        env[key] = value
+    return env
+
+
+def _normalize_cerberus_env(env: dict[str, str]) -> tuple[tuple[str, str], ...]:
+    """Normalize env map into a stable, hashable tuple of key/value pairs."""
+    return tuple(sorted(env.items()))
 
 
 class ConfigurationError(Exception):
@@ -57,6 +103,12 @@ class MalaConfig:
             Defaults to True.
         review_timeout: Timeout in seconds for review operations.
             Defaults to 300.
+        cerberus_spawn_args: Extra args for `review-gate spawn-code-review`.
+            Defaults to empty (no extra args).
+        cerberus_wait_args: Extra args for `review-gate wait`.
+            Defaults to empty (no extra args).
+        cerberus_env: Extra environment variables for review-gate.
+            Defaults to empty (no extra env).
 
     Example:
         # Programmatic construction (no env vars needed):
@@ -89,6 +141,9 @@ class MalaConfig:
     # Review settings
     review_enabled: bool = field(default=True)
     review_timeout: int = field(default=300)
+    cerberus_spawn_args: tuple[str, ...] = field(default_factory=tuple)
+    cerberus_wait_args: tuple[str, ...] = field(default_factory=tuple)
+    cerberus_env: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         """Derive feature flags from API key presence.
@@ -96,6 +151,22 @@ class MalaConfig:
         Since the dataclass is frozen, we use object.__setattr__ to set
         derived fields after initialization.
         """
+        # Normalize Cerberus overrides for immutability/consistency
+        if isinstance(self.cerberus_spawn_args, list):
+            object.__setattr__(
+                self, "cerberus_spawn_args", tuple(self.cerberus_spawn_args)
+            )
+        if isinstance(self.cerberus_wait_args, list):
+            object.__setattr__(
+                self, "cerberus_wait_args", tuple(self.cerberus_wait_args)
+            )
+        if isinstance(self.cerberus_env, dict):
+            object.__setattr__(
+                self, "cerberus_env", _normalize_cerberus_env(self.cerberus_env)
+            )
+        elif isinstance(self.cerberus_env, list):
+            object.__setattr__(self, "cerberus_env", tuple(self.cerberus_env))
+
         # Derive braintrust_enabled from api key presence if not explicitly set
         if not self.braintrust_enabled and self.braintrust_api_key:
             object.__setattr__(self, "braintrust_enabled", True)
@@ -113,6 +184,10 @@ class MalaConfig:
             - CLAUDE_CONFIG_DIR: Claude SDK config directory (optional)
             - BRAINTRUST_API_KEY: Braintrust API key (optional)
             - MORPH_API_KEY: Morph API key (optional)
+            - MALA_REVIEW_TIMEOUT: Review timeout in seconds (optional)
+            - MALA_CERBERUS_SPAWN_ARGS: Extra args for review-gate spawn (optional)
+            - MALA_CERBERUS_WAIT_ARGS: Extra args for review-gate wait (optional)
+            - MALA_CERBERUS_ENV: Extra env for review-gate (optional)
 
         Args:
             validate: If True (default), run validation and raise ConfigurationError
@@ -150,18 +225,65 @@ class MalaConfig:
         braintrust_api_key = os.environ.get("BRAINTRUST_API_KEY") or None
         morph_api_key = os.environ.get("MORPH_API_KEY") or None
 
+        review_timeout = None
+        review_timeout_raw = os.environ.get("MALA_REVIEW_TIMEOUT")
+        parse_errors: list[str] = []
+        if review_timeout_raw:
+            try:
+                review_timeout = int(review_timeout_raw)
+            except ValueError:
+                parse_errors.append(
+                    f"MALA_REVIEW_TIMEOUT: invalid integer '{review_timeout_raw}'"
+                )
+                review_timeout = None
+
+        # Parse Cerberus override settings
+        try:
+            cerberus_spawn_args = _parse_cerberus_args(
+                os.environ.get("MALA_CERBERUS_SPAWN_ARGS"),
+                source="MALA_CERBERUS_SPAWN_ARGS",
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            cerberus_spawn_args = []
+
+        try:
+            cerberus_wait_args = _parse_cerberus_args(
+                os.environ.get("MALA_CERBERUS_WAIT_ARGS"),
+                source="MALA_CERBERUS_WAIT_ARGS",
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            cerberus_wait_args = []
+
+        try:
+            cerberus_env = _parse_cerberus_env(
+                os.environ.get("MALA_CERBERUS_ENV"),
+                source="MALA_CERBERUS_ENV",
+            )
+        except ValueError as exc:
+            parse_errors.append(str(exc))
+            cerberus_env = {}
+
         config = cls(
             runs_dir=runs_dir,
             lock_dir=lock_dir,
             claude_config_dir=claude_config_dir,
             braintrust_api_key=braintrust_api_key,
             morph_api_key=morph_api_key,
+            review_timeout=review_timeout if review_timeout is not None else 300,
+            cerberus_spawn_args=tuple(cerberus_spawn_args),
+            cerberus_wait_args=tuple(cerberus_wait_args),
+            cerberus_env=_normalize_cerberus_env(cerberus_env),
         )
 
         if validate:
             errors = config.validate()
+            errors.extend(parse_errors)
             if errors:
                 raise ConfigurationError(errors)
+        elif parse_errors:
+            raise ConfigurationError(parse_errors)
 
         return config
 
@@ -202,6 +324,8 @@ class MalaConfig:
             errors.append(
                 f"claude_config_dir should be an absolute path, got: {self.claude_config_dir}"
             )
+        if self.review_timeout < 0:
+            errors.append(f"review_timeout must be >= 0, got: {self.review_timeout}")
 
         return errors
 

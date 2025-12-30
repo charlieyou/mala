@@ -339,12 +339,33 @@ def run(
         ),
     ] = False,
     review_timeout: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--review-timeout",
             help="Timeout in seconds for review operations (default: 300)",
         ),
-    ] = 300,
+    ] = None,
+    cerberus_spawn_args: Annotated[
+        str | None,
+        typer.Option(
+            "--cerberus-spawn-args",
+            help="Extra args for `review-gate spawn-code-review` (shlex-style string)",
+        ),
+    ] = None,
+    cerberus_wait_args: Annotated[
+        str | None,
+        typer.Option(
+            "--cerberus-wait-args",
+            help="Extra args for `review-gate wait` (shlex-style string)",
+        ),
+    ] = None,
+    cerberus_env: Annotated[
+        str | None,
+        typer.Option(
+            "--cerberus-env",
+            help="Extra env for review-gate (JSON object or comma KEY=VALUE list)",
+        ),
+    ] = None,
     no_morph: Annotated[
         bool,
         typer.Option(
@@ -434,8 +455,11 @@ def run(
         "max_gate_retries": max_gate_retries,
         "max_review_retries": max_review_retries,
         "braintrust": _braintrust_enabled,
-        "review_timeout": review_timeout,
         "no_morph": no_morph,
+        "review_timeout": None,
+        "cerberus_spawn_args": None,
+        "cerberus_wait_args": None,
+        "cerberus_env": None,
     }
 
     # Construct config from environment (orchestrator uses this for API keys and feature flags)
@@ -444,7 +468,50 @@ def run(
     # Apply CLI overrides to config (frozen dataclass requires replace)
     from dataclasses import replace
 
-    config = replace(config, review_timeout=review_timeout)
+    if review_timeout is not None:
+        config = replace(config, review_timeout=review_timeout)
+
+    if cerberus_spawn_args is not None:
+        try:
+            from .config import _parse_cerberus_args
+
+            spawn_args = tuple(
+                _parse_cerberus_args(
+                    cerberus_spawn_args, source="--cerberus-spawn-args"
+                )
+            )
+        except ValueError as exc:
+            log("✗", str(exc), Colors.RED)
+            raise typer.Exit(1)
+        config = replace(config, cerberus_spawn_args=spawn_args)
+
+    if cerberus_wait_args is not None:
+        try:
+            from .config import _parse_cerberus_args
+
+            wait_args = tuple(
+                _parse_cerberus_args(cerberus_wait_args, source="--cerberus-wait-args")
+            )
+        except ValueError as exc:
+            log("✗", str(exc), Colors.RED)
+            raise typer.Exit(1)
+        config = replace(config, cerberus_wait_args=wait_args)
+
+    if cerberus_env is not None:
+        try:
+            from .config import _normalize_cerberus_env, _parse_cerberus_env
+
+            env_map = _parse_cerberus_env(cerberus_env, source="--cerberus-env")
+            config = replace(config, cerberus_env=_normalize_cerberus_env(env_map))
+        except ValueError as exc:
+            log("✗", str(exc), Colors.RED)
+            raise typer.Exit(1)
+
+    # Record effective values for logging/metadata
+    cli_args["review_timeout"] = config.review_timeout
+    cli_args["cerberus_spawn_args"] = list(config.cerberus_spawn_args)
+    cli_args["cerberus_wait_args"] = list(config.cerberus_wait_args)
+    cli_args["cerberus_env"] = dict(config.cerberus_env)
 
     # Determine morph_enabled: disabled if --no-morph flag set, otherwise use config default
     morph_enabled = (

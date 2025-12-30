@@ -653,22 +653,18 @@ class BaselineCoverageService:
                         details.append(f"pytest output: {pytest_tail}")
                     if combine_result is not None and combine_result.returncode != 0:
                         combine_tail = (
-                            combine_result.stderr_tail()
-                            or combine_result.stdout_tail()
+                            combine_result.stderr_tail() or combine_result.stdout_tail()
                         )
                         if combine_tail:
                             details.append(f"coverage combine failed: {combine_tail}")
                     if xml_result is not None and xml_result.returncode != 0:
-                        xml_tail = (
-                            xml_result.stderr_tail() or xml_result.stdout_tail()
-                        )
+                        xml_tail = xml_result.stderr_tail() or xml_result.stdout_tail()
                         if xml_tail:
                             details.append(f"coverage xml failed: {xml_tail}")
 
                     detail_msg = f" ({'; '.join(details)})" if details else ""
                     return BaselineRefreshResult.fail(
-                        "No coverage.xml generated during baseline refresh"
-                        + detail_msg
+                        "No coverage.xml generated during baseline refresh" + detail_msg
                     )
 
             # Atomic rename to main repo

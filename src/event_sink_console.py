@@ -122,6 +122,24 @@ class ConsoleEventSink:
                 cli_parts.append(
                     f"--max-review-retries={config.cli_args['max_review_retries']}"
                 )
+            if config.cli_args.get("review_timeout") is not None:
+                cli_parts.append(
+                    f"--review-timeout={config.cli_args['review_timeout']}"
+                )
+            spawn_args = config.cli_args.get("cerberus_spawn_args")
+            if isinstance(spawn_args, list) and spawn_args:
+                spawn_strs = [arg for arg in spawn_args if isinstance(arg, str)]
+                if spawn_strs:
+                    cli_parts.append(f"--cerberus-spawn-args={' '.join(spawn_strs)}")
+            wait_args = config.cli_args.get("cerberus_wait_args")
+            if isinstance(wait_args, list) and wait_args:
+                wait_strs = [arg for arg in wait_args if isinstance(arg, str)]
+                if wait_strs:
+                    cli_parts.append(f"--cerberus-wait-args={' '.join(wait_strs)}")
+            env_vars = config.cli_args.get("cerberus_env")
+            if isinstance(env_vars, dict) and env_vars:
+                env_str = ",".join(f"{key}={value}" for key, value in env_vars.items())
+                cli_parts.append(f"--cerberus-env={env_str}")
             if config.cli_args.get("braintrust"):
                 cli_parts.append("--braintrust")
             if cli_parts:

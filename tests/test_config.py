@@ -39,6 +39,13 @@ class TestMalaConfigDefaults:
         assert config.braintrust_enabled is False
         assert config.morph_enabled is False
 
+    def test_default_cerberus_overrides_empty(self) -> None:
+        """Cerberus override settings default to empty values."""
+        config = MalaConfig()
+        assert config.cerberus_spawn_args == ()
+        assert config.cerberus_wait_args == ()
+        assert config.cerberus_env == ()
+
 
 class TestMalaConfigFeatureFlags:
     """Tests for feature flag derivation."""
@@ -144,6 +151,62 @@ class TestMalaConfigFromEnv:
         assert config.morph_api_key == "morph-test-key"
         assert config.morph_enabled is True
 
+    def test_from_env_reads_review_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads MALA_REVIEW_TIMEOUT."""
+        monkeypatch.setenv("MALA_REVIEW_TIMEOUT", "450")
+        config = MalaConfig.from_env(validate=False)
+        assert config.review_timeout == 450
+
+    def test_from_env_rejects_invalid_review_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() rejects invalid MALA_REVIEW_TIMEOUT values."""
+        monkeypatch.setenv("MALA_REVIEW_TIMEOUT", "not-a-number")
+        with pytest.raises(ConfigurationError):
+            MalaConfig.from_env(validate=False)
+
+    def test_from_env_reads_cerberus_spawn_args(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads MALA_CERBERUS_SPAWN_ARGS."""
+        monkeypatch.setenv("MALA_CERBERUS_SPAWN_ARGS", "--foo bar --flag")
+        config = MalaConfig.from_env(validate=False)
+        assert config.cerberus_spawn_args == ("--foo", "bar", "--flag")
+
+    def test_from_env_reads_cerberus_wait_args(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads MALA_CERBERUS_WAIT_ARGS."""
+        monkeypatch.setenv("MALA_CERBERUS_WAIT_ARGS", "--baz qux")
+        config = MalaConfig.from_env(validate=False)
+        assert config.cerberus_wait_args == ("--baz", "qux")
+
+    def test_from_env_reads_cerberus_env_json(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads MALA_CERBERUS_ENV as JSON."""
+        monkeypatch.setenv("MALA_CERBERUS_ENV", '{"FOO":"bar","NUM":1}')
+        config = MalaConfig.from_env(validate=False)
+        assert dict(config.cerberus_env) == {"FOO": "bar", "NUM": "1"}
+
+    def test_from_env_reads_cerberus_env_kv(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads MALA_CERBERUS_ENV as KEY=VALUE list."""
+        monkeypatch.setenv("MALA_CERBERUS_ENV", "FOO=bar,BAZ=qux")
+        config = MalaConfig.from_env(validate=False)
+        assert dict(config.cerberus_env) == {"FOO": "bar", "BAZ": "qux"}
+
+    def test_from_env_rejects_invalid_cerberus_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() rejects invalid MALA_CERBERUS_ENV values."""
+        monkeypatch.setenv("MALA_CERBERUS_ENV", "NOT_A_KV")
+        with pytest.raises(ConfigurationError):
+            MalaConfig.from_env(validate=False)
+
     def test_from_env_treats_empty_string_as_none(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -237,6 +300,12 @@ class TestMalaConfigValidate:
         assert any("runs_dir" in e and "absolute" in e for e in errors)
         assert any("lock_dir" in e and "absolute" in e for e in errors)
         assert any("claude_config_dir" in e and "absolute" in e for e in errors)
+
+    def test_validate_negative_review_timeout(self) -> None:
+        """Negative review_timeout produces validation error."""
+        config = MalaConfig(review_timeout=-1)
+        errors = config.validate()
+        assert any("review_timeout" in e for e in errors)
 
 
 class TestMalaConfigEnsureDirectories:

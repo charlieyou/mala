@@ -811,6 +811,40 @@ def test_run_review_timeout_custom(
     assert config.review_timeout == 600
 
 
+def test_run_cerberus_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that Cerberus CLI overrides apply to config and cli_args."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            cerberus_spawn_args="--foo bar --flag",
+            cerberus_wait_args="--baz qux",
+            cerberus_env="FOO=bar,BAZ=qux",
+        )
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_kwargs is not None
+
+    config = DummyOrchestrator.last_kwargs["config"]
+    assert config.cerberus_spawn_args == ("--foo", "bar", "--flag")
+    assert config.cerberus_wait_args == ("--baz", "qux")
+    assert dict(config.cerberus_env) == {"FOO": "bar", "BAZ": "qux"}
+
+    cli_args = DummyOrchestrator.last_kwargs["cli_args"]
+    assert cli_args["cerberus_spawn_args"] == ["--foo", "bar", "--flag"]
+    assert cli_args["cerberus_wait_args"] == ["--baz", "qux"]
+    assert cli_args["cerberus_env"] == {"FOO": "bar", "BAZ": "qux"}
+
+
 def test_run_no_codex_thinking_mode_flag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

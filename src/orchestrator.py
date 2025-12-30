@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -141,10 +141,14 @@ class DefaultReviewer:
     behavior for the orchestrator. Tests can inject alternative implementations.
 
     The reviewer spawns review-gate CLI processes and parses their output.
+    Extra args/env can be provided to customize review-gate behavior.
     For the initial review, an empty diff short-circuits to PASS without spawning.
     """
 
     repo_path: Path
+    spawn_args: tuple[str, ...] = field(default_factory=tuple)
+    wait_args: tuple[str, ...] = field(default_factory=tuple)
+    env: dict[str, str] = field(default_factory=dict)
 
     async def __call__(
         self,
@@ -190,10 +194,14 @@ class DefaultReviewer:
         spawn_cmd = ["review-gate", "spawn-code-review", "--diff", diff_range]
         if context_file:
             spawn_cmd.extend(["--context-file", str(context_file)])
+        if self.spawn_args:
+            spawn_cmd.extend(self.spawn_args)
 
         # Run spawn command
         try:
-            spawn_result = await asyncio.to_thread(self._run_command, spawn_cmd)
+            spawn_result = await asyncio.to_thread(
+                self._run_command, spawn_cmd, env=self.env
+            )
         except Exception as e:
             return ReviewResult(
                 passed=False,
@@ -235,22 +243,26 @@ class DefaultReviewer:
             )
 
         # Build wait command with timeout
+        wait_timeout = self._extract_wait_timeout(self.wait_args)
         wait_cmd = [
             "review-gate",
             "wait",
             "--json",
             "--session-key",
             session_key,
-            "--timeout",
-            str(timeout),
         ]
+        if wait_timeout is None:
+            wait_timeout = timeout
+            wait_cmd.extend(["--timeout", str(timeout)])
+        if self.wait_args:
+            wait_cmd.extend(self.wait_args)
 
         # Run wait command with subprocess timeout slightly longer than CLI timeout
         # This allows the CLI's internal timeout to trigger first with a proper error message
-        subprocess_timeout = timeout + 30
+        subprocess_timeout = wait_timeout + 30
         try:
             wait_result = await asyncio.to_thread(
-                self._run_command, wait_cmd, subprocess_timeout
+                self._run_command, wait_cmd, subprocess_timeout, self.env
             )
         except Exception as e:
             return ReviewResult(
@@ -270,7 +282,10 @@ class DefaultReviewer:
         )
 
     def _run_command(
-        self, cmd: list[str], timeout: int | None = None
+        self,
+        cmd: list[str],
+        timeout: int | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run a subprocess command in repo_path directory.
 
@@ -281,7 +296,10 @@ class DefaultReviewer:
         Returns:
             CompletedProcess with stdout, stderr, and returncode.
         """
+        import os
         import subprocess
+
+        merged_env = {**os.environ, **env} if env else None
 
         return subprocess.run(
             cmd,
@@ -289,7 +307,27 @@ class DefaultReviewer:
             capture_output=True,
             text=True,
             timeout=timeout if timeout is not None else 600,
+            env=merged_env,
         )
+
+    @staticmethod
+    def _extract_wait_timeout(args: tuple[str, ...]) -> int | None:
+        """Extract --timeout value from wait args if provided."""
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg.startswith("--timeout="):
+                value = arg.split("=", 1)[1]
+                if value.isdigit():
+                    return int(value)
+                return None
+            if arg == "--timeout" and i + 1 < len(args):
+                value = args[i + 1]
+                if value.isdigit():
+                    return int(value)
+                return None
+            i += 1
+        return None
 
 
 def get_mcp_servers(
@@ -466,7 +504,12 @@ class MalaOrchestrator:
 
         # CodeReviewer: DefaultReviewer using Cerberus review-gate
         self.code_reviewer: CodeReviewer = (
-            DefaultReviewer(repo_path=self.repo_path)
+            DefaultReviewer(
+                repo_path=self.repo_path,
+                spawn_args=self._config.cerberus_spawn_args,
+                wait_args=self._config.cerberus_wait_args,
+                env=dict(self._config.cerberus_env),
+            )
             if code_reviewer is None
             else code_reviewer
         )
