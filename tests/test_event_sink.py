@@ -165,6 +165,24 @@ class TestNullEventSink:
         assert sink.on_abort_requested("Fatal error occurred") is None
         assert sink.on_tasks_aborting(3, "Unrecoverable error") is None
 
+        # Epic verification lifecycle
+        assert sink.on_epic_verification_started("epic-1") is None
+        assert sink.on_epic_verification_passed("epic-1", 0.95) is None
+        assert (
+            sink.on_epic_verification_failed("epic-1", 2, ["issue-1", "issue-2"])
+            is None
+        )
+        assert (
+            sink.on_epic_verification_human_review(
+                "epic-1", "Low confidence", "issue-3"
+            )
+            is None
+        )
+        assert (
+            sink.on_epic_remediation_created("epic-1", "issue-4", "Criterion text here")
+            is None
+        )
+
     def test_can_be_called_multiple_times(self) -> None:
         """NullEventSink methods can be called repeatedly."""
         sink = NullEventSink()
@@ -364,3 +382,91 @@ class TestConsoleEventSink:
         assert "5" in call_args[0][1]
         assert "active task" in call_args[0][1]
         assert "Timeout exceeded" in call_args[0][1]
+
+    @patch("src.event_sink_console.log")
+    def test_on_epic_verification_started_logs_epic_id(
+        self, mock_log: MagicMock
+    ) -> None:
+        """on_epic_verification_started logs the epic being verified."""
+        sink = ConsoleEventSink()
+        sink.on_epic_verification_started("epic-123")
+
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        assert "Verifying epic" in call_args[0][1]
+        assert "epic-123" in call_args[0][1]
+
+    @patch("src.event_sink_console.log")
+    def test_on_epic_verification_passed_logs_confidence(
+        self, mock_log: MagicMock
+    ) -> None:
+        """on_epic_verification_passed logs epic id and confidence."""
+        sink = ConsoleEventSink()
+        sink.on_epic_verification_passed("epic-123", 0.95)
+
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        assert "epic-123" in call_args[0][1]
+        assert "verified" in call_args[0][1]
+        assert "95%" in call_args[0][1]
+
+    @patch("src.event_sink_console.log")
+    def test_on_epic_verification_failed_logs_details(
+        self, mock_log: MagicMock
+    ) -> None:
+        """on_epic_verification_failed logs unmet count and remediation issues."""
+        sink = ConsoleEventSink()
+        sink.on_epic_verification_failed("epic-123", 2, ["issue-1", "issue-2"])
+
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        assert "epic-123" in call_args[0][1]
+        assert "2 unmet criteria" in call_args[0][1]
+        assert "issue-1" in call_args[0][1]
+        assert "issue-2" in call_args[0][1]
+
+    @patch("src.event_sink_console.log")
+    def test_on_epic_verification_human_review_logs_reason(
+        self, mock_log: MagicMock
+    ) -> None:
+        """on_epic_verification_human_review logs reason and review issue."""
+        sink = ConsoleEventSink()
+        sink.on_epic_verification_human_review("epic-123", "Low confidence", "review-1")
+
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        assert "epic-123" in call_args[0][1]
+        assert "human review" in call_args[0][1]
+        assert "Low confidence" in call_args[0][1]
+        assert "review-1" in call_args[0][1]
+
+    @patch("src.event_sink_console.log_verbose")
+    def test_on_epic_remediation_created_logs_criterion(
+        self, mock_log_verbose: MagicMock
+    ) -> None:
+        """on_epic_remediation_created logs issue id and truncated criterion."""
+        sink = ConsoleEventSink()
+        long_criterion = "A" * 100  # Long text to test truncation
+        sink.on_epic_remediation_created("epic-123", "issue-1", long_criterion)
+
+        mock_log_verbose.assert_called_once()
+        call_args = mock_log_verbose.call_args
+        assert "epic-123" in call_args[0][1]
+        assert "issue-1" in call_args[0][1]
+        # Should be truncated (60 chars + ...)
+        assert "..." in call_args[0][1]
+
+    @patch("src.event_sink_console.log_verbose")
+    def test_on_epic_remediation_created_short_criterion_not_truncated(
+        self, mock_log_verbose: MagicMock
+    ) -> None:
+        """on_epic_remediation_created does not truncate short criterion."""
+        sink = ConsoleEventSink()
+        short_criterion = "Short criterion text"
+        sink.on_epic_remediation_created("epic-123", "issue-1", short_criterion)
+
+        mock_log_verbose.assert_called_once()
+        call_args = mock_log_verbose.call_args
+        assert short_criterion in call_args[0][1]
+        # Short text should not have "..." appended unless it's cut off
+        assert "..." not in call_args[0][1]

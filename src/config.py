@@ -14,6 +14,9 @@ Environment Variables:
     MALA_CERBERUS_SPAWN_ARGS: Extra args for `review-gate spawn-code-review`
     MALA_CERBERUS_WAIT_ARGS: Extra args for `review-gate wait`
     MALA_CERBERUS_ENV: Extra env for review-gate (JSON dict or comma KEY=VALUE list)
+    MALA_MAX_DIFF_SIZE_KB: Max diff size for epic verification (KB)
+    LLM_API_KEY: API key for LLM calls (fallback to ANTHROPIC_API_KEY)
+    LLM_BASE_URL: Base URL for LLM API
 """
 
 from __future__ import annotations
@@ -65,6 +68,16 @@ def _normalize_cerberus_env(env: dict[str, str]) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(env.items()))
 
 
+def _safe_int(value: str | None, default: int) -> int:
+    """Safely parse an integer with fallback to default."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 class ConfigurationError(Exception):
     """Raised when configuration validation fails."""
 
@@ -109,6 +122,12 @@ class MalaConfig:
             Defaults to empty (no extra args).
         cerberus_env: Extra environment variables for review-gate.
             Defaults to empty (no extra env).
+        max_diff_size_kb: Maximum diff size for epic verification (KB).
+            Env: MALA_MAX_DIFF_SIZE_KB (default: 100)
+        llm_api_key: API key for LLM calls (epic verification).
+            Env: LLM_API_KEY (falls back to ANTHROPIC_API_KEY if not set)
+        llm_base_url: Base URL for LLM API requests.
+            Env: LLM_BASE_URL (for proxy/routing, e.g., MorphLLM)
 
     Example:
         # Programmatic construction (no env vars needed):
@@ -144,6 +163,14 @@ class MalaConfig:
     cerberus_spawn_args: tuple[str, ...] = field(default_factory=tuple)
     cerberus_wait_args: tuple[str, ...] = field(default_factory=tuple)
     cerberus_env: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    # Epic verification settings
+    max_diff_size_kb: int = 100  # Maximum diff size for epic verification (KB)
+
+    # LLM configuration (for epic verification and other direct API calls)
+    llm_api_key: str | None = (
+        None  # API key for LLM calls (falls back to ANTHROPIC_API_KEY)
+    )
+    llm_base_url: str | None = None  # Base URL for LLM API (for proxy/routing)
 
     def __post_init__(self) -> None:
         """Derive feature flags from API key presence.
@@ -188,6 +215,9 @@ class MalaConfig:
             - MALA_CERBERUS_SPAWN_ARGS: Extra args for review-gate spawn (optional)
             - MALA_CERBERUS_WAIT_ARGS: Extra args for review-gate wait (optional)
             - MALA_CERBERUS_ENV: Extra env for review-gate (optional)
+            - MALA_MAX_DIFF_SIZE_KB: Max diff size for epic verification (optional)
+            - LLM_API_KEY: API key for LLM calls (optional)
+            - LLM_BASE_URL: Base URL for LLM API (optional)
 
         Args:
             validate: If True (default), run validation and raise ConfigurationError
@@ -265,6 +295,18 @@ class MalaConfig:
             parse_errors.append(str(exc))
             cerberus_env = {}
 
+        # Get epic verification settings
+        max_diff_size_kb = _safe_int(
+            os.environ.get("MALA_MAX_DIFF_SIZE_KB"), default=100
+        )
+
+        # Get LLM configuration (for epic verification and other direct API calls)
+        # Falls back to ANTHROPIC_API_KEY if LLM_API_KEY is not set
+        llm_api_key = (
+            os.environ.get("LLM_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or None
+        )
+        llm_base_url = os.environ.get("LLM_BASE_URL") or None
+
         config = cls(
             runs_dir=runs_dir,
             lock_dir=lock_dir,
@@ -275,6 +317,9 @@ class MalaConfig:
             cerberus_spawn_args=tuple(cerberus_spawn_args),
             cerberus_wait_args=tuple(cerberus_wait_args),
             cerberus_env=_normalize_cerberus_env(cerberus_env),
+            max_diff_size_kb=max_diff_size_kb,
+            llm_api_key=llm_api_key,
+            llm_base_url=llm_base_url,
         )
 
         if validate:

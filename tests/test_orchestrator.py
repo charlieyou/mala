@@ -2982,10 +2982,26 @@ class TestEpicClosureAfterChildCompletion:
 
     @pytest.mark.asyncio
     async def test_epic_closure_called_after_issue_closes(self, tmp_path: Path) -> None:
-        """close_eligible_epics_async should be called after each issue was closed."""
+        """verify_and_close_eligible should be called after each issue was closed."""
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
 
         epic_closure_calls: list[str] = []
+
+        # Create mock for epic_verifier.verify_and_close_eligible
+        from src.models import EpicVerificationResult
+
+        async def mock_verify_and_close_eligible(
+            human_override_epic_ids: set[str] | None = None,
+        ) -> EpicVerificationResult:
+            epic_closure_calls.append("called")
+            return EpicVerificationResult(
+                verified_count=1,
+                passed_count=1,  # Simulates epic was verified and closed
+                failed_count=0,
+                human_review_count=0,
+                verdicts={},
+                remediation_issues_created=[],
+            )
 
         async def mock_close_eligible_epics_async() -> bool:
             epic_closure_calls.append("called")
@@ -3036,6 +3052,11 @@ class TestEpicClosureAfterChildCompletion:
                 orchestrator.beads,
                 "close_eligible_epics_async",
                 side_effect=mock_close_eligible_epics_async,
+            ),
+            patch.object(
+                orchestrator.epic_verifier,
+                "verify_and_close_eligible",
+                side_effect=mock_verify_and_close_eligible,
             ),
             patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
             patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
@@ -3130,6 +3151,24 @@ class TestEpicClosureAfterChildCompletion:
         epic_closure_calls: list[str] = []
         issues_processed = []
 
+        # Create mock for epic_verifier.verify_and_close_eligible
+        from src.models import EpicVerificationResult
+
+        async def mock_verify_and_close_eligible(
+            human_override_epic_ids: set[str] | None = None,
+        ) -> EpicVerificationResult:
+            epic_closure_calls.append("called")
+            # First call closes an epic, second doesn't
+            passed_count = 1 if len(epic_closure_calls) == 1 else 0
+            return EpicVerificationResult(
+                verified_count=1,
+                passed_count=passed_count,
+                failed_count=0,
+                human_review_count=0,
+                verdicts={},
+                remediation_issues_created=[],
+            )
+
         async def mock_close_eligible_epics_async() -> bool:
             epic_closure_calls.append("called")
             # First call closes an epic, second doesn't
@@ -3181,6 +3220,11 @@ class TestEpicClosureAfterChildCompletion:
                 orchestrator.beads,
                 "close_eligible_epics_async",
                 side_effect=mock_close_eligible_epics_async,
+            ),
+            patch.object(
+                orchestrator.epic_verifier,
+                "verify_and_close_eligible",
+                side_effect=mock_verify_and_close_eligible,
             ),
             patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
             patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),

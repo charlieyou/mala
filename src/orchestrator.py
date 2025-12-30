@@ -72,6 +72,7 @@ from .validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
+from .epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
 
 if TYPE_CHECKING:
     import subprocess
@@ -417,6 +418,8 @@ class MalaOrchestrator:
         event_sink: MalaEventSink | None = None,
         # Centralized configuration (optional, uses from_env() if not provided)
         config: MalaConfig | None = None,
+        # Epic verification override (bypasses verification for listed epic IDs)
+        epic_override_ids: set[str] | None = None,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
@@ -501,6 +504,27 @@ class MalaOrchestrator:
             if issue_provider is None
             else issue_provider
         )
+
+        # EpicVerifier: For epic verification before closure
+        # Requires beads to be a BeadsClient for epic operations
+        self.epic_override_ids = epic_override_ids or set()
+        if isinstance(self.beads, BeadsClient):
+            verification_model = ClaudeEpicVerificationModel(
+                api_key=self._config.llm_api_key,
+                base_url=self._config.llm_base_url,
+                timeout_ms=self.timeout_seconds * 1000,
+            )
+            self.epic_verifier: EpicVerifier | None = EpicVerifier(
+                beads=self.beads,
+                model=verification_model,
+                repo_path=self.repo_path,
+                max_diff_size_kb=self._config.max_diff_size_kb,
+                event_sink=self.event_sink,
+                lock_manager=True,  # Enable locking for sequential epic processing
+            )
+        else:
+            # When using a mock issue_provider, skip EpicVerifier
+            self.epic_verifier = None
 
         # CodeReviewer: DefaultReviewer using Cerberus review-gate
         self.code_reviewer: CodeReviewer = (
@@ -659,8 +683,15 @@ class MalaOrchestrator:
             # Gate passed - close the issue and check epic closure
             if await self.beads.close_async(issue_id):
                 self.event_sink.on_issue_closed(issue_id, issue_id)
-                # Check if this closes any parent epics
-                if await self.beads.close_eligible_epics_async():
+                # Check if this closes any parent epics (with verification)
+                if self.epic_verifier is not None:
+                    # EpicVerifier emits on_epic_verification_passed events
+                    # for each closed epic, so no legacy on_epic_closed needed
+                    await self.epic_verifier.verify_and_close_eligible(
+                        human_override_epic_ids=self.epic_override_ids
+                    )
+                elif await self.beads.close_eligible_epics_async():
+                    # Fallback for mock providers without EpicVerifier
                     self.event_sink.on_epic_closed(issue_id)
 
             # Populate metadata from stored gate result (if available)
