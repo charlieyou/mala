@@ -1111,3 +1111,244 @@ class TestBinaryFileHandling:
         # File should be listed but content not included
         assert "invalid.txt" in result
         assert "Hello" not in result  # Content should not be present
+
+
+# ============================================================================
+# Integration Tests for EpicVerifier Orchestrator Wiring
+# ============================================================================
+
+
+@pytest.mark.integration
+class TestEpicVerifierOrchestratorIntegration:
+    """Integration tests for EpicVerifier wiring in MalaOrchestrator."""
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_uses_epic_verifier_for_closure(
+        self, tmp_path: Path
+    ) -> None:
+        """Orchestrator should use EpicVerifier instead of close_eligible_epics_async."""
+        from src.orchestrator import MalaOrchestrator
+        from src.config import MalaConfig
+
+        # Create orchestrator with mock beads
+        config = MalaConfig(max_diff_size_kb=100)
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            config=config,
+        )
+
+        # Verify EpicVerifier was instantiated
+        assert orchestrator.epic_verifier is not None
+        assert orchestrator.epic_verifier.max_diff_size_kb == 100
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_respects_epic_override_ids(
+        self, tmp_path: Path
+    ) -> None:
+        """Orchestrator should pass epic_override_ids to verify_and_close_eligible."""
+        from src.orchestrator import MalaOrchestrator
+        from src.config import MalaConfig
+
+        override_ids = {"epic-1", "epic-2"}
+        config = MalaConfig(max_diff_size_kb=100)
+        orchestrator = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            config=config,
+            epic_override_ids=override_ids,
+        )
+
+        # Verify override IDs were stored
+        assert orchestrator.epic_override_ids == override_ids
+
+    @pytest.mark.asyncio
+    async def test_verify_and_close_with_override_bypasses_verification(
+        self,
+    ) -> None:
+        """Epics in override set should close without model verification."""
+        mock_beads = MagicMock()
+        mock_beads.get_issue_description_async = AsyncMock(return_value="Epic desc")
+        mock_beads.get_epic_children_async = AsyncMock(return_value={"child-1"})
+        mock_beads.close_async = AsyncMock(return_value=True)
+
+        mock_model = MagicMock()
+        mock_model.verify = AsyncMock()  # Should NOT be called
+
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=Path("/tmp"),
+        )
+
+        # Mock _get_eligible_epics to return epic-1
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "epic" in cmd and "list" in cmd:
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout='[{"id": "epic-1"}]',
+                )
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+
+        result = await verifier.verify_and_close_eligible(
+            human_override_epic_ids={"epic-1"}
+        )
+
+        # Epic should be closed without calling model
+        mock_model.verify.assert_not_called()
+        mock_beads.close_async.assert_called_with("epic-1")
+        assert result.passed_count == 1
+        assert (
+            result.verdicts["epic-1"].reasoning
+            == "Human override - bypassed verification"
+        )
+
+    @pytest.mark.asyncio
+    async def test_verify_and_close_creates_remediation_on_fail(self) -> None:
+        """Failed verification should create remediation issues, not close epic."""
+        mock_beads = MagicMock()
+        mock_beads.get_issue_description_async = AsyncMock(return_value="Epic desc")
+        mock_beads.get_epic_children_async = AsyncMock(return_value={"child-1"})
+        mock_beads.close_async = AsyncMock(return_value=True)
+
+        mock_model = MagicMock()
+        mock_model.verify = AsyncMock(
+            return_value=EpicVerdict(
+                passed=False,
+                unmet_criteria=[
+                    UnmetCriterion(
+                        criterion="Must have tests",
+                        evidence="No tests",
+                        severity="major",
+                        criterion_hash=_compute_criterion_hash("Must have tests"),
+                    )
+                ],
+                confidence=0.9,
+                reasoning="Tests missing",
+            )
+        )
+
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=Path("/tmp"),
+        )
+
+        created_issues: list[str] = []
+
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout='[{"id": "epic-1"}]',
+                )
+            if "log" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="abc123")
+            if "show" in cmd and "epic-1" in cmd:
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout='{"priority": "P2"}',
+                )
+            if "show" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="diff")
+            if "list" in cmd and "--tag" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="[]")
+            if "issue" in cmd and "create" in cmd:
+                created_issues.append("rem-1")
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout="Created issue: rem-1",
+                )
+            if "dep" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="")
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+
+        result = await verifier.verify_and_close_eligible()
+
+        # Epic should NOT be closed (verification failed)
+        mock_beads.close_async.assert_not_called()
+        assert result.failed_count == 1
+        assert result.passed_count == 0
+        assert len(result.remediation_issues_created) == 1
+
+    @pytest.mark.asyncio
+    async def test_config_max_diff_size_kb_is_respected(self) -> None:
+        """EpicVerifier should use max_diff_size_kb from config."""
+        from src.config import MalaConfig
+
+        config = MalaConfig(max_diff_size_kb=50)
+        assert config.max_diff_size_kb == 50
+
+        mock_beads = MagicMock()
+        mock_model = MagicMock()
+
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=Path("/tmp"),
+            max_diff_size_kb=config.max_diff_size_kb,
+        )
+
+        assert verifier.max_diff_size_kb == 50
+
+    @pytest.mark.asyncio
+    async def test_config_default_max_diff_size_kb_is_100(self) -> None:
+        """Default max_diff_size_kb should be 100."""
+        from src.config import MalaConfig
+
+        config = MalaConfig()
+        assert config.max_diff_size_kb == 100
+
+    @pytest.mark.asyncio
+    async def test_verify_passes_for_met_criteria(self) -> None:
+        """Verification should pass and close epic when all criteria met."""
+        mock_beads = MagicMock()
+        mock_beads.get_issue_description_async = AsyncMock(return_value="Epic desc")
+        mock_beads.get_epic_children_async = AsyncMock(return_value={"child-1"})
+        mock_beads.close_async = AsyncMock(return_value=True)
+
+        mock_model = MagicMock()
+        mock_model.verify = AsyncMock(
+            return_value=EpicVerdict(
+                passed=True,
+                unmet_criteria=[],
+                confidence=0.95,
+                reasoning="All criteria met",
+            )
+        )
+
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=Path("/tmp"),
+        )
+
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout='[{"id": "epic-1"}]',
+                )
+            if "log" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="abc123")
+            if "show" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="diff")
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+
+        result = await verifier.verify_and_close_eligible()
+
+        # Epic should be closed (verification passed)
+        mock_beads.close_async.assert_called_with("epic-1")
+        assert result.passed_count == 1
+        assert result.failed_count == 0

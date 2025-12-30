@@ -352,6 +352,13 @@ def run(
             help="Disable MorphLLM routing; use models directly for debugging or when MorphLLM is unavailable",
         ),
     ] = False,
+    epic_override: Annotated[
+        str | None,
+        typer.Option(
+            "--epic-override",
+            help="Comma-separated epic IDs to close without verification (explicit human bypass)",
+        ),
+    ] = None,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -402,6 +409,20 @@ def run(
         )
         raise typer.Exit(1)
 
+    # Parse --epic-override flag into a set of epic IDs
+    epic_override_ids: set[str] | None = None
+    if epic_override:
+        epic_override_ids = {
+            eid.strip() for eid in epic_override.split(",") if eid.strip()
+        }
+        if not epic_override_ids:
+            log(
+                "✗",
+                "Invalid --epic-override value: no valid epic IDs found",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+
     # Ensure user config directory exists
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -436,6 +457,7 @@ def run(
         "braintrust": _braintrust_enabled,
         "codex_thinking_mode": codex_thinking_mode,
         "no_morph": no_morph,
+        "epic_override": epic_override,
     }
 
     # Construct config from environment (orchestrator uses this for API keys and feature flags)
@@ -464,6 +486,7 @@ def run(
         cli_args=cli_args,
         codex_thinking_mode=codex_thinking_mode,
         config=config,
+        epic_override_ids=epic_override_ids,
     )
 
     success_count, total = asyncio.run(orchestrator.run())

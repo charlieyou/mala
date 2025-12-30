@@ -82,6 +82,9 @@ class MalaConfig:
     braintrust_enabled: bool = field(default=False)
     morph_enabled: bool = field(default=False)
 
+    # Epic verification settings
+    max_diff_size_kb: int = 100  # Maximum diff size for epic verification (KB)
+
     def __post_init__(self) -> None:
         """Derive feature flags from API key presence.
 
@@ -142,12 +145,17 @@ class MalaConfig:
         braintrust_api_key = os.environ.get("BRAINTRUST_API_KEY") or None
         morph_api_key = os.environ.get("MORPH_API_KEY") or None
 
+        # Get epic verification settings
+        max_diff_size_kb_str = os.environ.get("MALA_MAX_DIFF_SIZE_KB")
+        max_diff_size_kb = int(max_diff_size_kb_str) if max_diff_size_kb_str else 100
+
         config = cls(
             runs_dir=runs_dir,
             lock_dir=lock_dir,
             claude_config_dir=claude_config_dir,
             braintrust_api_key=braintrust_api_key,
             morph_api_key=morph_api_key,
+            max_diff_size_kb=max_diff_size_kb,
         )
 
         if validate:
