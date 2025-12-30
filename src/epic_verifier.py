@@ -132,6 +132,37 @@ def _load_prompt_template() -> str:
     return prompt_path.read_text()
 
 
+def _extract_json_from_code_blocks(text: str) -> str | None:
+    """Extract JSON content from markdown code blocks.
+
+    This function properly handles responses with multiple code blocks by
+    extracting each code block individually and returning the first one
+    that contains valid JSON (i.e., starts with '{').
+
+    Args:
+        text: The raw model response text that may contain markdown code blocks.
+
+    Returns:
+        The JSON string extracted from the first JSON code block, or None if
+        no valid JSON code block is found.
+    """
+    # Pattern to match individual code blocks non-greedily
+    # Matches: ```json ... ``` or ``` ... ```
+    # The .*? is non-greedy and DOTALL is NOT used, so we need to handle newlines
+    # Use a pattern that matches until the closing ```
+    code_block_pattern = r"```(?:json)?\s*\n?([\s\S]*?)```"
+
+    matches = re.finditer(code_block_pattern, text)
+
+    for match in matches:
+        content = match.group(1).strip()
+        # Check if this looks like JSON (starts with '{')
+        if content.startswith("{"):
+            return content
+
+    return None
+
+
 class ClaudeEpicVerificationModel:
     """Claude-based implementation of EpicVerificationModel protocol.
 
@@ -318,20 +349,21 @@ class ClaudeEpicVerificationModel:
     def _parse_verdict(self, response_text: str) -> EpicVerdict:
         """Parse model response into EpicVerdict.
 
+        Uses a robust code block parser that handles responses with multiple
+        markdown code blocks by extracting each block individually, avoiding
+        the issue where a greedy regex could span multiple blocks.
+
         Args:
             response_text: The raw model response text.
 
         Returns:
             Parsed EpicVerdict.
         """
-        # Extract JSON from response (may be wrapped in markdown code blocks)
-        json_match = re.search(
-            r"```(?:json)?\s*(\{.*\})\s*```", response_text, re.DOTALL
-        )
-        if json_match:
-            json_str = json_match.group(1)
-        else:
-            # Try to find raw JSON object
+        # Extract JSON from code blocks using the robust non-greedy parser
+        json_str = _extract_json_from_code_blocks(response_text)
+
+        if json_str is None:
+            # Try to find raw JSON object (not in code block)
             json_match = re.search(
                 r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", response_text, re.DOTALL
             )

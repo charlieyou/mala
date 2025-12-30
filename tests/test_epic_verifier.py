@@ -21,6 +21,7 @@ from src.epic_verifier import (
     ClaudeEpicVerificationModel,
     EpicVerifier,
     _compute_criterion_hash,
+    _extract_json_from_code_blocks,
     extract_spec_paths,
 )
 from src.models import EpicVerdict, RetryConfig, UnmetCriterion
@@ -865,6 +866,159 @@ class TestClaudeEpicVerificationModel:
             "Test criterion"
         )
 
+    def test_parses_json_with_multiple_code_blocks(self) -> None:
+        """Should extract JSON from first code block when multiple blocks exist."""
+        model = ClaudeEpicVerificationModel()
+        response = """Here is my analysis:
+
+First, let me show you the code that was reviewed:
+```python
+def example():
+    return 42
+```
+
+Now here is the verdict:
+```json
+{
+    "passed": true,
+    "confidence": 0.88,
+    "reasoning": "Tests exist",
+    "unmet_criteria": []
+}
+```
+
+And here's another block for reference:
+```
+some other content
+```
+"""
+        verdict = model._parse_verdict(response)
+        assert verdict.passed is True
+        assert verdict.confidence == 0.88
+
+    def test_parses_json_when_json_block_is_not_first(self) -> None:
+        """Should find JSON block even if other code blocks come first."""
+        model = ClaudeEpicVerificationModel()
+        response = """Analysis:
+
+Code snippet:
+```bash
+echo "hello world"
+```
+
+Result:
+```json
+{
+    "passed": false,
+    "confidence": 0.75,
+    "reasoning": "Missing tests",
+    "unmet_criteria": [
+        {"criterion": "Test coverage", "evidence": "No tests", "severity": "major"}
+    ]
+}
+```
+"""
+        verdict = model._parse_verdict(response)
+        assert verdict.passed is False
+        assert verdict.confidence == 0.75
+        assert len(verdict.unmet_criteria) == 1
+
+
+# ============================================================================
+# Test _extract_json_from_code_blocks helper
+# ============================================================================
+
+
+class TestExtractJsonFromCodeBlocks:
+    """Tests for the JSON extraction helper function."""
+
+    def test_extracts_from_single_json_block(self) -> None:
+        """Should extract JSON from a single json code block."""
+        text = '```json\n{"key": "value"}\n```'
+        result = _extract_json_from_code_blocks(text)
+        assert result == '{"key": "value"}'
+
+    def test_extracts_from_plain_code_block(self) -> None:
+        """Should extract JSON from a code block without language specifier."""
+        text = '```\n{"key": "value"}\n```'
+        result = _extract_json_from_code_blocks(text)
+        assert result == '{"key": "value"}'
+
+    def test_returns_none_when_no_code_blocks(self) -> None:
+        """Should return None when there are no code blocks."""
+        text = "Just plain text without any code blocks."
+        result = _extract_json_from_code_blocks(text)
+        assert result is None
+
+    def test_returns_none_when_no_json_in_code_blocks(self) -> None:
+        """Should return None when code blocks don't contain JSON."""
+        text = """```python
+def foo():
+    pass
+```"""
+        result = _extract_json_from_code_blocks(text)
+        assert result is None
+
+    def test_extracts_first_json_block_from_multiple(self) -> None:
+        """Should return first JSON code block when multiple exist."""
+        text = """```python
+code = "not json"
+```
+
+```json
+{"first": true}
+```
+
+```json
+{"second": true}
+```"""
+        result = _extract_json_from_code_blocks(text)
+        assert result == '{"first": true}'
+
+    def test_handles_code_block_with_backticks_spanning_multiple_lines(self) -> None:
+        """Should handle multiline JSON in code blocks."""
+        text = """```json
+{
+    "passed": true,
+    "confidence": 0.9,
+    "reasoning": "All good",
+    "unmet_criteria": []
+}
+```"""
+        result = _extract_json_from_code_blocks(text)
+        assert result is not None
+        import json
+
+        data = json.loads(result)
+        assert data["passed"] is True
+        assert data["confidence"] == 0.9
+
+    def test_skips_non_json_blocks_to_find_json(self) -> None:
+        """Should skip non-JSON blocks to find one that starts with '{'."""
+        text = """Here is the diff:
+```diff
+- old line
++ new line
+```
+
+And the result:
+```json
+{"result": "success"}
+```"""
+        result = _extract_json_from_code_blocks(text)
+        assert result == '{"result": "success"}'
+
+    def test_handles_empty_code_block(self) -> None:
+        """Should handle empty code blocks without crashing."""
+        text = """```
+```
+
+```json
+{"valid": true}
+```"""
+        result = _extract_json_from_code_blocks(text)
+        assert result == '{"valid": true}'
+
 
 # ============================================================================
 # Test lock usage
@@ -1534,7 +1688,9 @@ class TestRetryBehavior:
         )
         model = ClaudeEpicVerificationModel(retry_config=retry_config)
         # Use a simple template that doesn't conflict with .format()
-        model._prompt_template = "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+        model._prompt_template = (
+            "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+        )
 
         call_count = 0
 
@@ -1571,7 +1727,9 @@ class TestRetryBehavior:
         )
         model = ClaudeEpicVerificationModel(retry_config=retry_config)
         # Use a simple template that doesn't conflict with .format()
-        model._prompt_template = "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+        model._prompt_template = (
+            "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+        )
 
         call_count = 0
 
@@ -1600,7 +1758,9 @@ class TestRetryBehavior:
         )
         model = ClaudeEpicVerificationModel(retry_config=retry_config)
         # Use a simple template that doesn't conflict with .format()
-        model._prompt_template = "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+        model._prompt_template = (
+            "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+        )
 
         call_count = 0
 
@@ -1623,7 +1783,9 @@ class TestRetryBehavior:
         """Should return immediately on successful first attempt."""
         model = ClaudeEpicVerificationModel()
         # Use a simple template that doesn't conflict with .format()
-        model._prompt_template = "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+        model._prompt_template = (
+            "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+        )
 
         call_count = 0
 
