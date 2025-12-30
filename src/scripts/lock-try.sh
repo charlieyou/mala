@@ -7,6 +7,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MALA_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 if [[ $# -ne 1 ]]; then
     echo "Usage: lock-try.sh <filepath>" >&2
     exit 2
@@ -28,8 +31,4 @@ if ! is_literal_key "$filepath"; then
     fi
 fi
 
-if command -v uv >/dev/null 2>&1; then
-    exec uv run python -m src.tools.locking try "$filepath"
-else
-    exec python -m src.tools.locking try "$filepath"
-fi
+exec env PYTHONPATH="$MALA_ROOT" python -m src.tools.locking try "$filepath"

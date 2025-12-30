@@ -277,6 +277,8 @@ class E2ERunner:
             str(self.config.max_issues),
             "--timeout",
             str(int(self.config.timeout_seconds)),
+            "--disable-validations",
+            "e2e",
         ]
 
         # Use CommandRunner with buffer for cleanup time

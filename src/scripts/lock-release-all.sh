@@ -5,8 +5,7 @@
 
 set -euo pipefail
 
-if command -v uv >/dev/null 2>&1; then
-    exec uv run python -m src.tools.locking release-all
-else
-    exec python -m src.tools.locking release-all
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MALA_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+exec env PYTHONPATH="$MALA_ROOT" python -m src.tools.locking release-all

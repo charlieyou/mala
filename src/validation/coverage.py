@@ -534,12 +534,21 @@ class BaselineCoverageService:
             # This ensures we capture baseline even if it's below pyproject.toml threshold
             # Also replace any existing -m marker with "unit or integration" to
             # avoid end-to-end tests during baseline refresh.
+            # Remove xdist flags to avoid coverage merge flakiness in baseline refresh.
             new_pytest_cmd = []
             marker_expr: str | None = None
             skip_next = False
             for arg in pytest_cmd:
                 if skip_next:
                     skip_next = False
+                    continue
+                # Strip xdist flags for deterministic coverage generation
+                if arg in {"-n", "--numprocesses", "--dist"}:
+                    skip_next = True
+                    continue
+                if arg.startswith("-n=") or arg.startswith("--numprocesses="):
+                    continue
+                if arg.startswith("--dist="):
                     continue
                 if arg.startswith("--cov-fail-under="):
                     continue
@@ -573,19 +582,90 @@ class BaselineCoverageService:
             if "e2e" in marker_expr:
                 marker_expr = "unit or integration"
 
+            # Ensure XML coverage output is requested (needed for baseline).
+            if not any(
+                arg == "--cov-report=xml" or arg.startswith("--cov-report=xml")
+                for arg in new_pytest_cmd
+            ):
+                new_pytest_cmd.append("--cov-report=xml")
+
             new_pytest_cmd.append("--cov-fail-under=0")
             new_pytest_cmd.extend(["-m", marker_expr])
 
             # Run pytest - we ignore the exit code because tests may fail
             # but still generate a valid coverage.xml baseline
-            runner.run(new_pytest_cmd, env=env)
+            pytest_result = runner.run(new_pytest_cmd, env=env)
 
             # Check for coverage.xml in worktree
             worktree_coverage = worktree_path / "coverage.xml"
             if not worktree_coverage.exists():
-                return BaselineRefreshResult.fail(
-                    "No coverage.xml generated during baseline refresh"
-                )
+                # Fallback: combine coverage data if pytest didn't emit XML
+                coverage_data = [
+                    path
+                    for path in worktree_path.glob(".coverage*")
+                    if path.is_file() and not path.name.endswith(".xml")
+                ]
+
+                combine_result = None
+                xml_result = None
+
+                if coverage_data:
+                    # Use the same invocation style as pytest when possible.
+                    if (
+                        len(pytest_cmd) >= 3
+                        and pytest_cmd[0] == "uv"
+                        and pytest_cmd[1] == "run"
+                    ):
+                        coverage_base = ["uv", "run", "coverage"]
+                    elif (
+                        len(pytest_cmd) >= 3
+                        and pytest_cmd[1] == "-m"
+                        and pytest_cmd[2] == "pytest"
+                    ):
+                        coverage_base = [pytest_cmd[0], "-m", "coverage"]
+                    else:
+                        coverage_base = ["coverage"]
+
+                    combine_result = runner.run(
+                        [*coverage_base, "combine"],
+                        env=env,
+                    )
+                    if combine_result.returncode == 0:
+                        xml_result = runner.run(
+                            [*coverage_base, "xml", "-o", str(worktree_coverage)],
+                            env=env,
+                        )
+
+                if not worktree_coverage.exists():
+                    details: list[str] = []
+                    if pytest_result.timed_out:
+                        details.append("pytest timed out")
+                    elif pytest_result.returncode != 0:
+                        details.append(f"pytest exited {pytest_result.returncode}")
+                    pytest_tail = (
+                        pytest_result.stderr_tail() or pytest_result.stdout_tail()
+                    )
+                    if pytest_tail:
+                        details.append(f"pytest output: {pytest_tail}")
+                    if combine_result is not None and combine_result.returncode != 0:
+                        combine_tail = (
+                            combine_result.stderr_tail()
+                            or combine_result.stdout_tail()
+                        )
+                        if combine_tail:
+                            details.append(f"coverage combine failed: {combine_tail}")
+                    if xml_result is not None and xml_result.returncode != 0:
+                        xml_tail = (
+                            xml_result.stderr_tail() or xml_result.stdout_tail()
+                        )
+                        if xml_tail:
+                            details.append(f"coverage xml failed: {xml_tail}")
+
+                    detail_msg = f" ({'; '.join(details)})" if details else ""
+                    return BaselineRefreshResult.fail(
+                        "No coverage.xml generated during baseline refresh"
+                        + detail_msg
+                    )
 
             # Atomic rename to main repo
             temp_coverage = baseline_path.with_suffix(".xml.tmp")

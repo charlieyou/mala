@@ -1453,6 +1453,80 @@ class TestSpecRunnerBaselineRefresh:
         assert result.percent == 85.0
         assert baseline_path.exists()
 
+    def test_baseline_refresh_generates_xml_from_coverage_data(
+        self, service: BaselineCoverageService, tmp_path: Path
+    ) -> None:
+        """Fallback should generate coverage.xml when only coverage data exists."""
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["uv", "run", "pytest", "--cov=src", "--cov-report=xml"],
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        mock_worktree = MagicMock(spec=WorktreeContext)
+        mock_worktree.state = WorktreeState.CREATED
+        mock_worktree.path = tmp_path / "baseline-worktree"
+        mock_worktree.path.mkdir()
+
+        # Simulate coverage data without an XML report.
+        (mock_worktree.path / ".coverage").write_text("dummy")
+
+        baseline_path = tmp_path / "coverage.xml"
+        assert not baseline_path.exists()
+
+        commands: list[list[str]] = []
+
+        class FakeRunner:
+            def __init__(self, cwd: Path, timeout_seconds: float | None = None) -> None:
+                self.cwd = cwd
+
+            def run(
+                self, cmd: list[str], env: dict[str, str] | None = None
+            ) -> CommandResult:
+                commands.append(cmd)
+                if "coverage" in cmd and "xml" in cmd:
+                    (self.cwd / "coverage.xml").write_text(
+                        '<?xml version="1.0"?>\n'
+                        '<coverage line-rate="0.90" branch-rate="0.85" />'
+                    )
+                return CommandResult(command=cmd, returncode=0, stdout="", stderr="")
+
+        def mock_git_run(args: list[str], **kwargs: object) -> CommandResult:
+            if "status" in args and "--porcelain" in args:
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
+            if "log" in args:
+                return CommandResult(
+                    command=args, returncode=0, stdout="1700000000\n", stderr=""
+                )
+            return CommandResult(command=args, returncode=0, stdout="", stderr="")
+
+        with (
+            patch(
+                "src.validation.worktree.create_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.validation.worktree.remove_worktree",
+                return_value=mock_worktree,
+            ),
+            patch("src.tools.command_runner.CommandRunner", FakeRunner),
+            patch("src.validation.coverage.run_command", side_effect=mock_git_run),
+            patch("src.tools.locking.try_lock", return_value=True),
+        ):
+            result = service.refresh_if_stale(spec)
+
+        assert result.success
+        assert baseline_path.exists()
+        assert any("combine" in cmd for cmd in commands)
+        assert any("xml" in cmd for cmd in commands)
+
     def test_baseline_refresh_skipped_when_fresh(
         self, service: BaselineCoverageService, tmp_path: Path
     ) -> None:

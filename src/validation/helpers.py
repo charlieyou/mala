@@ -118,7 +118,19 @@ def write_fixture_repo(repo_path: Path) -> None:
         "def add(a: int, b: int) -> int:\n    return a - b\n"
     )
     (repo_path / "tests" / "test_app.py").write_text(
-        "from app import add\n\n\ndef test_add():\n    assert add(2, 2) == 4\n"
+        "\n".join(
+            [
+                "import pytest",
+                "",
+                "from app import add",
+                "",
+                "",
+                "@pytest.mark.unit",
+                "def test_add():",
+                "    assert add(2, 2) == 4",
+            ]
+        )
+        + "\n"
     )
     (repo_path / "pyproject.toml").write_text(
         "\n".join(
@@ -131,10 +143,21 @@ def write_fixture_repo(repo_path: Path) -> None:
                 "dependencies = []",
                 "",
                 "[project.optional-dependencies]",
-                'dev = ["pytest>=8.0.0", "pytest-cov>=4.1.0"]',
+                'dev = ["pytest>=8.0.0", "pytest-cov>=4.1.0", "pytest-xdist>=3.8.0"]',
                 "",
                 "[tool.pytest.ini_options]",
                 'pythonpath = ["src"]',
+                "markers = [",
+                '    "unit: fast, isolated tests (default)",',
+                '    "integration: tests that exercise multiple components",',
+                "]",
+                "",
+                "[dependency-groups]",
+                "dev = [",
+                '    "pytest>=9.0.2",',
+                '    "pytest-cov>=6.0.0",',
+                '    "pytest-xdist>=3.8.0",',
+                "]",
             ]
         )
         + "\n"
