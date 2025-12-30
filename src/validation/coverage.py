@@ -197,7 +197,11 @@ def check_coverage_threshold(
             branch_rate=result.branch_rate,
         )
 
-    passed = result.percent >= min_percent
+    # Use small epsilon for floating-point comparison to avoid precision issues
+    # where coverage like 88.79999 fails against threshold 88.8 even though
+    # they display as the same value
+    epsilon = 1e-9
+    passed = result.percent >= min_percent - epsilon
 
     if passed:
         return CoverageResult(

@@ -337,6 +337,28 @@ class TestCheckCoverageThreshold:
         assert checked.passed is True
         assert checked.status == CoverageStatus.PASSED
 
+    def test_check_floating_point_precision_edge_case(self) -> None:
+        """Test that floating-point precision doesn't cause false failures.
+
+        This tests the edge case where coverage like 88.79999999999999 should
+        pass against threshold 88.8 since they display as the same value.
+        """
+        # Simulate a floating-point precision issue where the actual value
+        # is infinitesimally below the threshold due to float representation
+        result = CoverageResult(
+            percent=88.8 - 1e-10,  # Just below 88.8 due to float precision
+            passed=False,
+            status=CoverageStatus.PARSED,
+            report_path=Path("coverage.xml"),
+            line_rate=0.888 - 1e-12,
+        )
+
+        checked = check_coverage_threshold(result, min_percent=88.8)
+
+        # Should pass because the difference is within epsilon tolerance
+        assert checked.passed is True
+        assert checked.status == CoverageStatus.PASSED
+
     def test_check_below_threshold(self) -> None:
         result = CoverageResult(
             percent=50.0,
