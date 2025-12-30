@@ -13,7 +13,7 @@ An agent that verifies all commits made for issues under an epic collectively me
 
 ## Non-Goals (Out of Scope)
 
-- Code quality review (already handled by existing Codex review)
+- Code quality review (already handled by external review via Cerberus)
 - Individual issue validation (already handled by QualityGate)
 - Performance testing or load testing
 - Manual test execution

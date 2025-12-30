@@ -60,16 +60,16 @@ npm install -g @anthropic-ai/claude-code
 claude login
 ```
 
-### Codex
+### Cerberus Review-Gate (Optional)
 
-[Codex](https://github.com/openai/codex) is used for automated code review after agents complete their work. Install and authenticate:
+[Cerberus](https://github.com/cyouAI/cerberus) provides automated code review via external reviewers (Codex, Gemini, Claude) after agents complete their work. Install if you want automated review:
 
 ```bash
-npm install -g @openai/codex
-codex login
+# Cerberus CLI (optional - for automated code review)
+pip install cerberus-review
 ```
 
-Codex review can be disabled with `--disable-validations=codex-review`.
+Review can be disabled with `--disable-validations=review`.
 
 ### Creating Issues Correctly
 
@@ -173,7 +173,7 @@ mala (Python Orchestrator)
 5. **On file conflict**: Agent polls every 1s for lock (up to 60s timeout), returns BLOCKED if unavailable
 6. **Quality gate**: After agent completes, orchestrator verifies commit exists and validation commands ran
 7. **Same-session re-entry**: If gate fails, orchestrator resumes the SAME Claude session with failure context
-8. **Codex review**: After gate passes, automated code review with fix cycle (disable with `--disable-validations=codex-review`)
+8. **External review**: After gate passes, automated code review via Cerberus review-gate (disable with `--disable-validations=review`)
 9. **On success**: Orchestrator closes the issue via `bd close`
 10. **On failure**: After retries exhausted, orchestrator marks issue with `needs-followup` label and records log path in notes
 11. **Run-level validation**: After all issues complete, a final validation pass catches cross-issue regressions (see [Run-Level Validation](#run-level-validation))
@@ -213,7 +213,7 @@ Each spawned agent follows this workflow:
 6. **Commit**: Stage and commit changes locally
 7. **Cleanup**: Release locks (orchestrator closes issue after gate passes)
 
-Note: Agents do NOT close issues directly. The orchestrator closes issues only after the quality gate (and optional Codex review) passes.
+Note: Agents do NOT close issues directly. The orchestrator closes issues only after the quality gate (and optional external review) passes.
 
 ### Resolution Markers
 
@@ -225,7 +225,7 @@ Agents can signal non-implementation resolutions by printing these markers:
 | `ISSUE_OBSOLETE` | Issue is no longer relevant (superseded, invalid, etc.) | Orchestrator closes issue without requiring commit |
 | `ISSUE_ALREADY_COMPLETE` | Work was already done in a prior commit (agent found existing solution) | Orchestrator closes issue, referencing the prior commit |
 
-These markers allow agents to handle issues that don't need implementation without failing the quality gate. All three skip Codex review since there's no new code to review.
+These markers allow agents to handle issues that don't need implementation without failing the quality gate. All three skip external review since there's no new code to review.
 
 ## Quality Gate
 
@@ -253,23 +253,22 @@ This continues for up to `max_gate_retries` attempts (default: 3). The orchestra
 - **Previous commit hash**: Detects "no progress" when commit is unchanged
 - **No-progress detection**: Stops retries early if agent makes no meaningful changes
 
-### Codex Review
+### External Review (Cerberus Review-Gate)
 
-Codex review is enabled by default. After the deterministic gate passes:
+External review via Cerberus is enabled by default. After the deterministic gate passes:
 
-1. **Codex review runs**: Invokes `codex exec` with `--output-schema` for structured JSON output
-2. **Scope verification**: Review checks the diff against the issue description and acceptance criteria to catch incomplete implementations
-3. **JSON parsing**: Output must be valid JSON with `passed` boolean and `issues` array
-4. **Parse retry**: If JSON is invalid, retries once with stricter prompt (fail-closed behavior)
-5. **Review failure handling**: If review finds errors, orchestrator resumes the SAME session with:
-   - List of issues (file, line, severity, message)
+1. **Review spawns**: Cerberus `review-gate` spawns external reviewers (Codex, Gemini, Claude) to review the diff
+2. **Scope verification**: Reviewers check the diff against the issue description and acceptance criteria to catch incomplete implementations
+3. **Consensus**: All available reviewers must unanimously pass for the review to pass
+4. **Review failure handling**: If any reviewer finds errors, orchestrator resumes the SAME session with:
+   - List of issues (file, line, priority, message) from all reviewers
    - Instructions to fix errors and re-run validations
    - Cumulative diff from baseline (includes all work across retry attempts)
-6. **Re-gating**: After fixes, runs both deterministic gate AND Codex review again
+5. **Re-gating**: After fixes, runs both deterministic gate AND external review again
 
-Review retries are capped at `max_review_retries` (default: 3). Use `--disable-validations=codex-review` to disable.
+Review retries are capped at `max_review_retries` (default: 2). Use `--disable-validations=review` to disable.
 
-**Skipped for no-work resolutions**: Issues resolved with `ISSUE_NO_CHANGE`, `ISSUE_OBSOLETE`, or `ISSUE_ALREADY_COMPLETE` skip Codex review entirely since there's no new code to review.
+**Skipped for no-work resolutions**: Issues resolved with `ISSUE_NO_CHANGE`, `ISSUE_OBSOLETE`, or `ISSUE_ALREADY_COMPLETE` skip external review entirely since there's no new code to review.
 
 ### Failure Handling
 
@@ -382,7 +381,7 @@ spec = build_validation_spec(
 - `integration-tests`: Exclude integration tests from pytest
 - `coverage`: Disable coverage checking
 - `e2e`: Disable E2E fixture repo test
-- `codex-review`: Disable Codex review
+- `review`: Disable external review (Cerberus review-gate)
 
 ### Code vs Docs Classification
 
@@ -441,7 +440,7 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | `--epic`, `-e` | - | Only process tasks that are children of this epic |
 | `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
 | `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
-| `--max-review-retries` | 2 | Maximum Codex review retry attempts per issue |
+| `--max-review-retries` | 2 | Maximum external review retry attempts per issue |
 | `--disable-validations` | - | Comma-separated list (see below) |
 | `--coverage-threshold` | 85.0 | Minimum coverage percentage (0-100) |
 | `--wip` | false | Include and prioritize in_progress issues (without this flag, only open issues are fetched) |
@@ -457,7 +456,7 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | `integration-tests` | Exclude integration tests from pytest |
 | `coverage` | Disable coverage checking |
 | `e2e` | Disable E2E fixture repo test |
-| `codex-review` | Disable Codex review |
+| `review` | Disable external review (Cerberus review-gate) |
 | `followup-on-run-validate-fail` | Don't mark issues with `needs-followup` on run-level validation failure |
 
 ### Global Configuration

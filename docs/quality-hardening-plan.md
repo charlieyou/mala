@@ -158,14 +158,14 @@ GateDecision:
 ## 2) Architecture Overview
 
 ### Validation Flow
-Agent -> EvidenceGate -> Post-commit clean-room validation -> Codex review
+Agent -> EvidenceGate -> Post-commit clean-room validation -> External review
 -> Run-level validation -> Orchestrator close.
 
 Key properties:
 - EvidenceGate is fast and enforces compliance via log parsing.
 - Clean-room validation is the source of truth for per-issue correctness.
 - Run-level validation verifies combined state across all issues.
-- Codex review is a correctness backstop.
+- External review (Cerberus review-gate) is a correctness backstop.
 - Issues do not close until run-level validation passes.
 
 ### Module Structure
@@ -206,8 +206,10 @@ Related modules:
     `~/.config/mala/worktrees/<run_id>/<issue_id>/<attempt>`
   - Cleanup on pass/fail unless `--keep-worktrees` is set.
 
-### Gate 3: Codex Review (default ON)
+### Gate 3: External Review (default ON)
+- Uses Cerberus review-gate with multiple external reviewers (Codex, Gemini, Claude).
 - Runs after clean-room validation (avoids burning review cycles on broken builds).
+- Requires unanimous consensus from all available reviewers.
 - On failure: same-session re-entry, then re-run Gate 1 + Gate 2 + Gate 3.
 - Commit hash per retry:
   - Each attempt re-reads the latest `bd-<issue>` commit hash.
@@ -228,7 +230,7 @@ Defaults (all ON):
 - integration tests: ON
 - coverage: ON (min 85%)
 - E2E fixture repo: ON (run-level only)
-- codex review: ON
+- external review: ON
 
 Disable list (comma-separated via `--disable-validations <csv>`):
 - `post-validate`: Skip test commands entirely
@@ -236,7 +238,7 @@ Disable list (comma-separated via `--disable-validations <csv>`):
 - `integration-tests`: Exclude integration tests from pytest
 - `coverage`: Disable coverage checking
 - `e2e`: Disable E2E fixture repo test
-- `codex-review`: Disable Codex review
+- `review`: Disable external review (Cerberus review-gate)
 - `followup-on-run-validate-fail`: Skip follow-up issue creation
 
 Other flags:
@@ -312,11 +314,11 @@ Doc extensions: `.md`, `.rst`, `.txt`
 Per-issue retries (same session):
 - EvidenceGate failure -> re-entry
 - Post-commit validation failure -> re-entry
-- Codex review failure -> re-entry
+- External review failure -> re-entry
 
 Retry limits:
 - `max_gate_retries` for EvidenceGate (default 3)
-- `max_review_retries` for Codex review (default 5)
+- `max_review_retries` for external review (default 2)
 
 Retry exhaustion behavior:
 - If a per-issue retry limit is hit, mark the issue failed and continue.
@@ -341,7 +343,27 @@ Run-level validation failure:
 
 Raw stdout/stderr stored in `~/.config/mala/validation/`.
 
-## 11) Deferred / Future
+## 11) Migration Notes (Cerberus Review-Gate)
+
+### Breaking Changes (v0.x → Cerberus integration)
+
+**CLI flag changes:**
+- `--disable-validations=codex-review` → `--disable-validations=review`
+- `--codex-thinking-mode` flag removed (reasoning effort now configured in Cerberus)
+
+**Metadata field renames:**
+- `codex_review_log_path` → `review_log_path` (in `IssueRun`)
+- `codex_review` → `review_enabled` (in `RunConfig`)
+- `codex_review_enabled` → `review_enabled` (in `LifecycleConfig`)
+
+**Impact:** Historical run metadata files (in `~/.config/mala/runs/`) with the old field names will fail to parse. Old run data is not migrated—accept this as a clean break since historical metadata is non-critical.
+
+**Code module changes:**
+- `src/codex_review.py` deleted, replaced by `src/cerberus_review.py`
+- `CodexReviewResult` → `ReviewResult` (new dataclass with Cerberus-compatible fields)
+- `run_codex_review()` → `run_cerberus_review()` (new adapter function)
+
+## 12) Deferred / Future
 
 - Checkpoint/resume (`mala resume <run_id>`) using run metadata.
 - Configurable code classification via `pyproject.toml` or `.mala.toml`.
