@@ -285,9 +285,9 @@ def run(
         int,
         typer.Option(
             "--max-review-retries",
-            help="Maximum codex review retry attempts per issue (default: 2)",
+            help="Maximum codex review retry attempts per issue (default: 3)",
         ),
-    ] = 2,
+    ] = 3,
     disable_validations: Annotated[
         str | None,
         typer.Option(
