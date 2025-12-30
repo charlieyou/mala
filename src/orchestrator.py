@@ -147,9 +147,16 @@ class DefaultReviewer:
     """
 
     repo_path: Path
+    bin_path: Path | None = None  # Path to cerberus bin/ directory
     spawn_args: tuple[str, ...] = field(default_factory=tuple)
     wait_args: tuple[str, ...] = field(default_factory=tuple)
     env: dict[str, str] = field(default_factory=dict)
+
+    def _get_review_gate_cmd(self) -> str:
+        """Get the full path to review-gate command."""
+        if self.bin_path:
+            return str(self.bin_path / "review-gate")
+        return "review-gate"
 
     async def __call__(
         self,
@@ -192,11 +199,14 @@ class DefaultReviewer:
             pass
 
         # Build spawn command
-        spawn_cmd = ["review-gate", "spawn-code-review", "--diff", diff_range]
+        # Note: spawn-code-review takes range as positional arg, not --diff
+        spawn_cmd = [self._get_review_gate_cmd(), "spawn-code-review"]
         if context_file:
             spawn_cmd.extend(["--context-file", str(context_file)])
         if self.spawn_args:
             spawn_cmd.extend(self.spawn_args)
+        # Diff range goes at the end as positional argument
+        spawn_cmd.append(diff_range)
 
         # Run spawn command
         try:
@@ -246,7 +256,7 @@ class DefaultReviewer:
         # Build wait command with timeout
         wait_timeout = self._extract_wait_timeout(self.wait_args)
         wait_cmd = [
-            "review-gate",
+            self._get_review_gate_cmd(),
             "wait",
             "--json",
             "--session-key",
@@ -530,6 +540,7 @@ class MalaOrchestrator:
         self.code_reviewer: CodeReviewer = (
             DefaultReviewer(
                 repo_path=self.repo_path,
+                bin_path=self._config.cerberus_bin_path,
                 spawn_args=self._config.cerberus_spawn_args,
                 wait_args=self._config.cerberus_wait_args,
                 env=dict(self._config.cerberus_env),

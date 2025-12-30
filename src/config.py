@@ -68,6 +68,39 @@ def _normalize_cerberus_env(env: dict[str, str]) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(env.items()))
 
 
+def _find_cerberus_bin_path(claude_config_dir: Path) -> Path | None:
+    """Find the cerberus plugin bin directory from Claude's installed plugins.
+
+    Looks up the cerberus plugin installation path from Claude's
+    installed_plugins.json and returns the path to its bin/ directory.
+
+    Args:
+        claude_config_dir: Path to Claude config directory (typically ~/.claude).
+
+    Returns:
+        Path to cerberus bin directory, or None if not found.
+    """
+    plugins_file = claude_config_dir / "plugins" / "installed_plugins.json"
+    if not plugins_file.exists():
+        return None
+
+    try:
+        data = json.loads(plugins_file.read_text())
+        # Look for cerberus plugin (key format: "cerberus@cerberus" or similar)
+        for key, installs in data.items():
+            if "cerberus" in key.lower() and isinstance(installs, list) and installs:
+                # Get the first (most recent) installation
+                install_path = installs[0].get("installPath")
+                if install_path:
+                    bin_path = Path(install_path) / "bin"
+                    if bin_path.exists():
+                        return bin_path
+    except (json.JSONDecodeError, KeyError, TypeError):
+        pass
+
+    return None
+
+
 def _safe_int(value: str | None, default: int) -> int:
     """Safely parse an integer with fallback to default."""
     if value is None:
@@ -160,6 +193,7 @@ class MalaConfig:
     # Review settings
     review_enabled: bool = field(default=True)
     review_timeout: int = field(default=300)
+    cerberus_bin_path: Path | None = None  # Path to cerberus bin/ directory
     cerberus_spawn_args: tuple[str, ...] = field(default_factory=tuple)
     cerberus_wait_args: tuple[str, ...] = field(default_factory=tuple)
     cerberus_env: tuple[tuple[str, str], ...] = field(default_factory=tuple)
@@ -295,6 +329,9 @@ class MalaConfig:
             parse_errors.append(str(exc))
             cerberus_env = {}
 
+        # Auto-detect cerberus bin path from Claude plugins
+        cerberus_bin_path = _find_cerberus_bin_path(claude_config_dir)
+
         # Get epic verification settings
         max_diff_size_kb = _safe_int(
             os.environ.get("MALA_MAX_DIFF_SIZE_KB"), default=100
@@ -314,6 +351,7 @@ class MalaConfig:
             braintrust_api_key=braintrust_api_key,
             morph_api_key=morph_api_key,
             review_timeout=review_timeout if review_timeout is not None else 300,
+            cerberus_bin_path=cerberus_bin_path,
             cerberus_spawn_args=tuple(cerberus_spawn_args),
             cerberus_wait_args=tuple(cerberus_wait_args),
             cerberus_env=_normalize_cerberus_env(cerberus_env),
