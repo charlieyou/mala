@@ -2580,12 +2580,12 @@ class TestValidationResultMetadata:
         # Validation field should be populated from gate evidence
         assert issue_run.validation is not None
         assert issue_run.validation.passed is True
-        # Commands run should match what was in evidence
+        # Commands run should match what was in evidence (using command names, not kind values)
         assert set(issue_run.validation.commands_run) == {
-            "test",
-            "lint",
-            "format",
-            "typecheck",
+            "pytest",
+            "ruff check",
+            "ruff format",
+            "ty check",
         }
         assert issue_run.validation.commands_failed == []
 
@@ -2695,10 +2695,10 @@ class TestValidationResultMetadata:
         assert issue_run.validation is not None
         assert issue_run.validation.passed is False
         assert set(issue_run.validation.commands_run) == {
-            "test",
-            "lint",
-            "format",
-            "typecheck",
+            "pytest",
+            "ruff check",
+            "ruff format",
+            "ty check",
         }
         # Failed commands should match gate evidence
         assert issue_run.validation.commands_failed == ["ruff check"]

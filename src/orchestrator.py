@@ -518,8 +518,11 @@ class MalaOrchestrator:
 
                 # Derive validation metadata from gate evidence (no re-running)
                 if evidence is not None:
+                    # Use KIND_TO_NAME for consistent command names with commands_failed
                     commands_run = [
-                        kind.value for kind, ran in evidence.commands_ran.items() if ran
+                        QualityGate.KIND_TO_NAME.get(kind, kind.value)
+                        for kind, ran in evidence.commands_ran.items()
+                        if ran
                     ]
                     # Filter to only show commands that affected the gate decision
                     # (exclude ignored commands like 'uv sync')
@@ -555,8 +558,11 @@ class MalaOrchestrator:
             # validation_result.passed reflects gate's validation status, not overall run
             # (run may fail due to review even if validation passed)
             if evidence is not None:
+                # Use KIND_TO_NAME for consistent command names with commands_failed
                 commands_run = [
-                    kind.value for kind, ran in evidence.commands_ran.items() if ran
+                    QualityGate.KIND_TO_NAME.get(kind, kind.value)
+                    for kind, ran in evidence.commands_ran.items()
+                    if ran
                 ]
                 # Filter to only show commands that affected the gate decision
                 # (exclude ignored commands like 'uv sync')
