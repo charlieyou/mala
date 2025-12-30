@@ -429,11 +429,11 @@ class ConsoleEventSink:
 
     def on_issues_committed(self) -> None:
         """Log issues.jsonl commit."""
-        log_verbose("◦", "Committed .beads/issues.jsonl", Colors.MUTED)
+        log("◐", "Committed .beads/issues.jsonl", Colors.MUTED)
 
     def on_run_metadata_saved(self, path: str) -> None:
         """Log run metadata save."""
-        log_verbose("◦", f"Saved run metadata: {path}", Colors.MUTED)
+        log("◐", f"Run metadata: {path}", Colors.MUTED)
 
     def on_run_level_validation_disabled(self) -> None:
         """Log when run-level validation is disabled."""
