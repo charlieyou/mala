@@ -9,6 +9,7 @@ import pytest
 import typer
 
 import src.orchestrator
+import src.orchestrator_factory
 import src.beads_client
 import src.tools.locking
 
@@ -147,13 +148,42 @@ class TestImportSafety:
 
 
 class DummyOrchestrator:
-    last_kwargs: dict[str, Any] | None = None
+    """Dummy orchestrator for testing CLI parameter passing."""
+
+    last_kwargs: ClassVar[dict[str, Any] | None] = None
+    last_config: ClassVar[Any | None] = None
+    last_mala_config: ClassVar[Any | None] = None
+    last_deps: ClassVar[Any | None] = None
 
     def __init__(self, **kwargs: object) -> None:
         type(self).last_kwargs = kwargs
 
     async def run(self) -> tuple[int, int]:
         return (1, 1)
+
+    @classmethod
+    def reset(cls) -> None:
+        """Reset class state between tests."""
+        cls.last_kwargs = None
+        cls.last_config = None
+        cls.last_mala_config = None
+        cls.last_deps = None
+
+
+def mock_create_orchestrator(
+    config: object, *, mala_config: object = None, deps: object = None
+) -> DummyOrchestrator:
+    """Mock factory that captures args and returns a DummyOrchestrator."""
+    DummyOrchestrator.last_config = config
+    DummyOrchestrator.last_mala_config = mala_config
+    DummyOrchestrator.last_deps = deps
+    # Also store in last_kwargs for backward-compat assertions
+    DummyOrchestrator.last_kwargs = {
+        "config": config,
+        "mala_config": mala_config,
+        "deps": deps,
+    }
+    return DummyOrchestrator()
 
 
 def test_run_without_morph_api_key_passes_config(
@@ -162,22 +192,24 @@ def test_run_without_morph_api_key_passes_config(
     """Test that CLI passes config to orchestrator when MORPH_API_KEY is missing."""
     cli = _reload_cli(monkeypatch)
     monkeypatch.delenv("MORPH_API_KEY", raising=False)
+    DummyOrchestrator.reset()
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(repo_path=tmp_path)
 
     assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_kwargs is not None
-    # CLI now passes config instead of morph_enabled
-    assert "config" in DummyOrchestrator.last_kwargs
-    config = DummyOrchestrator.last_kwargs["config"]
-    assert config.morph_api_key is None
-    assert config.morph_enabled is False
+    assert DummyOrchestrator.last_config is not None
+    # MalaConfig is passed via mala_config
+    mala_config = DummyOrchestrator.last_mala_config
+    assert mala_config.morph_api_key is None
+    assert mala_config.morph_enabled is False
 
 
 def test_run_with_morph_api_key_passes_config(
@@ -186,22 +218,24 @@ def test_run_with_morph_api_key_passes_config(
     """Test that CLI passes config with morph_api_key when MORPH_API_KEY is set."""
     cli = _reload_cli(monkeypatch)
     monkeypatch.setenv("MORPH_API_KEY", "test-key")
+    DummyOrchestrator.reset()
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(repo_path=tmp_path)
 
     assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_kwargs is not None
-    # CLI now passes config instead of morph_enabled
-    assert "config" in DummyOrchestrator.last_kwargs
-    config = DummyOrchestrator.last_kwargs["config"]
-    assert config.morph_api_key == "test-key"
-    assert config.morph_enabled is True
+    assert DummyOrchestrator.last_config is not None
+    # MalaConfig is passed via mala_config
+    mala_config = DummyOrchestrator.last_mala_config
+    assert mala_config.morph_api_key == "test-key"
+    assert mala_config.morph_enabled is True
 
 
 def test_run_invalid_only_exits(
@@ -226,6 +260,7 @@ def test_run_invalid_only_exits(
 def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cli = _reload_cli(monkeypatch)
     monkeypatch.setenv("MORPH_API_KEY", "test-key")
+    DummyOrchestrator.reset()
 
     verbose_calls = {"enabled": None}
 
@@ -234,7 +269,9 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", _set_verbose)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -253,15 +290,17 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
 
     assert excinfo.value.exit_code == 0
     assert verbose_calls["enabled"] is True
-    assert DummyOrchestrator.last_kwargs is not None
-    assert DummyOrchestrator.last_kwargs["only_ids"] == {"id-1", "id-2"}
+    # OrchestratorConfig is passed via config
+    orchestrator_config = DummyOrchestrator.last_config
+    assert orchestrator_config is not None
+    assert orchestrator_config.only_ids == {"id-1", "id-2"}
     # review_timeout is passed via cli_args for logging/metadata
-    assert DummyOrchestrator.last_kwargs["cli_args"]["review_timeout"] == 600
-    # CLI now passes config instead of morph_enabled
-    config = DummyOrchestrator.last_kwargs["config"]
-    assert config.morph_enabled is True
-    # review_timeout is also applied to config for orchestrator use
-    assert config.review_timeout == 600
+    assert orchestrator_config.cli_args["review_timeout"] == 600
+    # MalaConfig is passed via mala_config
+    mala_config = DummyOrchestrator.last_mala_config
+    assert mala_config.morph_enabled is True
+    # review_timeout is also applied to mala_config for orchestrator use
+    assert mala_config.review_timeout == 600
     assert config_dir.exists()
 
 
@@ -279,7 +318,9 @@ def test_run_verbose_mode_sets_verbose_true(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", _set_verbose)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -303,7 +344,9 @@ def test_run_default_quiet_mode(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", _set_verbose)
 
     with pytest.raises(typer.Exit):
@@ -507,7 +550,9 @@ def test_run_disable_validations_valid(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -517,8 +562,8 @@ def test_run_disable_validations_valid(
         )
 
     assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_kwargs is not None
-    assert DummyOrchestrator.last_kwargs["disable_validations"] == {
+    assert DummyOrchestrator.last_config is not None
+    assert DummyOrchestrator.last_config.disable_validations == {
         "coverage",
         "integration-tests",
         "e2e",
@@ -592,7 +637,9 @@ def test_run_validation_flags_passed_to_orchestrator(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -603,9 +650,9 @@ def test_run_validation_flags_passed_to_orchestrator(
         )
 
     assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_kwargs is not None
-    assert DummyOrchestrator.last_kwargs["disable_validations"] == {"post-validate"}
-    assert DummyOrchestrator.last_kwargs["coverage_threshold"] == 72.5
+    assert DummyOrchestrator.last_config is not None
+    assert DummyOrchestrator.last_config.disable_validations == {"post-validate"}
+    assert DummyOrchestrator.last_config.coverage_threshold == 72.5
 
 
 def test_run_validation_flags_defaults(
@@ -617,17 +664,19 @@ def test_run_validation_flags_defaults(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit):
         cli.run(repo_path=tmp_path)
 
-    assert DummyOrchestrator.last_kwargs is not None
-    assert DummyOrchestrator.last_kwargs["disable_validations"] is None
-    assert DummyOrchestrator.last_kwargs["coverage_threshold"] is None
-    assert DummyOrchestrator.last_kwargs["prioritize_wip"] is False
-    assert DummyOrchestrator.last_kwargs["focus"] is True
+    assert DummyOrchestrator.last_config is not None
+    assert DummyOrchestrator.last_config.disable_validations is None
+    assert DummyOrchestrator.last_config.coverage_threshold is None
+    assert DummyOrchestrator.last_config.prioritize_wip is False
+    assert DummyOrchestrator.last_config.focus is True
 
 
 def test_run_wip_flag_passed_to_orchestrator(
@@ -639,15 +688,17 @@ def test_run_wip_flag_passed_to_orchestrator(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(repo_path=tmp_path, wip=True)
 
     assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_kwargs is not None
-    assert DummyOrchestrator.last_kwargs["prioritize_wip"] is True
+    assert DummyOrchestrator.last_config is not None
+    assert DummyOrchestrator.last_config.prioritize_wip is True
 
 
 def test_run_focus_flag_default_true(
@@ -659,15 +710,17 @@ def test_run_focus_flag_default_true(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(repo_path=tmp_path)
 
     assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_kwargs is not None
-    assert DummyOrchestrator.last_kwargs["focus"] is True
+    assert DummyOrchestrator.last_config is not None
+    assert DummyOrchestrator.last_config.focus is True
 
 
 def test_run_no_focus_flag_passed_to_orchestrator(
@@ -679,15 +732,17 @@ def test_run_no_focus_flag_passed_to_orchestrator(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(repo_path=tmp_path, focus=False)
 
     assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_kwargs is not None
-    assert DummyOrchestrator.last_kwargs["focus"] is False
+    assert DummyOrchestrator.last_config is not None
+    assert DummyOrchestrator.last_config.focus is False
 
 
 def test_run_focus_composes_with_wip(
@@ -699,16 +754,18 @@ def test_run_focus_composes_with_wip(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(repo_path=tmp_path, focus=True, wip=True)
 
     assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_kwargs is not None
-    assert DummyOrchestrator.last_kwargs["focus"] is True
-    assert DummyOrchestrator.last_kwargs["prioritize_wip"] is True
+    assert DummyOrchestrator.last_config is not None
+    assert DummyOrchestrator.last_config.focus is True
+    assert DummyOrchestrator.last_config.prioritize_wip is True
 
 
 def test_run_review_disabled_via_disable_validations(
@@ -720,7 +777,9 @@ def test_run_review_disabled_via_disable_validations(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -730,8 +789,8 @@ def test_run_review_disabled_via_disable_validations(
         )
 
     assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_kwargs is not None
-    assert DummyOrchestrator.last_kwargs["disable_validations"] == {"review"}
+    assert DummyOrchestrator.last_config is not None
+    assert DummyOrchestrator.last_config.disable_validations == {"review"}
 
 
 def test_disable_validations_legacy_codex_value_rejected(
@@ -772,19 +831,20 @@ def test_run_review_timeout_default(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(repo_path=tmp_path)
 
     assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_kwargs is not None
-    # review_timeout is passed via cli_args for logging/metadata
-    assert DummyOrchestrator.last_kwargs["cli_args"]["review_timeout"] == 300
-    # review_timeout is also applied to config for orchestrator use
-    config = DummyOrchestrator.last_kwargs["config"]
-    assert config.review_timeout == 300
+    # review_timeout is passed via cli_args (inside OrchestratorConfig)
+    assert DummyOrchestrator.last_config is not None
+    assert DummyOrchestrator.last_config.cli_args["review_timeout"] == 300
+    # review_timeout is also applied to mala_config for orchestrator use
+    assert DummyOrchestrator.last_mala_config.review_timeout == 300
 
 
 def test_run_review_timeout_custom(
@@ -796,19 +856,20 @@ def test_run_review_timeout_custom(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(repo_path=tmp_path, review_timeout=600)
 
     assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_kwargs is not None
-    # review_timeout is passed via cli_args for logging/metadata
-    assert DummyOrchestrator.last_kwargs["cli_args"]["review_timeout"] == 600
-    # review_timeout is also applied to config for orchestrator use
-    config = DummyOrchestrator.last_kwargs["config"]
-    assert config.review_timeout == 600
+    # review_timeout is passed via cli_args (inside OrchestratorConfig)
+    assert DummyOrchestrator.last_config is not None
+    assert DummyOrchestrator.last_config.cli_args["review_timeout"] == 600
+    # review_timeout is also applied to mala_config for orchestrator use
+    assert DummyOrchestrator.last_mala_config.review_timeout == 600
 
 
 def test_run_cerberus_overrides(
@@ -820,7 +881,9 @@ def test_run_cerberus_overrides(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -832,14 +895,14 @@ def test_run_cerberus_overrides(
         )
 
     assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_kwargs is not None
+    assert DummyOrchestrator.last_mala_config is not None
 
-    config = DummyOrchestrator.last_kwargs["config"]
-    assert config.cerberus_spawn_args == ("--foo", "bar", "--flag")
-    assert config.cerberus_wait_args == ("--baz", "qux")
-    assert dict(config.cerberus_env) == {"FOO": "bar", "BAZ": "qux"}
+    mala_config = DummyOrchestrator.last_mala_config
+    assert mala_config.cerberus_spawn_args == ("--foo", "bar", "--flag")
+    assert mala_config.cerberus_wait_args == ("--baz", "qux")
+    assert dict(mala_config.cerberus_env) == {"FOO": "bar", "BAZ": "qux"}
 
-    cli_args = DummyOrchestrator.last_kwargs["cli_args"]
+    cli_args = DummyOrchestrator.last_config.cli_args
     assert cli_args["cerberus_spawn_args"] == ["--foo", "bar", "--flag"]
     assert cli_args["cerberus_wait_args"] == ["--baz", "qux"]
     assert cli_args["cerberus_env"] == {"FOO": "bar", "BAZ": "qux"}
@@ -1023,7 +1086,9 @@ def test_dry_run_exits_without_processing(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestrator, "MalaOrchestrator", DummyOrchestrator)
+    monkeypatch.setattr(
+        src.orchestrator_factory, "create_orchestrator", mock_create_orchestrator
+    )
     monkeypatch.setattr(src.beads_client, "BeadsClient", DummyBeadsClient)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
