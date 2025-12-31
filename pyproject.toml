@@ -153,13 +153,26 @@ layers = [
 # Contract 2: Domain Independence
 # -----------------------------------------------------------------------------
 # Core domain modules must not depend on orchestration or CLI.
+# Uses forbidden (unidirectional) rather than independence (bidirectional)
+# to allow domain modules to import from each other while preventing
+# imports from upper layers.
 
 [[tool.importlinter.contracts]]
 name = "Domain layer independence"
-type = "independence"
-modules = [
+type = "forbidden"
+source_modules = [
     "src.lifecycle",
     "src.models",
+    "src.quality_gate",
+    "src.validation",
+    "src.prompts",
+]
+forbidden_modules = [
+    "src.cli",
+    "src.main",
+    "src.orchestrator",
+    "src.orchestrator_factory",
+    "src.orchestrator_types",
 ]
 
 # -----------------------------------------------------------------------------
