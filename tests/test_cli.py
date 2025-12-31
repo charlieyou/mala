@@ -33,103 +33,139 @@ class TestImportSafety:
 
     def test_import_does_not_load_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Importing src.cli should not call load_user_env()."""
-        # Clear modules to force fresh import
-        # Include cli_support and log_output.run_metadata which are dependencies
-        for mod_name in list(sys.modules.keys()):
-            if (
-                mod_name.startswith("src.cli")
-                or mod_name.startswith("src.tools.env")
-                or mod_name.startswith("src.log_output.run_metadata")
+        # Track which modules we'll delete for cleanup
+        # Note: We only delete cli and tools.env modules, not run_metadata
+        # to avoid polluting RunMetadata references in other modules
+        deleted_modules = [
+            mod_name
+            for mod_name in sys.modules.keys()
+            if mod_name.startswith("src.cli") or mod_name.startswith("src.tools.env")
+        ]
+        for mod_name in deleted_modules:
+            del sys.modules[mod_name]
+
+        try:
+            # Track if load_user_env gets called
+            load_called = {"called": False}
+
+            def mock_load_user_env() -> None:
+                load_called["called"] = True
+
+            # Patch both src.tools.env and src.cli_support to ensure full isolation
+            # (cli_support re-exports load_user_env from tools.env)
+            with (
+                patch("src.tools.env.load_user_env", mock_load_user_env),
+                patch("src.cli_support.load_user_env", mock_load_user_env),
             ):
-                del sys.modules[mod_name]
+                # Force reimport of cli module
+                if "src.cli" in sys.modules:
+                    del sys.modules["src.cli"]
 
-        # Track if load_user_env gets called
-        load_called = {"called": False}
+                import src.cli
 
-        def mock_load_user_env() -> None:
-            load_called["called"] = True
+                # Import should NOT have triggered load_user_env
+                assert not load_called["called"], (
+                    "load_user_env() was called at import time - should only be called via bootstrap()"
+                )
 
-        # Patch both src.tools.env and src.cli_support to ensure full isolation
-        # (cli_support re-exports load_user_env from tools.env)
-        with (
-            patch("src.tools.env.load_user_env", mock_load_user_env),
-            patch("src.cli_support.load_user_env", mock_load_user_env),
-        ):
-            # Force reimport of cli module
-            if "src.cli" in sys.modules:
-                del sys.modules["src.cli"]
-
-            import src.cli
-
-            # Import should NOT have triggered load_user_env
-            assert not load_called["called"], (
-                "load_user_env() was called at import time - should only be called via bootstrap()"
-            )
-
-            # Verify the module was imported (avoids F401 unused import warning)
-            assert hasattr(src.cli, "bootstrap")
+                # Verify the module was imported (avoids F401 unused import warning)
+                assert hasattr(src.cli, "bootstrap")
+        finally:
+            # Reload modules from disk to restore clean state for other tests
+            for mod_name in deleted_modules:
+                if mod_name in sys.modules:
+                    del sys.modules[mod_name]
+            # Force re-import of the modules we deleted (if they were imported before)
+            for mod_name in deleted_modules:
+                importlib.import_module(mod_name)
 
     def test_import_does_not_setup_braintrust(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Importing src.cli should not set up Braintrust."""
-        # Clear modules to force fresh import
-        for mod_name in list(sys.modules.keys()):
-            if mod_name.startswith("src.cli"):
-                del sys.modules[mod_name]
+        # Track which modules we'll delete for cleanup
+        deleted_modules = [
+            mod_name
+            for mod_name in sys.modules.keys()
+            if mod_name.startswith("src.cli")
+        ]
+        for mod_name in deleted_modules:
+            del sys.modules[mod_name]
 
-        # Set a Braintrust API key that would trigger setup if called
-        monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
+        try:
+            # Set a Braintrust API key that would trigger setup if called
+            monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
 
-        setup_called = {"called": False}
+            setup_called = {"called": False}
 
-        def mock_setup(*args: object, **kwargs: object) -> None:
-            setup_called["called"] = True
+            def mock_setup(*args: object, **kwargs: object) -> None:
+                setup_called["called"] = True
 
-        # Patch the Braintrust setup function
-        with patch.dict(sys.modules, {"braintrust": None, "braintrust.wrappers": None}):
-            if "src.cli" in sys.modules:
-                del sys.modules["src.cli"]
+            # Patch the Braintrust setup function
+            with patch.dict(
+                sys.modules, {"braintrust": None, "braintrust.wrappers": None}
+            ):
+                if "src.cli" in sys.modules:
+                    del sys.modules["src.cli"]
 
-            import src.cli
+                import src.cli
 
-            # Import should NOT have triggered Braintrust setup
-            assert not src.cli._braintrust_enabled, (
-                "Braintrust was enabled at import time - should only happen via bootstrap()"
-            )
+                # Import should NOT have triggered Braintrust setup
+                assert not src.cli._braintrust_enabled, (
+                    "Braintrust was enabled at import time - should only happen via bootstrap()"
+                )
+        finally:
+            # Reload modules from disk to restore clean state for other tests
+            for mod_name in deleted_modules:
+                if mod_name in sys.modules:
+                    del sys.modules[mod_name]
+            for mod_name in deleted_modules:
+                importlib.import_module(mod_name)
 
     def test_bootstrap_loads_env_and_braintrust(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """bootstrap() should load env and set up Braintrust when API key is present."""
-        # Clear modules
-        for mod_name in list(sys.modules.keys()):
-            if mod_name.startswith("src.cli") or mod_name.startswith("src.tools.env"):
-                del sys.modules[mod_name]
+        # Track which modules we'll delete for cleanup
+        deleted_modules = [
+            mod_name
+            for mod_name in sys.modules.keys()
+            if mod_name.startswith("src.cli") or mod_name.startswith("src.tools.env")
+        ]
+        for mod_name in deleted_modules:
+            del sys.modules[mod_name]
 
-        monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
+        try:
+            monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
 
-        import src.cli
+            import src.cli
 
-        # Reset state
-        src.cli._bootstrapped = False
-        src.cli._braintrust_enabled = False
+            # Reset state
+            src.cli._bootstrapped = False
+            src.cli._braintrust_enabled = False
 
-        # Track calls
-        load_called = {"called": False}
-        original_load = src.cli.load_user_env
+            # Track calls
+            load_called = {"called": False}
+            original_load = src.cli.load_user_env
 
-        def tracking_load() -> None:
-            load_called["called"] = True
-            original_load()
+            def tracking_load() -> None:
+                load_called["called"] = True
+                original_load()
 
-        monkeypatch.setattr(src.cli, "load_user_env", tracking_load)
+            monkeypatch.setattr(src.cli, "load_user_env", tracking_load)
 
-        # Call bootstrap
-        src.cli.bootstrap()
+            # Call bootstrap
+            src.cli.bootstrap()
 
-        assert load_called["called"], "bootstrap() should call load_user_env()"
-        assert src.cli._bootstrapped, "bootstrap() should set _bootstrapped = True"
+            assert load_called["called"], "bootstrap() should call load_user_env()"
+            assert src.cli._bootstrapped, "bootstrap() should set _bootstrapped = True"
+        finally:
+            # Reload modules from disk to restore clean state for other tests
+            for mod_name in deleted_modules:
+                if mod_name in sys.modules:
+                    del sys.modules[mod_name]
+            for mod_name in deleted_modules:
+                importlib.import_module(mod_name)
 
     def test_bootstrap_is_idempotent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Calling bootstrap() multiple times should only execute once."""
