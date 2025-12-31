@@ -1,0 +1,12 @@
+{
+  "status": "error",
+  "consensus_verdict": null,
+  "reviewers": {},
+  "aggregated_findings": [],
+  "parse_errors": [
+    {
+      "reviewer": null,
+      "error": "session key or session id is required"
+    }
+  ]
+}

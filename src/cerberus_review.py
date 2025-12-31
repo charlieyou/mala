@@ -312,21 +312,17 @@ def parse_cerberus_json(output: str) -> tuple[bool, list[ReviewIssue], str | Non
     if not isinstance(data, dict):
         return False, [], "Root element is not an object"
 
-    # Check consensus verdict
-    consensus = data.get("consensus", {})
-    if not isinstance(consensus, dict):
-        return False, [], "'consensus' field must be an object"
-
-    verdict = consensus.get("verdict")
-    if verdict not in ("PASS", "FAIL", "NEEDS_WORK", "no_reviewers"):
+    # Check consensus verdict (top-level consensus_verdict field)
+    verdict = data.get("consensus_verdict")
+    if verdict not in ("PASS", "FAIL", "NEEDS_WORK", "no_reviewers", "ERROR"):
         return False, [], f"Invalid verdict: {verdict}"
 
     passed = verdict == "PASS"
 
-    # Parse issues
-    raw_issues = data.get("issues", [])
+    # Parse issues from aggregated_findings (may be empty for PASS verdict)
+    raw_issues = data.get("aggregated_findings", [])
     if not isinstance(raw_issues, list):
-        return False, [], "'issues' field must be an array"
+        raw_issues = []
 
     issues: list[ReviewIssue] = []
     for i, item in enumerate(raw_issues):
@@ -337,17 +333,25 @@ def parse_cerberus_json(output: str) -> tuple[bool, list[ReviewIssue], str | Non
         if not isinstance(reviewer, str):
             return False, [], f"Issue {i}: 'reviewer' must be a string"
 
-        file_path = item.get("file", "")
-        if not isinstance(file_path, str):
-            return False, [], f"Issue {i}: 'file' must be a string"
+        # Cerberus uses file_path (can be null for non-file-specific findings)
+        file_path = item.get("file_path")
+        if file_path is None:
+            file_path = ""
+        elif not isinstance(file_path, str):
+            return False, [], f"Issue {i}: 'file_path' must be a string or null"
 
-        line_start = item.get("line_start", 0)
-        if not isinstance(line_start, int):
-            return False, [], f"Issue {i}: 'line_start' must be an integer"
+        # line_start and line_end can be null
+        line_start = item.get("line_start")
+        if line_start is None:
+            line_start = 0
+        elif not isinstance(line_start, int):
+            return False, [], f"Issue {i}: 'line_start' must be an integer or null"
 
-        line_end = item.get("line_end", 0)
-        if not isinstance(line_end, int):
-            return False, [], f"Issue {i}: 'line_end' must be an integer"
+        line_end = item.get("line_end")
+        if line_end is None:
+            line_end = 0
+        elif not isinstance(line_end, int):
+            return False, [], f"Issue {i}: 'line_end' must be an integer or null"
 
         priority = item.get("priority")
         if priority is not None and not isinstance(priority, int):

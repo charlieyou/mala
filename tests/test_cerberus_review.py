@@ -5,6 +5,7 @@ Tests the cerberus_review integration including:
 - Exit code mapping (0-5)
 - Issue formatting
 - Parse error extraction
+- Golden file tests against real Cerberus output
 """
 
 from __future__ import annotations
@@ -22,24 +23,31 @@ from src.cerberus_review import (
     parse_cerberus_json,
 )
 
+# Path to golden files captured from real Cerberus output
+FIXTURES_DIR = Path(__file__).parent / "fixtures" / "cerberus"
+
 
 def _make_valid_response(
     verdict: str = "PASS", issues: list[dict] | None = None
 ) -> str:
-    """Helper to create a valid Cerberus review-gate response JSON."""
+    """Helper to create a valid Cerberus review-gate response JSON.
+
+    Uses the actual Cerberus output format with:
+    - consensus_verdict at top level (not consensus.verdict)
+    - aggregated_findings (not issues)
+    """
     return json.dumps(
         {
-            "status": "resolved",
-            "consensus": {"verdict": verdict, "iteration": 1},
+            "status": "complete",
+            "consensus_verdict": verdict,
             "reviewers": {
                 "codex": {
                     "verdict": verdict,
                     "summary": "Test",
-                    "issues": [],
-                    "error": None,
+                    "findings": [],
                 }
             },
-            "issues": issues or [],
+            "aggregated_findings": issues or [],
             "parse_errors": [],
         }
     )
@@ -54,10 +62,13 @@ def _make_issue(
     body: str = "Test body",
     reviewer: str = "codex",
 ) -> dict:
-    """Helper to create a valid issue dict."""
+    """Helper to create a valid issue dict.
+
+    Uses the actual Cerberus format with file_path (not file).
+    """
     return {
         "reviewer": reviewer,
-        "file": file,
+        "file_path": file,
         "line_start": line_start,
         "line_end": line_end,
         "priority": priority,
@@ -175,10 +186,12 @@ class TestParseCerberusJson:
         assert "'consensus'" in error or "Invalid verdict" in error
 
     def test_returns_error_for_invalid_issue_type(self) -> None:
+        """Test error when aggregated_findings contains non-object items."""
         output = json.dumps(
             {
-                "consensus": {"verdict": "FAIL"},
-                "issues": ["not an object"],
+                "status": "complete",
+                "consensus_verdict": "FAIL",
+                "aggregated_findings": ["not an object"],
             }
         )
         passed, _issues, error = parse_cerberus_json(output)
@@ -191,6 +204,78 @@ class TestParseCerberusJson:
         assert passed is False
         assert error is not None
         assert "Root element is not an object" in error
+
+
+class TestGoldenFiles:
+    """Golden file tests using captured real Cerberus output.
+
+    These tests ensure parse_cerberus_json correctly handles the actual
+    output format from `review-gate wait --json`, not just mock data.
+    """
+
+    def test_golden_pass(self) -> None:
+        """Parse real PASS output from Cerberus."""
+        output = (FIXTURES_DIR / "wait_pass.json").read_text()
+        passed, issues, error = parse_cerberus_json(output)
+
+        assert error is None, f"Unexpected parse error: {error}"
+        assert passed is True
+        # PASS verdict but has P3 findings (non-blocking)
+        assert len(issues) == 1
+        assert issues[0].priority == 3
+        assert issues[0].reviewer == "gemini"
+
+    def test_golden_fail(self) -> None:
+        """Parse real FAIL output from Cerberus with multiple reviewers."""
+        output = (FIXTURES_DIR / "wait_fail.json").read_text()
+        passed, issues, error = parse_cerberus_json(output)
+
+        assert error is None, f"Unexpected parse error: {error}"
+        assert passed is False
+        assert len(issues) == 3
+
+        # Verify all reviewers' findings are captured
+        reviewers = {i.reviewer for i in issues}
+        assert reviewers == {"claude", "codex", "gemini"}
+
+        # Verify P1 issues exist
+        p1_issues = [i for i in issues if i.priority == 1]
+        assert len(p1_issues) == 2
+
+        # Verify file paths are captured
+        files = {i.file for i in issues}
+        assert "tests/test_cli.py" in files
+        assert "src/orchestrator.py" in files
+
+    def test_golden_no_reviewers(self) -> None:
+        """Parse output when no reviewers were spawned."""
+        output = (FIXTURES_DIR / "wait_no_reviewers.json").read_text()
+        passed, _issues, error = parse_cerberus_json(output)
+
+        # null consensus_verdict should fail validation
+        assert passed is False
+        assert error is not None
+        assert "Invalid verdict" in error
+
+    def test_golden_error(self) -> None:
+        """Parse output when review-gate encounters an error."""
+        output = (FIXTURES_DIR / "wait_error.json").read_text()
+        passed, _issues, error = parse_cerberus_json(output)
+
+        # null consensus_verdict should fail validation
+        assert passed is False
+        assert error is not None
+        assert "Invalid verdict" in error
+
+    def test_golden_timeout(self) -> None:
+        """Parse output when review times out."""
+        output = (FIXTURES_DIR / "wait_timeout.json").read_text()
+        passed, _issues, error = parse_cerberus_json(output)
+
+        # null consensus_verdict on timeout should fail validation
+        assert passed is False
+        assert error is not None
+        assert "Invalid verdict" in error
 
 
 class TestMapExitCodeToResult:

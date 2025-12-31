@@ -1,0 +1,42 @@
+{
+  "status": "complete",
+  "consensus_verdict": "PASS",
+  "reviewers": {
+    "claude": {
+      "verdict": "PASS",
+      "summary": "All claims in the artifact are verified as accurate.",
+      "findings": []
+    },
+    "codex": {
+      "verdict": "PASS",
+      "summary": "All findings are supported by the referenced code.",
+      "findings": []
+    },
+    "gemini": {
+      "verdict": "PASS",
+      "summary": "The artifact's findings are accurate and well-supported.",
+      "findings": [
+        {
+          "title": "[P3] Minor line number discrepancies",
+          "body": "The artifact references line ranges that are slightly off by 1-2 lines.",
+          "priority": 3,
+          "file_path": null,
+          "line_start": null,
+          "line_end": null
+        }
+      ]
+    }
+  },
+  "aggregated_findings": [
+    {
+      "title": "[P3] Minor line number discrepancies",
+      "body": "The artifact references line ranges that are slightly off by 1-2 lines.",
+      "priority": 3,
+      "file_path": null,
+      "line_start": null,
+      "line_end": null,
+      "reviewer": "gemini"
+    }
+  ],
+  "parse_errors": []
+}

@@ -1,0 +1,18 @@
+{
+  "status": "timeout",
+  "consensus_verdict": null,
+  "reviewers": {
+    "codex": {
+      "verdict": "PENDING",
+      "summary": "Timed out waiting for reviewer",
+      "findings": []
+    },
+    "gemini": {
+      "verdict": "PASS",
+      "summary": "Review completed successfully.",
+      "findings": []
+    }
+  },
+  "aggregated_findings": [],
+  "parse_errors": []
+}

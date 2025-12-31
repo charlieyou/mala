@@ -1,0 +1,78 @@
+{
+  "status": "complete",
+  "consensus_verdict": "FAIL",
+  "reviewers": {
+    "claude": {
+      "verdict": "PASS",
+      "summary": "The refactoring is well-executed with proper backward compatibility.",
+      "findings": [
+        {
+          "title": "[P2] DummyOrchestrator.last_kwargs should be reset in test teardown",
+          "body": "The DummyOrchestrator class uses class-level state that persists across tests.",
+          "priority": 2,
+          "file_path": "tests/test_cli.py",
+          "line_start": 158,
+          "line_end": 171
+        }
+      ]
+    },
+    "codex": {
+      "verdict": "FAIL",
+      "summary": "Factory initialization drops the review-gate disable signal.",
+      "findings": [
+        {
+          "title": "[P1] Propagate review-gate disable into _disabled_validations",
+          "body": "When the factory detects a missing review-gate it adds 'review' to its local disabled_validations set, but _init_from_config rebuilds _disabled_validations only from config.disable_validations.",
+          "priority": 1,
+          "file_path": "src/orchestrator.py",
+          "line_start": 279,
+          "line_end": 283
+        }
+      ]
+    },
+    "gemini": {
+      "verdict": "FAIL",
+      "summary": "The refactor introduces a breaking change by displacing the primary positional argument.",
+      "findings": [
+        {
+          "title": "[P1] Restore MalaOrchestrator positional argument compatibility",
+          "body": "The refactor moved _config to the first positional argument in MalaOrchestrator.__init__, displacing repo_path.",
+          "priority": 1,
+          "file_path": "src/orchestrator.py",
+          "line_start": 160,
+          "line_end": 170
+        }
+      ]
+    }
+  },
+  "aggregated_findings": [
+    {
+      "title": "[P2] DummyOrchestrator.last_kwargs should be reset in test teardown",
+      "body": "The DummyOrchestrator class uses class-level state that persists across tests.",
+      "priority": 2,
+      "file_path": "tests/test_cli.py",
+      "line_start": 158,
+      "line_end": 171,
+      "reviewer": "claude"
+    },
+    {
+      "title": "[P1] Propagate review-gate disable into _disabled_validations",
+      "body": "When the factory detects a missing review-gate it adds 'review' to its local disabled_validations set, but _init_from_config rebuilds _disabled_validations only from config.disable_validations.",
+      "priority": 1,
+      "file_path": "src/orchestrator.py",
+      "line_start": 279,
+      "line_end": 283,
+      "reviewer": "codex"
+    },
+    {
+      "title": "[P1] Restore MalaOrchestrator positional argument compatibility",
+      "body": "The refactor moved _config to the first positional argument in MalaOrchestrator.__init__, displacing repo_path.",
+      "priority": 1,
+      "file_path": "src/orchestrator.py",
+      "line_start": 160,
+      "line_end": 170,
+      "reviewer": "gemini"
+    }
+  ],
+  "parse_errors": []
+}
