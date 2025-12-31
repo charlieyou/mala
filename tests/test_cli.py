@@ -766,7 +766,7 @@ def test_disable_validations_legacy_codex_value_rejected(
 def test_run_review_timeout_default(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that --review-timeout defaults to 300."""
+    """Test that --review-timeout defaults to 1200."""
     cli = _reload_cli(monkeypatch)
     monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
@@ -781,10 +781,10 @@ def test_run_review_timeout_default(
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_kwargs is not None
     # review_timeout is passed via cli_args for logging/metadata
-    assert DummyOrchestrator.last_kwargs["cli_args"]["review_timeout"] == 300
+    assert DummyOrchestrator.last_kwargs["cli_args"]["review_timeout"] == 1200
     # review_timeout is also applied to config for orchestrator use
     config = DummyOrchestrator.last_kwargs["config"]
-    assert config.review_timeout == 300
+    assert config.review_timeout == 1200
 
 
 def test_run_review_timeout_custom(

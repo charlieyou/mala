@@ -219,7 +219,7 @@ class MalaConfig:
 
     # Review settings
     review_enabled: bool = field(default=True)
-    review_timeout: int = field(default=300)
+    review_timeout: int = field(default=1200)
     cerberus_bin_path: Path | None = None  # Path to cerberus bin/ directory
     cerberus_spawn_args: tuple[str, ...] = field(default_factory=tuple)
     cerberus_wait_args: tuple[str, ...] = field(default_factory=tuple)
@@ -377,7 +377,7 @@ class MalaConfig:
             claude_config_dir=claude_config_dir,
             braintrust_api_key=braintrust_api_key,
             morph_api_key=morph_api_key,
-            review_timeout=review_timeout if review_timeout is not None else 300,
+            review_timeout=review_timeout if review_timeout is not None else 1200,
             cerberus_bin_path=cerberus_bin_path,
             cerberus_spawn_args=tuple(cerberus_spawn_args),
             cerberus_wait_args=tuple(cerberus_wait_args),

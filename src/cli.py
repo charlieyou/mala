@@ -342,7 +342,7 @@ def run(
         int | None,
         typer.Option(
             "--review-timeout",
-            help="Timeout in seconds for review operations (default: 300)",
+            help="Timeout in seconds for review operations (default: 1200)",
         ),
     ] = None,
     cerberus_spawn_args: Annotated[

@@ -483,7 +483,7 @@ class TestReviewRunnerConfig:
         config = ReviewRunnerConfig()
 
         assert config.max_review_retries == 3
-        assert config.review_timeout == 300
+        assert config.review_timeout == 1200
 
     def test_config_deprecated_fields_still_accepted(self) -> None:
         """Config should accept deprecated fields for backward compatibility."""

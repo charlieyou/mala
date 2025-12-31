@@ -473,7 +473,7 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
 | `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
 | `--max-review-retries` | 3 | Maximum external review retry attempts per issue |
-| `--review-timeout` | 300 | Timeout in seconds for Cerberus review operations |
+| `--review-timeout` | 1200 | Timeout in seconds for Cerberus review operations |
 | `--cerberus-spawn-args` | - | Extra args appended to `review-gate spawn-code-review` |
 | `--cerberus-wait-args` | - | Extra args appended to `review-gate wait` |
 | `--cerberus-env` | - | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
@@ -517,7 +517,7 @@ Precedence: CLI flags override global config, which overrides program defaults.
 |----------|---------|-------------|
 | `MALA_RUNS_DIR` | `~/.config/mala/runs` | Directory for run metadata |
 | `MALA_LOCK_DIR` | `/tmp/mala-locks` | Directory for filesystem locks |
-| `MALA_REVIEW_TIMEOUT` | `300` | Review-gate wait timeout in seconds |
+| `MALA_REVIEW_TIMEOUT` | `1200` | Review-gate wait timeout in seconds |
 
 **Epic verification** (set in `.env` or environment):
 

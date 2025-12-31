@@ -39,7 +39,7 @@ class ReviewRunnerConfig:
     """
 
     max_review_retries: int = 3
-    review_timeout: int = 300
+    review_timeout: int = 1200
     # Deprecated fields (kept for backward compatibility with orchestrator)
     thinking_mode: str | None = None
     capture_session_log: bool = False
