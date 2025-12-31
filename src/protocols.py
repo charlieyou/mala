@@ -7,7 +7,7 @@ represents a stage boundary that the orchestrator interacts with.
 Design principles:
 - Protocols use structural typing (typing.Protocol) for flexibility
 - Methods match exactly what the orchestrator actually calls
-- Result types are referenced from existing modules, not redefined
+- Result types are defined as local Protocol types to avoid import-time dependencies
 - BeadsClient, ReviewRunner, and QualityGate conform to these protocols
 
 Usage:
@@ -19,18 +19,293 @@ Usage:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
     from pathlib import Path
 
-    from .cerberus_review import ReviewResult
-    from .models import EpicVerdict
-    from .quality_gate import CommitResult, GateResult, ValidationEvidence
-    from .session_log_parser import JsonlEntry
-    from .validation.spec import ValidationSpec
+
+# =============================================================================
+# Local Protocol Types
+# =============================================================================
+# These Protocol types replace TYPE_CHECKING imports from domain/infra modules
+# to satisfy the "Layered Architecture" contract. They define the structural
+# shape that protocols.py needs without creating import-time dependencies.
+#
+# Each Protocol matches only the attributes/methods that protocols.py actually
+# uses, following the Interface Segregation Principle.
+# =============================================================================
+
+
+class JsonlEntryProtocol(Protocol):
+    """Protocol for parsed JSONL log entries with byte offset tracking.
+
+    Matches the shape of session_log_parser.JsonlEntry for structural typing.
+    """
+
+    @property
+    def data(self) -> dict[str, Any]:
+        """The parsed JSON object from this line."""
+        ...
+
+    @property
+    def entry(self) -> object | None:
+        """The typed LogEntry if successfully parsed, None otherwise."""
+        ...
+
+    @property
+    def line_len(self) -> int:
+        """Length of the raw line in bytes (for offset tracking)."""
+        ...
+
+    @property
+    def offset(self) -> int:
+        """Byte offset where this line started in the file."""
+        ...
+
+
+class ValidationSpecProtocol(Protocol):
+    """Protocol for validation specification.
+
+    Matches the shape of validation.spec.ValidationSpec for structural typing.
+    Only includes attributes/methods that protocols.py method signatures use.
+    """
+
+    @property
+    def commands(self) -> list[Any]:
+        """List of validation commands to run."""
+        ...
+
+    @property
+    def scope(self) -> object:
+        """The validation scope (per-issue or run-level)."""
+        ...
+
+
+class ValidationEvidenceProtocol(Protocol):
+    """Protocol for validation evidence from agent runs.
+
+    Matches the shape of quality_gate.ValidationEvidence for structural typing.
+    """
+
+    @property
+    def commands_ran(self) -> dict[Any, bool]:
+        """Mapping of CommandKind to whether it ran."""
+        ...
+
+    @property
+    def failed_commands(self) -> list[str]:
+        """List of validation commands that failed."""
+        ...
+
+    def has_any_evidence(self) -> bool:
+        """Check if any validation command ran."""
+        ...
+
+
+class CommitResultProtocol(Protocol):
+    """Protocol for commit existence check results.
+
+    Matches the shape of quality_gate.CommitResult for structural typing.
+    """
+
+    @property
+    def exists(self) -> bool:
+        """Whether a matching commit exists."""
+        ...
+
+    @property
+    def commit_hash(self) -> str | None:
+        """The commit hash if found."""
+        ...
+
+    @property
+    def message(self) -> str | None:
+        """The commit message if found."""
+        ...
+
+
+class IssueResolutionProtocol(Protocol):
+    """Protocol for issue resolution records.
+
+    Matches the shape of models.IssueResolution for structural typing.
+    """
+
+    @property
+    def outcome(self) -> object:
+        """The resolution outcome (success, no_change, obsolete, etc.)."""
+        ...
+
+    @property
+    def rationale(self) -> str:
+        """Explanation for the resolution."""
+        ...
+
+
+class GateResultProtocol(Protocol):
+    """Protocol for quality gate check results.
+
+    Matches the shape of quality_gate.GateResult for structural typing.
+    """
+
+    @property
+    def passed(self) -> bool:
+        """Whether the quality gate passed."""
+        ...
+
+    @property
+    def failure_reasons(self) -> list[str]:
+        """List of reasons why the gate failed."""
+        ...
+
+    @property
+    def commit_hash(self) -> str | None:
+        """The commit hash if found."""
+        ...
+
+    @property
+    def validation_evidence(self) -> ValidationEvidenceProtocol | None:
+        """Evidence of validation commands executed."""
+        ...
+
+    @property
+    def no_progress(self) -> bool:
+        """Whether no progress was detected."""
+        ...
+
+    @property
+    def resolution(self) -> IssueResolutionProtocol | None:
+        """Issue resolution if applicable."""
+        ...
+
+
+class ReviewIssueProtocol(Protocol):
+    """Protocol for review issues found during code review.
+
+    Matches the shape of cerberus_review.ReviewIssue for structural typing.
+    """
+
+    @property
+    def file(self) -> str:
+        """File path where the issue was found."""
+        ...
+
+    @property
+    def line_start(self) -> int:
+        """Starting line number."""
+        ...
+
+    @property
+    def line_end(self) -> int:
+        """Ending line number."""
+        ...
+
+    @property
+    def priority(self) -> int | None:
+        """Issue priority (0=P0, 1=P1, etc.)."""
+        ...
+
+    @property
+    def title(self) -> str:
+        """Issue title."""
+        ...
+
+    @property
+    def body(self) -> str:
+        """Issue body/description."""
+        ...
+
+    @property
+    def reviewer(self) -> str:
+        """Which reviewer found this issue."""
+        ...
+
+
+class ReviewResultProtocol(Protocol):
+    """Protocol for code review results.
+
+    Matches the shape of cerberus_review.ReviewResult for structural typing.
+    """
+
+    @property
+    def passed(self) -> bool:
+        """Whether the review passed."""
+        ...
+
+    @property
+    def issues(self) -> list[ReviewIssueProtocol]:
+        """List of issues found during review."""
+        ...
+
+    @property
+    def parse_error(self) -> str | None:
+        """Parse error message if JSON parsing failed."""
+        ...
+
+    @property
+    def fatal_error(self) -> bool:
+        """Whether this is a fatal error (should not retry)."""
+        ...
+
+    @property
+    def review_log_path(self) -> object | None:
+        """Path to review session logs."""
+        ...
+
+
+class UnmetCriterionProtocol(Protocol):
+    """Protocol for unmet criteria during epic verification.
+
+    Matches the shape of models.UnmetCriterion for structural typing.
+    """
+
+    @property
+    def criterion(self) -> str:
+        """The acceptance criterion not met."""
+        ...
+
+    @property
+    def evidence(self) -> str:
+        """Why it's considered unmet."""
+        ...
+
+    @property
+    def severity(self) -> str:
+        """How critical the gap is (critical, major, minor)."""
+        ...
+
+    @property
+    def criterion_hash(self) -> str:
+        """SHA256 of criterion text, for deduplication."""
+        ...
+
+
+class EpicVerdictProtocol(Protocol):
+    """Protocol for epic verification verdicts.
+
+    Matches the shape of models.EpicVerdict for structural typing.
+    """
+
+    @property
+    def passed(self) -> bool:
+        """Whether all acceptance criteria were met."""
+        ...
+
+    @property
+    def unmet_criteria(self) -> list[UnmetCriterionProtocol]:
+        """List of criteria that were not satisfied."""
+        ...
+
+    @property
+    def confidence(self) -> float:
+        """Model confidence in the verdict (0.0 to 1.0)."""
+        ...
+
+    @property
+    def reasoning(self) -> str:
+        """Explanation of the verification outcome."""
+        ...
 
 
 @runtime_checkable
@@ -68,7 +343,9 @@ class LogProvider(Protocol):
         """
         ...
 
-    def iter_events(self, log_path: Path, offset: int = 0) -> Iterator[JsonlEntry]:
+    def iter_events(
+        self, log_path: Path, offset: int = 0
+    ) -> Iterator[JsonlEntryProtocol]:
         """Iterate over parsed JSONL entries from a log file.
 
         Reads the file starting from the given byte offset and yields
@@ -80,7 +357,7 @@ class LogProvider(Protocol):
             offset: Byte offset to start reading from (default 0).
 
         Yields:
-            JsonlEntry objects for each successfully parsed JSON line.
+            JsonlEntryProtocol objects for each successfully parsed JSON line.
             The entry field contains the typed LogEntry if parsing succeeded.
 
         Note:
@@ -276,7 +553,7 @@ class CodeReviewer(Protocol):
         claude_session_id: str | None = None,
         *,
         commit_shas: Sequence[str] | None = None,
-    ) -> ReviewResult:
+    ) -> ReviewResultProtocol:
         """Run code review on a diff range.
 
         Args:
@@ -288,7 +565,7 @@ class CodeReviewer(Protocol):
                 When provided, reviewers should scope to these commits only.
 
         Returns:
-            ReviewResult with review outcome. On parse failure,
+            ReviewResultProtocol with review outcome. On parse failure,
             returns passed=False with parse_error set.
         """
         ...
@@ -315,8 +592,8 @@ class GateChecker(Protocol):
         log_path: Path,
         baseline_timestamp: int | None = None,
         log_offset: int = 0,
-        spec: ValidationSpec | None = None,
-    ) -> GateResult:
+        spec: ValidationSpecProtocol | None = None,
+    ) -> GateResultProtocol:
         """Run quality gate check with support for no-op/obsolete resolutions.
 
         This method is scope-aware and handles special resolution outcomes:
@@ -332,7 +609,7 @@ class GateChecker(Protocol):
             spec: ValidationSpec for scope-aware evidence checking (required).
 
         Returns:
-            GateResult with pass/fail, failure reasons, and resolution.
+            GateResultProtocol with pass/fail, failure reasons, and resolution.
 
         Raises:
             ValueError: If spec is not provided.
@@ -362,7 +639,7 @@ class GateChecker(Protocol):
         log_offset: int,
         previous_commit_hash: str | None,
         current_commit_hash: str | None,
-        spec: ValidationSpec | None = None,
+        spec: ValidationSpecProtocol | None = None,
         check_validation_evidence: bool = True,
     ) -> bool:
         """Check if no progress was made since the last attempt.
@@ -388,8 +665,8 @@ class GateChecker(Protocol):
         ...
 
     def parse_validation_evidence_with_spec(
-        self, log_path: Path, spec: ValidationSpec, offset: int = 0
-    ) -> ValidationEvidence:
+        self, log_path: Path, spec: ValidationSpecProtocol, offset: int = 0
+    ) -> ValidationEvidenceProtocol:
         """Parse JSONL log for validation evidence using spec-defined patterns.
 
         Args:
@@ -398,13 +675,13 @@ class GateChecker(Protocol):
             offset: Byte offset to start parsing from (default 0).
 
         Returns:
-            ValidationEvidence with flags indicating which validations ran.
+            ValidationEvidenceProtocol with flags indicating which validations ran.
         """
         ...
 
     def check_commit_exists(
         self, issue_id: str, baseline_timestamp: int | None = None
-    ) -> CommitResult:
+    ) -> CommitResultProtocol:
         """Check if a commit with bd-<issue_id> exists in recent history.
 
         Searches commits from the last 30 days to accommodate long-running
@@ -416,7 +693,7 @@ class GateChecker(Protocol):
                 commits created after this time.
 
         Returns:
-            CommitResult indicating whether a matching commit exists.
+            CommitResultProtocol indicating whether a matching commit exists.
         """
         ...
 
@@ -440,7 +717,7 @@ class EpicVerificationModel(Protocol):
         epic_criteria: str,
         diff: str,
         spec_content: str | None,
-    ) -> EpicVerdict:
+    ) -> EpicVerdictProtocol:
         """Verify if the diff satisfies the epic's acceptance criteria.
 
         Args:
