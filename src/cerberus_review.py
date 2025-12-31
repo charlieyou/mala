@@ -322,7 +322,7 @@ def parse_cerberus_json(output: str) -> tuple[bool, list[ReviewIssue], str | Non
     # Parse issues from aggregated_findings (may be empty for PASS verdict)
     raw_issues = data.get("aggregated_findings", [])
     if not isinstance(raw_issues, list):
-        raw_issues = []
+        return False, [], "'aggregated_findings' field must be an array"
 
     issues: list[ReviewIssue] = []
     for i, item in enumerate(raw_issues):
