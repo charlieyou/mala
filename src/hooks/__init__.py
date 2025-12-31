@@ -39,8 +39,10 @@ from .lint_cache import (
 )
 from .locking import (
     StopHook,
+    get_lock_holder,
     make_lock_enforcement_hook,
     make_stop_hook,
+    run_command,
 )
 
 __all__ = [
@@ -61,8 +63,10 @@ __all__ = [
     "_get_git_state",
     "block_dangerous_commands",
     "block_morph_replaced_tools",
+    "get_lock_holder",
     "make_file_read_cache_hook",
     "make_lint_cache_hook",
     "make_lock_enforcement_hook",
     "make_stop_hook",
+    "run_command",
 ]
