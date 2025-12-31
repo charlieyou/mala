@@ -72,6 +72,10 @@ def _get_review_followup_prompt() -> str:
     return REVIEW_FOLLOWUP_FILE.read_text()
 
 
+class IdleTimeoutError(Exception):
+    """Raised when the SDK response stream is idle for too long."""
+
+
 @runtime_checkable
 class SDKClientProtocol(Protocol):
     """Protocol for SDK client interactions.
@@ -169,6 +173,8 @@ class AgentSessionConfig:
             When enabled, code changes are reviewed after the gate passes.
         log_file_wait_timeout: Seconds to wait for log file after session
             completes. Default 60s allows time for SDK to flush logs under load.
+        idle_timeout_seconds: Seconds to wait for any SDK message before
+            aborting the session. None derives a default based on timeout_seconds.
     """
 
     repo_path: Path
@@ -179,6 +185,7 @@ class AgentSessionConfig:
     morph_api_key: str | None = None
     review_enabled: bool = True
     log_file_wait_timeout: float = 60.0
+    idle_timeout_seconds: float | None = None
 
 
 @dataclass
@@ -443,6 +450,12 @@ class AgentSessionRunner:
         # Claude SDK may have async delays in log writing, especially under load.
         log_file_wait_timeout = self.config.log_file_wait_timeout
         log_file_poll_interval = 0.5
+        idle_timeout_seconds = self.config.idle_timeout_seconds
+        if idle_timeout_seconds is None:
+            derived = self.config.timeout_seconds * 0.2
+            idle_timeout_seconds = min(900.0, max(300.0, derived))
+        if idle_timeout_seconds <= 0:
+            idle_timeout_seconds = None
 
         try:
             async with asyncio.timeout(self.config.timeout_seconds):
@@ -465,7 +478,29 @@ class AgentSessionRunner:
 
                     # Main message loop
                     while not lifecycle.is_terminal:
-                        async for message in client.receive_response():
+
+                        async def _iter_messages() -> AsyncIterator[Any]:
+                            stream = client.receive_response()
+                            if idle_timeout_seconds is None:
+                                async for msg in stream:
+                                    yield msg
+                                return
+                            while True:
+                                try:
+                                    msg = await asyncio.wait_for(
+                                        stream.__anext__(),
+                                        timeout=idle_timeout_seconds,
+                                    )
+                                except StopAsyncIteration:
+                                    break
+                                except TimeoutError as exc:
+                                    raise IdleTimeoutError(
+                                        "SDK stream idle for "
+                                        f"{idle_timeout_seconds:.0f} seconds"
+                                    ) from exc
+                                yield msg
+
+                        async for message in _iter_messages():
                             # Log to tracer if provided
                             if tracer is not None:
                                 tracer.log_message(message)
@@ -780,6 +815,9 @@ class AgentSessionRunner:
                                 await client.query(followup, session_id=session_id)
                                 continue
 
+        except IdleTimeoutError as e:
+            lifecycle.on_error(lifecycle_ctx, e)
+            final_result = lifecycle_ctx.final_result
         except TimeoutError:
             timeout_mins = self.config.timeout_seconds // 60
             lifecycle.on_timeout(lifecycle_ctx, timeout_mins)

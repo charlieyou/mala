@@ -9,6 +9,7 @@ isinstance checks work correctly in the runner.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, Self
 
 import pytest
@@ -83,6 +84,31 @@ class FakeSDKClient:
         """Yield messages then the result message."""
         for msg in self.messages:
             yield msg
+        yield self.result_message
+
+
+class HangingSDKClient(FakeSDKClient):
+    """Fake SDK client that never yields a response (simulates hung stream)."""
+
+    async def receive_response(self) -> AsyncIterator[Any]:
+        while True:
+            await asyncio.sleep(3600)
+            if False:  # pragma: no cover
+                yield None
+
+
+class SlowSDKClient(FakeSDKClient):
+    """Fake SDK client that yields messages after a short delay."""
+
+    def __init__(self, delay: float, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.delay = delay
+
+    async def receive_response(self) -> AsyncIterator[Any]:
+        for msg in self.messages:
+            await asyncio.sleep(self.delay)
+            yield msg
+        await asyncio.sleep(self.delay)
         yield self.result_message
 
 
@@ -216,6 +242,131 @@ class TestAgentSessionRunnerBasics:
         # Check the first query was the prompt
         assert len(fake_client.queries) >= 1
         assert fake_client.queries[0] == ("My test prompt", None)
+
+    @pytest.mark.asyncio
+    async def test_idle_timeout_aborts_session(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Runner should fail fast when SDK stream is idle."""
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            idle_timeout_seconds=0.1,
+            review_enabled=False,
+        )
+        fake_client = HangingSDKClient()
+        fake_factory = FakeSDKClientFactory(fake_client)
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),
+            sdk_client_factory=fake_factory,
+        )
+
+        input = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input)
+
+        assert output.success is False
+        assert "idle" in output.summary.lower()
+
+    @pytest.mark.asyncio
+    async def test_idle_timeout_allows_slow_stream(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Idle watchdog should not trip when messages arrive in time."""
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=5,
+            idle_timeout_seconds=0.2,
+            review_enabled=False,
+        )
+        slow_client = SlowSDKClient(delay=0.05)
+        fake_factory = FakeSDKClientFactory(slow_client)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+        )
+
+        input = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input)
+
+        assert output.success is True
+
+    @pytest.mark.asyncio
+    async def test_idle_timeout_disabled(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Idle watchdog can be disabled with idle_timeout_seconds=0."""
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=5,
+            idle_timeout_seconds=0,
+            review_enabled=False,
+        )
+        slow_client = SlowSDKClient(delay=0.2)
+        fake_factory = FakeSDKClientFactory(slow_client)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+        )
+
+        input = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input)
+
+        assert output.success is True
 
 
 class TestAgentSessionRunnerGateHandling:
