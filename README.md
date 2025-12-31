@@ -147,6 +147,9 @@ mala status
 
 # Clean up locks and logs
 mala clean
+
+# Verify and close a specific epic without running tasks
+mala epic-verify proj-abc /path/to/repo
 ```
 
 ## Coordination Layers
@@ -229,6 +232,15 @@ The diff size threshold is configurable via `MALA_MAX_DIFF_SIZE_KB` (default: 10
 ```bash
 # Force-close epics without verification
 mala run --epic-override proj-abc,proj-def /path/to/repo
+```
+
+**Manual epic verification:**
+```bash
+# Verify and close a specific epic without running tasks
+mala epic-verify proj-abc /path/to/repo
+
+# Verify an already-closed epic without closing it again
+mala epic-verify proj-abc /path/to/repo --force --no-close
 ```
 
 ## Agent Workflow

@@ -14,6 +14,7 @@ import src.beads_client
 import src.tools.locking
 import src.cli_support
 import src.log_output.run_metadata
+from src.models import EpicVerificationResult
 
 
 def _reload_cli(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
@@ -205,6 +206,38 @@ class DummyOrchestrator:
         return (1, 1)
 
 
+class DummyEpicVerifier:
+    last_call: ClassVar[dict[str, object] | None] = None
+
+    async def verify_epic_with_options(
+        self,
+        epic_id: str,
+        *,
+        human_override: bool = False,
+        require_eligible: bool = True,
+        close_epic: bool = True,
+    ) -> EpicVerificationResult:
+        DummyEpicVerifier.last_call = {
+            "epic_id": epic_id,
+            "human_override": human_override,
+            "require_eligible": require_eligible,
+            "close_epic": close_epic,
+        }
+        return EpicVerificationResult(
+            verified_count=1,
+            passed_count=1,
+            failed_count=0,
+            human_review_count=0,
+            verdicts={},
+            remediation_issues_created=[],
+        )
+
+
+class DummyOrchestratorWithVerifier:
+    def __init__(self, verifier: DummyEpicVerifier) -> None:
+        self.epic_verifier = verifier
+
+
 def _make_dummy_create_orchestrator() -> Callable[[object], DummyOrchestrator]:
     """Create a dummy create_orchestrator that captures arguments."""
 
@@ -214,6 +247,19 @@ def _make_dummy_create_orchestrator() -> Callable[[object], DummyOrchestrator]:
         DummyOrchestrator.last_orch_config = config
         DummyOrchestrator.last_mala_config = mala_config
         return DummyOrchestrator()
+
+    return dummy_create_orchestrator
+
+
+def _make_dummy_create_orchestrator_with_verifier(
+    verifier: DummyEpicVerifier,
+) -> Callable[[object], DummyOrchestratorWithVerifier]:
+    """Create a dummy create_orchestrator that provides an epic verifier."""
+
+    def dummy_create_orchestrator(
+        config: object, *, mala_config: object = None, deps: object = None
+    ) -> DummyOrchestratorWithVerifier:
+        return DummyOrchestratorWithVerifier(verifier)
 
     return dummy_create_orchestrator
 
@@ -428,6 +474,41 @@ def test_run_repo_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
 
     assert excinfo.value.exit_code == 1
     assert logs
+
+
+def test_epic_verify_invokes_verifier(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cli = _reload_cli(monkeypatch)
+    verifier = DummyEpicVerifier()
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    import src.orchestrator_factory
+
+    monkeypatch.setattr(
+        src.orchestrator_factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator_with_verifier(verifier),
+    )
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.epic_verify(
+            epic_id="epic-1",
+            repo_path=tmp_path,
+            force=True,
+            close=False,
+        )
+
+    assert excinfo.value.exit_code == 0
+    assert DummyEpicVerifier.last_call == {
+        "epic_id": "epic-1",
+        "human_override": False,
+        "require_eligible": False,
+        "close_epic": False,
+    }
 
 
 def test_clean_removes_locks_and_logs(

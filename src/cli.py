@@ -5,6 +5,7 @@ mala CLI: Agent SDK orchestrator for parallel issue processing.
 
 Usage:
     mala run [OPTIONS] [REPO_PATH]
+    mala epic-verify [OPTIONS] EPIC_ID [REPO_PATH]
     mala clean
     mala status
 """
@@ -569,6 +570,110 @@ def run(
     # Exit 0 if: no issues to process (no-op) OR at least one succeeded
     # Exit 1 only if: issues were processed but all failed
     raise typer.Exit(0 if success_count > 0 or total == 0 else 1)
+
+
+@app.command("epic-verify")
+def epic_verify(
+    epic_id: Annotated[
+        str,
+        typer.Argument(
+            help="Epic ID to verify and optionally close",
+        ),
+    ],
+    repo_path: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to repository with beads issues",
+        ),
+    ] = Path("."),
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Run verification even if epic is not eligible or already closed",
+        ),
+    ] = False,
+    close: Annotated[
+        bool,
+        typer.Option(
+            "--close/--no-close",
+            help="Close the epic after passing verification (default: close)",
+        ),
+    ] = True,
+    human_override: Annotated[
+        bool,
+        typer.Option(
+            "--human-override",
+            help="Bypass verification and close directly (requires --close)",
+        ),
+    ] = False,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            help="Enable verbose output",
+        ),
+    ] = False,
+) -> None:
+    """Verify a single epic and optionally close it without running tasks."""
+    set_verbose(verbose)
+
+    if human_override and not close:
+        log("✗", "--human-override requires --close", Colors.RED)
+        raise typer.Exit(1)
+
+    repo_path = repo_path.resolve()
+    if not repo_path.exists():
+        log("✗", f"Repository not found: {repo_path}", Colors.RED)
+        raise typer.Exit(1)
+
+    USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    config = _lazy("MalaConfig").from_env(validate=False)
+    orch_config = _lazy("OrchestratorConfig")(repo_path=repo_path)
+    orchestrator = _lazy("create_orchestrator")(orch_config, mala_config=config)
+    verifier = getattr(orchestrator, "epic_verifier", None)
+
+    if verifier is None:
+        log("✗", "Epic verifier unavailable for this configuration", Colors.RED)
+        raise typer.Exit(1)
+
+    result = asyncio.run(
+        verifier.verify_epic_with_options(
+            epic_id,
+            human_override=human_override,
+            require_eligible=not force,
+            close_epic=close,
+        )
+    )
+
+    if result.verified_count == 0:
+        log("○", f"No verification run for epic {epic_id}", Colors.GRAY)
+        if not force:
+            log("◐", "Use --force to bypass eligibility checks", Colors.MUTED)
+        raise typer.Exit(1)
+
+    if result.remediation_issues_created:
+        log(
+            "◐",
+            f"Remediation issues: {', '.join(result.remediation_issues_created)}",
+            Colors.MUTED,
+        )
+
+    if result.failed_count > 0:
+        log("✗", f"Epic {epic_id} failed verification", Colors.RED)
+        raise typer.Exit(1)
+
+    if result.human_review_count > 0:
+        log("⚠", f"Epic {epic_id} requires human review", Colors.YELLOW)
+        raise typer.Exit(1)
+
+    if close:
+        log("✓", f"Epic {epic_id} verified and closed", Colors.GREEN)
+    else:
+        log("✓", f"Epic {epic_id} verified (no close)", Colors.GREEN)
+    raise typer.Exit(0)
 
 
 @app.command()

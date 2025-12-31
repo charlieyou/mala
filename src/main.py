@@ -7,6 +7,7 @@ The actual implementation lives in src/cli.py.
 
 Usage:
     mala run [OPTIONS] [REPO_PATH]
+    mala epic-verify [OPTIONS] EPIC_ID [REPO_PATH]
     mala clean
     mala status
 """

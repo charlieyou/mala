@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -506,9 +507,12 @@ class EpicVerifier:
 
             # Acquire per-epic lock for sequential processing
             lock_key: str | None = None
+            lock_agent_id: str | None = None
             if self.lock_manager is not None:
                 # Use lock context manager if available
                 lock_key = f"epic_verify:{epic_id}"
+                # Use unique agent_id per process to ensure mutual exclusion
+                lock_agent_id = f"epic_verifier_{os.getpid()}"
                 try:
                     # Try to acquire lock with timeout
                     from src.tools.locking import wait_for_lock
@@ -516,8 +520,9 @@ class EpicVerifier:
                     acquired = await asyncio.to_thread(
                         wait_for_lock,
                         lock_key,
-                        "epic_verifier",
-                        timeout_seconds=EPIC_VERIFY_LOCK_TIMEOUT_SECONDS,
+                        lock_agent_id,
+                        str(self.repo_path),  # repo_namespace for consistent lock keys
+                        EPIC_VERIFY_LOCK_TIMEOUT_SECONDS,
                     )
                     if not acquired:
                         # Could not acquire lock, skip this epic
@@ -590,8 +595,9 @@ class EpicVerifier:
                     try:
                         from src.tools.locking import get_lock_holder, lock_path
 
-                        lp = lock_path(lock_key)
-                        if lp.exists() and get_lock_holder(lock_key) == "epic_verifier":
+                        repo_ns = str(self.repo_path)
+                        lp = lock_path(lock_key, repo_ns)
+                        if lp.exists() and get_lock_holder(lock_key, repo_ns) == lock_agent_id:
                             lp.unlink(missing_ok=True)
                     except ImportError:
                         pass
@@ -746,6 +752,32 @@ class EpicVerifier:
         Returns:
             Summary of verification result for this epic.
         """
+        return await self.verify_epic_with_options(
+            epic_id,
+            human_override=human_override,
+            require_eligible=True,
+            close_epic=True,
+        )
+
+    async def verify_epic_with_options(
+        self,
+        epic_id: str,
+        *,
+        human_override: bool = False,
+        require_eligible: bool = True,
+        close_epic: bool = True,
+    ) -> EpicVerificationResult:
+        """Verify a specific epic with optional eligibility and closing behavior.
+
+        Args:
+            epic_id: The epic ID to verify.
+            human_override: If True, bypass verification and (optionally) close.
+            require_eligible: If True, only run when all children are closed.
+            close_epic: If True, close the epic after a passing verification.
+
+        Returns:
+            Summary of verification result for this epic.
+        """
         verdicts: dict[str, EpicVerdict] = {}
         remediation_issues: list[str] = []
         passed_count = 0
@@ -753,9 +785,7 @@ class EpicVerifier:
         human_review_count = 0
         verified_count = 0
 
-        # Check if epic is eligible for closure
-        if not await self._is_epic_eligible(epic_id):
-            # Epic not eligible (not all children closed)
+        if require_eligible and not await self._is_epic_eligible(epic_id):
             return EpicVerificationResult(
                 verified_count=0,
                 passed_count=0,
@@ -765,33 +795,42 @@ class EpicVerifier:
                 remediation_issues_created=[],
             )
 
-        # Human override bypasses verification
         if human_override:
-            closed = await self.beads.close_async(epic_id)
             verified_count = 1
-            if closed:
-                passed_count = 1
+            if close_epic:
+                closed = await self.beads.close_async(epic_id)
+                if closed:
+                    passed_count = 1
+                    verdicts[epic_id] = EpicVerdict(
+                        passed=True,
+                        unmet_criteria=[],
+                        confidence=1.0,
+                        reasoning="Human override - bypassed verification",
+                    )
+                else:
+                    human_review_count = 1
+                    reason = "Human override close failed - epic could not be closed"
+                    review_id = await self.request_human_review(epic_id, reason, None)
+                    remediation_issues.append(review_id)
+                    verdicts[epic_id] = EpicVerdict(
+                        passed=False,
+                        unmet_criteria=[],
+                        confidence=0.0,
+                        reasoning=reason,
+                    )
+                    if self.event_sink is not None:
+                        self.event_sink.on_epic_verification_human_review(
+                            epic_id, reason, review_id
+                        )
+            else:
                 verdicts[epic_id] = EpicVerdict(
                     passed=True,
                     unmet_criteria=[],
                     confidence=1.0,
-                    reasoning="Human override - bypassed verification",
+                    reasoning="Human override - bypassed verification (no close)",
                 )
-            else:
-                human_review_count = 1
-                reason = "Human override close failed - epic could not be closed"
-                review_id = await self.request_human_review(epic_id, reason, None)
-                remediation_issues.append(review_id)
-                verdicts[epic_id] = EpicVerdict(
-                    passed=False,
-                    unmet_criteria=[],
-                    confidence=0.0,
-                    reasoning=reason,
-                )
-                if self.event_sink is not None:
-                    self.event_sink.on_epic_verification_human_review(
-                        epic_id, reason, review_id
-                    )
+                passed_count = 1
+
             return EpicVerificationResult(
                 verified_count=verified_count,
                 passed_count=passed_count,
@@ -801,21 +840,23 @@ class EpicVerifier:
                 remediation_issues_created=remediation_issues,
             )
 
-        # Acquire per-epic lock for sequential processing
         lock_key: str | None = None
+        lock_agent_id: str | None = None
         if self.lock_manager is not None:
             lock_key = f"epic_verify:{epic_id}"
+            # Use unique agent_id per process to ensure mutual exclusion
+            lock_agent_id = f"epic_verifier_{os.getpid()}"
             try:
                 from src.tools.locking import wait_for_lock
 
                 acquired = await asyncio.to_thread(
                     wait_for_lock,
                     lock_key,
-                    "epic_verifier",
-                    timeout_seconds=EPIC_VERIFY_LOCK_TIMEOUT_SECONDS,
+                    lock_agent_id,
+                    str(self.repo_path),  # repo_namespace for consistent lock keys
+                    EPIC_VERIFY_LOCK_TIMEOUT_SECONDS,
                 )
                 if not acquired:
-                    # Could not acquire lock, skip verification
                     return EpicVerificationResult(
                         verified_count=0,
                         passed_count=0,
@@ -828,7 +869,6 @@ class EpicVerifier:
                 pass
 
         try:
-            # Emit verification started event
             if self.event_sink is not None:
                 self.event_sink.on_epic_verification_started(epic_id)
 
@@ -837,27 +877,32 @@ class EpicVerifier:
             verified_count = 1
 
             if verdict.passed and verdict.confidence >= LOW_CONFIDENCE_THRESHOLD:
-                # Verification passed, close the epic
-                closed = await self.beads.close_async(epic_id)
-                if closed:
+                if close_epic:
+                    closed = await self.beads.close_async(epic_id)
+                    if closed:
+                        passed_count = 1
+                        if self.event_sink is not None:
+                            self.event_sink.on_epic_verification_passed(
+                                epic_id, verdict.confidence
+                            )
+                    else:
+                        human_review_count = 1
+                        reason = "Verification passed but epic close failed"
+                        review_id = await self.request_human_review(
+                            epic_id, reason, verdict
+                        )
+                        remediation_issues.append(review_id)
+                        if self.event_sink is not None:
+                            self.event_sink.on_epic_verification_human_review(
+                                epic_id, reason, review_id
+                            )
+                else:
                     passed_count = 1
                     if self.event_sink is not None:
                         self.event_sink.on_epic_verification_passed(
                             epic_id, verdict.confidence
                         )
-                else:
-                    human_review_count = 1
-                    reason = "Verification passed but epic close failed"
-                    review_id = await self.request_human_review(
-                        epic_id, reason, verdict
-                    )
-                    remediation_issues.append(review_id)
-                    if self.event_sink is not None:
-                        self.event_sink.on_epic_verification_human_review(
-                            epic_id, reason, review_id
-                        )
             elif verdict.confidence < LOW_CONFIDENCE_THRESHOLD:
-                # Low confidence, flag for human review
                 reason = f"Low confidence ({verdict.confidence:.2f})"
                 review_id = await self.request_human_review(epic_id, reason, verdict)
                 remediation_issues.append(review_id)
@@ -867,7 +912,6 @@ class EpicVerifier:
                         epic_id, reason, review_id
                     )
             else:
-                # Verification failed, create remediation issues
                 issue_ids = await self.create_remediation_issues(epic_id, verdict)
                 remediation_issues.extend(issue_ids)
                 await self.add_epic_blockers(epic_id, issue_ids)
@@ -877,13 +921,13 @@ class EpicVerifier:
                         epic_id, len(verdict.unmet_criteria), issue_ids
                     )
         finally:
-            # Release lock if we acquired one
             if self.lock_manager is not None and lock_key is not None:
                 try:
                     from src.tools.locking import get_lock_holder, lock_path
 
-                    lp = lock_path(lock_key)
-                    if lp.exists() and get_lock_holder(lock_key) == "epic_verifier":
+                    repo_ns = str(self.repo_path)
+                    lp = lock_path(lock_key, repo_ns)
+                    if lp.exists() and get_lock_holder(lock_key, repo_ns) == lock_agent_id:
                         lp.unlink(missing_ok=True)
                 except ImportError:
                     pass

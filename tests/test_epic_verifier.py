@@ -1197,11 +1197,15 @@ class TestLockUsage:
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
 
         # Mock the locking module
+        import os
+
+        expected_agent_id = f"epic_verifier_{os.getpid()}"
+
         with patch("src.tools.locking.wait_for_lock") as mock_wait:
             mock_wait.return_value = True
 
             with patch("src.tools.locking.get_lock_holder") as mock_holder:
-                mock_holder.return_value = "epic_verifier"
+                mock_holder.return_value = expected_agent_id
 
                 with patch("src.tools.locking.lock_path") as mock_path:
                     mock_lock_path = MagicMock()
@@ -1215,7 +1219,9 @@ class TestLockUsage:
                     # Since we patched the module, the import succeeds
                     mock_wait.assert_called_once()
                     call_args = mock_wait.call_args[0]
-                    assert "epic_verify:epic-1" == call_args[0]
+                    assert call_args[0] == "epic_verify:epic-1"
+                    assert call_args[1] == expected_agent_id
+                    assert call_args[2] == str(verifier.repo_path)  # repo_namespace
 
 
 # ============================================================================
