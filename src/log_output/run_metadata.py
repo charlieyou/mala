@@ -359,6 +359,8 @@ class RunMetadata:
 
         with open(path, "w") as f:
             json.dump(self._to_dict(), f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
         return path
 
 
@@ -422,6 +424,8 @@ def write_run_marker(
 
     with open(marker_path, "w") as f:
         json.dump(data, f)
+        f.flush()
+        os.fsync(f.fileno())
 
     return marker_path
 
