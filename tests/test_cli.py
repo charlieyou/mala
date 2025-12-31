@@ -49,8 +49,12 @@ class TestImportSafety:
         def mock_load_user_env() -> None:
             load_called["called"] = True
 
-        # Patch before import
-        with patch("src.tools.env.load_user_env", mock_load_user_env):
+        # Patch both src.tools.env and src.cli_support to ensure full isolation
+        # (cli_support re-exports load_user_env from tools.env)
+        with (
+            patch("src.tools.env.load_user_env", mock_load_user_env),
+            patch("src.cli_support.load_user_env", mock_load_user_env),
+        ):
             # Force reimport of cli module
             if "src.cli" in sys.modules:
                 del sys.modules["src.cli"]
