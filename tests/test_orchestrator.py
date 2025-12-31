@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator, Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -3625,6 +3625,8 @@ class TestBaselineCommitSelection:
             context_file: Path | None = None,
             timeout: int = 300,
             claude_session_id: str | None = None,
+            *,
+            commit_shas: Sequence[str] | None = None,
         ) -> MagicMock:
             # Extract baseline from diff_range (format: "baseline..HEAD")
             baseline = diff_range.split("..")[0] if ".." in diff_range else None
@@ -3706,6 +3708,8 @@ class TestBaselineCommitSelection:
             context_file: Path | None = None,
             timeout: int = 300,
             claude_session_id: str | None = None,
+            *,
+            commit_shas: Sequence[str] | None = None,
         ) -> MagicMock:
             # Extract baseline from diff_range (format: "baseline..HEAD")
             baseline = diff_range.split("..")[0] if ".." in diff_range else None
@@ -3836,28 +3840,17 @@ class TestBaselineCommitSelection:
         assert "get_git_commit_async" in call_order
 
 
-class TestReviewUsesCurrentHead:
-    """Tests that external review uses current HEAD instead of specific commit.
+class TestReviewUsesIssueCommits:
+    """Tests that external review scopes to commits for the active issue.
 
-    When multiple agents are working in parallel, one agent may fix issues
-    introduced by another agent. The review should see the cumulative
-    diff from baseline to current HEAD, not just up to the agent's specific
-    commit.
-
-    See issue mala-l10: If Agent A makes commit abc123 with issues, and Agent B
-    makes commit def456 that fixes those issues, review for Agent A
-    should review baseline..HEAD (seeing the fix) not baseline..abc123.
+    When multiple agents are working in parallel, we should only review
+    commits created for the current issue (bd-<issue_id>: prefix), not
+    unrelated commits from other agents.
     """
 
     @pytest.mark.asyncio
-    async def test_review_receives_current_head_not_agent_commit(
-        self, tmp_path: Path
-    ) -> None:
-        """Review should use current HEAD, not the agent's specific commit.
-
-        This ensures that if another agent fixed issues after this agent's commit,
-        the review will see the clean cumulative diff.
-        """
+    async def test_review_scopes_to_issue_commits(self, tmp_path: Path) -> None:
+        """Review should use the issue's commit list, not unrelated commits."""
         from src.cerberus_review import ReviewResult
         from src.orchestrator import MalaOrchestrator
         from src.quality_gate import GateResult
@@ -3875,8 +3868,7 @@ class TestReviewUsesCurrentHead:
             log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
         )
 
-        # Track the diff_range passed to code review
-        captured_diff_ranges: list[str] = []
+        captured_commit_lists: list[Sequence[str] | None] = []
 
         class MockCodeReviewer:
             async def __call__(
@@ -3885,8 +3877,10 @@ class TestReviewUsesCurrentHead:
                 context_file: Path | None = None,
                 timeout: int = 300,
                 claude_session_id: str | None = None,
+                *,
+                commit_shas: Sequence[str] | None = None,
             ) -> ReviewResult:
-                captured_diff_ranges.append(diff_range)
+                captured_commit_lists.append(commit_shas)
                 return ReviewResult(
                     passed=True,
                     issues=[],
@@ -3897,17 +3891,16 @@ class TestReviewUsesCurrentHead:
 
         mock_reviewer = MockCodeReviewer()
 
-        # Simulate: agent made commit "agent_commit_abc", but HEAD is now "current_head_xyz"
-        # (because another agent made a subsequent commit)
-        agent_commit = "agent_commit_abc123"
+        # Simulate: agent made commits for this issue, but HEAD includes other changes.
+        issue_commits = ["issue_commit_abc123", "issue_commit_def456"]
         current_head = "current_head_xyz456"
 
-        # Mock the quality gate to return a passing result with the agent's specific commit.
+        # Mock the quality gate to return a passing result with the agent's commit.
         # Gate must pass for review to be triggered (see lifecycle.py:270-284).
         mock_gate_result = GateResult(
             passed=True,  # Gate passes, triggering review
             failure_reasons=[],
-            commit_hash=agent_commit,  # This is the agent's commit
+            commit_hash=issue_commits[-1],
         )
 
         async def mock_get_git_commit_async(cwd: Path, timeout: float = 5.0) -> str:
@@ -3957,6 +3950,10 @@ class TestReviewUsesCurrentHead:
                 side_effect=mock_get_git_commit_async,
             ),
             patch("src.orchestrator.get_baseline_for_issue", return_value=None),
+            patch(
+                "src.orchestrator.get_issue_commits_async",
+                return_value=issue_commits,
+            ),
             patch.object(orchestrator.review_runner, "code_reviewer", mock_reviewer),
             patch.object(orchestrator, "quality_gate", mock_quality_gate),
             patch.object(orchestrator.gate_runner, "gate_checker", mock_quality_gate),
@@ -3968,13 +3965,9 @@ class TestReviewUsesCurrentHead:
         ):
             await orchestrator.run_implementer("test-issue")
 
-        # The key assertion: code review should receive diff range with current HEAD
-        assert len(captured_diff_ranges) >= 1, "Code review should have been called"
-        # The diff range should include current HEAD in the format "baseline..HEAD"
-        assert current_head in captured_diff_ranges[0], (
-            f"Code review diff range should include current HEAD ({current_head}), "
-            f"got: {captured_diff_ranges[0]}"
-        )
+        # The key assertion: code review should receive the issue commit list
+        assert captured_commit_lists, "Code review should have been called"
+        assert captured_commit_lists[0] == issue_commits
 
 
 class TestRunSync:

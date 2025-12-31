@@ -88,3 +88,44 @@ async def get_baseline_for_issue(
         return None  # Root commit (no parent)
 
     return parent_result.stdout.strip()
+
+
+async def get_issue_commits_async(
+    repo_path: Path,
+    issue_id: str,
+    *,
+    since_timestamp: int | None = None,
+    timeout: float = DEFAULT_GIT_TIMEOUT,
+) -> list[str]:
+    """Get commit SHAs for an issue, optionally filtered by timestamp.
+
+    Finds commits with "bd-{issue_id}:" prefix, ordered oldest -> newest.
+
+    Args:
+        repo_path: Path to the git repository.
+        issue_id: The issue ID (e.g., "mala-123").
+        since_timestamp: Optional Unix timestamp (seconds). If provided,
+            only commits after this time are returned.
+        timeout: Timeout in seconds for git operations.
+
+    Returns:
+        List of commit SHAs (full length). Empty if none found or git fails.
+    """
+    runner = CommandRunner(cwd=repo_path, timeout_seconds=timeout)
+    escaped_issue_id = re.escape(issue_id)
+
+    cmd = [
+        "git",
+        "log",
+        "--format=%H",
+        "--reverse",
+        f"--grep=^bd-{escaped_issue_id}:",
+    ]
+    if since_timestamp is not None and since_timestamp > 0:
+        cmd.append(f"--since=@{since_timestamp}")
+
+    log_result = await runner.run_async(cmd)
+    if not log_result.ok:
+        return []
+
+    return [line.strip() for line in log_result.stdout.splitlines() if line.strip()]

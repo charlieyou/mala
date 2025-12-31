@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from collections.abc import Iterator
     from pathlib import Path
 
@@ -273,6 +274,8 @@ class CodeReviewer(Protocol):
         context_file: Path | None = None,
         timeout: int = 300,
         claude_session_id: str | None = None,
+        *,
+        commit_shas: Sequence[str] | None = None,
     ) -> ReviewResult:
         """Run code review on a diff range.
 
@@ -281,6 +284,8 @@ class CodeReviewer(Protocol):
             context_file: Optional path to file with issue description context.
             timeout: Timeout in seconds for the review operation.
             claude_session_id: Optional Claude session ID for review attribution.
+            commit_shas: Optional list of commit SHAs to review directly.
+                When provided, reviewers should scope to these commits only.
 
         Returns:
             ReviewResult with review outcome. On parse failure,

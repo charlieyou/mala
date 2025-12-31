@@ -16,8 +16,12 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from src.tools.command_runner import CommandRunner
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 @dataclass
@@ -174,6 +178,8 @@ class DefaultReviewer:
         context_file: Path | None = None,
         timeout: int = 300,
         claude_session_id: str | None = None,
+        *,
+        commit_shas: Sequence[str] | None = None,
     ) -> ReviewResult:
         # Validate review-gate binary exists and is executable before proceeding
         validation_error = self._validate_review_gate_bin()
@@ -197,9 +203,12 @@ class DefaultReviewer:
                 review_log_path=None,
             )
 
+        use_commits = bool(commit_shas)
+
         # Check for empty diff (short-circuit without spawning review-gate)
-        # This avoids parse errors or failures when there's nothing to review
-        if await self._is_diff_empty(diff_range, runner):
+        # This avoids parse errors or failures when there's nothing to review.
+        # Only applies to range-based reviews; commit lists are reviewed directly.
+        if not use_commits and await self._is_diff_empty(diff_range, runner):
             return ReviewResult(
                 passed=True,
                 issues=[],
@@ -213,8 +222,12 @@ class DefaultReviewer:
             spawn_cmd.extend(["--context-file", str(context_file)])
         if self.spawn_args:
             spawn_cmd.extend(self.spawn_args)
-        # Diff range is a positional argument (review-gate does not accept --diff).
-        spawn_cmd.append(diff_range)
+        if use_commits:
+            spawn_cmd.append("--commit")
+            spawn_cmd.extend(commit_shas or [])
+        else:
+            # Diff range is a positional argument (review-gate does not accept --diff).
+            spawn_cmd.append(diff_range)
 
         spawn_result = await runner.run_async(spawn_cmd, env=env, timeout=timeout)
         if spawn_result.timed_out:

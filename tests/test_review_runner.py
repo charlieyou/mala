@@ -4,6 +4,7 @@ Tests the extracted code review orchestration logic using fake code reviewers,
 without actual Cerberus CLI or subprocess dependencies.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -39,6 +40,8 @@ class FakeCodeReviewer:
         context_file: Path | None = None,
         timeout: int = 300,
         claude_session_id: str | None = None,
+        *,
+        commit_shas: Sequence[str] | None = None,
     ) -> ReviewResult:
         """Record call and return configured result."""
         self.calls.append(
@@ -47,6 +50,7 @@ class FakeCodeReviewer:
                 "context_file": context_file,
                 "timeout": timeout,
                 "claude_session_id": claude_session_id,
+                "commit_shas": commit_shas,
             }
         )
         return self.result
@@ -179,6 +183,7 @@ class TestReviewRunnerBasics:
             commit_sha="abc123",
             issue_description="Fix the bug",
             baseline_commit="def456",
+            commit_shas=["commit1", "commit2"],
             claude_session_id="session-123",
         )
 
@@ -192,6 +197,7 @@ class TestReviewRunnerBasics:
         # context_file should be set when issue_description is provided
         assert call["context_file"] is not None
         assert call["claude_session_id"] == "session-123"
+        assert call["commit_shas"] == ["commit1", "commit2"]
 
     @pytest.mark.asyncio
     async def test_run_review_captures_review_log(
@@ -574,6 +580,8 @@ class TestContextFileCleanup:
                 context_file: Path | None = None,
                 timeout: int = 300,
                 claude_session_id: str | None = None,
+                *,
+                commit_shas: Sequence[str] | None = None,
             ) -> ReviewResult:
                 nonlocal context_file_path
                 context_file_path = context_file
@@ -615,6 +623,8 @@ class TestContextFileCleanup:
                 context_file: Path | None = None,
                 timeout: int = 300,
                 claude_session_id: str | None = None,
+                *,
+                commit_shas: Sequence[str] | None = None,
             ) -> ReviewResult:
                 nonlocal context_file_path
                 context_file_path = context_file

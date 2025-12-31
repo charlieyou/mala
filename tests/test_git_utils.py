@@ -159,6 +159,72 @@ class TestGetBaselineForIssue:
 
         assert result is None
 
+
+class TestGetIssueCommitsAsync:
+    """Tests for get_issue_commits_async() function."""
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_no_commits(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(command=["git", "log"], returncode=0, stdout=""),
+            ]
+        )
+        monkeypatch.setattr(
+            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_issue_commits_async(Path("/repo"), "mala-123")
+
+        assert result == []
+        assert r"--grep=^bd-mala\-123:" in mock_runner.calls[0]
+
+    @pytest.mark.asyncio
+    async def test_returns_commits_in_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "log"],
+                    returncode=0,
+                    stdout="aaa111\nbbb222\nccc333\n",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        result = await git_utils.get_issue_commits_async(Path("/repo"), "mala-123")
+
+        assert result == ["aaa111", "bbb222", "ccc333"]
+
+    @pytest.mark.asyncio
+    async def test_since_timestamp_is_applied(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_runner = MockCommandRunner(
+            responses=[
+                CommandResult(
+                    command=["git", "log"],
+                    returncode=0,
+                    stdout="aaa111\n",
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+        )
+
+        await git_utils.get_issue_commits_async(
+            Path("/repo"), "mala-123", since_timestamp=1703502000
+        )
+
+        assert "--since=@1703502000" in mock_runner.calls[0]
+
     @pytest.mark.asyncio
     async def test_timeout_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Timeout should return None gracefully."""

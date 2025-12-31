@@ -24,7 +24,7 @@ def _find_review_gate_bin() -> Path | None:
 
 def _setup_git_repo(repo_path: Path) -> str:
     """Initialize a git repo with two commits for review.
-    
+
     Returns the base SHA (first commit) for the diff range.
     The second commit contains changes to review.
     """
@@ -41,7 +41,7 @@ def _setup_git_repo(repo_path: Path) -> str:
         check=True,
         capture_output=True,
     )
-    
+
     # Create initial commit
     (repo_path / "main.py").write_text("# Initial file\n")
     subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
@@ -51,7 +51,7 @@ def _setup_git_repo(repo_path: Path) -> str:
         check=True,
         capture_output=True,
     )
-    
+
     # Get the base SHA
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -61,7 +61,7 @@ def _setup_git_repo(repo_path: Path) -> str:
         text=True,
     )
     base_sha = result.stdout.strip()
-    
+
     # Create second commit with changes to review
     (repo_path / "main.py").write_text("# Initial file\n\ndef hello():\n    print('hello')\n")
     subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
@@ -71,8 +71,85 @@ def _setup_git_repo(repo_path: Path) -> str:
         check=True,
         capture_output=True,
     )
-    
+
     return base_sha
+
+
+def _setup_git_repo_with_commits(repo_path: Path) -> list[str]:
+    """Initialize a git repo with three commits and return their SHAs."""
+    subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+
+    (repo_path / "main.py").write_text("# Initial file\n")
+    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+
+    def _head_sha() -> str:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+
+    first_sha = _head_sha()
+
+    (repo_path / "main.py").write_text(
+        "# Initial file\n\ndef hello():\n    print('hello')\n"
+    )
+    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Add hello function"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    second_sha = _head_sha()
+
+    (repo_path / "main.py").write_text(
+        "# Initial file\n\ndef hello():\n    print('hello')\n\ndef other_agent():\n    print('other agent')\n"
+    )
+    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Add other agent change"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    third_sha = _head_sha()
+
+    return [first_sha, second_sha, third_sha]
+
+
+def _review_artifact_path(repo_path: Path, session_id: str) -> Path:
+    project_hash = "-" + str(repo_path).lstrip("/").replace("/", "-")
+    return (
+        Path.home()
+        / ".claude"
+        / "projects"
+        / project_hash
+        / "cerberus"
+        / session_id
+        / "latest.md"
+    )
 
 
 @pytest.fixture
@@ -120,6 +197,38 @@ async def test_review_gate_full_flow(tmp_path: Path, review_gate_bin: Path) -> N
     # Key assertion: no fatal errors - proves protocol compatibility
     # parse_error can be non-None for transient reviewer failures (acceptable)
     assert result.fatal_error is False, f"Fatal error: {result.parse_error}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.flaky(reruns=2)
+async def test_review_gate_commits_scope(
+    tmp_path: Path, review_gate_bin: Path
+) -> None:
+    """Review should scope to explicit commits when commit list is provided."""
+    commits = _setup_git_repo_with_commits(tmp_path)
+    session_id = f"test-{uuid.uuid4()}"
+
+    reviewer = DefaultReviewer(
+        repo_path=tmp_path,
+        bin_path=review_gate_bin,
+        spawn_args=("--mode=fast",),
+    )
+
+    result = await reviewer(
+        diff_range=f"{commits[0]}..HEAD",
+        claude_session_id=session_id,
+        timeout=120,
+        commit_shas=[commits[1]],
+    )
+
+    assert result.fatal_error is False, f"Fatal error: {result.parse_error}"
+
+    artifact_path = _review_artifact_path(tmp_path, session_id)
+    assert artifact_path.exists()
+    artifact = artifact_path.read_text()
+    assert "<!-- diff-args: --commit" in artifact
+    assert commits[1] in artifact
+    assert "other agent" not in artifact
 
 
 @pytest.mark.asyncio

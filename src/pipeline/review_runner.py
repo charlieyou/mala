@@ -57,6 +57,7 @@ class ReviewInput:
         commit_sha: Current commit SHA to review.
         issue_description: Issue description for scope verification.
         baseline_commit: Optional baseline commit for cumulative diff.
+        commit_shas: Optional list of commit SHAs to review directly.
         claude_session_id: Optional Claude session ID for external review context.
     """
 
@@ -65,6 +66,7 @@ class ReviewInput:
     commit_sha: str
     issue_description: str | None = None
     baseline_commit: str | None = None
+    commit_shas: list[str] | None = None
     claude_session_id: str | None = None
 
 
@@ -174,6 +176,7 @@ class ReviewRunner:
                 context_file=context_file,
                 timeout=self.config.review_timeout,
                 claude_session_id=input.claude_session_id,
+                commit_shas=input.commit_shas,
             )
 
             session_log_path = None

@@ -17,6 +17,7 @@ from .git_utils import (
     get_git_commit_async,
     get_git_branch_async,
     get_baseline_for_issue,
+    get_issue_commits_async,
 )
 from .mcp import MORPH_DISALLOWED_TOOLS
 from .log_output.console import (
@@ -922,15 +923,22 @@ class MalaOrchestrator:
             issue_desc: str | None,
             baseline: str | None,
             session_id: str | None,
+            retry_state: RetryState,
         ) -> ReviewResult:
             current_head = await get_git_commit_async(self.repo_path)
             self.review_runner.config.capture_session_log = is_verbose_enabled()
+            commit_shas = await get_issue_commits_async(
+                self.repo_path,
+                issue_id,
+                since_timestamp=retry_state.baseline_timestamp,
+            )
             review_input = ReviewInput(
                 issue_id=issue_id,
                 repo_path=self.repo_path,
                 commit_sha=current_head,
                 issue_description=issue_desc,
                 baseline_commit=baseline,
+                commit_shas=commit_shas or None,
                 claude_session_id=session_id,
             )
             output = await self.review_runner.run_review(review_input)
