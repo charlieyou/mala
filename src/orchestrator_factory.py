@@ -145,10 +145,11 @@ def _derive_config(
     Returns:
         _DerivedConfig with computed values.
     """
-    # Compute timeout
+    # Compute timeout - match legacy behavior where 0 is treated as "use default"
+    # (truthiness check: `if timeout_minutes` treats 0 as falsy)
     effective_timeout = (
         config.timeout_minutes
-        if config.timeout_minutes is not None
+        if config.timeout_minutes
         else DEFAULT_AGENT_TIMEOUT_MINUTES
     )
     timeout_seconds = effective_timeout * 60
@@ -272,7 +273,6 @@ def _build_dependencies(
 
     # Issue provider (needs event_sink for warnings)
     issue_provider: IssueProvider
-    beads_client: BeadsClient | None = None
     if deps is not None and deps.issue_provider is not None:
         issue_provider = deps.issue_provider
     else:
@@ -284,9 +284,9 @@ def _build_dependencies(
         # BeadsClient implements IssueProvider protocol
         issue_provider = beads_client  # type: ignore[assignment]
 
-    # Epic verifier (only when using real BeadsClient)
+    # Epic verifier (only when using real BeadsClient - either created or injected)
     epic_verifier: EpicVerifier | None = None
-    if beads_client is not None:
+    if isinstance(issue_provider, BeadsClient):
         verification_model = ClaudeEpicVerificationModel(
             api_key=mala_config.llm_api_key,
             base_url=mala_config.llm_base_url,
@@ -294,7 +294,7 @@ def _build_dependencies(
             retry_config=RetryConfig(),
         )
         epic_verifier = EpicVerifier(
-            beads=beads_client,
+            beads=issue_provider,
             model=verification_model,
             repo_path=repo_path,
             max_diff_size_kb=mala_config.max_diff_size_kb,
@@ -417,7 +417,7 @@ def create_orchestrator(
     )
 
 
-# Re-export MalaConfig for convenience
+# Type imports for documentation and IDE support (not runtime exports)
 if TYPE_CHECKING:
     from .config import MalaConfig
     from .epic_verifier import EpicVerifier

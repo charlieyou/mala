@@ -45,6 +45,9 @@ from .locking import (
     run_command,
 )
 
+# Re-export from mcp for backward compatibility
+from ..mcp import MORPH_DISALLOWED_TOOLS
+
 __all__ = [
     "BASH_TOOL_NAMES",
     "DANGEROUS_PATTERNS",
@@ -52,6 +55,7 @@ __all__ = [
     "FILE_PATH_KEYS",
     "FILE_WRITE_TOOLS",
     "LINT_COMMAND_PATTERNS",
+    "MORPH_DISALLOWED_TOOLS",
     "SAFE_GIT_ALTERNATIVES",
     "CachedFileInfo",
     "FileReadCache",
