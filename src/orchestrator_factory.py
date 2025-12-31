@@ -174,13 +174,14 @@ def _build_dependencies(
         Tuple of all required dependencies.
     """
     from .beads_client import BeadsClient
+    from .braintrust_integration import BraintrustProvider
     from .cerberus_review import DefaultReviewer
     from .epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
     from .event_sink import ConsoleEventSink
     from .models import RetryConfig
     from .quality_gate import QualityGate
     from .session_log_parser import FileSystemLogProvider
-    from .telemetry import BraintrustProvider, NullTelemetryProvider
+    from .telemetry import NullTelemetryProvider
 
     # Get resolved path
     repo_path = config.repo_path.resolve()

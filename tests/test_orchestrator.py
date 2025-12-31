@@ -775,7 +775,7 @@ class TestOrchestratorInitialization:
 
     def test_telemetry_provider_braintrust_when_enabled(self, tmp_path: Path) -> None:
         """Telemetry provider is BraintrustProvider when braintrust_enabled=True."""
-        from src.telemetry import BraintrustProvider
+        from src.braintrust_integration import BraintrustProvider
 
         orch = MalaOrchestrator(repo_path=tmp_path, braintrust_enabled=True)
         assert isinstance(orch.telemetry_provider, BraintrustProvider)

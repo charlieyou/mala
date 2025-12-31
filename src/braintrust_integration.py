@@ -219,3 +219,95 @@ class TracedAgentExecution:
         """Record an error message."""
         self.error = error
         self.success = False
+
+
+class BraintrustSpan:
+    """Span implementation wrapping TracedAgentExecution.
+
+    This is an adapter that wraps TracedAgentExecution to match
+    the TelemetrySpan protocol. It delegates all operations to
+    the underlying TracedAgentExecution instance.
+    """
+
+    def __init__(
+        self, issue_id: str, agent_id: str, metadata: dict[str, Any] | None = None
+    ):
+        self._tracer = TracedAgentExecution(
+            issue_id=issue_id,
+            agent_id=agent_id,
+            metadata=metadata,
+        )
+
+    def __enter__(self) -> Self:
+        self._tracer.__enter__()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self._tracer.__exit__(exc_type, exc_val, exc_tb)
+
+    def log_input(self, prompt: str) -> None:
+        self._tracer.log_input(prompt)
+
+    def log_message(self, message: object) -> None:
+        self._tracer.log_message(message)
+
+    def set_success(self, success: bool) -> None:
+        self._tracer.set_success(success)
+
+    def set_error(self, error: str) -> None:
+        self._tracer.set_error(error)
+
+
+class BraintrustProvider:
+    """Telemetry provider wrapping Braintrust integration.
+
+    This provider wraps the existing TracedAgentExecution API,
+    delegating to braintrust_integration.py for the actual tracing.
+
+    The provider is enabled when:
+    - braintrust package is installed
+    - BRAINTRUST_API_KEY environment variable is set
+
+    Usage:
+        provider = BraintrustProvider()
+        if provider.is_enabled():
+            with provider.create_span("task-123", {"agent_id": "agent-1"}):
+                # Work is traced
+                pass
+            provider.flush()
+    """
+
+    def is_enabled(self) -> bool:
+        """Check if Braintrust is available and configured."""
+        return is_braintrust_enabled()
+
+    def create_span(
+        self, name: str, metadata: dict[str, Any] | None = None
+    ) -> BraintrustSpan:
+        """Create a span for tracing an agent execution.
+
+        Args:
+            name: Span name (used as issue_id for TracedAgentExecution)
+            metadata: Optional metadata dict. If 'agent_id' key is present,
+                     it's used for the agent_id parameter; otherwise defaults
+                     to 'unknown'.
+
+        Returns:
+            A BraintrustSpan wrapping TracedAgentExecution
+        """
+        metadata = metadata or {}
+        agent_id = metadata.pop("agent_id", "unknown")
+        return BraintrustSpan(
+            issue_id=name,
+            agent_id=str(agent_id),
+            metadata=metadata if metadata else None,
+        )
+
+    def flush(self) -> None:
+        """Flush pending Braintrust logs."""
+        flush_braintrust()

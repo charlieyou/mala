@@ -11,9 +11,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast, overload
 
 from .beads_client import BeadsClient
+from .braintrust_integration import BraintrustProvider
 from .config import MalaConfig
 from .event_sink import ConsoleEventSink
-from .telemetry import BraintrustProvider, NullTelemetryProvider
+from .telemetry import NullTelemetryProvider
 from .git_utils import (
     get_git_commit_async,
     get_git_branch_async,

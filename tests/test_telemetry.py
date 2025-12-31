@@ -6,9 +6,11 @@ from typing import Any, Self
 import pytest
 
 import src.braintrust_integration as braintrust_integration
-from src.telemetry import (
+from src.braintrust_integration import (
     BraintrustProvider,
     BraintrustSpan,
+)
+from src.telemetry import (
     NullSpan,
     NullTelemetryProvider,
 )
