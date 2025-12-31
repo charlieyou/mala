@@ -782,7 +782,7 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         return _lazy_modules[name]
 
     if name == "BeadsClient":
-        from .beads_client import BeadsClient
+        from .cli_support import BeadsClient
 
         _lazy_modules[name] = BeadsClient
     elif name == "MalaConfig":

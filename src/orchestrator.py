@@ -148,6 +148,135 @@ class IssueResult:
     resolution: IssueResolution | None = None  # Resolution outcome if using markers
 
 
+@dataclass
+class GateMetadata:
+    """Metadata extracted from quality gate results for finalization.
+
+    This dataclass holds the processed results from a quality gate check,
+    separating the extraction logic from the finalization flow.
+    """
+
+    quality_gate_result: QualityGateResult | None = None
+    validation_result: MetaValidationResult | None = None
+
+
+def _build_gate_metadata(
+    gate_result: GateResult | GateResultProtocol | None,
+    passed: bool,
+) -> GateMetadata:
+    """Build GateMetadata from a stored gate result.
+
+    Extracts evidence from the stored gate result without re-running validation.
+    This is the primary path used when gate results are available from
+    _run_quality_gate_sync.
+
+    Args:
+        gate_result: The stored gate result (may be None if no gate ran).
+        passed: Whether the overall run passed (affects quality_gate_result.passed).
+
+    Returns:
+        GateMetadata with extracted quality gate and validation results.
+    """
+    if gate_result is None:
+        return GateMetadata()
+
+    evidence = gate_result.validation_evidence
+    commit_hash = gate_result.commit_hash
+
+    # Build evidence dict from stored evidence
+    evidence_dict: dict[str, bool] = {}
+    if evidence is not None:
+        evidence_dict = evidence.to_evidence_dict()
+    evidence_dict["commit_found"] = commit_hash is not None
+
+    quality_gate_result = QualityGateResult(
+        passed=passed if passed else gate_result.passed,
+        evidence=evidence_dict,
+        failure_reasons=[] if passed else list(gate_result.failure_reasons),
+    )
+
+    validation_result: MetaValidationResult | None = None
+    if evidence is not None:
+        # Use KIND_TO_NAME for consistent command names with commands_failed
+        commands_run = [
+            QualityGate.KIND_TO_NAME.get(kind, kind.value)
+            for kind, ran in evidence.commands_ran.items()
+            if ran
+        ]
+        # Filter to only show commands that affected the gate decision
+        # (exclude ignored commands like 'uv sync')
+        gate_failed_commands = [
+            cmd
+            for cmd in evidence.failed_commands
+            if cmd not in QUALITY_GATE_IGNORED_COMMANDS
+        ]
+        validation_result = MetaValidationResult(
+            passed=passed if passed else gate_result.passed,
+            commands_run=commands_run,
+            commands_failed=gate_failed_commands,
+        )
+
+    return GateMetadata(
+        quality_gate_result=quality_gate_result,
+        validation_result=validation_result,
+    )
+
+
+def _build_gate_metadata_from_logs(
+    log_path: Path,
+    result_summary: str,
+    result_success: bool,
+    quality_gate: GateChecker,
+    per_issue_spec: ValidationSpec | ValidationSpecProtocol | None,
+) -> GateMetadata:
+    """Build GateMetadata by parsing logs directly (fallback path).
+
+    This is a fallback path used when no stored gate result is available.
+    It parses the log file directly to extract validation evidence.
+
+    Args:
+        log_path: Path to the session log file.
+        result_summary: Summary from the issue result (for extracting failure reasons).
+        result_success: Whether the run succeeded (determines passed status).
+        quality_gate: The GateChecker instance for parsing.
+        per_issue_spec: ValidationSpec for parsing evidence (if None, returns empty).
+
+    Returns:
+        GateMetadata with extracted results, or empty if spec is None.
+    """
+    if per_issue_spec is None:
+        return GateMetadata()
+
+    evidence = quality_gate.parse_validation_evidence_with_spec(
+        log_path, cast("ValidationSpecProtocol", per_issue_spec)
+    )
+
+    # Extract failure reasons from result summary
+    failure_reasons: list[str] = []
+    if "Quality gate failed:" in result_summary:
+        reasons_part = result_summary.replace("Quality gate failed: ", "")
+        failure_reasons = [r.strip() for r in reasons_part.split(";")]
+
+    # Build spec-driven evidence dict
+    evidence_dict = evidence.to_evidence_dict()
+
+    # Check commit exists (we don't have stored result, so check now)
+    # Note: We don't call check_commit_exists here because it's expensive
+    # and this is a fallback path - just mark as unknown
+    evidence_dict["commit_found"] = False
+
+    quality_gate_result = QualityGateResult(
+        passed=result_success,
+        evidence=evidence_dict,
+        failure_reasons=failure_reasons,
+    )
+
+    return GateMetadata(
+        quality_gate_result=quality_gate_result,
+        validation_result=None,  # No validation metadata in fallback path
+    )
+
+
 class MalaOrchestrator:
     """Orchestrates parallel issue processing using Claude Agent SDK.
 
@@ -685,6 +814,98 @@ class MalaOrchestrator:
             self._run_quality_gate_sync, issue_id, log_path, retry_state
         )
 
+    async def _check_epic_closure(self, issue_id: str) -> None:
+        """Check if closing this issue should also close its parent epic.
+
+        Args:
+            issue_id: The issue that was just closed.
+        """
+        parent_epic = await self.beads.get_parent_epic_async(issue_id)
+        if parent_epic is None or parent_epic in self.verified_epics:
+            return
+
+        if self.epic_verifier is not None:
+            # Verify and close only the affected epic
+            human_override = parent_epic in self.epic_override_ids
+            verification_result = await self.epic_verifier.verify_and_close_epic(
+                parent_epic, human_override=human_override
+            )
+            # Mark as verified to prevent duplicate verifications
+            if verification_result.verified_count > 0:
+                self.verified_epics.add(parent_epic)
+        elif await self.beads.close_eligible_epics_async():
+            # Fallback for mock providers without EpicVerifier
+            self.event_sink.on_epic_closed(issue_id)
+
+    def _record_issue_run(
+        self,
+        issue_id: str,
+        result: IssueResult,
+        log_path: Path | None,
+        gate_metadata: GateMetadata,
+        run_metadata: RunMetadata,
+    ) -> None:
+        """Record an issue run to the run metadata.
+
+        Args:
+            issue_id: The issue ID.
+            result: The issue result.
+            log_path: Path to the session log (if any).
+            gate_metadata: Extracted gate metadata.
+            run_metadata: The run metadata to record to.
+        """
+        issue_run = IssueRun(
+            issue_id=result.issue_id,
+            agent_id=result.agent_id,
+            status="success" if result.success else "failed",
+            duration_seconds=result.duration_seconds,
+            session_id=result.session_id,
+            log_path=str(log_path) if log_path else None,
+            quality_gate=gate_metadata.quality_gate_result,
+            error=result.summary if not result.success else None,
+            gate_attempts=result.gate_attempts,
+            review_attempts=result.review_attempts,
+            validation=gate_metadata.validation_result,
+            resolution=result.resolution,
+            review_log_path=self.review_log_paths.get(issue_id),
+        )
+        run_metadata.record_issue(issue_run)
+
+    def _cleanup_session_paths(self, issue_id: str) -> None:
+        """Remove stored session and review log paths for an issue.
+
+        Args:
+            issue_id: The issue ID to clean up paths for.
+        """
+        self.session_log_paths.pop(issue_id, None)
+        self.review_log_paths.pop(issue_id, None)
+
+    async def _emit_completion(
+        self,
+        issue_id: str,
+        result: IssueResult,
+        log_path: Path | None,
+    ) -> None:
+        """Emit completion event and handle failure tracking.
+
+        Args:
+            issue_id: The issue ID.
+            result: The issue result.
+            log_path: Path to the session log (if any).
+        """
+        self.event_sink.on_issue_completed(
+            issue_id,
+            issue_id,
+            result.success,
+            result.duration_seconds,
+            truncate_text(result.summary, 50) if result.success else result.summary,
+        )
+        if not result.success:
+            self.failed_issues.add(issue_id)
+            await self.beads.mark_needs_followup_async(
+                issue_id, result.summary, log_path=log_path
+            )
+
     async def _finalize_issue_result(
         self,
         issue_id: str,
@@ -697,175 +918,36 @@ class MalaOrchestrator:
         validation parsing. Gate result includes validation_evidence
         already parsed during quality gate check.
         """
-        quality_gate_result: QualityGateResult | None = None
-        validation_result: MetaValidationResult | None = None
         log_path = self.session_log_paths.get(issue_id)
-
-        # Get stored gate result (set by _run_quality_gate_sync)
         stored_gate_result = self.last_gate_results.get(issue_id)
 
-        if result.success:
-            # Gate passed - close the issue and check epic closure
-            if await self.beads.close_async(issue_id):
-                self.event_sink.on_issue_closed(issue_id, issue_id)
-                # Check if this closes the parent epic (with verification)
-                # Only verify the affected epic, not all eligible epics
-                parent_epic = await self.beads.get_parent_epic_async(issue_id)
-                if parent_epic is not None and parent_epic not in self.verified_epics:
-                    if self.epic_verifier is not None:
-                        # Verify and close only the affected epic
-                        human_override = parent_epic in self.epic_override_ids
-                        verification_result = (
-                            await self.epic_verifier.verify_and_close_epic(
-                                parent_epic, human_override=human_override
-                            )
-                        )
-                        # Mark as verified to prevent duplicate verifications
-                        if verification_result.verified_count > 0:
-                            self.verified_epics.add(parent_epic)
-                    elif await self.beads.close_eligible_epics_async():
-                        # Fallback for mock providers without EpicVerifier
-                        self.event_sink.on_epic_closed(issue_id)
-
-            # Populate metadata from stored gate result (if available)
-            if stored_gate_result is not None:
-                evidence = stored_gate_result.validation_evidence
-                commit_hash = stored_gate_result.commit_hash
-
-                # Build evidence dict from stored evidence
-                evidence_dict: dict[str, bool] = {}
-                if evidence is not None:
-                    evidence_dict = evidence.to_evidence_dict()
-                evidence_dict["commit_found"] = commit_hash is not None
-
-                quality_gate_result = QualityGateResult(
-                    passed=True,
-                    evidence=evidence_dict,
-                    failure_reasons=[],
-                )
-
-                # Derive validation metadata from gate evidence (no re-running)
-                if evidence is not None:
-                    # Use KIND_TO_NAME for consistent command names with commands_failed
-                    commands_run = [
-                        QualityGate.KIND_TO_NAME.get(kind, kind.value)
-                        for kind, ran in evidence.commands_ran.items()
-                        if ran
-                    ]
-                    # Filter to only show commands that affected the gate decision
-                    # (exclude ignored commands like 'uv sync')
-                    gate_failed_commands = [
-                        cmd
-                        for cmd in evidence.failed_commands
-                        if cmd not in QUALITY_GATE_IGNORED_COMMANDS
-                    ]
-                    validation_result = MetaValidationResult(
-                        passed=True,
-                        commands_run=commands_run,
-                        commands_failed=gate_failed_commands,
-                    )
-
-        elif not result.success and stored_gate_result is not None:
-            # Failed run - use evidence from stored gate result
-            evidence = stored_gate_result.validation_evidence
-            commit_hash = stored_gate_result.commit_hash
-
-            # Build evidence dict from stored evidence
-            evidence_dict = {}
-            if evidence is not None:
-                evidence_dict = evidence.to_evidence_dict()
-            evidence_dict["commit_found"] = commit_hash is not None
-
-            quality_gate_result = QualityGateResult(
-                passed=stored_gate_result.passed,
-                evidence=evidence_dict,
-                failure_reasons=list(stored_gate_result.failure_reasons),
-            )
-
-            # Derive validation metadata from gate evidence
-            # validation_result.passed reflects gate's validation status, not overall run
-            # (run may fail due to review even if validation passed)
-            if evidence is not None:
-                # Use KIND_TO_NAME for consistent command names with commands_failed
-                commands_run = [
-                    QualityGate.KIND_TO_NAME.get(kind, kind.value)
-                    for kind, ran in evidence.commands_ran.items()
-                    if ran
-                ]
-                # Filter to only show commands that affected the gate decision
-                # (exclude ignored commands like 'uv sync')
-                gate_failed_commands = [
-                    cmd
-                    for cmd in evidence.failed_commands
-                    if cmd not in QUALITY_GATE_IGNORED_COMMANDS
-                ]
-                validation_result = MetaValidationResult(
-                    passed=stored_gate_result.passed,
-                    commands_run=commands_run,
-                    commands_failed=gate_failed_commands,
-                )
-
+        # Build gate metadata from stored result or logs
+        if stored_gate_result is not None:
+            gate_metadata = _build_gate_metadata(stored_gate_result, result.success)
         elif not result.success and log_path and log_path.exists():
-            # Fallback: no stored gate result, parse logs directly
-            # This happens in tests that mock run_implementer or edge cases
-            assert self.per_issue_spec is not None
-            spec = self.per_issue_spec
-            evidence = self.quality_gate.parse_validation_evidence_with_spec(
-                log_path, cast("ValidationSpecProtocol", spec)
+            gate_metadata = _build_gate_metadata_from_logs(
+                log_path,
+                result.summary,
+                result.success,
+                self.quality_gate,
+                self.per_issue_spec,
             )
-            commit_result = self.quality_gate.check_commit_exists(issue_id)
-            # Extract failure reasons from result summary
-            failure_reasons = []
-            if "Quality gate failed:" in result.summary:
-                reasons_part = result.summary.replace("Quality gate failed: ", "")
-                failure_reasons = [r.strip() for r in reasons_part.split(";")]
-            # Build spec-driven evidence dict
-            evidence_dict = evidence.to_evidence_dict()
-            evidence_dict["commit_found"] = commit_result.exists
-            quality_gate_result = QualityGateResult(
-                passed=False,
-                evidence=evidence_dict,
-                failure_reasons=failure_reasons,
-            )
+        else:
+            gate_metadata = GateMetadata()
 
+        # Handle successful issue closure and epic verification
+        if result.success and await self.beads.close_async(issue_id):
+            self.event_sink.on_issue_closed(issue_id, issue_id)
+            await self._check_epic_closure(issue_id)
+
+        # Update tracking state
         self.completed.append(result)
         self.active_tasks.pop(issue_id, None)
 
-        # Record to run metadata
-        issue_run = IssueRun(
-            issue_id=result.issue_id,
-            agent_id=result.agent_id,
-            status="success" if result.success else "failed",
-            duration_seconds=result.duration_seconds,
-            session_id=result.session_id,
-            log_path=str(log_path) if log_path else None,
-            quality_gate=quality_gate_result,
-            error=result.summary if not result.success else None,
-            gate_attempts=result.gate_attempts,
-            review_attempts=result.review_attempts,
-            validation=validation_result,
-            resolution=result.resolution,
-            review_log_path=self.review_log_paths.get(issue_id),
-        )
-        run_metadata.record_issue(issue_run)
-
-        # Pop log paths after recording
-        self.session_log_paths.pop(issue_id, None)
-        self.review_log_paths.pop(issue_id, None)
-
-        self.event_sink.on_issue_completed(
-            issue_id,
-            issue_id,
-            result.success,
-            result.duration_seconds,
-            truncate_text(result.summary, 50) if result.success else result.summary,
-        )
-        if not result.success:
-            self.failed_issues.add(issue_id)
-            # Mark needs-followup with log path
-            await self.beads.mark_needs_followup_async(
-                issue_id, result.summary, log_path=log_path
-            )
+        # Record to run metadata and cleanup
+        self._record_issue_run(issue_id, result, log_path, gate_metadata, run_metadata)
+        self._cleanup_session_paths(issue_id)
+        await self._emit_completion(issue_id, result, log_path)
 
     async def _abort_active_tasks(self, run_metadata: RunMetadata) -> None:
         """Cancel active tasks and mark them as failed.

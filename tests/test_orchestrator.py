@@ -4371,3 +4371,246 @@ class TestOrchestratorFactory:
         assert deps.log_provider is None
         assert deps.telemetry_provider is None
         assert deps.event_sink is None
+
+
+class TestBuildGateMetadata:
+    """Tests for _build_gate_metadata pure function."""
+
+    def test_none_gate_result_returns_empty_metadata(self) -> None:
+        """When gate_result is None, returns empty GateMetadata."""
+        from src.orchestrator import _build_gate_metadata
+
+        result = _build_gate_metadata(None, passed=True)
+
+        assert result.quality_gate_result is None
+        assert result.validation_result is None
+
+    def test_successful_gate_with_full_evidence(self) -> None:
+        """Successful gate result with full evidence extracts all fields."""
+        from src.orchestrator import _build_gate_metadata
+        from src.quality_gate import GateResult, ValidationEvidence
+        from src.validation.spec import CommandKind
+
+        evidence = ValidationEvidence(
+            commands_ran={CommandKind.TEST: True, CommandKind.LINT: True},
+            failed_commands=[],
+        )
+        gate_result = GateResult(
+            passed=True,
+            failure_reasons=[],
+            commit_hash="abc123",
+            validation_evidence=evidence,
+        )
+
+        result = _build_gate_metadata(gate_result, passed=True)
+
+        assert result.quality_gate_result is not None
+        assert result.quality_gate_result.passed is True
+        assert result.quality_gate_result.failure_reasons == []
+        assert result.quality_gate_result.evidence["commit_found"] is True
+        assert result.validation_result is not None
+        assert result.validation_result.passed is True
+        assert "pytest" in result.validation_result.commands_run
+        assert "ruff check" in result.validation_result.commands_run
+        assert result.validation_result.commands_failed == []
+
+    def test_failed_gate_with_partial_evidence(self) -> None:
+        """Failed gate result extracts failure reasons and evidence."""
+        from src.orchestrator import _build_gate_metadata
+        from src.quality_gate import GateResult, ValidationEvidence
+        from src.validation.spec import CommandKind
+
+        evidence = ValidationEvidence(
+            commands_ran={CommandKind.TEST: True, CommandKind.LINT: False},
+            failed_commands=["pytest"],
+        )
+        gate_result = GateResult(
+            passed=False,
+            failure_reasons=["pytest failed", "no commit found"],
+            commit_hash=None,
+            validation_evidence=evidence,
+        )
+
+        result = _build_gate_metadata(gate_result, passed=False)
+
+        assert result.quality_gate_result is not None
+        assert result.quality_gate_result.passed is False
+        assert result.quality_gate_result.failure_reasons == [
+            "pytest failed",
+            "no commit found",
+        ]
+        assert result.quality_gate_result.evidence["commit_found"] is False
+        assert result.validation_result is not None
+        assert result.validation_result.passed is False
+        assert "pytest" in result.validation_result.commands_run
+        assert "pytest" in result.validation_result.commands_failed
+
+    def test_empty_failure_reasons_and_missing_commit(self) -> None:
+        """Gate result with empty failure reasons and missing commit."""
+        from src.orchestrator import _build_gate_metadata
+        from src.quality_gate import GateResult, ValidationEvidence
+
+        evidence = ValidationEvidence(commands_ran={}, failed_commands=[])
+        gate_result = GateResult(
+            passed=False,
+            failure_reasons=[],
+            commit_hash=None,
+            validation_evidence=evidence,
+        )
+
+        result = _build_gate_metadata(gate_result, passed=False)
+
+        assert result.quality_gate_result is not None
+        assert result.quality_gate_result.failure_reasons == []
+        assert result.quality_gate_result.evidence["commit_found"] is False
+
+    def test_passed_true_overrides_gate_result_passed(self) -> None:
+        """When passed=True, quality_gate_result.passed should be True."""
+        from src.orchestrator import _build_gate_metadata
+        from src.quality_gate import GateResult, ValidationEvidence
+
+        evidence = ValidationEvidence(commands_ran={}, failed_commands=[])
+        gate_result = GateResult(
+            passed=False,  # Gate says failed
+            failure_reasons=["some reason"],
+            commit_hash="abc123",
+            validation_evidence=evidence,
+        )
+
+        # But overall run passed (e.g., resolution marker)
+        result = _build_gate_metadata(gate_result, passed=True)
+
+        assert result.quality_gate_result is not None
+        # passed=True should override gate_result.passed
+        assert result.quality_gate_result.passed is True
+        # failure_reasons should be empty when passed=True
+        assert result.quality_gate_result.failure_reasons == []
+
+
+class TestBuildGateMetadataFromLogs:
+    """Tests for _build_gate_metadata_from_logs fallback function."""
+
+    def test_none_spec_returns_empty_metadata(self, tmp_path: Path) -> None:
+        """When per_issue_spec is None, returns empty GateMetadata."""
+        from typing import cast
+
+        from src.orchestrator import _build_gate_metadata_from_logs
+        from src.protocols import GateChecker
+        from src.quality_gate import QualityGate
+
+        log_path = tmp_path / "test.log"
+        log_path.write_text("{}")
+        quality_gate = cast(GateChecker, QualityGate(repo_path=tmp_path))
+
+        result = _build_gate_metadata_from_logs(
+            log_path=log_path,
+            result_summary="Quality gate failed: no tests",
+            result_success=False,
+            quality_gate=quality_gate,
+            per_issue_spec=None,
+        )
+
+        assert result.quality_gate_result is None
+        assert result.validation_result is None
+
+    def test_valid_spec_parses_evidence(self, tmp_path: Path) -> None:
+        """With valid spec, parses evidence from logs."""
+        import re
+        from typing import cast
+
+        from src.orchestrator import _build_gate_metadata_from_logs
+        from src.protocols import GateChecker
+        from src.quality_gate import QualityGate
+        from src.validation.spec import (
+            CommandKind,
+            ValidationCommand,
+            ValidationScope,
+            ValidationSpec,
+        )
+
+        log_path = tmp_path / "test.log"
+        # Write a minimal log entry
+        log_path.write_text('{"type":"result"}\n')
+
+        quality_gate = cast(GateChecker, QualityGate(repo_path=tmp_path))
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command=["pytest"],
+                    kind=CommandKind.TEST,
+                    detection_pattern=re.compile(r"pytest"),
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        result = _build_gate_metadata_from_logs(
+            log_path=log_path,
+            result_summary="Quality gate failed: pytest failed",
+            result_success=False,
+            quality_gate=quality_gate,
+            per_issue_spec=spec,
+        )
+
+        assert result.quality_gate_result is not None
+        assert result.quality_gate_result.passed is False
+        assert "pytest failed" in result.quality_gate_result.failure_reasons
+        # validation_result is None in fallback path
+        assert result.validation_result is None
+
+    def test_result_success_determines_passed_status(self, tmp_path: Path) -> None:
+        """result_success parameter determines quality_gate_result.passed."""
+        from typing import cast
+
+        from src.orchestrator import _build_gate_metadata_from_logs
+        from src.protocols import GateChecker
+        from src.quality_gate import QualityGate
+        from src.validation.spec import ValidationScope, ValidationSpec
+
+        log_path = tmp_path / "test.log"
+        log_path.write_text('{"type":"result"}\n')
+
+        quality_gate = cast(GateChecker, QualityGate(repo_path=tmp_path))
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
+
+        # Test with result_success=True
+        result = _build_gate_metadata_from_logs(
+            log_path=log_path,
+            result_summary="Success",
+            result_success=True,
+            quality_gate=quality_gate,
+            per_issue_spec=spec,
+        )
+
+        assert result.quality_gate_result is not None
+        assert result.quality_gate_result.passed is True
+
+    def test_extracts_failure_reasons_from_summary(self, tmp_path: Path) -> None:
+        """Extracts failure reasons from 'Quality gate failed:' prefix."""
+        from typing import cast
+
+        from src.orchestrator import _build_gate_metadata_from_logs
+        from src.protocols import GateChecker
+        from src.quality_gate import QualityGate
+        from src.validation.spec import ValidationScope, ValidationSpec
+
+        log_path = tmp_path / "test.log"
+        log_path.write_text('{"type":"result"}\n')
+
+        quality_gate = cast(GateChecker, QualityGate(repo_path=tmp_path))
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
+
+        result = _build_gate_metadata_from_logs(
+            log_path=log_path,
+            result_summary="Quality gate failed: lint failed; no commit",
+            result_success=False,
+            quality_gate=quality_gate,
+            per_issue_spec=spec,
+        )
+
+        assert result.quality_gate_result is not None
+        assert result.quality_gate_result.failure_reasons == [
+            "lint failed",
+            "no commit",
+        ]

@@ -12,10 +12,12 @@ from __future__ import annotations
 # Environment configuration (from src.tools.env)
 from .tools.env import (
     USER_CONFIG_DIR,
-    SCRIPTS_DIR,
     get_runs_dir,
     load_user_env,
 )
+
+# BeadsClient (from src.beads_client)
+from .beads_client import BeadsClient
 
 # Locking utilities (from src.tools.locking)
 from .tools.locking import get_lock_dir
@@ -34,8 +36,8 @@ from .log_output.console import (
 )
 
 __all__ = [
-    "SCRIPTS_DIR",
     "USER_CONFIG_DIR",
+    "BeadsClient",
     "Colors",
     "get_lock_dir",
     "get_running_instances",
