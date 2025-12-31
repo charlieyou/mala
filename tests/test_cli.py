@@ -34,8 +34,13 @@ class TestImportSafety:
     def test_import_does_not_load_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Importing src.cli should not call load_user_env()."""
         # Clear modules to force fresh import
+        # Include cli_support and log_output.run_metadata which are dependencies
         for mod_name in list(sys.modules.keys()):
-            if mod_name.startswith("src.cli") or mod_name.startswith("src.tools.env"):
+            if (
+                mod_name.startswith("src.cli")
+                or mod_name.startswith("src.tools.env")
+                or mod_name.startswith("src.log_output.run_metadata")
+            ):
                 del sys.modules[mod_name]
 
         # Track if load_user_env gets called
