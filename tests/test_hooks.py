@@ -180,7 +180,9 @@ class TestMakeLockEnforcementHook:
         hook_input = make_hook_input("Write", {"file_path": test_file})
         context = make_context()
 
-        with patch("src.hooks.locking.get_lock_holder", return_value="my-agent") as mock:
+        with patch(
+            "src.hooks.locking.get_lock_holder", return_value="my-agent"
+        ) as mock:
             result = await hook(hook_input, None, context)
 
         assert result == {}  # Allowed
