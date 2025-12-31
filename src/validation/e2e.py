@@ -267,6 +267,8 @@ class E2ERunner:
         if issue_id:
             annotate_issue(fixture_path, issue_id)
 
+        # Convert timeout from seconds to minutes for CLI (which expects minutes)
+        timeout_minutes = max(1, int(self.config.timeout_seconds // 60))
         cmd = [
             "mala",
             "run",
@@ -276,9 +278,11 @@ class E2ERunner:
             "--max-issues",
             str(self.config.max_issues),
             "--timeout",
-            str(int(self.config.timeout_seconds)),
+            str(timeout_minutes),
             "--disable-validations",
             "e2e",
+            # Disable Morph MCP to avoid potential hangs from npx network issues
+            "--no-morph",
         ]
 
         # Use CommandRunner with buffer for cleanup time

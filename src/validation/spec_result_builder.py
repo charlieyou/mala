@@ -259,6 +259,7 @@ class SpecResultBuilder:
             enabled=config.enabled,
             skip_if_no_keys=True,  # Don't fail if API key missing
             keep_fixture=True,  # Keep for debugging
+            timeout_seconds=1200.0,  # 20 min for E2E mala run (default 10 min was too short)
         )
         runner = E2ERunner(runner_config)
         return runner.run(env=dict(env), cwd=cwd)
