@@ -2982,18 +2982,19 @@ class TestEpicClosureAfterChildCompletion:
 
     @pytest.mark.asyncio
     async def test_epic_closure_called_after_issue_closes(self, tmp_path: Path) -> None:
-        """verify_and_close_eligible should be called after each issue was closed."""
+        """verify_and_close_epic should be called for the affected epic after issue closes."""
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
 
         epic_closure_calls: list[str] = []
 
-        # Create mock for epic_verifier.verify_and_close_eligible
+        # Create mock for epic_verifier.verify_and_close_epic
         from src.models import EpicVerificationResult
 
-        async def mock_verify_and_close_eligible(
-            human_override_epic_ids: set[str] | None = None,
+        async def mock_verify_and_close_epic(
+            epic_id: str,
+            human_override: bool = False,
         ) -> EpicVerificationResult:
-            epic_closure_calls.append("called")
+            epic_closure_calls.append(epic_id)
             return EpicVerificationResult(
                 verified_count=1,
                 passed_count=1,  # Simulates epic was verified and closed
@@ -3004,7 +3005,7 @@ class TestEpicClosureAfterChildCompletion:
             )
 
         async def mock_close_eligible_epics_async() -> bool:
-            epic_closure_calls.append("called")
+            epic_closure_calls.append("close_eligible_called")
             return True  # Simulate epic was closed
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
@@ -3037,6 +3038,10 @@ class TestEpicClosureAfterChildCompletion:
         async def mock_claim_async(issue_id: str) -> bool:
             return True
 
+        # Mock get_parent_epic_async to return a parent epic
+        async def mock_get_parent_epic_async(issue_id: str) -> str | None:
+            return "parent-epic" if issue_id == "child-issue" else None
+
         with (
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
@@ -3050,13 +3055,18 @@ class TestEpicClosureAfterChildCompletion:
             patch.object(orchestrator.beads, "close_async", return_value=True),
             patch.object(
                 orchestrator.beads,
+                "get_parent_epic_async",
+                side_effect=mock_get_parent_epic_async,
+            ),
+            patch.object(
+                orchestrator.beads,
                 "close_eligible_epics_async",
                 side_effect=mock_close_eligible_epics_async,
             ),
             patch.object(
                 orchestrator.epic_verifier,
-                "verify_and_close_eligible",
-                side_effect=mock_verify_and_close_eligible,
+                "verify_and_close_epic",
+                side_effect=mock_verify_and_close_epic,
             ),
             patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
             patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
@@ -3066,8 +3076,9 @@ class TestEpicClosureAfterChildCompletion:
         ):
             await orchestrator.run()
 
-        # Epic closure should have been called after the issue was closed
+        # Epic verification should have been called once for the parent epic
         assert len(epic_closure_calls) == 1
+        assert epic_closure_calls[0] == "parent-epic"
 
     @pytest.mark.asyncio
     async def test_epic_closure_not_called_when_issue_fails(
@@ -3142,27 +3153,25 @@ class TestEpicClosureAfterChildCompletion:
         assert len(epic_closure_calls) == 0
 
     @pytest.mark.asyncio
-    async def test_multiple_issues_trigger_epic_closure_check_each_time(
+    async def test_multiple_issues_same_epic_no_duplicate_verification(
         self, tmp_path: Path
     ) -> None:
-        """Each successful issue closure should check for epic closure."""
+        """Multiple issues from same epic should only trigger one verification."""
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=2)
 
         epic_closure_calls: list[str] = []
         issues_processed = []
 
-        # Create mock for epic_verifier.verify_and_close_eligible
         from src.models import EpicVerificationResult
 
-        async def mock_verify_and_close_eligible(
-            human_override_epic_ids: set[str] | None = None,
+        async def mock_verify_and_close_epic(
+            epic_id: str,
+            human_override: bool = False,
         ) -> EpicVerificationResult:
-            epic_closure_calls.append("called")
-            # First call closes an epic, second doesn't
-            passed_count = 1 if len(epic_closure_calls) == 1 else 0
+            epic_closure_calls.append(epic_id)
             return EpicVerificationResult(
                 verified_count=1,
-                passed_count=passed_count,
+                passed_count=1,
                 failed_count=0,
                 human_review_count=0,
                 verdicts={},
@@ -3170,9 +3179,8 @@ class TestEpicClosureAfterChildCompletion:
             )
 
         async def mock_close_eligible_epics_async() -> bool:
-            epic_closure_calls.append("called")
-            # First call closes an epic, second doesn't
-            return len(epic_closure_calls) == 1
+            epic_closure_calls.append("close_eligible_called")
+            return True
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             issues_processed.append(issue_id)
@@ -3205,6 +3213,12 @@ class TestEpicClosureAfterChildCompletion:
         async def mock_claim_async(issue_id: str) -> bool:
             return True
 
+        # Both child issues belong to the same parent epic
+        async def mock_get_parent_epic_async(issue_id: str) -> str | None:
+            if issue_id in ("child-1", "child-2"):
+                return "same-parent-epic"
+            return None
+
         with (
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
@@ -3218,13 +3232,18 @@ class TestEpicClosureAfterChildCompletion:
             patch.object(orchestrator.beads, "close_async", return_value=True),
             patch.object(
                 orchestrator.beads,
+                "get_parent_epic_async",
+                side_effect=mock_get_parent_epic_async,
+            ),
+            patch.object(
+                orchestrator.beads,
                 "close_eligible_epics_async",
                 side_effect=mock_close_eligible_epics_async,
             ),
             patch.object(
                 orchestrator.epic_verifier,
-                "verify_and_close_eligible",
-                side_effect=mock_verify_and_close_eligible,
+                "verify_and_close_epic",
+                side_effect=mock_verify_and_close_epic,
             ),
             patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
             patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
@@ -3236,8 +3255,109 @@ class TestEpicClosureAfterChildCompletion:
 
         # Both issues should have been processed
         assert len(issues_processed) == 2
-        # Epic closure should have been called for each successful issue
+        # Epic verification should only be called once (duplicate prevention)
+        assert len(epic_closure_calls) == 1
+        assert epic_closure_calls[0] == "same-parent-epic"
+
+    @pytest.mark.asyncio
+    async def test_multiple_issues_different_epics_each_verified(
+        self, tmp_path: Path
+    ) -> None:
+        """Issues from different epics should each trigger verification for their epic."""
+        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=2)
+
+        epic_closure_calls: list[str] = []
+        issues_processed = []
+
+        from src.models import EpicVerificationResult
+
+        async def mock_verify_and_close_epic(
+            epic_id: str,
+            human_override: bool = False,
+        ) -> EpicVerificationResult:
+            epic_closure_calls.append(epic_id)
+            return EpicVerificationResult(
+                verified_count=1,
+                passed_count=1,
+                failed_count=0,
+                human_review_count=0,
+                verdicts={},
+                remediation_issues_created=[],
+            )
+
+        async def mock_run_implementer(issue_id: str) -> IssueResult:
+            issues_processed.append(issue_id)
+            log_path = tmp_path / f"{issue_id}.jsonl"
+            log_path.touch()
+            orchestrator.session_log_paths[issue_id] = log_path
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id=f"{issue_id}-agent",
+                success=True,
+                summary="Completed successfully",
+            )
+
+        call_count = 0
+
+        async def mock_get_ready_async(
+            exclude_ids: set[str] | None = None,
+            epic_id: str | None = None,
+            only_ids: set[str] | None = None,
+            suppress_warn_ids: set[str] | None = None,
+            prioritize_wip: bool = False,
+            focus: bool = True,
+        ) -> list[str]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ["child-1", "child-2"]
+            return []
+
+        async def mock_claim_async(issue_id: str) -> bool:
+            return True
+
+        # Each child issue belongs to a different parent epic
+        async def mock_get_parent_epic_async(issue_id: str) -> str | None:
+            if issue_id == "child-1":
+                return "epic-1"
+            elif issue_id == "child-2":
+                return "epic-2"
+            return None
+
+        with (
+            patch.object(
+                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
+            ),
+            patch.object(
+                orchestrator.beads, "claim_async", side_effect=mock_claim_async
+            ),
+            patch.object(
+                orchestrator, "run_implementer", side_effect=mock_run_implementer
+            ),
+            patch.object(orchestrator.beads, "close_async", return_value=True),
+            patch.object(
+                orchestrator.beads,
+                "get_parent_epic_async",
+                side_effect=mock_get_parent_epic_async,
+            ),
+            patch.object(
+                orchestrator.epic_verifier,
+                "verify_and_close_epic",
+                side_effect=mock_verify_and_close_epic,
+            ),
+            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
+            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestrator.release_run_locks"),
+            patch("subprocess.run", return_value=make_subprocess_result()),
+        ):
+            await orchestrator.run()
+
+        # Both issues should have been processed
+        assert len(issues_processed) == 2
+        # Epic verification should be called for each unique parent epic
         assert len(epic_closure_calls) == 2
+        assert set(epic_closure_calls) == {"epic-1", "epic-2"}
 
 
 class TestQualityGateAsync:

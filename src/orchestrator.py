@@ -230,6 +230,9 @@ class MalaOrchestrator:
         # Gate result includes validation_evidence parsed from logs
         self.last_gate_results: dict[str, GateResult] = {}
 
+        # Track verified epics to prevent duplicate verifications in a single run
+        self.verified_epics: set[str] = set()
+
         # Initialize pipeline stage implementations (use defaults if not provided)
         # LogProvider: FileSystemLogProvider for reading Claude SDK logs
         self.log_provider: LogProvider = (
@@ -494,16 +497,24 @@ class MalaOrchestrator:
             # Gate passed - close the issue and check epic closure
             if await self.beads.close_async(issue_id):
                 self.event_sink.on_issue_closed(issue_id, issue_id)
-                # Check if this closes any parent epics (with verification)
-                if self.epic_verifier is not None:
-                    # EpicVerifier emits on_epic_verification_passed events
-                    # for each closed epic, so no legacy on_epic_closed needed
-                    await self.epic_verifier.verify_and_close_eligible(
-                        human_override_epic_ids=self.epic_override_ids
-                    )
-                elif await self.beads.close_eligible_epics_async():
-                    # Fallback for mock providers without EpicVerifier
-                    self.event_sink.on_epic_closed(issue_id)
+                # Check if this closes the parent epic (with verification)
+                # Only verify the affected epic, not all eligible epics
+                parent_epic = await self.beads.get_parent_epic_async(issue_id)
+                if parent_epic is not None and parent_epic not in self.verified_epics:
+                    if self.epic_verifier is not None:
+                        # Verify and close only the affected epic
+                        human_override = parent_epic in self.epic_override_ids
+                        verification_result = (
+                            await self.epic_verifier.verify_and_close_epic(
+                                parent_epic, human_override=human_override
+                            )
+                        )
+                        # Mark as verified to prevent duplicate verifications
+                        if verification_result.verified_count > 0:
+                            self.verified_epics.add(parent_epic)
+                    elif await self.beads.close_eligible_epics_async():
+                        # Fallback for mock providers without EpicVerifier
+                        self.event_sink.on_epic_closed(issue_id)
 
             # Populate metadata from stored gate result (if available)
             if stored_gate_result is not None:

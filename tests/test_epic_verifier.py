@@ -790,6 +790,151 @@ class TestVerifyAndCloseEligible:
 
 
 # ============================================================================
+# Test verify_and_close_epic (single epic verification)
+# ============================================================================
+
+
+class TestVerifyAndCloseEpic:
+    """Tests for verify_and_close_epic method (single epic verification)."""
+
+    @pytest.mark.asyncio
+    async def test_verifies_and_closes_eligible_epic(
+        self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
+    ) -> None:
+        """Should verify and close an eligible epic."""
+
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout='[{"id": "epic-1"}]',
+                )
+            if "log" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="abc123")
+            if "show" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="diff")
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+
+        result = await verifier.verify_and_close_epic("epic-1")
+
+        assert result.verified_count == 1
+        assert result.passed_count == 1
+        mock_beads.close_async.assert_called_with("epic-1")
+
+    @pytest.mark.asyncio
+    async def test_skips_non_eligible_epic(
+        self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
+    ) -> None:
+        """Should not verify an epic that is not eligible."""
+
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+                # Return empty list - no eligible epics
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout="[]",
+                )
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+
+        result = await verifier.verify_and_close_epic("epic-1")
+
+        # Should not verify or close
+        assert result.verified_count == 0
+        assert result.passed_count == 0
+        mock_model.verify.assert_not_called()
+        mock_beads.close_async.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_human_override_bypasses_verification(
+        self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
+    ) -> None:
+        """Should close with human override without verification."""
+
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout='[{"id": "epic-1"}]',
+                )
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+
+        result = await verifier.verify_and_close_epic("epic-1", human_override=True)
+
+        assert result.passed_count == 1
+        mock_model.verify.assert_not_called()
+        mock_beads.close_async.assert_called_with("epic-1")
+
+    @pytest.mark.asyncio
+    async def test_creates_remediation_for_failed(
+        self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
+    ) -> None:
+        """Should create remediation issues for failed verification."""
+        mock_model.verify.return_value = EpicVerdict(
+            passed=False,
+            unmet_criteria=[
+                UnmetCriterion(
+                    criterion="Must have tests",
+                    evidence="No tests found",
+                    severity="major",
+                    criterion_hash=_compute_criterion_hash("Must have tests"),
+                )
+            ],
+            confidence=0.85,
+            reasoning="Missing tests",
+        )
+
+        created_issues: list[str] = []
+
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout='[{"id": "epic-1"}]',
+                )
+            if "log" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="abc123")
+            if "show" in cmd and "epic-1" in cmd:
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout='{"priority": "P2"}',
+                )
+            if "show" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="diff")
+            if "list" in cmd and "--tag" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="[]")
+            if "issue" in cmd and "create" in cmd:
+                created_issues.append("rem-1")
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout="Created issue: rem-1",
+                )
+            if "dep" in cmd:
+                return CommandResult(command=cmd, returncode=0, stdout="")
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+
+        result = await verifier.verify_and_close_epic("epic-1")
+
+        assert result.failed_count == 1
+        assert len(result.remediation_issues_created) == 1
+        # Epic should NOT be closed when verification fails
+        mock_beads.close_async.assert_not_called()
+
+
+# ============================================================================
 # Test ClaudeEpicVerificationModel
 # ============================================================================
 

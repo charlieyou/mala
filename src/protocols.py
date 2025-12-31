@@ -243,6 +243,17 @@ class IssueProvider(Protocol):
         """
         ...
 
+    async def get_parent_epic_async(self, issue_id: str) -> str | None:
+        """Get the parent epic ID for an issue.
+
+        Args:
+            issue_id: The issue ID to find the parent epic for.
+
+        Returns:
+            The parent epic ID, or None if no parent epic exists (orphan).
+        """
+        ...
+
 
 @runtime_checkable
 class CodeReviewer(Protocol):
