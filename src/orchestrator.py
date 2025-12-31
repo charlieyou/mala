@@ -7,7 +7,7 @@ import functools
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 from .beads_client import BeadsClient
 from .config import MalaConfig
@@ -73,12 +73,14 @@ from .validation.spec import (
 )
 from .epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
 from .models import RetryConfig
+from .orchestrator_factory import DEFAULT_AGENT_TIMEOUT_MINUTES
 
 if TYPE_CHECKING:
     from .cerberus_review import ReviewResult
     from .event_sink import EventRunConfig, MalaEventSink
     from .lifecycle import RetryState
     from .models import IssueResolution
+    from .orchestrator_factory import OrchestratorConfig, _DerivedConfig
     from .protocols import CodeReviewer, GateChecker, IssueProvider, LogProvider
     from .quality_gate import GateResult
     from .telemetry import TelemetryProvider
@@ -95,11 +97,6 @@ _PROMPT_DIR = Path(__file__).parent / "prompts"
 PROMPT_FILE = _PROMPT_DIR / "implementer_prompt.md"
 REVIEW_FOLLOWUP_FILE = _PROMPT_DIR / "review_followup.md"
 FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
-
-# Default timeout for agent execution (protects against hung MCP server subprocesses)
-# This ensures stuck subprocesses (e.g., ripgrep searching from wrong directory)
-# don't hang indefinitely even when cwd is misconfigured.
-DEFAULT_AGENT_TIMEOUT_MINUTES = 60
 
 # Bounded wait for log file (seconds) - used by AgentSessionRunner
 # Re-exported here for backwards compatibility with tests.
@@ -142,11 +139,67 @@ class IssueResult:
 
 
 class MalaOrchestrator:
-    """Orchestrates parallel issue processing using Claude Agent SDK."""
+    """Orchestrates parallel issue processing using Claude Agent SDK.
 
+    This class can be instantiated in two ways:
+    1. Legacy: Direct constructor with individual parameters (backward compatible)
+    2. Factory: Via create_orchestrator() with OrchestratorConfig and deps
+
+    The factory pattern is preferred for new code as it provides cleaner
+    separation of concerns and easier testing.
+    """
+
+    @overload
     def __init__(
         self,
         repo_path: Path,
+        max_agents: int | None = ...,
+        timeout_minutes: int | None = ...,
+        max_issues: int | None = ...,
+        epic_id: str | None = ...,
+        only_ids: set[str] | None = ...,
+        braintrust_enabled: bool | None = ...,
+        max_gate_retries: int = ...,
+        max_review_retries: int = ...,
+        disable_validations: set[str] | None = ...,
+        coverage_threshold: float | None = ...,
+        morph_enabled: bool | None = ...,
+        prioritize_wip: bool = ...,
+        focus: bool = ...,
+        cli_args: dict[str, object] | None = ...,
+        issue_provider: IssueProvider | None = ...,
+        code_reviewer: CodeReviewer | None = ...,
+        gate_checker: GateChecker | None = ...,
+        log_provider: LogProvider | None = ...,
+        telemetry_provider: TelemetryProvider | None = ...,
+        event_sink: MalaEventSink | None = ...,
+        config: MalaConfig | None = ...,
+        epic_override_ids: set[str] | None = ...,
+    ) -> None:
+        """Legacy constructor signature for backward compatibility."""
+        ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        _config: OrchestratorConfig,
+        _mala_config: MalaConfig,
+        _derived: _DerivedConfig,
+        _issue_provider: IssueProvider,
+        _code_reviewer: CodeReviewer,
+        _gate_checker: GateChecker,
+        _log_provider: LogProvider,
+        _telemetry_provider: TelemetryProvider,
+        _event_sink: MalaEventSink,
+        _epic_verifier: EpicVerifier | None,
+    ) -> None:
+        """Internal constructor used by create_orchestrator()."""
+        ...
+
+    def __init__(
+        self,
+        repo_path: Path | None = None,
         max_agents: int | None = None,
         timeout_minutes: int | None = None,
         max_issues: int | None = None,
@@ -172,10 +225,167 @@ class MalaOrchestrator:
         config: MalaConfig | None = None,
         # Epic verification override (bypasses verification for listed epic IDs)
         epic_override_ids: set[str] | None = None,
+        # Internal parameters used by create_orchestrator() - prefixed with underscore
+        _config: OrchestratorConfig | None = None,
+        _mala_config: MalaConfig | None = None,
+        _derived: _DerivedConfig | None = None,
+        _issue_provider: IssueProvider | None = None,
+        _code_reviewer: CodeReviewer | None = None,
+        _gate_checker: GateChecker | None = None,
+        _log_provider: LogProvider | None = None,
+        _telemetry_provider: TelemetryProvider | None = None,
+        _event_sink: MalaEventSink | None = None,
+        _epic_verifier: EpicVerifier | None = None,
     ):
+        # Detect which initialization path to use
+        if _config is not None:
+            # Factory path: use pre-computed config and dependencies
+            self._init_from_factory(
+                _config,
+                _mala_config,
+                _derived,
+                _issue_provider,
+                _code_reviewer,
+                _gate_checker,
+                _log_provider,
+                _telemetry_provider,
+                _event_sink,
+                _epic_verifier,
+            )
+        else:
+            # Legacy path: compute everything from individual parameters
+            if repo_path is None:
+                raise ValueError("repo_path is required for legacy initialization")
+            self._init_legacy(
+                repo_path=repo_path,
+                max_agents=max_agents,
+                timeout_minutes=timeout_minutes,
+                max_issues=max_issues,
+                epic_id=epic_id,
+                only_ids=only_ids,
+                braintrust_enabled=braintrust_enabled,
+                max_gate_retries=max_gate_retries,
+                max_review_retries=max_review_retries,
+                disable_validations=disable_validations,
+                coverage_threshold=coverage_threshold,
+                morph_enabled=morph_enabled,
+                prioritize_wip=prioritize_wip,
+                focus=focus,
+                cli_args=cli_args,
+                issue_provider=issue_provider,
+                code_reviewer=code_reviewer,
+                gate_checker=gate_checker,
+                log_provider=log_provider,
+                telemetry_provider=telemetry_provider,
+                event_sink=event_sink,
+                config=config,
+                epic_override_ids=epic_override_ids,
+            )
+
+    def _init_from_factory(
+        self,
+        orch_config: OrchestratorConfig,
+        mala_config: MalaConfig | None,
+        derived: _DerivedConfig | None,
+        issue_provider: IssueProvider | None,
+        code_reviewer: CodeReviewer | None,
+        gate_checker: GateChecker | None,
+        log_provider: LogProvider | None,
+        telemetry_provider: TelemetryProvider | None,
+        event_sink: MalaEventSink | None,
+        epic_verifier: EpicVerifier | None,
+    ) -> None:
+        """Initialize from factory-provided config and dependencies."""
+        if mala_config is None:
+            raise ValueError("_mala_config is required when using factory path")
+        if derived is None:
+            raise ValueError("_derived is required when using factory path")
+        if issue_provider is None:
+            raise ValueError("_issue_provider is required when using factory path")
+        if code_reviewer is None:
+            raise ValueError("_code_reviewer is required when using factory path")
+        if gate_checker is None:
+            raise ValueError("_gate_checker is required when using factory path")
+        if log_provider is None:
+            raise ValueError("_log_provider is required when using factory path")
+        if telemetry_provider is None:
+            raise ValueError("_telemetry_provider is required when using factory path")
+        if event_sink is None:
+            raise ValueError("_event_sink is required when using factory path")
+
+        # Store configs
+        self._mala_config = mala_config
+
+        # Set all attributes from config
+        self.repo_path = orch_config.repo_path.resolve()
+        self.max_agents = orch_config.max_agents
+        self.timeout_seconds = derived.timeout_seconds
+        self.max_issues = orch_config.max_issues
+        self.epic_id = orch_config.epic_id
+        self.only_ids = orch_config.only_ids
+        self.braintrust_enabled = derived.braintrust_enabled
+        self.morph_enabled = derived.morph_enabled
+        self.max_gate_retries = orch_config.max_gate_retries
+        self.max_review_retries = orch_config.max_review_retries
+        self.disable_validations = orch_config.disable_validations
+        self._disabled_validations = derived.disabled_validations
+        self.coverage_threshold = orch_config.coverage_threshold
+        self.prioritize_wip = orch_config.prioritize_wip
+        self.focus = orch_config.focus
+        self.cli_args = orch_config.cli_args
+        self.epic_override_ids = orch_config.epic_override_ids or set()
+
+        # Review disabled reason (if any)
+        self.review_disabled_reason = derived.review_disabled_reason
+
+        # Initialize runtime state
+        self._init_runtime_state()
+
+        # Set dependencies
+        self.log_provider = log_provider
+        self.quality_gate = gate_checker
+        self.event_sink = event_sink
+        self.beads = issue_provider
+        self.epic_verifier = epic_verifier
+        self.code_reviewer = code_reviewer
+        self.telemetry_provider = telemetry_provider
+
+        # Build pipeline runners
+        self._init_pipeline_runners()
+
+    def _init_legacy(
+        self,
+        repo_path: Path,
+        max_agents: int | None,
+        timeout_minutes: int | None,
+        max_issues: int | None,
+        epic_id: str | None,
+        only_ids: set[str] | None,
+        braintrust_enabled: bool | None,
+        max_gate_retries: int,
+        max_review_retries: int,
+        disable_validations: set[str] | None,
+        coverage_threshold: float | None,
+        morph_enabled: bool | None,
+        prioritize_wip: bool,
+        focus: bool,
+        cli_args: dict[str, object] | None,
+        issue_provider: IssueProvider | None,
+        code_reviewer: CodeReviewer | None,
+        gate_checker: GateChecker | None,
+        log_provider: LogProvider | None,
+        telemetry_provider: TelemetryProvider | None,
+        event_sink: MalaEventSink | None,
+        config: MalaConfig | None,
+        epic_override_ids: set[str] | None,
+    ) -> None:
+        """Initialize using legacy individual parameters."""
+        import os
+        import shutil
+
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
-        # Use default timeout if not specified to protect against hung MCP subprocesses
+        # Use default timeout if not specified
         effective_timeout = (
             timeout_minutes if timeout_minutes else DEFAULT_AGENT_TIMEOUT_MINUTES
         )
@@ -185,22 +395,20 @@ class MalaOrchestrator:
         self.only_ids = only_ids
 
         # Use config if provided, otherwise load from environment
-        # Store config for later use (e.g., passing API keys to get_mcp_servers)
-        self._config = (
+        self._mala_config = (
             config if config is not None else MalaConfig.from_env(validate=False)
         )
 
         # Derive feature flags from config if not explicitly provided
-        # This allows explicit parameters to override config values
         if braintrust_enabled is not None:
             self.braintrust_enabled = braintrust_enabled
         else:
-            self.braintrust_enabled = self._config.braintrust_enabled
+            self.braintrust_enabled = self._mala_config.braintrust_enabled
 
         if morph_enabled is not None:
             self.morph_enabled = morph_enabled
         else:
-            self.morph_enabled = self._config.morph_enabled
+            self.morph_enabled = self._mala_config.morph_enabled
 
         self.max_gate_retries = max_gate_retries
         self.max_review_retries = max_review_retries
@@ -212,48 +420,26 @@ class MalaOrchestrator:
         self.prioritize_wip = prioritize_wip
         self.focus = focus
         self.cli_args = cli_args
+        self.epic_override_ids = epic_override_ids or set()
 
-        self.active_tasks: dict[str, asyncio.Task] = {}
-        self.agent_ids: dict[str, str] = {}
-        self.completed: list[IssueResult] = []
-        self.failed_issues: set[str] = set()
-        self.abort_run: bool = False
-        self.abort_reason: str | None = None
+        # Initialize runtime state
+        self._init_runtime_state()
 
-        # Track session log paths for quality gate (issue_id -> log_path)
-        self.session_log_paths: dict[str, Path] = {}
-
-        # Track review session log paths (issue_id -> log_path)
-        self.review_log_paths: dict[str, str] = {}
-
-        # Track last gate results per issue to avoid duplicate validation
-        # Gate result includes validation_evidence parsed from logs
-        self.last_gate_results: dict[str, GateResult] = {}
-
-        # Track verified epics to prevent duplicate verifications in a single run
-        self.verified_epics: set[str] = set()
-
-        # Initialize pipeline stage implementations (use defaults if not provided)
-        # LogProvider: FileSystemLogProvider for reading Claude SDK logs
+        # Initialize dependencies
         self.log_provider: LogProvider = (
             FileSystemLogProvider() if log_provider is None else log_provider
         )
 
-        # GateChecker: QualityGate for post-run validation
-        # Pass log_provider to QualityGate for log access
         self.quality_gate: GateChecker = (
             QualityGate(self.repo_path, log_provider=self.log_provider)
             if gate_checker is None
             else gate_checker
         )
 
-        # EventSink: ConsoleEventSink by default for run lifecycle logging
-        # (moved earlier so log_warning can use it)
         self.event_sink: MalaEventSink = (
             ConsoleEventSink() if event_sink is None else event_sink
         )
 
-        # IssueProvider: BeadsClient for issue tracking
         def log_warning(msg: str) -> None:
             self.event_sink.on_warning(msg)
 
@@ -263,13 +449,11 @@ class MalaOrchestrator:
             else issue_provider
         )
 
-        # EpicVerifier: For epic verification before closure
-        # Requires beads to be a BeadsClient for epic operations
-        self.epic_override_ids = epic_override_ids or set()
+        # EpicVerifier setup
         if isinstance(self.beads, BeadsClient):
             verification_model = ClaudeEpicVerificationModel(
-                api_key=self._config.llm_api_key,
-                base_url=self._config.llm_base_url,
+                api_key=self._mala_config.llm_api_key,
+                base_url=self._mala_config.llm_base_url,
                 timeout_ms=self.timeout_seconds * 1000,
                 retry_config=RetryConfig(),
             )
@@ -277,31 +461,24 @@ class MalaOrchestrator:
                 beads=self.beads,
                 model=verification_model,
                 repo_path=self.repo_path,
-                max_diff_size_kb=self._config.max_diff_size_kb,
+                max_diff_size_kb=self._mala_config.max_diff_size_kb,
                 event_sink=self.event_sink,
-                lock_manager=True,  # Enable locking for sequential epic processing
+                lock_manager=True,
             )
         else:
-            # When using a mock issue_provider, skip EpicVerifier
             self.epic_verifier = None
 
-        # Disable review if review-gate is not available.
+        # Check review availability
         self.review_disabled_reason: str | None = None
         if code_reviewer is None and "review" not in self._disabled_validations:
-            import os
-            import shutil
-
             review_gate_path = (
-                self._config.cerberus_bin_path / "review-gate"
-                if self._config.cerberus_bin_path
+                self._mala_config.cerberus_bin_path / "review-gate"
+                if self._mala_config.cerberus_bin_path
                 else None
             )
             if review_gate_path is None:
-                # No explicit bin_path - check PATH (respecting cerberus_env if set)
-                # Build effective PATH by merging cerberus_env with current env
-                cerberus_env_dict = dict(self._config.cerberus_env)
+                cerberus_env_dict = dict(self._mala_config.cerberus_env)
                 if "PATH" in cerberus_env_dict:
-                    # Prepend cerberus_env PATH to current PATH
                     effective_path = (
                         cerberus_env_dict["PATH"]
                         + os.pathsep
@@ -329,20 +506,18 @@ class MalaOrchestrator:
             if self.review_disabled_reason:
                 self._disabled_validations.add("review")
 
-        # CodeReviewer: DefaultReviewer using Cerberus review-gate
         self.code_reviewer: CodeReviewer = (
             DefaultReviewer(
                 repo_path=self.repo_path,
-                bin_path=self._config.cerberus_bin_path,
-                spawn_args=self._config.cerberus_spawn_args,
-                wait_args=self._config.cerberus_wait_args,
-                env=dict(self._config.cerberus_env),
+                bin_path=self._mala_config.cerberus_bin_path,
+                spawn_args=self._mala_config.cerberus_spawn_args,
+                wait_args=self._mala_config.cerberus_wait_args,
+                env=dict(self._mala_config.cerberus_env),
             )
             if code_reviewer is None
             else code_reviewer
         )
 
-        # TelemetryProvider: BraintrustProvider when enabled, else NullTelemetryProvider
         if telemetry_provider is not None:
             self.telemetry_provider: TelemetryProvider = telemetry_provider
         elif self.braintrust_enabled:
@@ -350,10 +525,26 @@ class MalaOrchestrator:
         else:
             self.telemetry_provider = NullTelemetryProvider()
 
-        # Cached per-issue validation spec (built once at run start)
+        # Build pipeline runners
+        self._init_pipeline_runners()
+
+    def _init_runtime_state(self) -> None:
+        """Initialize runtime state that's common to both init paths."""
+        self.active_tasks: dict[str, asyncio.Task[IssueResult]] = {}
+        self.agent_ids: dict[str, str] = {}
+        self.completed: list[IssueResult] = []
+        self.failed_issues: set[str] = set()
+        self.abort_run: bool = False
+        self.abort_reason: str | None = None
+        self.session_log_paths: dict[str, Path] = {}
+        self.review_log_paths: dict[str, str] = {}
+        self.last_gate_results: dict[str, GateResult] = {}
+        self.verified_epics: set[str] = set()
         self.per_issue_spec: ValidationSpec | None = None
 
-        # GateRunner: Extracted gate checking logic
+    def _init_pipeline_runners(self) -> None:
+        """Initialize pipeline runner components."""
+        # GateRunner
         gate_runner_config = GateRunnerConfig(
             max_gate_retries=self.max_gate_retries,
             disable_validations=self._disabled_validations,
@@ -365,12 +556,11 @@ class MalaOrchestrator:
             config=gate_runner_config,
         )
 
-        # ReviewRunner: Extracted review orchestration logic
-        # Note: capture_session_log depends on verbose mode, set per-issue
+        # ReviewRunner
         review_runner_config = ReviewRunnerConfig(
             max_review_retries=self.max_review_retries,
-            capture_session_log=False,  # Set per-issue based on verbose
-            review_timeout=self._config.review_timeout,
+            capture_session_log=False,
+            review_timeout=self._mala_config.review_timeout,
         )
         self.review_runner = ReviewRunner(
             code_reviewer=self.code_reviewer,
@@ -378,7 +568,7 @@ class MalaOrchestrator:
             gate_checker=self.quality_gate,
         )
 
-        # RunCoordinator: Extracted run-level validation and fixer logic
+        # RunCoordinator
         run_coordinator_config = RunCoordinatorConfig(
             repo_path=self.repo_path,
             timeout_seconds=self.timeout_seconds,
@@ -386,13 +576,24 @@ class MalaOrchestrator:
             disable_validations=self._disabled_validations,
             coverage_threshold=self.coverage_threshold,
             morph_enabled=self.morph_enabled,
-            morph_api_key=self._config.morph_api_key,
+            morph_api_key=self._mala_config.morph_api_key,
         )
         self.run_coordinator = RunCoordinator(
             config=run_coordinator_config,
             gate_checker=self.quality_gate,
             event_sink=self.event_sink,
         )
+
+    # Backward compatibility: expose _config as alias for _mala_config
+    @property
+    def _config(self) -> MalaConfig:
+        """Backward compatibility property for accessing MalaConfig."""
+        return self._mala_config
+
+    @_config.setter
+    def _config(self, value: MalaConfig) -> None:
+        """Backward compatibility setter for MalaConfig."""
+        self._mala_config = value
 
     def _cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup)."""

@@ -32,6 +32,8 @@ _LAZY_NAMES = frozenset(
         "BeadsClient",
         "MalaConfig",
         "MalaOrchestrator",
+        "OrchestratorConfig",
+        "create_orchestrator",
         "get_lock_dir",
         "get_running_instances",
         "get_running_instances_for_dir",
@@ -540,7 +542,8 @@ def run(
         False if no_morph else None
     )  # None lets orchestrator use config default
 
-    orchestrator = _lazy("MalaOrchestrator")(
+    # Build OrchestratorConfig for factory
+    orch_config = _lazy("OrchestratorConfig")(
         repo_path=repo_path,
         max_agents=max_agents,
         timeout_minutes=timeout,
@@ -556,9 +559,11 @@ def run(
         prioritize_wip=wip,
         focus=focus,
         cli_args=cli_args,
-        config=config,
         epic_override_ids=epic_override_ids,
     )
+
+    # Use factory to create orchestrator
+    orchestrator = _lazy("create_orchestrator")(orch_config, mala_config=config)
 
     success_count, total = asyncio.run(orchestrator.run())
     # Exit 0 if: no issues to process (no-op) OR at least one succeeded
@@ -788,6 +793,14 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from .orchestrator import MalaOrchestrator
 
         _lazy_modules[name] = MalaOrchestrator
+    elif name == "OrchestratorConfig":
+        from .orchestrator_factory import OrchestratorConfig
+
+        _lazy_modules[name] = OrchestratorConfig
+    elif name == "create_orchestrator":
+        from .orchestrator_factory import create_orchestrator
+
+        _lazy_modules[name] = create_orchestrator
     elif name == "get_lock_dir":
         from .tools.locking import get_lock_dir
 
