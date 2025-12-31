@@ -100,8 +100,13 @@ class HangingSDKClient(FakeSDKClient):
 class SlowSDKClient(FakeSDKClient):
     """Fake SDK client that yields messages after a short delay."""
 
-    def __init__(self, delay: float, **kwargs: Any):
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        delay: float,
+        messages: list[Any] | None = None,
+        result_message: ResultMessage | None = None,
+    ):
+        super().__init__(messages=messages, result_message=result_message)
         self.delay = delay
 
     async def receive_response(self) -> AsyncIterator[Any]:
