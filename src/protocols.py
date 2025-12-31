@@ -42,6 +42,7 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
+@runtime_checkable
 class JsonlEntryProtocol(Protocol):
     """Protocol for parsed JSONL log entries with byte offset tracking.
 
@@ -61,6 +62,7 @@ class JsonlEntryProtocol(Protocol):
     """Byte offset where this line started in the file."""
 
 
+@runtime_checkable
 class ValidationSpecProtocol(Protocol):
     """Protocol for validation specification.
 
@@ -75,6 +77,7 @@ class ValidationSpecProtocol(Protocol):
     """The validation scope (per-issue or run-level)."""
 
 
+@runtime_checkable
 class ValidationEvidenceProtocol(Protocol):
     """Protocol for validation evidence from agent runs.
 
@@ -96,6 +99,7 @@ class ValidationEvidenceProtocol(Protocol):
         ...
 
 
+@runtime_checkable
 class CommitResultProtocol(Protocol):
     """Protocol for commit existence check results.
 
@@ -112,6 +116,7 @@ class CommitResultProtocol(Protocol):
     """The commit message if found."""
 
 
+@runtime_checkable
 class IssueResolutionProtocol(Protocol):
     """Protocol for issue resolution records.
 
@@ -125,6 +130,7 @@ class IssueResolutionProtocol(Protocol):
     """Explanation for the resolution."""
 
 
+@runtime_checkable
 class GateResultProtocol(Protocol):
     """Protocol for quality gate check results.
 
@@ -150,6 +156,7 @@ class GateResultProtocol(Protocol):
     """Issue resolution if applicable."""
 
 
+@runtime_checkable
 class ReviewIssueProtocol(Protocol):
     """Protocol for review issues found during code review.
 
@@ -178,6 +185,7 @@ class ReviewIssueProtocol(Protocol):
     """Which reviewer found this issue."""
 
 
+@runtime_checkable
 class ReviewResultProtocol(Protocol):
     """Protocol for code review results.
 
@@ -200,6 +208,7 @@ class ReviewResultProtocol(Protocol):
     """Path to review session logs."""
 
 
+@runtime_checkable
 class UnmetCriterionProtocol(Protocol):
     """Protocol for unmet criteria during epic verification.
 
@@ -219,6 +228,7 @@ class UnmetCriterionProtocol(Protocol):
     """SHA256 of criterion text, for deduplication."""
 
 
+@runtime_checkable
 class EpicVerdictProtocol(Protocol):
     """Protocol for epic verification verdicts.
 
