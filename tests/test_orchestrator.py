@@ -3586,6 +3586,7 @@ class TestBaselineCommitSelection:
             diff_range: str,
             context_file: Path | None = None,
             timeout: int = 300,
+            claude_session_id: str | None = None,
         ) -> MagicMock:
             # Extract baseline from diff_range (format: "baseline..HEAD")
             baseline = diff_range.split("..")[0] if ".." in diff_range else None
@@ -3666,6 +3667,7 @@ class TestBaselineCommitSelection:
             diff_range: str,
             context_file: Path | None = None,
             timeout: int = 300,
+            claude_session_id: str | None = None,
         ) -> MagicMock:
             # Extract baseline from diff_range (format: "baseline..HEAD")
             baseline = diff_range.split("..")[0] if ".." in diff_range else None
@@ -3844,6 +3846,7 @@ class TestReviewUsesCurrentHead:
                 diff_range: str,
                 context_file: Path | None = None,
                 timeout: int = 300,
+                claude_session_id: str | None = None,
             ) -> ReviewResult:
                 captured_diff_ranges.append(diff_range)
                 return ReviewResult(

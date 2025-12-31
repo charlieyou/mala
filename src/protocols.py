@@ -272,6 +272,7 @@ class CodeReviewer(Protocol):
         diff_range: str,
         context_file: Path | None = None,
         timeout: int = 300,
+        claude_session_id: str | None = None,
     ) -> ReviewResult:
         """Run code review on a diff range.
 
@@ -279,6 +280,7 @@ class CodeReviewer(Protocol):
             diff_range: Git diff range to review (e.g., "baseline..HEAD").
             context_file: Optional path to file with issue description context.
             timeout: Timeout in seconds for the review operation.
+            claude_session_id: Optional Claude session ID for review attribution.
 
         Returns:
             ReviewResult with review outcome. On parse failure,

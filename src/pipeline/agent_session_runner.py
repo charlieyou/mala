@@ -137,7 +137,7 @@ GateCheckCallback = Callable[
     Coroutine[Any, Any, tuple["GateOutcome", int]],
 ]
 ReviewCheckCallback = Callable[
-    [str, str | None, str | None],
+    [str, str | None, str | None, str | None],
     Coroutine[Any, Any, "ReviewOutcome"],
 ]
 ReviewNoProgressCallback = Callable[
@@ -239,7 +239,7 @@ class SessionCallbacks:
         on_gate_check: Async callback to run quality gate check.
             Args: (issue_id, log_path, retry_state) -> (GateResult, new_offset)
         on_review_check: Async callback to run external review (Cerberus).
-            Args: (issue_id, issue_description, baseline_commit) -> ReviewOutcome
+            Args: (issue_id, issue_description, baseline_commit, session_id) -> ReviewOutcome
         on_review_no_progress: Sync callback to check if no progress on review retry.
             Args: (log_path, log_offset, prev_commit, curr_commit) -> bool
         get_log_path: Callback to get log path from session ID.
@@ -685,6 +685,7 @@ class AgentSessionRunner:
                                 input.issue_id,
                                 input.issue_description,
                                 input.baseline_commit,
+                                lifecycle_ctx.session_id,
                             )
 
                             # Check for fatal error

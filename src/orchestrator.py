@@ -717,7 +717,10 @@ class MalaOrchestrator:
             return await self._run_quality_gate_async(issue_id, log_path, retry_state)
 
         async def on_review_check(
-            issue_id: str, issue_desc: str | None, baseline: str | None
+            issue_id: str,
+            issue_desc: str | None,
+            baseline: str | None,
+            session_id: str | None,
         ) -> ReviewResult:
             current_head = await get_git_commit_async(self.repo_path)
             self.review_runner.config.capture_session_log = is_verbose_enabled()
@@ -727,6 +730,7 @@ class MalaOrchestrator:
                 commit_sha=current_head,
                 issue_description=issue_desc,
                 baseline_commit=baseline,
+                claude_session_id=session_id,
             )
             output = await self.review_runner.run_review(review_input)
             if output.session_log_path:

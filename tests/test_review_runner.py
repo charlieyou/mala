@@ -38,6 +38,7 @@ class FakeCodeReviewer:
         diff_range: str,
         context_file: Path | None = None,
         timeout: int = 300,
+        claude_session_id: str | None = None,
     ) -> ReviewResult:
         """Record call and return configured result."""
         self.calls.append(
@@ -45,6 +46,7 @@ class FakeCodeReviewer:
                 "diff_range": diff_range,
                 "context_file": context_file,
                 "timeout": timeout,
+                "claude_session_id": claude_session_id,
             }
         )
         return self.result
@@ -177,6 +179,7 @@ class TestReviewRunnerBasics:
             commit_sha="abc123",
             issue_description="Fix the bug",
             baseline_commit="def456",
+            claude_session_id="session-123",
         )
 
         await runner.run_review(review_input)
@@ -188,6 +191,7 @@ class TestReviewRunnerBasics:
         assert call["timeout"] == 600
         # context_file should be set when issue_description is provided
         assert call["context_file"] is not None
+        assert call["claude_session_id"] == "session-123"
 
     @pytest.mark.asyncio
     async def test_run_review_captures_review_log(
@@ -509,6 +513,7 @@ class TestReviewInput:
         assert review_input.commit_sha == "abc123"
         assert review_input.issue_description is None
         assert review_input.baseline_commit is None
+        assert review_input.claude_session_id is None
 
     def test_input_with_optional_fields(self, tmp_path: Path) -> None:
         """Input should accept optional fields."""
@@ -518,10 +523,12 @@ class TestReviewInput:
             commit_sha="abc123",
             issue_description="Fix the bug",
             baseline_commit="def456",
+            claude_session_id="session-456",
         )
 
         assert review_input.issue_description == "Fix the bug"
         assert review_input.baseline_commit == "def456"
+        assert review_input.claude_session_id == "session-456"
 
 
 class TestReviewOutput:
@@ -566,6 +573,7 @@ class TestContextFileCleanup:
                 diff_range: str,
                 context_file: Path | None = None,
                 timeout: int = 300,
+                claude_session_id: str | None = None,
             ) -> ReviewResult:
                 nonlocal context_file_path
                 context_file_path = context_file
@@ -606,6 +614,7 @@ class TestContextFileCleanup:
                 diff_range: str,
                 context_file: Path | None = None,
                 timeout: int = 300,
+                claude_session_id: str | None = None,
             ) -> ReviewResult:
                 nonlocal context_file_path
                 context_file_path = context_file

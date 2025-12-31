@@ -608,6 +608,11 @@ class TestAgentWorkflowE2E:
             permission_mode="bypassPermissions",
             model="haiku",
             max_turns=8,
+            env={
+                "LOCK_DIR": str(lock_dir),
+                "AGENT_ID": agent_id,
+                "PATH": f"{lock_env['scripts_dir']}:{os.environ.get('PATH', '')}",
+            },
         )
 
         prompt = f"""You are implementing a feature. Follow this EXACT workflow:

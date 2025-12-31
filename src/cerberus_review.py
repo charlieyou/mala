@@ -103,10 +103,12 @@ class DefaultReviewer:
                 return "review-gate binary not found in PATH"
         return None
 
-    def _build_env(self) -> dict[str, str]:
+    def _build_env(self, claude_session_id: str | None) -> dict[str, str]:
         merged = dict(self.env)
-        claude_session = merged.get("CLAUDE_SESSION_ID") or os.environ.get(
-            "CLAUDE_SESSION_ID"
+        claude_session = (
+            claude_session_id
+            or merged.get("CLAUDE_SESSION_ID")
+            or os.environ.get("CLAUDE_SESSION_ID")
         )
         if claude_session:
             merged["CLAUDE_SESSION_ID"] = claude_session
@@ -171,6 +173,7 @@ class DefaultReviewer:
         diff_range: str,
         context_file: Path | None = None,
         timeout: int = 300,
+        claude_session_id: str | None = None,
     ) -> ReviewResult:
         # Validate review-gate binary exists and is executable before proceeding
         validation_error = self._validate_review_gate_bin()
@@ -184,7 +187,7 @@ class DefaultReviewer:
             )
 
         runner = CommandRunner(cwd=self.repo_path)
-        env = self._build_env()
+        env = self._build_env(claude_session_id)
         if "CLAUDE_SESSION_ID" not in env:
             return ReviewResult(
                 passed=False,

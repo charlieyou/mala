@@ -1087,9 +1087,16 @@ class TestAgentSessionRunnerEventSink:
                 1000,
             )
 
+        captured_session_id: str | None = None
+
         async def on_review_check(
-            issue_id: str, description: str | None, baseline: str | None
+            issue_id: str,
+            description: str | None,
+            baseline: str | None,
+            session_id: str | None,
         ) -> ReviewResult:
+            nonlocal captured_session_id
+            captured_session_id = session_id
             return ReviewResult(passed=True, issues=[], parse_error=None)
 
         callbacks = SessionCallbacks(
@@ -1113,6 +1120,7 @@ class TestAgentSessionRunnerEventSink:
         output = await runner.run_session(input)
 
         assert output.success is True
+        assert captured_session_id == "test-session-123"
 
         # Check that review events were emitted
         event_names = [e[0] for e in fake_sink.events]
@@ -1163,7 +1171,10 @@ class TestAgentSessionRunnerEventSink:
             )
 
         async def on_review_check(
-            issue_id: str, description: str | None, baseline: str | None
+            issue_id: str,
+            description: str | None,
+            baseline: str | None,
+            session_id: str | None,
         ) -> ReviewResult:
             nonlocal review_check_count
             review_check_count += 1
