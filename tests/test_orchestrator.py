@@ -4174,7 +4174,8 @@ class TestOrchestratorFactory:
 
     def test_create_orchestrator_with_minimal_config(self, tmp_path: Path) -> None:
         """create_orchestrator works with just repo_path."""
-        from src.orchestrator_factory import OrchestratorConfig, create_orchestrator
+        from src.orchestrator_factory import create_orchestrator
+        from src.orchestrator_types import OrchestratorConfig
 
         config = OrchestratorConfig(repo_path=tmp_path)
         orchestrator = create_orchestrator(config)
@@ -4185,7 +4186,8 @@ class TestOrchestratorFactory:
 
     def test_create_orchestrator_with_full_config(self, tmp_path: Path) -> None:
         """create_orchestrator respects all config options."""
-        from src.orchestrator_factory import OrchestratorConfig, create_orchestrator
+        from src.orchestrator_factory import create_orchestrator
+        from src.orchestrator_types import OrchestratorConfig
 
         config = OrchestratorConfig(
             repo_path=tmp_path,
@@ -4220,7 +4222,8 @@ class TestOrchestratorFactory:
         from dataclasses import replace
 
         from src.config import MalaConfig
-        from src.orchestrator_factory import OrchestratorConfig, create_orchestrator
+        from src.orchestrator_factory import create_orchestrator
+        from src.orchestrator_types import OrchestratorConfig
 
         config = OrchestratorConfig(repo_path=tmp_path)
         mala_config = MalaConfig.from_env(validate=False)
@@ -4235,11 +4238,8 @@ class TestOrchestratorFactory:
     def test_create_orchestrator_with_custom_dependencies(self, tmp_path: Path) -> None:
         """create_orchestrator uses provided dependencies."""
         from src.event_sink import NullEventSink
-        from src.orchestrator_factory import (
-            OrchestratorConfig,
-            OrchestratorDependencies,
-            create_orchestrator,
-        )
+        from src.orchestrator_factory import create_orchestrator
+        from src.orchestrator_types import OrchestratorConfig, OrchestratorDependencies
 
         custom_sink = NullEventSink()
         deps = OrchestratorDependencies(event_sink=custom_sink)
@@ -4251,10 +4251,10 @@ class TestOrchestratorFactory:
 
     def test_create_orchestrator_timeout_defaults_to_60(self, tmp_path: Path) -> None:
         """Default timeout is 60 minutes when not specified."""
-        from src.orchestrator_factory import (
+        from src.orchestrator_factory import create_orchestrator
+        from src.orchestrator_types import (
             DEFAULT_AGENT_TIMEOUT_MINUTES,
             OrchestratorConfig,
-            create_orchestrator,
         )
 
         config = OrchestratorConfig(repo_path=tmp_path)
@@ -4266,10 +4266,10 @@ class TestOrchestratorFactory:
         self, tmp_path: Path
     ) -> None:
         """Timeout of 0 is treated as falsy and uses default."""
-        from src.orchestrator_factory import (
+        from src.orchestrator_factory import create_orchestrator
+        from src.orchestrator_types import (
             DEFAULT_AGENT_TIMEOUT_MINUTES,
             OrchestratorConfig,
-            create_orchestrator,
         )
 
         config = OrchestratorConfig(repo_path=tmp_path, timeout_minutes=0)
@@ -4280,7 +4280,7 @@ class TestOrchestratorFactory:
 
     def test_factory_path_requires_all_dependencies(self, tmp_path: Path) -> None:
         """Factory path raises ValueError if required deps are missing."""
-        from src.orchestrator_factory import OrchestratorConfig, _DerivedConfig
+        from src.orchestrator_types import OrchestratorConfig, _DerivedConfig
 
         config = OrchestratorConfig(repo_path=tmp_path)
         derived = _DerivedConfig(
@@ -4314,7 +4314,8 @@ class TestOrchestratorFactory:
         self, tmp_path: Path
     ) -> None:
         """Legacy and factory paths produce equivalent orchestrators."""
-        from src.orchestrator_factory import OrchestratorConfig, create_orchestrator
+        from src.orchestrator_factory import create_orchestrator
+        from src.orchestrator_types import OrchestratorConfig
 
         # Create via legacy path
         legacy = MalaOrchestrator(
@@ -4341,7 +4342,7 @@ class TestOrchestratorFactory:
 
     def test_orchestrator_config_defaults(self) -> None:
         """OrchestratorConfig has sensible defaults."""
-        from src.orchestrator_factory import OrchestratorConfig
+        from src.orchestrator_types import OrchestratorConfig
 
         config = OrchestratorConfig(repo_path=Path("/tmp"))
 
@@ -4361,7 +4362,7 @@ class TestOrchestratorFactory:
 
     def test_orchestrator_dependencies_all_optional(self) -> None:
         """OrchestratorDependencies allows all fields to be None."""
-        from src.orchestrator_factory import OrchestratorDependencies
+        from src.orchestrator_types import OrchestratorDependencies
 
         deps = OrchestratorDependencies()
 
