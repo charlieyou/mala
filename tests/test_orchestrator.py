@@ -4492,15 +4492,17 @@ class TestBuildGateMetadataFromLogs:
 
     def test_none_spec_returns_empty_metadata(self, tmp_path: Path) -> None:
         """When per_issue_spec is None, returns empty GateMetadata."""
-        from typing import cast
+        from typing import TYPE_CHECKING, cast
 
         from src.orchestrator import _build_gate_metadata_from_logs
-        from src.protocols import GateChecker
         from src.quality_gate import QualityGate
+
+        if TYPE_CHECKING:
+            from src.protocols import GateChecker
 
         log_path = tmp_path / "test.log"
         log_path.write_text("{}")
-        quality_gate = cast(GateChecker, QualityGate(repo_path=tmp_path))
+        quality_gate = cast("GateChecker", QualityGate(repo_path=tmp_path))
 
         result = _build_gate_metadata_from_logs(
             log_path=log_path,
@@ -4516,10 +4518,9 @@ class TestBuildGateMetadataFromLogs:
     def test_valid_spec_parses_evidence(self, tmp_path: Path) -> None:
         """With valid spec, parses evidence from logs."""
         import re
-        from typing import cast
+        from typing import TYPE_CHECKING, cast
 
         from src.orchestrator import _build_gate_metadata_from_logs
-        from src.protocols import GateChecker
         from src.quality_gate import QualityGate
         from src.validation.spec import (
             CommandKind,
@@ -4528,11 +4529,14 @@ class TestBuildGateMetadataFromLogs:
             ValidationSpec,
         )
 
+        if TYPE_CHECKING:
+            from src.protocols import GateChecker
+
         log_path = tmp_path / "test.log"
         # Write a minimal log entry
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast(GateChecker, QualityGate(repo_path=tmp_path))
+        quality_gate = cast("GateChecker", QualityGate(repo_path=tmp_path))
         spec = ValidationSpec(
             commands=[
                 ValidationCommand(
@@ -4561,17 +4565,19 @@ class TestBuildGateMetadataFromLogs:
 
     def test_result_success_determines_passed_status(self, tmp_path: Path) -> None:
         """result_success parameter determines quality_gate_result.passed."""
-        from typing import cast
+        from typing import TYPE_CHECKING, cast
 
         from src.orchestrator import _build_gate_metadata_from_logs
-        from src.protocols import GateChecker
         from src.quality_gate import QualityGate
         from src.validation.spec import ValidationScope, ValidationSpec
+
+        if TYPE_CHECKING:
+            from src.protocols import GateChecker
 
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast(GateChecker, QualityGate(repo_path=tmp_path))
+        quality_gate = cast("GateChecker", QualityGate(repo_path=tmp_path))
         spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
 
         # Test with result_success=True
@@ -4588,17 +4594,19 @@ class TestBuildGateMetadataFromLogs:
 
     def test_extracts_failure_reasons_from_summary(self, tmp_path: Path) -> None:
         """Extracts failure reasons from 'Quality gate failed:' prefix."""
-        from typing import cast
+        from typing import TYPE_CHECKING, cast
 
         from src.orchestrator import _build_gate_metadata_from_logs
-        from src.protocols import GateChecker
         from src.quality_gate import QualityGate
         from src.validation.spec import ValidationScope, ValidationSpec
+
+        if TYPE_CHECKING:
+            from src.protocols import GateChecker
 
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast(GateChecker, QualityGate(repo_path=tmp_path))
+        quality_gate = cast("GateChecker", QualityGate(repo_path=tmp_path))
         spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
 
         result = _build_gate_metadata_from_logs(
