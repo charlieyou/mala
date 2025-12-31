@@ -495,6 +495,19 @@ class IssueProvider(Protocol):
         """
         ...
 
+    async def find_issue_by_tag_async(self, tag: str) -> str | None:
+        """Find an existing issue with the given tag.
+
+        Used for deduplication when creating tracking issues.
+
+        Args:
+            tag: The tag to search for.
+
+        Returns:
+            Issue ID if found, None otherwise.
+        """
+        ...
+
 
 @runtime_checkable
 class CodeReviewer(Protocol):

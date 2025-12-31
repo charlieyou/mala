@@ -459,6 +459,7 @@ class ImplementerLifecycle:
 
         # Check for blocking issues (P0/P1 only). P2/P3 issues are acceptable
         # and can be tracked as beads issues later.
+        # Issues with None priority are treated as non-blocking (default to P3).
         blocking_issues = [
             i
             for i in review_result.issues
@@ -471,11 +472,11 @@ class ImplementerLifecycle:
         if review_result.passed or (not blocking_issues and not has_parse_error):
             ctx.success = True
             self._state = LifecycleState.SUCCESS
-            # Collect P2/P3 issues for tracking - filter to only issues with priority > 1
+            # Collect P2/P3 issues for tracking - include issues with priority > 1
+            # or issues with None priority (treated as P3 for tracking purposes).
+            # This ensures no review feedback is lost.
             low_pri_issues = [
-                i
-                for i in review_result.issues
-                if i.priority is not None and i.priority > 1
+                i for i in review_result.issues if i.priority is None or i.priority > 1
             ]
             ctx.low_priority_review_issues = low_pri_issues
             # Include P2/P3 count in message if any exist

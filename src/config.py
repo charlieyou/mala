@@ -182,6 +182,8 @@ class MalaConfig:
             Defaults to empty (no extra args).
         cerberus_env: Extra environment variables for review-gate.
             Defaults to empty (no extra env).
+        track_review_issues: Whether to create beads issues for P2/P3 review findings.
+            Env: MALA_TRACK_REVIEW_ISSUES (default: True)
         max_diff_size_kb: Maximum diff size for epic verification (KB).
             Env: MALA_MAX_DIFF_SIZE_KB (default: 100)
         llm_api_key: API key for LLM calls (epic verification).
@@ -224,6 +226,7 @@ class MalaConfig:
     cerberus_spawn_args: tuple[str, ...] = field(default_factory=tuple)
     cerberus_wait_args: tuple[str, ...] = field(default_factory=tuple)
     cerberus_env: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    track_review_issues: bool = field(default=True)  # Create beads issues for P2/P3
     # Epic verification settings
     max_diff_size_kb: int = 100  # Maximum diff size for epic verification (KB)
 
@@ -273,6 +276,7 @@ class MalaConfig:
             - BRAINTRUST_API_KEY: Braintrust API key (optional)
             - MORPH_API_KEY: Morph API key (optional)
             - MALA_REVIEW_TIMEOUT: Review timeout in seconds (optional)
+            - MALA_TRACK_REVIEW_ISSUES: Create beads issues for P2/P3 findings (optional)
             - MALA_CERBERUS_SPAWN_ARGS: Extra args for review-gate spawn (optional)
             - MALA_CERBERUS_WAIT_ARGS: Extra args for review-gate wait (optional)
             - MALA_CERBERUS_ENV: Extra env for review-gate (optional)
@@ -359,6 +363,10 @@ class MalaConfig:
         # Auto-detect cerberus bin path from Claude plugins
         cerberus_bin_path = _find_cerberus_bin_path(claude_config_dir)
 
+        # Parse track_review_issues flag (defaults to True)
+        track_review_issues_raw = os.environ.get("MALA_TRACK_REVIEW_ISSUES", "").lower()
+        track_review_issues = track_review_issues_raw not in ("0", "false", "no", "off")
+
         # Get epic verification settings
         max_diff_size_kb = _safe_int(
             os.environ.get("MALA_MAX_DIFF_SIZE_KB"), default=100
@@ -382,6 +390,7 @@ class MalaConfig:
             cerberus_spawn_args=tuple(cerberus_spawn_args),
             cerberus_wait_args=tuple(cerberus_wait_args),
             cerberus_env=_normalize_cerberus_env(cerberus_env),
+            track_review_issues=track_review_issues,
             max_diff_size_kb=max_diff_size_kb,
             llm_api_key=llm_api_key,
             llm_base_url=llm_base_url,

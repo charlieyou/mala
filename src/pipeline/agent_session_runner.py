@@ -26,7 +26,7 @@ import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from src.hooks import (
     FileReadCache,
@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from src.event_sink import MalaEventSink
     from src.lifecycle import GateOutcome, RetryState, ReviewOutcome
     from src.models import IssueResolution
+    from src.protocols import ReviewIssueProtocol
     from src.telemetry import TelemetrySpan
 
 
@@ -229,7 +230,7 @@ class AgentSessionOutput:
     duration_seconds: float = 0.0
     agent_id: str = ""
     review_log_path: str | None = None
-    low_priority_review_issues: list[object] | None = None
+    low_priority_review_issues: list[ReviewIssueProtocol] | None = None
 
 
 @dataclass
@@ -801,7 +802,8 @@ class AgentSessionRunner:
             duration_seconds=duration,
             agent_id=agent_id,
             review_log_path=cerberus_review_log_path,
-            low_priority_review_issues=list(lifecycle_ctx.low_priority_review_issues)
-            if lifecycle_ctx.low_priority_review_issues
-            else None,
+            low_priority_review_issues=cast(
+                "list[ReviewIssueProtocol] | None",
+                lifecycle_ctx.low_priority_review_issues or None,
+            ),
         )

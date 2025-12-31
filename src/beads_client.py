@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import TYPE_CHECKING
 
 from src.issue_manager import IssueManager
@@ -607,9 +608,47 @@ class BeadsClient:
             self._log_warning(f"bd issue create failed: {result.stderr}")
             return None
 
-        # bd issue create outputs the new issue ID on stdout
+        # Parse issue ID from output (typically "Created issue: <id>")
+        match = re.search(r"Created issue:\s*(\S+)", result.stdout)
+        if match:
+            return match.group(1)
+
+        # Try parsing as JSON if the CLI returns JSON
+        try:
+            data = json.loads(result.stdout)
+            if isinstance(data, dict):
+                issue_id = data.get("id")
+                if issue_id:
+                    return str(issue_id)
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback: try using stripped output as bare ID
         issue_id = result.stdout.strip()
         return issue_id if issue_id else None
+
+    async def find_issue_by_tag_async(self, tag: str) -> str | None:
+        """Find an existing issue with the given tag.
+
+        Args:
+            tag: The tag to search for.
+
+        Returns:
+            Issue ID if found, None otherwise.
+        """
+        result = await self._run_subprocess_async(
+            ["bd", "list", "--tag", tag, "--json"]
+        )
+        if result.returncode != 0:
+            return None
+        try:
+            issues = json.loads(result.stdout)
+            if isinstance(issues, list) and issues:
+                # Return first matching issue (should be only one due to dedup)
+                return str(issues[0].get("id", ""))
+            return None
+        except json.JSONDecodeError:
+            return None
 
     async def get_parent_epic_async(self, issue_id: str) -> str | None:
         """Get the parent epic ID for an issue.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -89,6 +90,7 @@ if TYPE_CHECKING:
         GateResultProtocol,
         IssueProvider,
         LogProvider,
+        ReviewIssueProtocol,
         ReviewResultProtocol,
         ValidationSpecProtocol,
     )
@@ -146,7 +148,7 @@ class IssueResult:
     gate_attempts: int = 1  # Number of gate retry attempts
     review_attempts: int = 0  # Number of Codex review attempts
     resolution: IssueResolution | None = None  # Resolution outcome if using markers
-    low_priority_review_issues: list[object] | None = None  # P2/P3 issues to track
+    low_priority_review_issues: list[ReviewIssueProtocol] | None = None  # P2/P3 issues
 
 
 @dataclass
@@ -910,8 +912,8 @@ class MalaOrchestrator:
     async def _create_review_tracking_issues(
         self,
         source_issue_id: str,
-        review_issues: list[object],
-    ) -> list[str]:
+        review_issues: list[ReviewIssueProtocol],
+    ) -> None:
         """Create beads issues from P2/P3 review findings.
 
         These are low-priority issues that didn't block the review but should
@@ -920,22 +922,17 @@ class MalaOrchestrator:
 
         Args:
             source_issue_id: The issue ID that triggered the review.
-            review_issues: List of ReviewIssue objects from the review.
-
-        Returns:
-            List of created issue IDs.
+            review_issues: List of ReviewIssueProtocol objects from the review.
         """
-        created_ids: list[str] = []
-
         for issue in review_issues:
-            # Type narrowing - assume ReviewIssue-like structure
-            file_path = getattr(issue, "file", "")
-            line_start = getattr(issue, "line_start", 0)
-            line_end = getattr(issue, "line_end", 0)
-            priority = getattr(issue, "priority", None)
-            title = getattr(issue, "title", "Review finding")
-            body = getattr(issue, "body", "")
-            reviewer = getattr(issue, "reviewer", "unknown")
+            # Access protocol-defined attributes directly
+            file_path = issue.file
+            line_start = issue.line_start
+            line_end = issue.line_end
+            priority = issue.priority
+            title = issue.title
+            body = issue.body
+            reviewer = issue.reviewer
 
             # Map priority to beads priority string (P2, P3, etc.)
             priority_str = f"P{priority}" if priority is not None else "P3"
@@ -945,6 +942,18 @@ class MalaOrchestrator:
                 location = f"{file_path}:{line_start}" if file_path else ""
             else:
                 location = f"{file_path}:{line_start}-{line_end}" if file_path else ""
+
+            # Build dedup tag from content hash to prevent duplicate issues
+            # Hash key: file + line + title (not body, which may vary)
+            hash_key = f"{file_path}:{line_start}:{line_end}:{title}"
+            content_hash = hashlib.sha256(hash_key.encode()).hexdigest()[:12]
+            dedup_tag = f"review_finding:{content_hash}"
+
+            # Check for existing issue with this dedup tag
+            existing_id = await self.beads.find_issue_by_tag_async(dedup_tag)
+            if existing_id:
+                # Already exists, skip creation
+                continue
 
             # Build issue title with location
             issue_title = f"[Review] {title}"
@@ -972,22 +981,20 @@ class MalaOrchestrator:
                 "auto_generated",
                 "review_finding",
                 f"source:{source_issue_id}",
+                dedup_tag,
             ]
 
-            issue_id = await self.beads.create_issue_async(
+            new_issue_id = await self.beads.create_issue_async(
                 title=issue_title,
                 description=description,
                 priority=priority_str,
                 tags=tags,
             )
-            if issue_id:
-                created_ids.append(issue_id)
+            if new_issue_id:
                 self.event_sink.on_warning(
-                    f"Created tracking issue {issue_id} for {priority_str} review finding",
+                    f"Created tracking issue {new_issue_id} for {priority_str} review finding",
                     agent_id=source_issue_id,
                 )
-
-        return created_ids
 
     async def _finalize_issue_result(
         self,
@@ -1023,8 +1030,8 @@ class MalaOrchestrator:
             self.event_sink.on_issue_closed(issue_id, issue_id)
             await self._check_epic_closure(issue_id)
 
-            # Create tracking issues for P2/P3 review findings (if any)
-            if result.low_priority_review_issues:
+            # Create tracking issues for P2/P3 review findings (if enabled)
+            if self._config.track_review_issues and result.low_priority_review_issues:
                 await self._create_review_tracking_issues(
                     issue_id, result.low_priority_review_issues
                 )
