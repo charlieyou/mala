@@ -4167,3 +4167,207 @@ class TestEventSinkIntegration:
         orchestrator = MalaOrchestrator(repo_path=tmp_path)
 
         assert isinstance(orchestrator.event_sink, ConsoleEventSink)
+
+
+class TestOrchestratorFactory:
+    """Tests for create_orchestrator() factory function."""
+
+    def test_create_orchestrator_with_minimal_config(self, tmp_path: Path) -> None:
+        """create_orchestrator works with just repo_path."""
+        from src.orchestrator_factory import OrchestratorConfig, create_orchestrator
+
+        config = OrchestratorConfig(repo_path=tmp_path)
+        orchestrator = create_orchestrator(config)
+
+        assert orchestrator.repo_path == tmp_path
+        assert orchestrator.max_agents is None
+        assert orchestrator.max_issues is None
+
+    def test_create_orchestrator_with_full_config(self, tmp_path: Path) -> None:
+        """create_orchestrator respects all config options."""
+        from src.orchestrator_factory import OrchestratorConfig, create_orchestrator
+
+        config = OrchestratorConfig(
+            repo_path=tmp_path,
+            max_agents=4,
+            timeout_minutes=30,
+            max_issues=10,
+            epic_id="epic-123",
+            only_ids={"issue-1", "issue-2"},
+            max_gate_retries=5,
+            max_review_retries=2,
+            disable_validations={"coverage"},
+            coverage_threshold=80.0,
+            prioritize_wip=True,
+            focus=False,
+        )
+        orchestrator = create_orchestrator(config)
+
+        assert orchestrator.repo_path == tmp_path
+        assert orchestrator.max_agents == 4
+        assert orchestrator.timeout_seconds == 30 * 60
+        assert orchestrator.max_issues == 10
+        assert orchestrator.epic_id == "epic-123"
+        assert orchestrator.only_ids == {"issue-1", "issue-2"}
+        assert orchestrator.max_gate_retries == 5
+        assert orchestrator.max_review_retries == 2
+        assert orchestrator.coverage_threshold == 80.0
+        assert orchestrator.prioritize_wip is True
+        assert orchestrator.focus is False
+
+    def test_create_orchestrator_with_custom_mala_config(self, tmp_path: Path) -> None:
+        """create_orchestrator uses provided MalaConfig."""
+        from dataclasses import replace
+
+        from src.config import MalaConfig
+        from src.orchestrator_factory import OrchestratorConfig, create_orchestrator
+
+        config = OrchestratorConfig(repo_path=tmp_path)
+        mala_config = MalaConfig.from_env(validate=False)
+        # Override a value
+        mala_config = replace(mala_config, review_timeout=999)
+
+        orchestrator = create_orchestrator(config, mala_config=mala_config)
+
+        # Verify mala_config was used
+        assert orchestrator._mala_config.review_timeout == 999
+
+    def test_create_orchestrator_with_custom_dependencies(self, tmp_path: Path) -> None:
+        """create_orchestrator uses provided dependencies."""
+        from src.event_sink import NullEventSink
+        from src.orchestrator_factory import (
+            OrchestratorConfig,
+            OrchestratorDependencies,
+            create_orchestrator,
+        )
+
+        custom_sink = NullEventSink()
+        deps = OrchestratorDependencies(event_sink=custom_sink)
+
+        config = OrchestratorConfig(repo_path=tmp_path)
+        orchestrator = create_orchestrator(config, deps=deps)
+
+        assert orchestrator.event_sink is custom_sink
+
+    def test_create_orchestrator_timeout_defaults_to_60(self, tmp_path: Path) -> None:
+        """Default timeout is 60 minutes when not specified."""
+        from src.orchestrator_factory import (
+            DEFAULT_AGENT_TIMEOUT_MINUTES,
+            OrchestratorConfig,
+            create_orchestrator,
+        )
+
+        config = OrchestratorConfig(repo_path=tmp_path)
+        orchestrator = create_orchestrator(config)
+
+        assert orchestrator.timeout_seconds == DEFAULT_AGENT_TIMEOUT_MINUTES * 60
+
+    def test_create_orchestrator_zero_timeout_uses_default(
+        self, tmp_path: Path
+    ) -> None:
+        """Timeout of 0 is treated as falsy and uses default."""
+        from src.orchestrator_factory import (
+            DEFAULT_AGENT_TIMEOUT_MINUTES,
+            OrchestratorConfig,
+            create_orchestrator,
+        )
+
+        config = OrchestratorConfig(repo_path=tmp_path, timeout_minutes=0)
+        orchestrator = create_orchestrator(config)
+
+        # 0 is falsy, so default is used
+        assert orchestrator.timeout_seconds == DEFAULT_AGENT_TIMEOUT_MINUTES * 60
+
+    def test_factory_path_requires_all_dependencies(self, tmp_path: Path) -> None:
+        """Factory path raises ValueError if required deps are missing."""
+        from src.orchestrator_factory import OrchestratorConfig, _DerivedConfig
+
+        config = OrchestratorConfig(repo_path=tmp_path)
+        derived = _DerivedConfig(
+            timeout_seconds=3600,
+            braintrust_enabled=False,
+            morph_enabled=False,
+            disabled_validations=set(),
+        )
+
+        # Using factory path with missing deps should raise
+        with pytest.raises(ValueError, match="_mala_config is required"):
+            MalaOrchestrator(
+                _config=config,
+                _mala_config=None,  # type: ignore[arg-type]  # Intentionally passing None to test error handling
+                _derived=derived,
+                _issue_provider=MagicMock(),
+                _code_reviewer=MagicMock(),
+                _gate_checker=MagicMock(),
+                _log_provider=MagicMock(),
+                _telemetry_provider=MagicMock(),
+                _event_sink=MagicMock(),
+                _epic_verifier=None,
+            )
+
+    def test_legacy_path_requires_repo_path(self) -> None:
+        """Legacy path raises ValueError if repo_path is None."""
+        with pytest.raises(ValueError, match="repo_path is required"):
+            MalaOrchestrator(repo_path=None)  # type: ignore[arg-type]  # Intentionally passing None to test error handling
+
+    def test_legacy_and_factory_produce_equivalent_orchestrators(
+        self, tmp_path: Path
+    ) -> None:
+        """Legacy and factory paths produce equivalent orchestrators."""
+        from src.orchestrator_factory import OrchestratorConfig, create_orchestrator
+
+        # Create via legacy path
+        legacy = MalaOrchestrator(
+            repo_path=tmp_path,
+            max_agents=2,
+            timeout_minutes=45,
+            max_issues=10,
+        )
+
+        # Create via factory path
+        config = OrchestratorConfig(
+            repo_path=tmp_path,
+            max_agents=2,
+            timeout_minutes=45,
+            max_issues=10,
+        )
+        factory = create_orchestrator(config)
+
+        # Key attributes should match
+        assert legacy.repo_path == factory.repo_path
+        assert legacy.max_agents == factory.max_agents
+        assert legacy.timeout_seconds == factory.timeout_seconds
+        assert legacy.max_issues == factory.max_issues
+
+    def test_orchestrator_config_defaults(self) -> None:
+        """OrchestratorConfig has sensible defaults."""
+        from src.orchestrator_factory import OrchestratorConfig
+
+        config = OrchestratorConfig(repo_path=Path("/tmp"))
+
+        assert config.max_agents is None
+        assert config.timeout_minutes is None
+        assert config.max_issues is None
+        assert config.epic_id is None
+        assert config.only_ids is None
+        assert config.braintrust_enabled is None
+        assert config.max_gate_retries == 3
+        assert config.max_review_retries == 3
+        assert config.disable_validations is None
+        assert config.coverage_threshold is None
+        assert config.morph_enabled is None
+        assert config.prioritize_wip is False
+        assert config.focus is True
+
+    def test_orchestrator_dependencies_all_optional(self) -> None:
+        """OrchestratorDependencies allows all fields to be None."""
+        from src.orchestrator_factory import OrchestratorDependencies
+
+        deps = OrchestratorDependencies()
+
+        assert deps.issue_provider is None
+        assert deps.code_reviewer is None
+        assert deps.gate_checker is None
+        assert deps.log_provider is None
+        assert deps.telemetry_provider is None
+        assert deps.event_sink is None
