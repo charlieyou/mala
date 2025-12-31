@@ -193,6 +193,21 @@ class SpecValidationRunner:
 
         return result
 
+    def _write_file_flushed(self, path: Path, content: str) -> None:
+        """Write content to a file with immediate flush to disk.
+
+        Uses explicit flush() and fsync() to ensure data is persisted
+        before returning. This prevents log data loss if mala is interrupted.
+
+        Args:
+            path: Path to write to.
+            content: Text content to write.
+        """
+        with open(path, "w") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+
     def _write_initial_manifest(
         self,
         log_dir: Path,
@@ -202,9 +217,15 @@ class SpecValidationRunner:
         context: ValidationContext,
         spec: ValidationSpec,
     ) -> None:
-        """Write initial manifest of expected commands for debugging."""
+        """Write initial manifest of expected commands for debugging.
+
+        Uses explicit flush() and fsync() to ensure the manifest is written
+        to disk immediately. This provides accurate debugging info if mala
+        is interrupted mid-validation.
+        """
         manifest_path = log_dir / "validation_manifest.json"
-        manifest_path.write_text(
+        self._write_file_flushed(
+            manifest_path,
             json.dumps(
                 {
                     "expected_commands": expected_commands,
@@ -214,7 +235,7 @@ class SpecValidationRunner:
                     "scope": spec.scope.value,
                 },
                 indent=2,
-            )
+            ),
         )
 
     def _run_commands(
@@ -277,7 +298,9 @@ class SpecValidationRunner:
     ) -> None:
         """Write completion manifest with expected vs actual commands.
 
-        This helps debug cases where commands are unexpectedly skipped.
+        Uses explicit flush() and fsync() to ensure the manifest is written
+        to disk immediately. This helps debug cases where commands are
+        unexpectedly skipped and prevents data loss if mala is interrupted.
         """
         actual_commands = [s.name for s in steps]
         manifest = {
@@ -301,7 +324,7 @@ class SpecValidationRunner:
             ],
         }
         manifest_path = log_dir / "validation_complete.json"
-        manifest_path.write_text(json.dumps(manifest, indent=2))
+        self._write_file_flushed(manifest_path, json.dumps(manifest, indent=2))
 
     def _build_spec_env(
         self,

@@ -13,6 +13,7 @@ validation pipeline.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -228,6 +229,10 @@ class SpecCommandExecutor:
     ) -> None:
         """Write a start marker file for debugging.
 
+        Uses explicit flush() and fsync() to ensure the marker is written
+        to disk immediately. This provides accurate debugging info if mala
+        is interrupted mid-execution.
+
         Args:
             log_dir: Directory for logs.
             index: Command index in the batch.
@@ -235,7 +240,7 @@ class SpecCommandExecutor:
             cwd: Working directory.
         """
         start_marker = log_dir / f"{index:02d}_{cmd.name.replace(' ', '_')}.started"
-        start_marker.write_text(f"command: {cmd.command}\ncwd: {cwd}\n")
+        self._write_file_flushed(start_marker, f"command: {cmd.command}\ncwd: {cwd}\n")
 
     def _run_command(
         self,
@@ -284,8 +289,26 @@ class SpecCommandExecutor:
         """
         return [str(SCRIPTS_DIR / "test-mutex.sh"), *cmd]
 
+    def _write_file_flushed(self, path: Path, content: str) -> None:
+        """Write content to a file with immediate flush to disk.
+
+        Uses explicit flush() and fsync() to ensure data is persisted
+        before returning. This prevents log data loss if mala is interrupted.
+
+        Args:
+            path: Path to write to.
+            content: Text content to write.
+        """
+        with open(path, "w") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+
     def _write_step_logs(self, step: ValidationStepResult, log_dir: Path) -> None:
         """Write step stdout/stderr to log files.
+
+        Uses explicit flush() and fsync() to ensure logs are written to disk
+        immediately. This prevents log data loss if mala is interrupted.
 
         Args:
             step: The step result to log.
@@ -296,11 +319,11 @@ class SpecCommandExecutor:
 
         if step.stdout_tail:
             stdout_path = log_dir / f"{safe_name}.stdout.log"
-            stdout_path.write_text(step.stdout_tail)
+            self._write_file_flushed(stdout_path, step.stdout_tail)
 
         if step.stderr_tail:
             stderr_path = log_dir / f"{safe_name}.stderr.log"
-            stderr_path.write_text(step.stderr_tail)
+            self._write_file_flushed(stderr_path, step.stderr_tail)
 
     def _log_success(
         self,

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -156,9 +157,16 @@ class LintCache:
                 self._entries = {}
 
     def _save(self) -> None:
-        """Save the cache to disk."""
+        """Save the cache to disk with immediate flush.
+
+        Uses explicit flush() and fsync() to ensure data is written to disk
+        before returning. This prevents data loss if mala is interrupted.
+        """
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self._cache_file.write_text(json.dumps(self._entries, indent=2))
+        with open(self._cache_file, "w") as f:
+            json.dump(self._entries, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
 
     def _get_key_str(self, command_name: str) -> str:
         """Get the cache key string for a command."""
