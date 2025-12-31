@@ -108,4 +108,232 @@ dev = [
     "pytest-cov>=5.0.0",
     "pytest-rerunfailures>=16.1",
     "pytest-xdist>=3.8.0",
+    "import-linter>=2.0",
+]
+
+# =============================================================================
+# Import Linter Configuration
+# =============================================================================
+# Enforces architectural boundaries between layers.
+# Run with: uvx import-linter
+#
+# Layers (high to low):
+#   cli -> orchestration -> pipeline -> domain -> infra
+#
+# Lower layers must not import from higher layers.
+# =============================================================================
+
+[tool.importlinter]
+root_packages = ["src"]
+include_external_packages = true
+
+# -----------------------------------------------------------------------------
+# Contract 1: Layered Architecture
+# -----------------------------------------------------------------------------
+# Defines the allowed dependency direction between architectural layers.
+# Each layer can only import from layers below it.
+
+[[tool.importlinter.contracts]]
+name = "Layered Architecture"
+type = "layers"
+layers = [
+    # CLI layer: entry points, argument parsing, user interaction
+    "src.cli | src.main",
+    # Orchestration layer: run coordination, issue dispatch, telemetry
+    "src.orchestrator | src.orchestrator_factory",
+    # Pipeline layer: agent session execution, gate/review runners
+    "src.pipeline",
+    # Domain layer: business logic, validation specs, lifecycle state machine
+    "src.lifecycle | src.quality_gate | src.validation | src.models | src.prompts",
+    # Infrastructure layer: external integrations, I/O, protocols
+    "src.beads_client | src.cerberus_review | src.mcp | src.hooks | src.log_output | src.event_sink | src.event_sink_console | src.session_log_parser | src.anthropic_client | src.braintrust_integration | src.telemetry | src.git_utils | src.config | src.protocols | src.log_events | src.epic_verifier | src.tools",
+]
+
+# -----------------------------------------------------------------------------
+# Contract 2: Domain Independence
+# -----------------------------------------------------------------------------
+# Core domain modules must not depend on orchestration or CLI.
+
+[[tool.importlinter.contracts]]
+name = "Domain layer independence"
+type = "independence"
+modules = [
+    "src.lifecycle",
+    "src.models",
+]
+
+# -----------------------------------------------------------------------------
+# Contract 3: No circular imports within pipeline
+# -----------------------------------------------------------------------------
+
+[[tool.importlinter.contracts]]
+name = "Pipeline modules acyclic"
+type = "independence"
+modules = [
+    "src.pipeline.agent_session_runner",
+    "src.pipeline.gate_runner",
+    "src.pipeline.review_runner",
+    "src.pipeline.run_coordinator",
+]
+
+# -----------------------------------------------------------------------------
+# Contract 4: Domain must not depend on infra
+# -----------------------------------------------------------------------------
+# Keep domain layer pure - no direct infrastructure dependencies.
+# Domain should only depend on protocols/abstractions.
+
+[[tool.importlinter.contracts]]
+name = "Domain must not depend on infra"
+type = "forbidden"
+source_modules = [
+    "src.lifecycle",
+    "src.quality_gate",
+    "src.validation",
+    "src.models",
+    "src.prompts",
+]
+forbidden_modules = [
+    "src.beads_client",
+    "src.cerberus_review",
+    "src.mcp",
+    "src.hooks",
+    "src.log_output",
+    "src.event_sink",
+    "src.event_sink_console",
+    "src.session_log_parser",
+    "src.anthropic_client",
+    "src.braintrust_integration",
+    "src.telemetry",
+    "src.git_utils",
+    "src.config",
+    "src.log_events",
+    "src.epic_verifier",
+    "src.tools",
+]
+
+# -----------------------------------------------------------------------------
+# Contract 5: CLI only depends on orchestrator
+# -----------------------------------------------------------------------------
+# CLI should not reach into pipeline/domain/infra directly.
+# All behavior routed through the orchestration layer.
+
+[[tool.importlinter.contracts]]
+name = "CLI only depends on orchestrator"
+type = "forbidden"
+source_modules = [
+    "src.cli",
+    "src.main",
+]
+forbidden_modules = [
+    "src.pipeline",
+    "src.lifecycle",
+    "src.quality_gate",
+    "src.validation",
+    "src.models",
+    "src.prompts",
+    "src.beads_client",
+    "src.cerberus_review",
+    "src.mcp",
+    "src.hooks",
+    "src.session_log_parser",
+    "src.anthropic_client",
+    "src.braintrust_integration",
+    "src.telemetry",
+    "src.git_utils",
+    "src.protocols",
+    "src.epic_verifier",
+    "src.tools",
+]
+
+# -----------------------------------------------------------------------------
+# Contract 6: Infra modules independent
+# -----------------------------------------------------------------------------
+# Infrastructure integrations should not import each other.
+# Keeps integrations isolated and composable.
+
+[[tool.importlinter.contracts]]
+name = "Infra modules independent"
+type = "independence"
+modules = [
+    "src.beads_client",
+    "src.cerberus_review",
+    "src.mcp",
+    "src.anthropic_client",
+    "src.braintrust_integration",
+    "src.git_utils",
+]
+
+# -----------------------------------------------------------------------------
+# Contract 7: External SDK confined to infra
+# -----------------------------------------------------------------------------
+# claude_agent_sdk, braintrust should only be imported by infra layer.
+
+[[tool.importlinter.contracts]]
+name = "SDK confined to infra"
+type = "forbidden"
+source_modules = [
+    "src.lifecycle",
+    "src.quality_gate",
+    "src.validation",
+    "src.models",
+    "src.prompts",
+]
+forbidden_modules = [
+    "claude_agent_sdk",
+    "braintrust",
+    "typer",
+]
+
+# -----------------------------------------------------------------------------
+# Contract 8: Only CLI imports typer
+# -----------------------------------------------------------------------------
+# Typer framework should be confined to CLI entry points.
+
+[[tool.importlinter.contracts]]
+name = "Only CLI imports typer"
+type = "forbidden"
+source_modules = [
+    "src.orchestrator",
+    "src.orchestrator_factory",
+    "src.pipeline",
+    "src.lifecycle",
+    "src.quality_gate",
+    "src.validation",
+    "src.models",
+    "src.prompts",
+    "src.beads_client",
+    "src.cerberus_review",
+    "src.mcp",
+    "src.hooks",
+    "src.log_output",
+    "src.event_sink",
+    "src.event_sink_console",
+    "src.session_log_parser",
+    "src.anthropic_client",
+    "src.braintrust_integration",
+    "src.telemetry",
+    "src.git_utils",
+    "src.config",
+    "src.protocols",
+    "src.log_events",
+    "src.epic_verifier",
+    "src.tools",
+]
+forbidden_modules = ["typer"]
+
+# -----------------------------------------------------------------------------
+# Contract 9: Hooks isolated
+# -----------------------------------------------------------------------------
+# Hooks should be self-contained, not reaching into other infra.
+
+[[tool.importlinter.contracts]]
+name = "Hooks isolated"
+type = "forbidden"
+source_modules = ["src.hooks"]
+forbidden_modules = [
+    "src.beads_client",
+    "src.cerberus_review",
+    "src.telemetry",
+    "src.braintrust_integration",
+    "src.anthropic_client",
 ]
