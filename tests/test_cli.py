@@ -12,6 +12,8 @@ import typer
 import src.orchestrator
 import src.beads_client
 import src.tools.locking
+import src.cli_support
+import src.log_output.run_metadata
 
 
 def _reload_cli(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
@@ -402,6 +404,9 @@ def test_clean_removes_locks_and_logs(
     def _log(*args: object, **_kwargs: object) -> None:
         logs.append(args)
 
+    # Patch both cli_support (where cli imports from) and src.tools.locking
+    # (where cli_support imports from) to ensure full isolation
+    monkeypatch.setattr(src.cli_support, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
     monkeypatch.setattr(cli, "log", _log)
@@ -419,7 +424,6 @@ def test_status_no_running_instance(
 ) -> None:
     """Test status when no mala instance is running in cwd."""
     cli = _reload_cli(monkeypatch)
-    import src.log_output.run_metadata
 
     config_dir = tmp_path / "config"
     config_dir.mkdir()
@@ -429,8 +433,11 @@ def test_status_no_running_instance(
     lock_dir.mkdir()
 
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    # Patch both cli_support and underlying modules
+    monkeypatch.setattr(src.cli_support, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
-    # Mock to return no running instances
+    # Mock to return no running instances - patch cli_support where cli imports from
+    monkeypatch.setattr(src.cli_support, "get_running_instances_for_dir", lambda _: [])
     monkeypatch.setattr(
         src.log_output.run_metadata, "get_running_instances_for_dir", lambda _: []
     )
@@ -447,7 +454,6 @@ def test_status_with_running_instance(
 ) -> None:
     """Test status when a mala instance is running in cwd."""
     cli = _reload_cli(monkeypatch)
-    import src.log_output.run_metadata
     from datetime import datetime, UTC
 
     config_dir = tmp_path / "config"
@@ -474,8 +480,16 @@ def test_status_with_running_instance(
     )
 
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    # Patch both cli_support and underlying modules
+    monkeypatch.setattr(src.cli_support, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
+    # Patch get_running_instances_for_dir in cli_support where cli imports from
+    monkeypatch.setattr(
+        src.cli_support,
+        "get_running_instances_for_dir",
+        lambda _: [mock_instance],
+    )
     monkeypatch.setattr(
         src.log_output.run_metadata,
         "get_running_instances_for_dir",
@@ -498,7 +512,6 @@ def test_status_all_flag(
 ) -> None:
     """Test status --all flag shows all instances grouped by directory."""
     cli = _reload_cli(monkeypatch)
-    import src.log_output.run_metadata
     from datetime import datetime, UTC
 
     config_dir = tmp_path / "config"
@@ -525,7 +538,15 @@ def test_status_all_flag(
     )
 
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    # Patch both cli_support and underlying modules
+    monkeypatch.setattr(src.cli_support, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
+    # Patch get_running_instances in cli_support where cli imports from
+    monkeypatch.setattr(
+        src.cli_support,
+        "get_running_instances",
+        lambda: [mock_instance_1, mock_instance_2],
+    )
     monkeypatch.setattr(
         src.log_output.run_metadata,
         "get_running_instances",

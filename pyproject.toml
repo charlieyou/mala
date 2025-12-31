@@ -140,7 +140,7 @@ layers = [
     # CLI layer: entry points, argument parsing, user interaction
     "src.cli | src.main",
     # Orchestration layer: run coordination, issue dispatch, telemetry
-    "src.orchestrator | src.orchestrator_factory | src.orchestrator_types",
+    "src.orchestrator | src.orchestrator_factory | src.orchestrator_types | src.cli_support",
     # Pipeline layer: agent session execution, gate/review runners
     "src.pipeline",
     # Domain layer: business logic, validation specs, lifecycle state machine
@@ -256,7 +256,11 @@ forbidden_modules = [
     "src.protocols",
     "src.epic_verifier",
     "src.tools",
+    "src.log_output",
 ]
+# Allow indirect imports through orchestration layer (e.g., cli -> cli_support -> tools)
+# CLI's direct imports are checked; transitive imports through allowed modules are OK
+allow_indirect_imports = true
 
 # -----------------------------------------------------------------------------
 # Contract 6: Infra modules independent

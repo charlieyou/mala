@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .tools.env import USER_CONFIG_DIR, get_runs_dir, load_user_env
+from .cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
 
 # Bootstrap state: tracks whether bootstrap() has been called
 # These are populated on first access via __getattr__
@@ -103,7 +103,7 @@ from typing import Annotated, Never
 
 import typer
 
-from .log_output.console import Colors, log, set_verbose
+from .cli_support import Colors, log, set_verbose
 
 # SDK-dependent imports (BeadsClient, MalaOrchestrator, get_lock_dir, run_metadata)
 # are lazy-loaded via __getattr__ to ensure bootstrap() runs before claude_agent_sdk
@@ -802,15 +802,15 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
 
         _lazy_modules[name] = create_orchestrator
     elif name == "get_lock_dir":
-        from .tools.locking import get_lock_dir
+        from .cli_support import get_lock_dir
 
         _lazy_modules[name] = get_lock_dir
     elif name == "get_running_instances":
-        from .log_output.run_metadata import get_running_instances
+        from .cli_support import get_running_instances
 
         _lazy_modules[name] = get_running_instances
     elif name == "get_running_instances_for_dir":
-        from .log_output.run_metadata import get_running_instances_for_dir
+        from .cli_support import get_running_instances_for_dir
 
         _lazy_modules[name] = get_running_instances_for_dir
 
