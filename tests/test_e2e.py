@@ -345,7 +345,7 @@ class TestE2ERunnerIntegration:
         if shutil.which("mala") is None or shutil.which("bd") is None:
             pytest.skip("E2E requires mala and bd CLIs")
 
-        config = E2EConfig(keep_fixture=True, timeout_seconds=1200.0)
+        config = E2EConfig(keep_fixture=True, timeout_seconds=300.0)
         runner = E2ERunner(config)
 
         result = runner.run(cwd=tmp_path)

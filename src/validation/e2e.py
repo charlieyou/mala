@@ -103,7 +103,7 @@ class E2EConfig:
         skip_if_no_keys: Deprecated, kept for backward compatibility.
             MORPH_API_KEY is no longer a hard prereq for E2E validation.
         keep_fixture: Keep fixture repo after completion (for debugging).
-        timeout_seconds: Timeout for the mala run command (default 600s/10min).
+        timeout_seconds: Timeout for the mala run command (default 300s/5min).
         max_agents: Maximum agents for the mala run.
         max_issues: Maximum issues to process in the mala run.
     """
@@ -111,7 +111,7 @@ class E2EConfig:
     enabled: bool = True
     skip_if_no_keys: bool = False
     keep_fixture: bool = False
-    timeout_seconds: float = 600.0
+    timeout_seconds: float = 300.0
     max_agents: int = 1
     max_issues: int = 1
 
