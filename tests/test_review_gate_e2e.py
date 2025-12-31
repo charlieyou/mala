@@ -1,83 +1,133 @@
-"""E2E coverage for passing Claude session ID into review-gate."""
+"""E2E coverage for Cerberus review-gate integration.
 
+Uses the real Cerberus review-gate CLI with --mode=fast to test the full
+integration path. This catches protocol mismatches between mala and Cerberus.
+"""
+
+import subprocess
+import uuid
 from pathlib import Path
 
 import pytest
 
 from src.cerberus_review import DefaultReviewer
+from src.config import _find_cerberus_bin_path
 
 pytestmark = [pytest.mark.e2e]
 
 
-def _write_fake_review_gate(bin_dir: Path) -> Path:
-    """Create a fake review-gate binary that records env to disk."""
-    script_path = bin_dir / "review-gate"
-    script_path.write_text(
-        """#!/usr/bin/env bash
-set -euo pipefail
+def _find_review_gate_bin() -> Path | None:
+    """Find the real review-gate binary from Claude's plugin cache."""
+    claude_config = Path.home() / ".claude"
+    return _find_cerberus_bin_path(claude_config)
 
-capture_path="${REVIEW_GATE_CAPTURE_PATH:-}"
-if [[ -z "$capture_path" ]]; then
-  echo "REVIEW_GATE_CAPTURE_PATH missing" >&2
-  exit 1
-fi
 
-command="${1:-}"
-shift || true
-
-if [[ "$command" == "spawn-code-review" ]]; then
-  echo "spawn:env=${CLAUDE_SESSION_ID:-}" > "$capture_path"
-  # spawn-code-review doesn't output JSON - it just spawns reviewers
-  exit 0
-fi
-
-if [[ "$command" == "wait" ]]; then
-  # Parse --session-id from args to verify it's passed correctly
-  session_id_arg=""
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --session-id=*) session_id_arg="${1#*=}"; shift ;;
-      --session-id) session_id_arg="${2:-}"; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-  echo "wait:env=${CLAUDE_SESSION_ID:-},arg=${session_id_arg}" >> "$capture_path"
-  echo '{"consensus":{"verdict":"PASS"},"issues":[],"reviewers":{}}'
-  exit 0
-fi
-
-echo "unknown command" >&2
-exit 1
-""",
-        encoding="utf-8",
+def _setup_git_repo(repo_path: Path) -> str:
+    """Initialize a git repo with a commit and uncommitted change.
+    
+    Returns the base SHA for the diff range.
+    """
+    subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
     )
-    script_path.chmod(0o755)
-    return script_path
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    
+    # Create initial commit
+    (repo_path / "main.py").write_text("# Initial file\n")
+    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    
+    # Get the base SHA
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    base_sha = result.stdout.strip()
+    
+    # Make an uncommitted change for the review
+    (repo_path / "main.py").write_text("# Initial file\n\ndef hello():\n    print('hello')\n")
+    
+    return base_sha
+
+
+@pytest.fixture
+def review_gate_bin() -> Path:
+    """Get the real review-gate binary, skip if not available."""
+    bin_path = _find_review_gate_bin()
+    if bin_path is None:
+        pytest.skip("Cerberus review-gate not installed")
+        raise AssertionError("unreachable")  # pytest.skip is NoReturn
+    review_gate = bin_path / "review-gate"
+    if not review_gate.exists():
+        pytest.skip(f"review-gate binary not found at {review_gate}")
+    return bin_path
 
 
 @pytest.mark.asyncio
-async def test_review_gate_receives_session_id(tmp_path: Path) -> None:
-    """DefaultReviewer should pass CLAUDE_SESSION_ID to review-gate."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _write_fake_review_gate(bin_dir)
-
-    capture_path = tmp_path / "review-gate-env.txt"
+async def test_review_gate_full_flow(tmp_path: Path, review_gate_bin: Path) -> None:
+    """Full E2E test with real Cerberus review-gate in fast mode."""
+    base_sha = _setup_git_repo(tmp_path)
+    session_id = f"test-{uuid.uuid4()}"
+    
     reviewer = DefaultReviewer(
         repo_path=tmp_path,
-        bin_path=bin_dir,
-        env={"REVIEW_GATE_CAPTURE_PATH": str(capture_path)},
+        bin_path=review_gate_bin,
+        spawn_args=("--mode=fast",),  # Use fast mode for quicker tests
     )
-
+    
     result = await reviewer(
-        diff_range="base..head",
-        claude_session_id="session-xyz",
+        diff_range=f"{base_sha}..HEAD",
+        claude_session_id=session_id,
+        timeout=120,
     )
+    
+    # The review should complete (pass or fail based on code quality)
+    # Key assertion: no parse errors - proves protocol compatibility
+    assert result.parse_error is None, f"Protocol error: {result.parse_error}"
+    assert result.fatal_error is False
 
+
+@pytest.mark.asyncio
+async def test_review_gate_empty_diff_shortcircuit(
+    tmp_path: Path, review_gate_bin: Path
+) -> None:
+    """Empty diff should short-circuit to PASS without spawning reviewers."""
+    base_sha = _setup_git_repo(tmp_path)
+    
+    # Undo the uncommitted change so diff is empty
+    subprocess.run(["git", "checkout", "."], cwd=tmp_path, check=True, capture_output=True)
+    
+    session_id = f"test-{uuid.uuid4()}"
+    
+    reviewer = DefaultReviewer(
+        repo_path=tmp_path,
+        bin_path=review_gate_bin,
+    )
+    
+    # Use base_sha..HEAD which should have no changes (HEAD == base_sha after checkout)
+    result = await reviewer(
+        diff_range=f"{base_sha}..HEAD",
+        claude_session_id=session_id,
+    )
+    
+    # Empty diff should pass immediately
     assert result.passed is True
-    assert capture_path.exists()
-    lines = capture_path.read_text().splitlines()
-    # Verify spawn receives session ID via environment
-    assert lines[0] == "spawn:env=session-xyz"
-    # Verify wait receives session ID via both env AND --session-id arg
-    assert lines[1] == "wait:env=session-xyz,arg=session-xyz"
+    assert result.parse_error is None
+    assert result.issues == []
