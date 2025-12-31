@@ -166,6 +166,8 @@ class AgentSessionConfig:
         morph_api_key: Morph API key (required if morph_enabled).
         review_enabled: Whether Cerberus external review is enabled.
             When enabled, code changes are reviewed after the gate passes.
+        log_file_wait_timeout: Seconds to wait for log file after session
+            completes. Default 60s allows time for SDK to flush logs under load.
     """
 
     repo_path: Path
@@ -175,6 +177,7 @@ class AgentSessionConfig:
     morph_enabled: bool = False
     morph_api_key: str | None = None
     review_enabled: bool = True
+    log_file_wait_timeout: float = 60.0
 
 
 @dataclass
@@ -433,9 +436,9 @@ class AgentSessionRunner:
         pending_lint_commands: dict[str, tuple[str, str]] = {}
 
         # Log file wait constants
-        # Allow 60s for log file to appear after session completes.
+        # Use configured timeout (default 60s) for log file to appear after session.
         # Claude SDK may have async delays in log writing, especially under load.
-        log_file_wait_timeout = 60
+        log_file_wait_timeout = self.config.log_file_wait_timeout
         log_file_poll_interval = 0.5
 
         try:

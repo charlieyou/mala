@@ -1582,13 +1582,31 @@ class TestAsyncBeadsClientWithTimeout:
 class TestMissingLogFile:
     """Test run_implementer behavior when log file never appears."""
 
+    # Use short log file wait timeout for tests (0.5s instead of 60s)
+    TEST_LOG_FILE_WAIT_TIMEOUT = 0.5
+
+    @pytest.fixture(autouse=True)
+    def short_log_timeout(self) -> Generator[None, None, None]:
+        """Patch log file wait timeout to avoid 60s waits in tests."""
+        from src.pipeline.agent_session_runner import AgentSessionConfig
+
+        original_init = AgentSessionConfig.__init__
+
+        def patched_init(
+            self: AgentSessionConfig, *args: object, **kwargs: object
+        ) -> None:
+            # Set short timeout default if not explicitly provided
+            if "log_file_wait_timeout" not in kwargs:
+                kwargs["log_file_wait_timeout"] = 0.5
+            original_init(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(AgentSessionConfig, "__init__", patched_init):
+            yield
+
     @pytest.mark.asyncio
     async def test_exits_quickly_when_log_file_missing(self, tmp_path: Path) -> None:
         """run_implementer should exit within bounded wait when log file missing."""
-        from src.orchestrator import (
-            MalaOrchestrator,
-            LOG_FILE_WAIT_TIMEOUT,
-        )
+        from src.orchestrator import MalaOrchestrator
 
         orchestrator = MalaOrchestrator(
             repo_path=tmp_path,
@@ -1637,7 +1655,9 @@ class TestMissingLogFile:
         )
 
         # Should complete within bounded wait + small buffer, not global timeout
-        max_expected = LOG_FILE_WAIT_TIMEOUT + 5  # 5s buffer for test overhead
+        max_expected = (
+            self.TEST_LOG_FILE_WAIT_TIMEOUT + 5
+        )  # 5s buffer for test overhead
         assert elapsed < max_expected, (
             f"run_implementer took {elapsed:.1f}s, expected < {max_expected}s"
         )
@@ -1807,6 +1827,24 @@ class TestAgentEnvInheritance:
     Verifies mala-w8w.1: Agent tool calls must see inherited env vars
     plus lock overrides (PATH/LOCK_DIR/AGENT_ID/REPO_NAMESPACE).
     """
+
+    @pytest.fixture(autouse=True)
+    def short_log_timeout(self) -> Generator[None, None, None]:
+        """Patch log file wait timeout to avoid 60s waits in tests."""
+        from src.pipeline.agent_session_runner import AgentSessionConfig
+
+        original_init = AgentSessionConfig.__init__
+
+        def patched_init(
+            self: AgentSessionConfig, *args: object, **kwargs: object
+        ) -> None:
+            # Set short timeout default if not explicitly provided
+            if "log_file_wait_timeout" not in kwargs:
+                kwargs["log_file_wait_timeout"] = 0.5
+            original_init(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(AgentSessionConfig, "__init__", patched_init):
+            yield
 
     @pytest.mark.asyncio
     async def test_agent_env_includes_os_environ(self, tmp_path: Path) -> None:
