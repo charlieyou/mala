@@ -35,6 +35,10 @@ if TYPE_CHECKING:
 #
 # Each Protocol matches only the attributes/methods that protocols.py actually
 # uses, following the Interface Segregation Principle.
+#
+# Note: These protocols use plain attributes (not @property) to be compatible
+# with dataclass implementations. Protocol structural typing matches attributes
+# regardless of whether they're defined as properties or plain attributes.
 # =============================================================================
 
 
@@ -44,25 +48,17 @@ class JsonlEntryProtocol(Protocol):
     Matches the shape of session_log_parser.JsonlEntry for structural typing.
     """
 
-    @property
-    def data(self) -> dict[str, Any]:
-        """The parsed JSON object from this line."""
-        ...
+    data: dict[str, Any]
+    """The parsed JSON object from this line."""
 
-    @property
-    def entry(self) -> object | None:
-        """The typed LogEntry if successfully parsed, None otherwise."""
-        ...
+    entry: object | None
+    """The typed LogEntry if successfully parsed, None otherwise."""
 
-    @property
-    def line_len(self) -> int:
-        """Length of the raw line in bytes (for offset tracking)."""
-        ...
+    line_len: int
+    """Length of the raw line in bytes (for offset tracking)."""
 
-    @property
-    def offset(self) -> int:
-        """Byte offset where this line started in the file."""
-        ...
+    offset: int
+    """Byte offset where this line started in the file."""
 
 
 class ValidationSpecProtocol(Protocol):
@@ -72,15 +68,11 @@ class ValidationSpecProtocol(Protocol):
     Only includes attributes/methods that protocols.py method signatures use.
     """
 
-    @property
-    def commands(self) -> list[Any]:
-        """List of validation commands to run."""
-        ...
+    commands: Sequence[Any]
+    """List of validation commands to run."""
 
-    @property
-    def scope(self) -> object:
-        """The validation scope (per-issue or run-level)."""
-        ...
+    scope: Any
+    """The validation scope (per-issue or run-level)."""
 
 
 class ValidationEvidenceProtocol(Protocol):
@@ -89,15 +81,11 @@ class ValidationEvidenceProtocol(Protocol):
     Matches the shape of quality_gate.ValidationEvidence for structural typing.
     """
 
-    @property
-    def commands_ran(self) -> dict[Any, bool]:
-        """Mapping of CommandKind to whether it ran."""
-        ...
+    commands_ran: dict[Any, bool]
+    """Mapping of CommandKind to whether it ran."""
 
-    @property
-    def failed_commands(self) -> list[str]:
-        """List of validation commands that failed."""
-        ...
+    failed_commands: list[str]
+    """List of validation commands that failed."""
 
     def has_any_evidence(self) -> bool:
         """Check if any validation command ran."""
@@ -110,20 +98,14 @@ class CommitResultProtocol(Protocol):
     Matches the shape of quality_gate.CommitResult for structural typing.
     """
 
-    @property
-    def exists(self) -> bool:
-        """Whether a matching commit exists."""
-        ...
+    exists: bool
+    """Whether a matching commit exists."""
 
-    @property
-    def commit_hash(self) -> str | None:
-        """The commit hash if found."""
-        ...
+    commit_hash: str | None
+    """The commit hash if found."""
 
-    @property
-    def message(self) -> str | None:
-        """The commit message if found."""
-        ...
+    message: str | None
+    """The commit message if found."""
 
 
 class IssueResolutionProtocol(Protocol):
@@ -132,15 +114,11 @@ class IssueResolutionProtocol(Protocol):
     Matches the shape of models.IssueResolution for structural typing.
     """
 
-    @property
-    def outcome(self) -> object:
-        """The resolution outcome (success, no_change, obsolete, etc.)."""
-        ...
+    outcome: Any
+    """The resolution outcome (success, no_change, obsolete, etc.)."""
 
-    @property
-    def rationale(self) -> str:
-        """Explanation for the resolution."""
-        ...
+    rationale: str
+    """Explanation for the resolution."""
 
 
 class GateResultProtocol(Protocol):
@@ -149,35 +127,23 @@ class GateResultProtocol(Protocol):
     Matches the shape of quality_gate.GateResult for structural typing.
     """
 
-    @property
-    def passed(self) -> bool:
-        """Whether the quality gate passed."""
-        ...
+    passed: bool
+    """Whether the quality gate passed."""
 
-    @property
-    def failure_reasons(self) -> list[str]:
-        """List of reasons why the gate failed."""
-        ...
+    failure_reasons: list[str]
+    """List of reasons why the gate failed."""
 
-    @property
-    def commit_hash(self) -> str | None:
-        """The commit hash if found."""
-        ...
+    commit_hash: str | None
+    """The commit hash if found."""
 
-    @property
-    def validation_evidence(self) -> ValidationEvidenceProtocol | None:
-        """Evidence of validation commands executed."""
-        ...
+    validation_evidence: ValidationEvidenceProtocol | None
+    """Evidence of validation commands executed."""
 
-    @property
-    def no_progress(self) -> bool:
-        """Whether no progress was detected."""
-        ...
+    no_progress: bool
+    """Whether no progress was detected."""
 
-    @property
-    def resolution(self) -> IssueResolutionProtocol | None:
-        """Issue resolution if applicable."""
-        ...
+    resolution: IssueResolutionProtocol | None
+    """Issue resolution if applicable."""
 
 
 class ReviewIssueProtocol(Protocol):
@@ -186,40 +152,26 @@ class ReviewIssueProtocol(Protocol):
     Matches the shape of cerberus_review.ReviewIssue for structural typing.
     """
 
-    @property
-    def file(self) -> str:
-        """File path where the issue was found."""
-        ...
+    file: str
+    """File path where the issue was found."""
 
-    @property
-    def line_start(self) -> int:
-        """Starting line number."""
-        ...
+    line_start: int
+    """Starting line number."""
 
-    @property
-    def line_end(self) -> int:
-        """Ending line number."""
-        ...
+    line_end: int
+    """Ending line number."""
 
-    @property
-    def priority(self) -> int | None:
-        """Issue priority (0=P0, 1=P1, etc.)."""
-        ...
+    priority: int | None
+    """Issue priority (0=P0, 1=P1, etc.)."""
 
-    @property
-    def title(self) -> str:
-        """Issue title."""
-        ...
+    title: str
+    """Issue title."""
 
-    @property
-    def body(self) -> str:
-        """Issue body/description."""
-        ...
+    body: str
+    """Issue body/description."""
 
-    @property
-    def reviewer(self) -> str:
-        """Which reviewer found this issue."""
-        ...
+    reviewer: str
+    """Which reviewer found this issue."""
 
 
 class ReviewResultProtocol(Protocol):
@@ -228,30 +180,20 @@ class ReviewResultProtocol(Protocol):
     Matches the shape of cerberus_review.ReviewResult for structural typing.
     """
 
-    @property
-    def passed(self) -> bool:
-        """Whether the review passed."""
-        ...
+    passed: bool
+    """Whether the review passed."""
 
-    @property
-    def issues(self) -> list[ReviewIssueProtocol]:
-        """List of issues found during review."""
-        ...
+    issues: Sequence[ReviewIssueProtocol]
+    """List of issues found during review."""
 
-    @property
-    def parse_error(self) -> str | None:
-        """Parse error message if JSON parsing failed."""
-        ...
+    parse_error: str | None
+    """Parse error message if JSON parsing failed."""
 
-    @property
-    def fatal_error(self) -> bool:
-        """Whether this is a fatal error (should not retry)."""
-        ...
+    fatal_error: bool
+    """Whether this is a fatal error (should not retry)."""
 
-    @property
-    def review_log_path(self) -> object | None:
-        """Path to review session logs."""
-        ...
+    review_log_path: Path | None
+    """Path to review session logs."""
 
 
 class UnmetCriterionProtocol(Protocol):
@@ -260,25 +202,17 @@ class UnmetCriterionProtocol(Protocol):
     Matches the shape of models.UnmetCriterion for structural typing.
     """
 
-    @property
-    def criterion(self) -> str:
-        """The acceptance criterion not met."""
-        ...
+    criterion: str
+    """The acceptance criterion not met."""
 
-    @property
-    def evidence(self) -> str:
-        """Why it's considered unmet."""
-        ...
+    evidence: str
+    """Why it's considered unmet."""
 
-    @property
-    def severity(self) -> str:
-        """How critical the gap is (critical, major, minor)."""
-        ...
+    severity: str
+    """How critical the gap is (critical, major, minor)."""
 
-    @property
-    def criterion_hash(self) -> str:
-        """SHA256 of criterion text, for deduplication."""
-        ...
+    criterion_hash: str
+    """SHA256 of criterion text, for deduplication."""
 
 
 class EpicVerdictProtocol(Protocol):
@@ -287,25 +221,17 @@ class EpicVerdictProtocol(Protocol):
     Matches the shape of models.EpicVerdict for structural typing.
     """
 
-    @property
-    def passed(self) -> bool:
-        """Whether all acceptance criteria were met."""
-        ...
+    passed: bool
+    """Whether all acceptance criteria were met."""
 
-    @property
-    def unmet_criteria(self) -> list[UnmetCriterionProtocol]:
-        """List of criteria that were not satisfied."""
-        ...
+    unmet_criteria: Sequence[UnmetCriterionProtocol]
+    """List of criteria that were not satisfied."""
 
-    @property
-    def confidence(self) -> float:
-        """Model confidence in the verdict (0.0 to 1.0)."""
-        ...
+    confidence: float
+    """Model confidence in the verdict (0.0 to 1.0)."""
 
-    @property
-    def reasoning(self) -> str:
-        """Explanation of the verification outcome."""
-        ...
+    reasoning: str
+    """Explanation of the verification outcome."""
 
 
 @runtime_checkable

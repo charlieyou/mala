@@ -74,14 +74,14 @@ from .validation.spec import (
 )
 from .epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
 from .models import RetryConfig
-from .orchestrator_factory import DEFAULT_AGENT_TIMEOUT_MINUTES
+from .orchestrator_types import DEFAULT_AGENT_TIMEOUT_MINUTES
 
 if TYPE_CHECKING:
     from .cerberus_review import ReviewResult
     from .event_sink import EventRunConfig, MalaEventSink
     from .lifecycle import RetryState
     from .models import IssueResolution
-    from .orchestrator_factory import OrchestratorConfig, _DerivedConfig
+    from .orchestrator_types import OrchestratorConfig, _DerivedConfig
     from .protocols import CodeReviewer, GateChecker, IssueProvider, LogProvider
     from .quality_gate import GateResult
     from .telemetry import TelemetryProvider

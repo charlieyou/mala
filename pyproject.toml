@@ -140,7 +140,7 @@ layers = [
     # CLI layer: entry points, argument parsing, user interaction
     "src.cli | src.main",
     # Orchestration layer: run coordination, issue dispatch, telemetry
-    "src.orchestrator | src.orchestrator_factory",
+    "src.orchestrator | src.orchestrator_factory | src.orchestrator_types",
     # Pipeline layer: agent session execution, gate/review runners
     "src.pipeline",
     # Domain layer: business logic, validation specs, lifecycle state machine

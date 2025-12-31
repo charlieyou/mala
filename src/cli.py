@@ -794,7 +794,7 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
 
         _lazy_modules[name] = MalaOrchestrator
     elif name == "OrchestratorConfig":
-        from .orchestrator_factory import OrchestratorConfig
+        from .orchestrator_types import OrchestratorConfig
 
         _lazy_modules[name] = OrchestratorConfig
     elif name == "create_orchestrator":
