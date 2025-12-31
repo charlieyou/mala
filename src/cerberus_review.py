@@ -235,32 +235,10 @@ class DefaultReviewer:
                 fatal_error=False,
             )
 
-        try:
-            spawn_payload = json.loads(spawn_result.stdout)
-        except json.JSONDecodeError as e:
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error=f"spawn parse error: {e}",
-                fatal_error=False,
-            )
-
-        if not isinstance(spawn_payload, dict):
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error="spawn output is not a JSON object",
-                fatal_error=False,
-            )
-
-        session_key = spawn_payload.get("session_key")
-        if not isinstance(session_key, str) or not session_key:
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error="spawn output missing session_key",
-                fatal_error=False,
-            )
+        # spawn-code-review doesn't output JSON to stdout - it just spawns reviewers
+        # and writes state to disk. We use --session-id with the Claude session ID
+        # to let the wait command find the state file.
+        session_id = env["CLAUDE_SESSION_ID"]
 
         # Check if wait_args already specifies --timeout to avoid duplicates
         user_timeout = self._extract_wait_timeout(self.wait_args)
@@ -270,8 +248,8 @@ class DefaultReviewer:
             self._review_gate_bin(),
             "wait",
             "--json",
-            "--session-key",
-            session_key,
+            "--session-id",
+            session_id,
         ]
         # Only add --timeout if not already specified in wait_args
         if user_timeout is None:

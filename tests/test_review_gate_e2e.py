@@ -26,13 +26,22 @@ command="${1:-}"
 shift || true
 
 if [[ "$command" == "spawn-code-review" ]]; then
-  echo "${CLAUDE_SESSION_ID:-}" > "$capture_path"
-  echo '{"session_key":"test-session"}'
+  echo "spawn:env=${CLAUDE_SESSION_ID:-}" > "$capture_path"
+  # spawn-code-review doesn't output JSON - it just spawns reviewers
   exit 0
 fi
 
 if [[ "$command" == "wait" ]]; then
-  echo "${CLAUDE_SESSION_ID:-}" >> "$capture_path"
+  # Parse --session-id from args to verify it's passed correctly
+  session_id_arg=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --session-id=*) session_id_arg="${1#*=}"; shift ;;
+      --session-id) session_id_arg="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  echo "wait:env=${CLAUDE_SESSION_ID:-},arg=${session_id_arg}" >> "$capture_path"
   echo '{"consensus":{"verdict":"PASS"},"issues":[],"reviewers":{}}'
   exit 0
 fi
@@ -67,4 +76,8 @@ async def test_review_gate_receives_session_id(tmp_path: Path) -> None:
 
     assert result.passed is True
     assert capture_path.exists()
-    assert "session-xyz" in capture_path.read_text().splitlines()
+    lines = capture_path.read_text().splitlines()
+    # Verify spawn receives session ID via environment
+    assert lines[0] == "spawn:env=session-xyz"
+    # Verify wait receives session ID via both env AND --session-id arg
+    assert lines[1] == "wait:env=session-xyz,arg=session-xyz"
