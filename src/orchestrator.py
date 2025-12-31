@@ -7,7 +7,7 @@ import functools
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, cast, overload
 
 from .beads_client import BeadsClient
 from .config import MalaConfig
@@ -82,7 +82,16 @@ if TYPE_CHECKING:
     from .lifecycle import RetryState
     from .models import IssueResolution
     from .orchestrator_types import OrchestratorConfig, _DerivedConfig
-    from .protocols import CodeReviewer, GateChecker, IssueProvider, LogProvider
+    from .protocols import (
+        CodeReviewer,
+        EpicVerificationModel,
+        GateChecker,
+        GateResultProtocol,
+        IssueProvider,
+        LogProvider,
+        ReviewResultProtocol,
+        ValidationSpecProtocol,
+    )
     from .quality_gate import GateResult
     from .telemetry import TelemetryProvider
     from .validation.spec import ValidationSpec
@@ -460,7 +469,7 @@ class MalaOrchestrator:
             )
             self.epic_verifier: EpicVerifier | None = EpicVerifier(
                 beads=self.beads,
-                model=verification_model,
+                model=cast("EpicVerificationModel", verification_model),
                 repo_path=self.repo_path,
                 max_diff_size_kb=self._mala_config.max_diff_size_kb,
                 event_sink=self.event_sink,
@@ -539,7 +548,7 @@ class MalaOrchestrator:
         self.abort_reason: str | None = None
         self.session_log_paths: dict[str, Path] = {}
         self.review_log_paths: dict[str, str] = {}
-        self.last_gate_results: dict[str, GateResult] = {}
+        self.last_gate_results: dict[str, GateResult | GateResultProtocol] = {}
         self.verified_epics: set[str] = set()
         self.per_issue_spec: ValidationSpec | None = None
 
@@ -625,7 +634,7 @@ class MalaOrchestrator:
         issue_id: str,
         log_path: Path,
         retry_state: RetryState,
-    ) -> tuple[GateResult, int]:
+    ) -> tuple[GateResult | GateResultProtocol, int]:
         """Synchronous quality gate check (blocking I/O).
 
         This is the blocking implementation that gets run via asyncio.to_thread.
@@ -658,7 +667,7 @@ class MalaOrchestrator:
         issue_id: str,
         log_path: Path,
         retry_state: RetryState,
-    ) -> tuple[GateResult, int]:
+    ) -> tuple[GateResult | GateResultProtocol, int]:
         """Run quality gate check asynchronously via to_thread.
 
         Wraps the blocking _run_quality_gate_sync to avoid stalling the event loop.
@@ -802,7 +811,7 @@ class MalaOrchestrator:
             assert self.per_issue_spec is not None
             spec = self.per_issue_spec
             evidence = self.quality_gate.parse_validation_evidence_with_spec(
-                log_path, spec
+                log_path, cast("ValidationSpecProtocol", spec)
             )
             commit_result = self.quality_gate.check_commit_exists(issue_id)
             # Extract failure reasons from result summary
@@ -915,7 +924,7 @@ class MalaOrchestrator:
 
         async def on_gate_check(
             issue_id: str, log_path: Path, retry_state: RetryState
-        ) -> tuple[GateResult, int]:
+        ) -> tuple[GateResult | GateResultProtocol, int]:
             return await self._run_quality_gate_async(issue_id, log_path, retry_state)
 
         async def on_review_check(
@@ -924,7 +933,7 @@ class MalaOrchestrator:
             baseline: str | None,
             session_id: str | None,
             retry_state: RetryState,
-        ) -> ReviewResult:
+        ) -> ReviewResult | ReviewResultProtocol:
             current_head = await get_git_commit_async(self.repo_path)
             self.review_runner.config.capture_session_log = is_verbose_enabled()
             commit_shas = await get_issue_commits_async(

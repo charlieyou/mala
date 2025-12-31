@@ -6,6 +6,7 @@ without SDK or subprocess dependencies.
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -15,6 +16,7 @@ from src.pipeline.gate_runner import (
     GateRunnerConfig,
     PerIssueGateInput,
 )
+from src.protocols import GateChecker  # noqa: TC001 - needed at runtime for cast()
 from src.quality_gate import CommitResult, GateResult, ValidationEvidence
 from src.validation.spec import (
     CommandKind,
@@ -132,7 +134,7 @@ class TestPerIssueGate:
     def runner(self, fake_checker: FakeGateChecker, tmp_path: Path) -> GateRunner:
         """Create a GateRunner with fake dependencies."""
         return GateRunner(
-            gate_checker=fake_checker,
+            gate_checker=cast("GateChecker", fake_checker),
             repo_path=tmp_path,
             config=GateRunnerConfig(max_gate_retries=3),
         )
@@ -298,7 +300,7 @@ class TestSpecCaching:
     def runner(self, fake_checker: FakeGateChecker, tmp_path: Path) -> GateRunner:
         """Create a GateRunner with fake dependencies."""
         return GateRunner(
-            gate_checker=fake_checker,
+            gate_checker=cast("GateChecker", fake_checker),
             repo_path=tmp_path,
             config=GateRunnerConfig(max_gate_retries=3),
         )

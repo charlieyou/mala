@@ -22,7 +22,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, cast
 
 from src.models import (
     EpicVerdict,
@@ -668,7 +668,24 @@ class EpicVerifier:
         # Invoke verification model with error handling
         # Per spec: timeouts/errors should trigger human review, not abort
         try:
-            return await self.model.verify(epic_description, diff, spec_content)
+            # Cast from EpicVerdictProtocol to EpicVerdict (structural compatibility)
+            result = await self.model.verify(epic_description, diff, spec_content)
+            return EpicVerdict(
+                passed=result.passed,
+                unmet_criteria=[
+                    UnmetCriterion(
+                        criterion=c.criterion,
+                        evidence=c.evidence,
+                        severity=cast(
+                            "Literal['critical', 'major', 'minor']", c.severity
+                        ),
+                        criterion_hash=c.criterion_hash,
+                    )
+                    for c in result.unmet_criteria
+                ],
+                confidence=result.confidence,
+                reasoning=result.reasoning,
+            )
         except Exception as e:
             # Model timeout or error - return low-confidence verdict for human review
             return EpicVerdict(

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 # Import shared types from orchestrator_types (breaks circular import)
 from .orchestrator_types import (
@@ -52,7 +52,13 @@ if TYPE_CHECKING:
     from .epic_verifier import EpicVerifier
     from .event_sink import MalaEventSink
     from .orchestrator import MalaOrchestrator
-    from .protocols import CodeReviewer, GateChecker, IssueProvider, LogProvider
+    from .protocols import (
+        CodeReviewer,
+        EpicVerificationModel,
+        GateChecker,
+        IssueProvider,
+        LogProvider,
+    )
     from .telemetry import TelemetryProvider
 
 
@@ -186,16 +192,20 @@ def _build_dependencies(
         event_sink = ConsoleEventSink()
 
     # Log provider
+    log_provider: LogProvider
     if deps is not None and deps.log_provider is not None:
         log_provider = deps.log_provider
     else:
-        log_provider = FileSystemLogProvider()
+        log_provider = cast("LogProvider", FileSystemLogProvider())
 
     # Gate checker (needs log_provider)
+    gate_checker: GateChecker
     if deps is not None and deps.gate_checker is not None:
         gate_checker = deps.gate_checker
     else:
-        gate_checker = QualityGate(repo_path, log_provider=log_provider)
+        gate_checker = cast(
+            "GateChecker", QualityGate(repo_path, log_provider=log_provider)
+        )
 
     # Issue provider (needs event_sink for warnings)
     issue_provider: IssueProvider
@@ -221,7 +231,7 @@ def _build_dependencies(
         )
         epic_verifier = EpicVerifier(
             beads=issue_provider,
-            model=verification_model,
+            model=cast("EpicVerificationModel", verification_model),
             repo_path=repo_path,
             max_diff_size_kb=mala_config.max_diff_size_kb,
             event_sink=event_sink,
@@ -229,24 +239,29 @@ def _build_dependencies(
         )
 
     # Code reviewer
+    code_reviewer: CodeReviewer
     if deps is not None and deps.code_reviewer is not None:
         code_reviewer = deps.code_reviewer
     else:
-        code_reviewer = DefaultReviewer(
-            repo_path=repo_path,
-            bin_path=mala_config.cerberus_bin_path,
-            spawn_args=mala_config.cerberus_spawn_args,
-            wait_args=mala_config.cerberus_wait_args,
-            env=dict(mala_config.cerberus_env),
+        code_reviewer = cast(
+            "CodeReviewer",
+            DefaultReviewer(
+                repo_path=repo_path,
+                bin_path=mala_config.cerberus_bin_path,
+                spawn_args=mala_config.cerberus_spawn_args,
+                wait_args=mala_config.cerberus_wait_args,
+                env=dict(mala_config.cerberus_env),
+            ),
         )
 
     # Telemetry provider
+    telemetry_provider: TelemetryProvider
     if deps is not None and deps.telemetry_provider is not None:
         telemetry_provider = deps.telemetry_provider
     elif derived.braintrust_enabled:
-        telemetry_provider = BraintrustProvider()
+        telemetry_provider = cast("TelemetryProvider", BraintrustProvider())
     else:
-        telemetry_provider = NullTelemetryProvider()
+        telemetry_provider = cast("TelemetryProvider", NullTelemetryProvider())
 
     return (
         issue_provider,

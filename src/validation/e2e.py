@@ -162,7 +162,9 @@ class E2ERunner:
         # Check for Cerberus review-gate (required for E2E to test review flow)
         cerberus_bin = _find_cerberus_bin_path(Path.home() / ".claude")
         if cerberus_bin is None:
-            missing.append("Cerberus review-gate not installed (check ~/.claude/plugins)")
+            missing.append(
+                "Cerberus review-gate not installed (check ~/.claude/plugins)"
+            )
         elif not (cerberus_bin / "review-gate").exists():
             missing.append(f"review-gate binary not found at {cerberus_bin}")
 

@@ -32,7 +32,11 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from src.protocols import LogProvider
+    from src.protocols import (
+        IssueResolutionProtocol,
+        LogProvider,
+        ValidationEvidenceProtocol,
+    )
     from src.validation.spec import ValidationSpec
 
 
@@ -238,9 +242,9 @@ class GateResult:
     passed: bool
     failure_reasons: list[str] = field(default_factory=list)
     commit_hash: str | None = None
-    validation_evidence: ValidationEvidence | None = None
+    validation_evidence: ValidationEvidence | ValidationEvidenceProtocol | None = None
     no_progress: bool = False
-    resolution: IssueResolution | None = None
+    resolution: IssueResolution | IssueResolutionProtocol | None = None
 
 
 class QualityGate:
@@ -380,7 +384,13 @@ class QualityGate:
         Yields:
             JsonlEntry objects for each successfully parsed JSON line.
         """
-        return self._log_provider.iter_events(log_path, offset)
+        # Cast to Iterator[JsonlEntry] since JsonlEntry and JsonlEntryProtocol
+        # are structurally compatible and callers use JsonlEntry methods
+        from typing import cast as typing_cast
+
+        return typing_cast(
+            "Iterator[JsonlEntry]", self._log_provider.iter_events(log_path, offset)
+        )
 
     def parse_issue_resolution(self, log_path: Path) -> IssueResolution | None:
         """Parse JSONL log file for issue resolution markers.

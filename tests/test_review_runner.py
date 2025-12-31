@@ -7,6 +7,7 @@ without actual Cerberus CLI or subprocess dependencies.
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -18,6 +19,7 @@ from src.pipeline.review_runner import (
     ReviewRunner,
     ReviewRunnerConfig,
 )
+from src.protocols import CodeReviewer, GateChecker  # noqa: TC001 - needed at runtime for cast()
 from src.quality_gate import CommitResult, GateResult, ValidationEvidence
 from src.validation.spec import ValidationSpec
 
@@ -146,7 +148,7 @@ class TestReviewRunnerBasics:
     ) -> None:
         """Runner should return ReviewOutput with result."""
         runner = ReviewRunner(
-            code_reviewer=fake_reviewer,
+            code_reviewer=cast("CodeReviewer", fake_reviewer),
             config=config,
         )
 
@@ -173,7 +175,7 @@ class TestReviewRunnerBasics:
             review_timeout=600,
         )
         runner = ReviewRunner(
-            code_reviewer=fake_reviewer,
+            code_reviewer=cast("CodeReviewer", fake_reviewer),
             config=config,
         )
 
@@ -214,7 +216,7 @@ class TestReviewRunnerBasics:
 
         config = ReviewRunnerConfig()
         runner = ReviewRunner(
-            code_reviewer=fake_reviewer,
+            code_reviewer=cast("CodeReviewer", fake_reviewer),
             config=config,
         )
 
@@ -237,7 +239,7 @@ class TestReviewRunnerBasics:
     ) -> None:
         """Runner should not create context file when no issue_description."""
         runner = ReviewRunner(
-            code_reviewer=fake_reviewer,
+            code_reviewer=cast("CodeReviewer", fake_reviewer),
             config=config,
         )
 
@@ -263,7 +265,7 @@ class TestReviewRunnerBasics:
     ) -> None:
         """Runner should use commit's parent as baseline when not provided."""
         runner = ReviewRunner(
-            code_reviewer=fake_reviewer,
+            code_reviewer=cast("CodeReviewer", fake_reviewer),
             config=config,
         )
 
@@ -290,7 +292,7 @@ class TestReviewRunnerResults:
         """Runner should return passed result correctly."""
         result = ReviewResult(passed=True, issues=[])
         fake_reviewer = FakeCodeReviewer(result=result)
-        runner = ReviewRunner(code_reviewer=fake_reviewer)
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -319,7 +321,7 @@ class TestReviewRunnerResults:
         ]
         result = ReviewResult(passed=False, issues=issues)
         fake_reviewer = FakeCodeReviewer(result=result)
-        runner = ReviewRunner(code_reviewer=fake_reviewer)
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -342,7 +344,7 @@ class TestReviewRunnerResults:
             parse_error="Invalid JSON output",
         )
         fake_reviewer = FakeCodeReviewer(result=result)
-        runner = ReviewRunner(code_reviewer=fake_reviewer)
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -380,8 +382,8 @@ class TestReviewRunnerNoProgress:
         fake_gate_checker.no_progress_result = True
         fake_reviewer = FakeCodeReviewer()
         runner = ReviewRunner(
-            code_reviewer=fake_reviewer,
-            gate_checker=fake_gate_checker,
+            code_reviewer=cast("CodeReviewer", fake_reviewer),
+            gate_checker=cast("GateChecker", fake_gate_checker),
         )
 
         no_progress_input = NoProgressInput(
@@ -404,8 +406,8 @@ class TestReviewRunnerNoProgress:
         fake_gate_checker.no_progress_result = False
         fake_reviewer = FakeCodeReviewer()
         runner = ReviewRunner(
-            code_reviewer=fake_reviewer,
-            gate_checker=fake_gate_checker,
+            code_reviewer=cast("CodeReviewer", fake_reviewer),
+            gate_checker=cast("GateChecker", fake_gate_checker),
         )
 
         no_progress_input = NoProgressInput(
@@ -427,8 +429,8 @@ class TestReviewRunnerNoProgress:
         """Runner should pass all parameters to gate checker."""
         fake_reviewer = FakeCodeReviewer()
         runner = ReviewRunner(
-            code_reviewer=fake_reviewer,
-            gate_checker=fake_gate_checker,
+            code_reviewer=cast("CodeReviewer", fake_reviewer),
+            gate_checker=cast("GateChecker", fake_gate_checker),
         )
 
         no_progress_input = NoProgressInput(
@@ -456,7 +458,7 @@ class TestReviewRunnerNoProgress:
         """Runner should raise when gate_checker not set."""
         fake_reviewer = FakeCodeReviewer()
         runner = ReviewRunner(
-            code_reviewer=fake_reviewer,
+            code_reviewer=cast("CodeReviewer", fake_reviewer),
             gate_checker=None,  # Not set
         )
 
@@ -590,7 +592,7 @@ class TestContextFileCleanup:
                 assert context_file.exists()
                 return ReviewResult(passed=True, issues=[])
 
-        runner = ReviewRunner(code_reviewer=CapturingReviewer())
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -633,7 +635,7 @@ class TestContextFileCleanup:
                 assert context_file.exists()
                 raise RuntimeError("Review failed")
 
-        runner = ReviewRunner(code_reviewer=FailingReviewer())
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", FailingReviewer()))
 
         review_input = ReviewInput(
             issue_id="test-123",
@@ -656,7 +658,7 @@ class TestContextFileCleanup:
     ) -> None:
         """No cleanup needed when no issue_description provided."""
         fake_reviewer = FakeCodeReviewer()
-        runner = ReviewRunner(code_reviewer=fake_reviewer)
+        runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
 
         review_input = ReviewInput(
             issue_id="test-123",

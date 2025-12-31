@@ -19,11 +19,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from src.cerberus_review import ReviewResult
-    from src.protocols import CodeReviewer, GateChecker
+    from src.protocols import (
+        CodeReviewer,
+        GateChecker,
+        ReviewResultProtocol,
+        ValidationSpecProtocol,
+    )
     from src.validation.spec import ValidationSpec
 
 
@@ -79,7 +84,7 @@ class ReviewOutput:
         session_log_path: Path to the review session log (if captured).
     """
 
-    result: ReviewResult
+    result: ReviewResult | ReviewResultProtocol
     session_log_path: str | None = None
 
 
@@ -218,6 +223,6 @@ class ReviewRunner:
             log_offset=input.log_offset,
             previous_commit_hash=input.previous_commit_hash,
             current_commit_hash=input.current_commit_hash,
-            spec=input.spec,
+            spec=cast("ValidationSpecProtocol | None", input.spec),
             check_validation_evidence=False,  # Only commit/working-tree for reviews
         )

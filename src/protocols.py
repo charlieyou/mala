@@ -91,6 +91,10 @@ class ValidationEvidenceProtocol(Protocol):
         """Check if any validation command ran."""
         ...
 
+    def to_evidence_dict(self) -> dict[str, bool]:
+        """Convert evidence to a serializable dict keyed by CommandKind value."""
+        ...
+
 
 class CommitResultProtocol(Protocol):
     """Protocol for commit existence check results.

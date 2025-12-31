@@ -17,7 +17,7 @@ Design principles:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from src.quality_gate import GateResult
 from src.validation.spec import (
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.lifecycle import RetryState
-    from src.protocols import GateChecker
+    from src.protocols import GateChecker, GateResultProtocol, ValidationSpecProtocol
     from src.validation.spec import ValidationSpec
 
 
@@ -76,7 +76,7 @@ class PerIssueGateOutput:
         new_log_offset: Updated log offset for next retry attempt.
     """
 
-    gate_result: GateResult
+    gate_result: GateResultProtocol
     new_log_offset: int
 
 
@@ -158,7 +158,7 @@ class GateRunner:
             log_path=input.log_path,
             baseline_timestamp=input.retry_state.baseline_timestamp,
             log_offset=input.retry_state.log_offset,
-            spec=spec,
+            spec=cast("ValidationSpecProtocol | None", spec),
         )
 
         # Calculate new offset for next attempt
@@ -173,7 +173,7 @@ class GateRunner:
                 input.retry_state.log_offset,
                 input.retry_state.previous_commit_hash,
                 gate_result.commit_hash,
-                spec=spec,
+                spec=cast("ValidationSpecProtocol | None", spec),
             )
             if no_progress:
                 # Add no-progress to failure reasons

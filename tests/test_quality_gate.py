@@ -7,10 +7,12 @@ Tests for:
 
 import json
 from pathlib import Path
+from typing import cast
 from src.tools.command_runner import CommandResult
 from src.validation.spec import CommandKind, ValidationScope, build_validation_spec
 from unittest.mock import patch
 
+from src.protocols import LogProvider  # noqa: TC001
 from src.quality_gate import (
     QualityGate,
     ValidationEvidence,
@@ -2960,7 +2962,7 @@ class TestLogProviderInjection:
         ]
 
         mock_provider = MockLogProvider(mock_entries)
-        gate = QualityGate(tmp_path, log_provider=mock_provider)
+        gate = QualityGate(tmp_path, log_provider=cast("LogProvider", mock_provider))
 
         # Verify LogProvider is used
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
@@ -2990,7 +2992,7 @@ class TestLogProviderInjection:
                 return 42  # Return known value to verify delegation
 
         mock_provider = MockLogProvider()
-        gate = QualityGate(tmp_path, log_provider=mock_provider)
+        gate = QualityGate(tmp_path, log_provider=cast("LogProvider", mock_provider))
 
         offset = gate.get_log_end_offset(tmp_path / "fake.jsonl")
         assert offset == 42
