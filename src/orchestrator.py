@@ -146,6 +146,7 @@ class IssueResult:
     gate_attempts: int = 1  # Number of gate retry attempts
     review_attempts: int = 0  # Number of Codex review attempts
     resolution: IssueResolution | None = None  # Resolution outcome if using markers
+    low_priority_review_issues: list[object] | None = None  # P2/P3 issues to track
 
 
 @dataclass
@@ -906,6 +907,88 @@ class MalaOrchestrator:
                 issue_id, result.summary, log_path=log_path
             )
 
+    async def _create_review_tracking_issues(
+        self,
+        source_issue_id: str,
+        review_issues: list[object],
+    ) -> list[str]:
+        """Create beads issues from P2/P3 review findings.
+
+        These are low-priority issues that didn't block the review but should
+        be tracked for later resolution. Each issue is created with appropriate
+        priority and linked to the source issue via tags.
+
+        Args:
+            source_issue_id: The issue ID that triggered the review.
+            review_issues: List of ReviewIssue objects from the review.
+
+        Returns:
+            List of created issue IDs.
+        """
+        created_ids: list[str] = []
+
+        for issue in review_issues:
+            # Type narrowing - assume ReviewIssue-like structure
+            file_path = getattr(issue, "file", "")
+            line_start = getattr(issue, "line_start", 0)
+            line_end = getattr(issue, "line_end", 0)
+            priority = getattr(issue, "priority", None)
+            title = getattr(issue, "title", "Review finding")
+            body = getattr(issue, "body", "")
+            reviewer = getattr(issue, "reviewer", "unknown")
+
+            # Map priority to beads priority string (P2, P3, etc.)
+            priority_str = f"P{priority}" if priority is not None else "P3"
+
+            # Build location string
+            if line_start == line_end or line_end == 0:
+                location = f"{file_path}:{line_start}" if file_path else ""
+            else:
+                location = f"{file_path}:{line_start}-{line_end}" if file_path else ""
+
+            # Build issue title with location
+            issue_title = f"[Review] {title}"
+            if location:
+                issue_title = f"[Review] {location}: {title}"
+
+            # Build description
+            description_parts = [
+                "## Review Finding",
+                "",
+                f"This issue was auto-created from a {priority_str} review finding.",
+                "",
+                f"**Source issue:** {source_issue_id}",
+                f"**Reviewer:** {reviewer}",
+            ]
+            if location:
+                description_parts.append(f"**Location:** {location}")
+            if body:
+                description_parts.extend(["", "## Details", "", body])
+
+            description = "\n".join(description_parts)
+
+            # Tags for tracking and deduplication
+            tags = [
+                "auto_generated",
+                "review_finding",
+                f"source:{source_issue_id}",
+            ]
+
+            issue_id = await self.beads.create_issue_async(
+                title=issue_title,
+                description=description,
+                priority=priority_str,
+                tags=tags,
+            )
+            if issue_id:
+                created_ids.append(issue_id)
+                self.event_sink.on_warning(
+                    f"Created tracking issue {issue_id} for {priority_str} review finding",
+                    agent_id=source_issue_id,
+                )
+
+        return created_ids
+
     async def _finalize_issue_result(
         self,
         issue_id: str,
@@ -939,6 +1022,12 @@ class MalaOrchestrator:
         if result.success and await self.beads.close_async(issue_id):
             self.event_sink.on_issue_closed(issue_id, issue_id)
             await self._check_epic_closure(issue_id)
+
+            # Create tracking issues for P2/P3 review findings (if any)
+            if result.low_priority_review_issues:
+                await self._create_review_tracking_issues(
+                    issue_id, result.low_priority_review_issues
+                )
 
         # Update tracking state
         self.completed.append(result)
@@ -1156,6 +1245,7 @@ class MalaOrchestrator:
             gate_attempts=output.gate_attempts,
             review_attempts=output.review_attempts,
             resolution=output.resolution,
+            low_priority_review_issues=output.low_priority_review_issues,
         )
 
     async def spawn_agent(self, issue_id: str) -> bool:

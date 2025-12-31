@@ -472,6 +472,29 @@ class IssueProvider(Protocol):
         """
         ...
 
+    async def create_issue_async(
+        self,
+        title: str,
+        description: str,
+        priority: str,
+        tags: list[str] | None = None,
+    ) -> str | None:
+        """Create a new issue for tracking.
+
+        Used to create tracking issues for low-priority review findings (P2/P3)
+        that should be addressed later but don't block the current work.
+
+        Args:
+            title: Issue title.
+            description: Issue description (supports markdown).
+            priority: Priority string (P1, P2, P3, etc.).
+            tags: Optional list of tags to apply.
+
+        Returns:
+            Created issue ID, or None on failure.
+        """
+        ...
+
 
 @runtime_checkable
 class CodeReviewer(Protocol):

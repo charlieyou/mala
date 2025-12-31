@@ -237,6 +237,9 @@ class LifecycleContext:
     last_review_result: ReviewOutcome | None = None
     # Resolution for issue (no-op, obsolete, etc.)
     resolution: IssueResolution | None = None
+    # P2/P3 issues from review to create as tracking issues
+    # These are low-priority issues that don't block the review but should be tracked
+    low_priority_review_issues: list[ReviewIssue] = field(default_factory=list)
 
 
 @dataclass
@@ -468,8 +471,15 @@ class ImplementerLifecycle:
         if review_result.passed or (not blocking_issues and not has_parse_error):
             ctx.success = True
             self._state = LifecycleState.SUCCESS
+            # Collect P2/P3 issues for tracking - filter to only issues with priority > 1
+            low_pri_issues = [
+                i
+                for i in review_result.issues
+                if i.priority is not None and i.priority > 1
+            ]
+            ctx.low_priority_review_issues = low_pri_issues
             # Include P2/P3 count in message if any exist
-            low_pri_count = len(review_result.issues) - len(blocking_issues)
+            low_pri_count = len(low_pri_issues)
             if low_pri_count > 0:
                 msg = f"Review passed ({low_pri_count} P2/P3 issues noted for later)"
             else:

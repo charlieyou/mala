@@ -570,6 +570,47 @@ class BeadsClient:
         result = await self._run_subprocess_async(["bd", "close", issue_id])
         return result.returncode == 0
 
+    async def create_issue_async(
+        self,
+        title: str,
+        description: str,
+        priority: str,
+        tags: list[str] | None = None,
+    ) -> str | None:
+        """Create a new issue via bd CLI (async version).
+
+        Args:
+            title: Issue title.
+            description: Issue description (supports markdown).
+            priority: Priority string (P1, P2, P3, etc.).
+            tags: Optional list of tags to apply.
+
+        Returns:
+            Created issue ID, or None on failure.
+        """
+        cmd = [
+            "bd",
+            "issue",
+            "create",
+            "--title",
+            title,
+            "--description",
+            description,
+            "--priority",
+            priority,
+        ]
+        for tag in tags or []:
+            cmd.extend(["--tag", tag])
+
+        result = await self._run_subprocess_async(cmd)
+        if result.returncode != 0:
+            self._log_warning(f"bd issue create failed: {result.stderr}")
+            return None
+
+        # bd issue create outputs the new issue ID on stdout
+        issue_id = result.stdout.strip()
+        return issue_id if issue_id else None
+
     async def get_parent_epic_async(self, issue_id: str) -> str | None:
         """Get the parent epic ID for an issue.
 

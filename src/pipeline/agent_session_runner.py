@@ -216,6 +216,7 @@ class AgentSessionOutput:
         duration_seconds: Total session duration.
         agent_id: The agent ID used for this session.
         review_log_path: Path to Cerberus review session log (if any).
+        low_priority_review_issues: P2/P3 review issues to track as beads issues.
     """
 
     success: bool
@@ -228,6 +229,7 @@ class AgentSessionOutput:
     duration_seconds: float = 0.0
     agent_id: str = ""
     review_log_path: str | None = None
+    low_priority_review_issues: list[object] | None = None
 
 
 @dataclass
@@ -799,4 +801,7 @@ class AgentSessionRunner:
             duration_seconds=duration,
             agent_id=agent_id,
             review_log_path=cerberus_review_log_path,
+            low_priority_review_issues=list(lifecycle_ctx.low_priority_review_issues)
+            if lifecycle_ctx.low_priority_review_issues
+            else None,
         )
