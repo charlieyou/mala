@@ -176,7 +176,7 @@ def _build_dependencies(
     from .beads_client import BeadsClient
     from .cerberus_review import DefaultReviewer
     from .epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
-    from .event_sink_console import ConsoleEventSink
+    from .event_sink import ConsoleEventSink
     from .models import RetryConfig
     from .quality_gate import QualityGate
     from .session_log_parser import FileSystemLogProvider

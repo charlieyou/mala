@@ -146,7 +146,7 @@ layers = [
     # Domain layer: business logic, validation specs, lifecycle state machine
     "src.lifecycle | src.quality_gate | src.validation | src.models | src.prompts",
     # Infrastructure layer: external integrations, I/O, protocols
-    "src.beads_client | src.cerberus_review | src.mcp | src.hooks | src.log_output | src.event_sink | src.event_sink_console | src.session_log_parser | src.anthropic_client | src.braintrust_integration | src.telemetry | src.git_utils | src.config | src.protocols | src.log_events | src.epic_verifier | src.tools",
+    "src.beads_client | src.cerberus_review | src.mcp | src.hooks | src.log_output | src.event_sink | src.session_log_parser | src.anthropic_client | src.braintrust_integration | src.telemetry | src.git_utils | src.config | src.protocols | src.log_events | src.epic_verifier | src.tools",
 ]
 
 # -----------------------------------------------------------------------------
@@ -212,7 +212,6 @@ forbidden_modules = [
     "src.hooks",
     "src.log_output",
     "src.event_sink",
-    "src.event_sink_console",
     "src.session_log_parser",
     "src.anthropic_client",
     "src.braintrust_integration",
@@ -324,7 +323,6 @@ source_modules = [
     "src.hooks",
     "src.log_output",
     "src.event_sink",
-    "src.event_sink_console",
     "src.session_log_parser",
     "src.anthropic_client",
     "src.braintrust_integration",

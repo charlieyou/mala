@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, cast, overload
 
 from .beads_client import BeadsClient
 from .config import MalaConfig
-from .event_sink_console import ConsoleEventSink
+from .event_sink import ConsoleEventSink
 from .telemetry import BraintrustProvider, NullTelemetryProvider
 from .git_utils import (
     get_git_commit_async,

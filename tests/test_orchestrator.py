@@ -4162,7 +4162,7 @@ class TestEventSinkIntegration:
     @pytest.mark.asyncio
     async def test_event_sink_defaults_to_console_sink(self, tmp_path: Path) -> None:
         """Event sink defaults to ConsoleEventSink when not specified."""
-        from src.event_sink_console import ConsoleEventSink
+        from src.event_sink import ConsoleEventSink
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path)
 

@@ -2,8 +2,12 @@
 
 from unittest.mock import MagicMock, patch
 
-from src.event_sink import MalaEventSink, NullEventSink, EventRunConfig
-from src.event_sink_console import ConsoleEventSink
+from src.event_sink import (
+    MalaEventSink,
+    NullEventSink,
+    EventRunConfig,
+    ConsoleEventSink,
+)
 
 
 class TestEventRunConfig:
@@ -267,7 +271,7 @@ class TestConsoleEventSink:
         missing = protocol_methods - sink_methods
         assert not missing, f"ConsoleEventSink missing protocol methods: {missing}"
 
-    @patch("src.event_sink_console.log")
+    @patch("src.event_sink.log")
     def test_on_run_started_logs(self, mock_log: MagicMock) -> None:
         """on_run_started calls log with run configuration."""
         sink = ConsoleEventSink()
@@ -285,7 +289,7 @@ class TestConsoleEventSink:
         all_call_args = [str(call) for call in mock_log.call_args_list]
         assert any("/tmp/repo" in args for args in all_call_args)
 
-    @patch("src.event_sink_console.log_tool")
+    @patch("src.event_sink.log_tool")
     def test_on_tool_use_delegates_to_log_tool(self, mock_log_tool: MagicMock) -> None:
         """on_tool_use delegates to log_tool helper."""
         sink = ConsoleEventSink()
@@ -294,7 +298,7 @@ class TestConsoleEventSink:
             "Read", "file.py", agent_id="agent-1", arguments={"path": "file.py"}
         )
 
-    @patch("src.event_sink_console.log_agent_text")
+    @patch("src.event_sink.log_agent_text")
     def test_on_agent_text_delegates_to_log_agent_text(
         self, mock_log_agent_text: MagicMock
     ) -> None:
@@ -303,7 +307,7 @@ class TestConsoleEventSink:
         sink.on_agent_text("agent-1", "Processing...")
         mock_log_agent_text.assert_called_once_with("Processing...", "agent-1")
 
-    @patch("src.event_sink_console.log")
+    @patch("src.event_sink.log")
     def test_representative_methods_execute(self, mock_log: MagicMock) -> None:
         """Representative methods from each category execute without error."""
         sink = ConsoleEventSink()
@@ -359,7 +363,7 @@ class TestConsoleEventSink:
         # All should have executed without raising exceptions
         assert mock_log.called
 
-    @patch("src.event_sink_console.log")
+    @patch("src.event_sink.log")
     def test_on_abort_requested_logs_fatal_error(self, mock_log: MagicMock) -> None:
         """on_abort_requested logs fatal error with abort message."""
         sink = ConsoleEventSink()
@@ -371,7 +375,7 @@ class TestConsoleEventSink:
         assert "Database connection lost" in call_args[0][1]
         assert "Aborting run" in call_args[0][1]
 
-    @patch("src.event_sink_console.log")
+    @patch("src.event_sink.log")
     def test_on_tasks_aborting_logs_count_and_reason(self, mock_log: MagicMock) -> None:
         """on_tasks_aborting logs task count and reason."""
         sink = ConsoleEventSink()
@@ -383,7 +387,7 @@ class TestConsoleEventSink:
         assert "active task" in call_args[0][1]
         assert "Timeout exceeded" in call_args[0][1]
 
-    @patch("src.event_sink_console.log")
+    @patch("src.event_sink.log")
     def test_on_epic_verification_started_logs_epic_id(
         self, mock_log: MagicMock
     ) -> None:
@@ -396,7 +400,7 @@ class TestConsoleEventSink:
         assert "Verifying epic" in call_args[0][1]
         assert "epic-123" in call_args[0][1]
 
-    @patch("src.event_sink_console.log")
+    @patch("src.event_sink.log")
     def test_on_epic_verification_passed_logs_confidence(
         self, mock_log: MagicMock
     ) -> None:
@@ -410,7 +414,7 @@ class TestConsoleEventSink:
         assert "verified" in call_args[0][1]
         assert "95%" in call_args[0][1]
 
-    @patch("src.event_sink_console.log")
+    @patch("src.event_sink.log")
     def test_on_epic_verification_failed_logs_details(
         self, mock_log: MagicMock
     ) -> None:
@@ -425,7 +429,7 @@ class TestConsoleEventSink:
         assert "issue-1" in call_args[0][1]
         assert "issue-2" in call_args[0][1]
 
-    @patch("src.event_sink_console.log")
+    @patch("src.event_sink.log")
     def test_on_epic_verification_human_review_logs_reason(
         self, mock_log: MagicMock
     ) -> None:
@@ -440,7 +444,7 @@ class TestConsoleEventSink:
         assert "Low confidence" in call_args[0][1]
         assert "review-1" in call_args[0][1]
 
-    @patch("src.event_sink_console.log_verbose")
+    @patch("src.event_sink.log_verbose")
     def test_on_epic_remediation_created_logs_criterion(
         self, mock_log_verbose: MagicMock
     ) -> None:
@@ -456,7 +460,7 @@ class TestConsoleEventSink:
         # Should be truncated (60 chars + ...)
         assert "..." in call_args[0][1]
 
-    @patch("src.event_sink_console.log_verbose")
+    @patch("src.event_sink.log_verbose")
     def test_on_epic_remediation_created_short_criterion_not_truncated(
         self, mock_log_verbose: MagicMock
     ) -> None:
