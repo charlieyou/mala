@@ -56,7 +56,7 @@ class TestMakeLockEnforcementHook:
         context = make_context()  # Context agent_id is ignored
 
         with patch(
-            "src.hooks.get_lock_holder", return_value="captured-agent-id"
+            "src.hooks.locking.get_lock_holder", return_value="captured-agent-id"
         ) as mock:
             result = await hook(hook_input, None, context)
 
@@ -71,7 +71,7 @@ class TestMakeLockEnforcementHook:
         hook_input = make_hook_input("Write", {"file_path": test_file})
         context = make_context()
 
-        with patch("src.hooks.get_lock_holder", return_value="other-agent"):
+        with patch("src.hooks.locking.get_lock_holder", return_value="other-agent"):
             result = await hook(hook_input, None, context)
 
         assert result["decision"] == "block"
@@ -85,7 +85,7 @@ class TestMakeLockEnforcementHook:
         hook_input = make_hook_input("Write", {"file_path": test_file})
         context = make_context()
 
-        with patch("src.hooks.get_lock_holder", return_value=None):
+        with patch("src.hooks.locking.get_lock_holder", return_value=None):
             result = await hook(hook_input, None, context)
 
         assert result["decision"] == "block"
@@ -113,7 +113,7 @@ class TestMakeLockEnforcementHook:
         hook = make_lock_enforcement_hook(agent_id)
         context = make_context(agent_id)
 
-        with patch("src.hooks.get_lock_holder", return_value=agent_id):
+        with patch("src.hooks.locking.get_lock_holder", return_value=agent_id):
             result = await hook(hook_input, None, context)
 
         assert result == {}  # Allowed when agent holds lock
@@ -130,7 +130,7 @@ class TestMakeLockEnforcementHook:
         hook = make_lock_enforcement_hook(agent_id)
         context = make_context(agent_id)
 
-        with patch("src.hooks.get_lock_holder", return_value=agent_id):
+        with patch("src.hooks.locking.get_lock_holder", return_value=agent_id):
             result = await hook(hook_input, None, context)
 
         assert result == {}  # Allowed
@@ -147,7 +147,7 @@ class TestMakeLockEnforcementHook:
         hook = make_lock_enforcement_hook(agent_id)
         context = make_context(agent_id)
 
-        with patch("src.hooks.get_lock_holder", return_value=agent_id):
+        with patch("src.hooks.locking.get_lock_holder", return_value=agent_id):
             result = await hook(hook_input, None, context)
 
         assert result == {}  # Allowed
@@ -180,7 +180,7 @@ class TestMakeLockEnforcementHook:
         hook_input = make_hook_input("Write", {"file_path": test_file})
         context = make_context()
 
-        with patch("src.hooks.get_lock_holder", return_value="my-agent") as mock:
+        with patch("src.hooks.locking.get_lock_holder", return_value="my-agent") as mock:
             result = await hook(hook_input, None, context)
 
         assert result == {}  # Allowed
@@ -1434,7 +1434,7 @@ class TestMakeStopHookWithCommandRunner:
         context = make_context()
         hook_input = cast("StopHookInput", {"stop_hook_type": "natural"})
 
-        with patch("src.hooks.run_command") as mock_run_command:
+        with patch("src.hooks.locking.run_command") as mock_run_command:
             mock_run_command.return_value = CommandResult(
                 command=["lock-release-all.sh"],
                 returncode=0,
@@ -1455,7 +1455,7 @@ class TestMakeStopHookWithCommandRunner:
         context = make_context()
         hook_input = cast("StopHookInput", {"stop_hook_type": "natural"})
 
-        with patch("src.hooks.run_command") as mock_run_command:
+        with patch("src.hooks.locking.run_command") as mock_run_command:
             mock_run_command.return_value = CommandResult(
                 command=["lock-release-all.sh"],
                 returncode=0,
@@ -1472,7 +1472,7 @@ class TestMakeStopHookWithCommandRunner:
         context = make_context()
         hook_input = cast("StopHookInput", {"stop_hook_type": "natural"})
 
-        with patch("src.hooks.run_command") as mock_run_command:
+        with patch("src.hooks.locking.run_command") as mock_run_command:
             mock_run_command.side_effect = Exception("Command failed")
             result = await hook(hook_input, None, context)
 
@@ -1484,7 +1484,7 @@ class TestGetGitStateWithCommandRunner:
 
     def test_uses_run_command_for_git_operations(self, tmp_path: Path) -> None:
         """_get_git_state should use run_command instead of subprocess.run."""
-        with patch("src.hooks.run_command") as mock_run_command:
+        with patch("src.hooks.lint_cache.run_command") as mock_run_command:
             # Mock successful git commands
             mock_run_command.side_effect = [
                 CommandResult(
@@ -1512,7 +1512,7 @@ class TestGetGitStateWithCommandRunner:
 
     def test_returns_none_on_git_failure(self, tmp_path: Path) -> None:
         """_get_git_state should return None if git command fails."""
-        with patch("src.hooks.run_command") as mock_run_command:
+        with patch("src.hooks.lint_cache.run_command") as mock_run_command:
             mock_run_command.return_value = CommandResult(
                 command=["git", "rev-parse", "HEAD"],
                 returncode=128,
@@ -1528,7 +1528,7 @@ class TestGetGitStateWithCommandRunner:
         """_get_git_state uses CommandRunner which handles timeouts."""
         # This test verifies that run_command is used, which means
         # CommandRunner's timeout and process-group termination apply
-        with patch("src.hooks.run_command") as mock_run_command:
+        with patch("src.hooks.lint_cache.run_command") as mock_run_command:
             mock_run_command.side_effect = [
                 CommandResult(
                     command=["git", "rev-parse", "HEAD"],
@@ -1550,7 +1550,7 @@ class TestGetGitStateWithCommandRunner:
 
     def test_handles_untracked_files_failure_gracefully(self, tmp_path: Path) -> None:
         """_get_git_state should handle ls-files failure gracefully."""
-        with patch("src.hooks.run_command") as mock_run_command:
+        with patch("src.hooks.lint_cache.run_command") as mock_run_command:
             mock_run_command.side_effect = [
                 CommandResult(
                     command=["git", "rev-parse", "HEAD"],
