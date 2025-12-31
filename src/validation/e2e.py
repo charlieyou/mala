@@ -20,6 +20,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.config import _find_cerberus_bin_path
 from src.tools.command_runner import CommandRunner
 from .helpers import (
     annotate_issue,
@@ -106,6 +107,7 @@ class E2EConfig:
         timeout_seconds: Timeout for the mala run command (default 300s/5min).
         max_agents: Maximum agents for the mala run.
         max_issues: Maximum issues to process in the mala run.
+        cerberus_mode: Cerberus review mode (fast/smart/max). Default "fast" for E2E.
     """
 
     enabled: bool = True
@@ -114,6 +116,7 @@ class E2EConfig:
     timeout_seconds: float = 300.0
     max_agents: int = 1
     max_issues: int = 1
+    cerberus_mode: str = "fast"
 
 
 class E2ERunner:
@@ -155,6 +158,13 @@ class E2ERunner:
         # Check for bd CLI
         if not shutil.which("bd"):
             missing.append("bd CLI not found in PATH")
+
+        # Check for Cerberus review-gate (required for E2E to test review flow)
+        cerberus_bin = _find_cerberus_bin_path(Path.home() / ".claude")
+        if cerberus_bin is None:
+            missing.append("Cerberus review-gate not installed (check ~/.claude/plugins)")
+        elif not (cerberus_bin / "review-gate").exists():
+            missing.append(f"review-gate binary not found at {cerberus_bin}")
 
         # Note: MORPH_API_KEY is intentionally NOT checked here.
         # E2E validation should not fail just because the key is missing.
@@ -283,6 +293,8 @@ class E2ERunner:
             "e2e",
             # Disable Morph MCP to avoid potential hangs from npx network issues
             "--no-morph",
+            # Use fast mode for Cerberus to speed up E2E tests
+            f"--cerberus-spawn-args=--mode={self.config.cerberus_mode}",
         ]
 
         # Use CommandRunner with buffer for cleanup time
