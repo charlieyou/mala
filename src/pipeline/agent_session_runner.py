@@ -55,6 +55,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from typing import Self
 
+    from claude_agent_sdk import ClaudeAgentOptions
+
     from src.infra.io.event_sink import MalaEventSink
     from src.domain.lifecycle import (
         GateOutcome,
@@ -62,7 +64,6 @@ if TYPE_CHECKING:
         ReviewOutcome,
         TransitionResult,
     )
-    from src.domain.quality_gate import GateResult
     from src.core.models import IssueResolution
     from src.core.protocols import ReviewIssueProtocol
     from src.infra.telemetry import TelemetrySpan
@@ -185,21 +186,46 @@ AgentTextCallback = Callable[[str, str], None]
 
 
 @dataclass
-class MessageIterationContext:
+class MessageIterationState:
     """Mutable state for message iteration within a session.
 
-    Passed by reference to helpers to avoid complex return types.
-    Tracks state that evolves during SDK message streaming.
+    Used to track state that evolves during SDK message streaming
+    and idle retry handling.
 
     Attributes:
         session_id: SDK session ID (updated when ResultMessage received).
-        tool_calls_count: Number of tool calls in the current iteration.
+        pending_session_id: Session ID to use for resuming after idle timeout.
+        tool_calls_this_turn: Number of tool calls in the current turn.
+        idle_retry_count: Number of idle timeout retries attempted.
+        pending_tool_ids: Set of tool IDs awaiting results.
         pending_lint_commands: Map of tool_use_id to (lint_type, command).
     """
 
     session_id: str | None = None
-    tool_calls_count: int = 0
+    pending_session_id: str | None = None
+    tool_calls_this_turn: int = 0
+    idle_retry_count: int = 0
+    pending_tool_ids: set[str] = field(default_factory=set)
     pending_lint_commands: dict[str, tuple[str, str]] = field(default_factory=dict)
+
+
+@dataclass
+class MessageIterationResult:
+    """Result from a message iteration.
+
+    Attributes:
+        success: Whether the iteration completed successfully.
+        session_id: Updated session ID (if received).
+        pending_query: Next query to send (for retries), or None if complete.
+        pending_session_id: Session ID to use for next query.
+        idle_retry_count: Updated idle retry count.
+    """
+
+    success: bool
+    session_id: str | None = None
+    pending_query: str | None = None
+    pending_session_id: str | None = None
+    idle_retry_count: int = 0
 
 
 @dataclass
@@ -410,15 +436,13 @@ class AgentSessionRunner:
 
     def _build_sdk_options(
         self,
-        agent_id: str,
         pre_tool_hooks: list[object],
         stop_hooks: list[object],
         agent_env: dict[str, str],
-    ) -> Any:
+    ) -> object:
         """Build SDK client options for the session.
 
         Args:
-            agent_id: The agent ID for this session.
             pre_tool_hooks: PreToolUse hooks for the session.
             stop_hooks: Stop hooks for the session.
             agent_env: Environment variables for the agent.
@@ -479,7 +503,9 @@ class AgentSessionRunner:
         """
         if self.callbacks.get_log_path is None:
             raise ValueError("get_log_path callback must be set")
-        new_log_path = self.callbacks.get_log_path(session_id)  # type: ignore[arg-type]
+        if session_id is None:
+            raise ValueError("session_id must be set before waiting for log")
+        new_log_path = self.callbacks.get_log_path(session_id)
 
         # Reset log_offset if log file changed (new session started)
         # This prevents using a stale offset from a previous session's
@@ -519,8 +545,7 @@ class AgentSessionRunner:
     def _handle_gate_effect(
         self,
         input: AgentSessionInput,
-        log_path: Path,
-        gate_result: GateResult,
+        gate_result: GateOutcome,
         lifecycle: ImplementerLifecycle,
         lifecycle_ctx: LifecycleContext,
         new_offset: int,
@@ -529,7 +554,6 @@ class AgentSessionRunner:
 
         Args:
             input: Session input with issue_id.
-            log_path: Path to log file.
             gate_result: Result from gate check callback.
             lifecycle: Lifecycle state machine.
             lifecycle_ctx: Lifecycle context.
@@ -615,7 +639,7 @@ class AgentSessionRunner:
         session_id: str | None,
         lifecycle: ImplementerLifecycle,
         lifecycle_ctx: LifecycleContext,
-    ) -> tuple[str | None, bool, str | None]:
+    ) -> tuple[str | None, bool, str | None, TransitionResult | None]:
         """Handle RUN_REVIEW effect - run review and process result.
 
         Args:
@@ -626,7 +650,8 @@ class AgentSessionRunner:
             lifecycle_ctx: Lifecycle context.
 
         Returns:
-            Tuple of (pending_query for retry or None, should_break, cerberus_log_path).
+            Tuple of (pending_query, should_break, cerberus_log_path, transition_result).
+            transition_result is None only for no-progress early exit.
         """
         cerberus_review_log_path: str | None = None
 
@@ -677,13 +702,13 @@ class AgentSessionRunner:
                     if self.callbacks.get_log_offset
                     else 0
                 )
-                lifecycle.on_review_result(
+                no_progress_result = lifecycle.on_review_result(
                     lifecycle_ctx,
                     synthetic,
                     new_offset,
                     no_progress=True,
                 )
-                return None, True, cerberus_review_log_path  # break
+                return None, True, cerberus_review_log_path, no_progress_result
 
         if self.event_sink is not None:
             self.event_sink.on_review_started(
@@ -763,10 +788,10 @@ class AgentSessionRunner:
                     input.issue_id,
                     issue_id=input.issue_id,
                 )
-            return None, True, cerberus_review_log_path  # break
+            return None, True, cerberus_review_log_path, result  # break
 
         if result.effect == Effect.COMPLETE_FAILURE:
-            return None, True, cerberus_review_log_path  # break
+            return None, True, cerberus_review_log_path, result  # break
 
         # parse_error retry: lifecycle returns RUN_REVIEW to re-run
         # review without prompting agent (no code changes needed)
@@ -776,7 +801,12 @@ class AgentSessionRunner:
                     f"Review tool error: {review_result.parse_error}; retrying",
                     agent_id=input.issue_id,
                 )
-            return None, False, cerberus_review_log_path  # continue (re-run review)
+            return (
+                None,
+                False,
+                cerberus_review_log_path,
+                result,
+            )  # continue (re-run review)
 
         if result.effect == Effect.SEND_REVIEW_RETRY:
             # Log review retry trigger
@@ -822,9 +852,264 @@ class AgentSessionRunner:
                 review_issues=review_issues_text,
                 issue_id=input.issue_id,
             )
-            return pending_query, False, cerberus_review_log_path  # continue with retry
+            return pending_query, False, cerberus_review_log_path, result
 
-        return None, False, cerberus_review_log_path  # continue
+        return None, False, cerberus_review_log_path, result
+
+    async def _run_message_iteration(
+        self,
+        query: str,
+        issue_id: str,
+        options: object,
+        state: MessageIterationState,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: LintCache,
+        idle_timeout_seconds: float | None,
+        tracer: TelemetrySpan | None = None,
+    ) -> MessageIterationResult:
+        """Run a single message iteration with idle retry handling.
+
+        Sends a query to the SDK and processes the response stream.
+        Handles idle timeouts with automatic retry logic.
+
+        Args:
+            query: The query to send to the agent.
+            issue_id: Issue ID for logging.
+            options: SDK client options.
+            state: Mutable state for the iteration.
+            lifecycle_ctx: Lifecycle context for session state.
+            lint_cache: Cache for lint command results.
+            idle_timeout_seconds: Idle timeout (None to disable).
+            tracer: Optional telemetry span context.
+
+        Returns:
+            MessageIterationResult with success status and updated state.
+
+        Raises:
+            IdleTimeoutError: If max idle retries exceeded.
+        """
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ClaudeSDKClient,
+            ResultMessage,
+            TextBlock,
+            ToolResultBlock,
+            ToolUseBlock,
+        )
+
+        pending_query: str | None = query
+        state.tool_calls_this_turn = 0
+        state.pending_tool_ids.clear()
+
+        while pending_query is not None:
+            # Backoff before retry (not on first attempt)
+            if state.idle_retry_count > 0:
+                if self.config.idle_retry_backoff:
+                    backoff_idx = min(
+                        state.idle_retry_count - 1,
+                        len(self.config.idle_retry_backoff) - 1,
+                    )
+                    backoff = self.config.idle_retry_backoff[backoff_idx]
+                else:
+                    backoff = 0.0
+                if backoff > 0:
+                    logger.info(
+                        f"Idle retry {state.idle_retry_count}: waiting {backoff}s"
+                    )
+                    await asyncio.sleep(backoff)
+
+            # Create client for this attempt
+            if self.sdk_client_factory is not None:
+                client = self.sdk_client_factory.create(options)
+            else:
+                client = ClaudeSDKClient(options=cast("ClaudeAgentOptions", options))
+
+            try:
+                async with client:
+                    # Send query
+                    query_start = time.time()
+                    if state.pending_session_id is not None:
+                        logger.debug(
+                            "Session %s: sending query with session_id=%s...",
+                            issue_id,
+                            state.pending_session_id[:8],
+                        )
+                        await client.query(
+                            pending_query, session_id=state.pending_session_id
+                        )
+                    else:
+                        logger.debug(
+                            "Session %s: sending query (new session)",
+                            issue_id,
+                        )
+                        await client.query(pending_query)
+                    first_message_received = False
+
+                    # Define message iterator with timeout handling
+                    async def _iter_messages() -> AsyncIterator[Any]:
+                        stream = client.receive_response()
+                        if idle_timeout_seconds is None:
+                            async for msg in stream:
+                                yield msg
+                            return
+                        while True:
+                            current_timeout = (
+                                None if state.pending_tool_ids else idle_timeout_seconds
+                            )
+                            try:
+                                msg = await asyncio.wait_for(
+                                    stream.__anext__(),
+                                    timeout=current_timeout,
+                                )
+                            except StopAsyncIteration:
+                                break
+                            except TimeoutError as exc:
+                                raise IdleTimeoutError(
+                                    f"SDK stream idle for {idle_timeout_seconds:.0f} seconds"
+                                ) from exc
+                            yield msg
+
+                    try:
+                        async for message in _iter_messages():
+                            if not first_message_received:
+                                first_message_received = True
+                                latency = time.time() - query_start
+                                logger.debug(
+                                    "Session %s: first message after %.1fs",
+                                    issue_id,
+                                    latency,
+                                )
+                            if tracer is not None:
+                                tracer.log_message(message)
+
+                            if isinstance(message, AssistantMessage):
+                                for block in message.content:
+                                    if isinstance(block, TextBlock):
+                                        if self.callbacks.on_agent_text is not None:
+                                            self.callbacks.on_agent_text(
+                                                issue_id, block.text
+                                            )
+                                    elif isinstance(block, ToolUseBlock):
+                                        state.tool_calls_this_turn += 1
+                                        state.pending_tool_ids.add(block.id)
+                                        if self.callbacks.on_tool_use is not None:
+                                            self.callbacks.on_tool_use(
+                                                issue_id, block.name, block.input
+                                            )
+                                        if block.name.lower() == "bash":
+                                            cmd = block.input.get("command", "")
+                                            lint_type = _detect_lint_command(cmd)
+                                            if lint_type:
+                                                state.pending_lint_commands[
+                                                    block.id
+                                                ] = (
+                                                    lint_type,
+                                                    cmd,
+                                                )
+                                    elif isinstance(block, ToolResultBlock):
+                                        tool_use_id = getattr(
+                                            block, "tool_use_id", None
+                                        )
+                                        if tool_use_id:
+                                            state.pending_tool_ids.discard(tool_use_id)
+                                        if tool_use_id in state.pending_lint_commands:
+                                            lint_type, cmd = (
+                                                state.pending_lint_commands.pop(
+                                                    tool_use_id
+                                                )
+                                            )
+                                            if not getattr(block, "is_error", False):
+                                                lint_cache.mark_success(lint_type, cmd)
+
+                            elif isinstance(message, ResultMessage):
+                                state.session_id = message.session_id
+                                lifecycle_ctx.session_id = message.session_id
+                                lifecycle_ctx.final_result = message.result or ""
+
+                        # Success
+                        stream_duration = time.time() - query_start
+                        logger.debug(
+                            "Session %s: stream complete after %.1fs, %d tool calls",
+                            issue_id,
+                            stream_duration,
+                            state.tool_calls_this_turn,
+                        )
+                        return MessageIterationResult(
+                            success=True,
+                            session_id=state.session_id,
+                            idle_retry_count=0,
+                        )
+
+                    except IdleTimeoutError:
+                        # Disconnect on idle timeout
+                        idle_duration = time.time() - query_start
+                        logger.warning(
+                            f"Session {issue_id}: idle timeout after "
+                            f"{idle_duration:.1f}s, {state.tool_calls_this_turn} tool "
+                            f"calls, first_msg={'yes' if first_message_received else 'no'}, "
+                            "disconnecting subprocess"
+                        )
+                        try:
+                            await asyncio.wait_for(
+                                client.disconnect(),
+                                timeout=DISCONNECT_TIMEOUT,
+                            )
+                        except TimeoutError:
+                            logger.warning(
+                                "disconnect() timed out, subprocess abandoned"
+                            )
+                        except Exception as e:
+                            logger.debug(f"Error during disconnect: {e}")
+
+                        # Check if we can retry
+                        if state.idle_retry_count >= self.config.max_idle_retries:
+                            logger.error(
+                                f"Session {issue_id}: max idle retries "
+                                f"({self.config.max_idle_retries}) exceeded"
+                            )
+                            raise IdleTimeoutError(
+                                f"Max idle retries ({self.config.max_idle_retries}) "
+                                "exceeded"
+                            ) from None
+
+                        # Prepare for retry
+                        state.idle_retry_count += 1
+                        resume_id = state.session_id or lifecycle_ctx.session_id
+
+                        if resume_id is not None:
+                            state.pending_session_id = resume_id
+                            pending_query = _get_idle_resume_prompt().format(
+                                issue_id=issue_id
+                            )
+                            logger.info(
+                                f"Session {issue_id}: retrying with resume "
+                                f"(session_id={resume_id[:8]}..., "
+                                f"attempt {state.idle_retry_count})"
+                            )
+                        elif state.tool_calls_this_turn == 0:
+                            state.pending_session_id = None
+                            # Keep original query
+                            logger.info(
+                                f"Session {issue_id}: retrying with fresh session "
+                                f"(no session_id, no side effects, "
+                                f"attempt {state.idle_retry_count})"
+                            )
+                        else:
+                            logger.error(
+                                f"Session {issue_id}: cannot retry - "
+                                f"{state.tool_calls_this_turn} tool calls "
+                                "occurred without session_id"
+                            )
+                            raise IdleTimeoutError(
+                                f"Cannot retry: {state.tool_calls_this_turn} tool calls "
+                                "occurred without session context"
+                            ) from None
+
+            except IdleTimeoutError:
+                raise
+
+        # Should not reach here
+        return MessageIterationResult(success=False)
 
     async def run_session(
         self,
@@ -846,16 +1131,6 @@ class AgentSessionRunner:
         Returns:
             AgentSessionOutput with success, summary, session_id, etc.
         """
-        # Defer SDK imports to runtime
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeSDKClient,
-            ResultMessage,
-            TextBlock,
-            ToolResultBlock,
-            ToolUseBlock,
-        )
-
         # Generate agent ID
         agent_id = f"{input.issue_id}-{uuid.uuid4().hex[:8]}"
         start_time = asyncio.get_event_loop().time()
@@ -881,9 +1156,7 @@ class AgentSessionRunner:
         agent_env = self._build_agent_env(agent_id)
 
         # Build SDK options using helper
-        options = self._build_sdk_options(
-            agent_id, pre_tool_hooks, stop_hooks, agent_env
-        )
+        options = self._build_sdk_options(pre_tool_hooks, stop_hooks, agent_env)
 
         # Session state - session_id MUST be initialized to None here to avoid
         # UnboundLocalError if IdleTimeoutError occurs before ResultMessage
@@ -905,8 +1178,6 @@ class AgentSessionRunner:
             idle_timeout_seconds = min(900.0, max(300.0, derived))
         if idle_timeout_seconds <= 0:
             idle_timeout_seconds = None
-        # Track pending tool calls to disable timeout during tool execution
-        pending_tool_ids: set[str] = set()
 
         try:
             async with asyncio.timeout(self.config.timeout_seconds):
@@ -919,299 +1190,34 @@ class AgentSessionRunner:
 
                 # Track state for query + message iteration
                 pending_query: str | None = input.prompt
-                pending_session_id: str | None = None
-                idle_retry_count: int = 0
-                tool_calls_this_turn: int = 0
                 # result tracks the lifecycle effect from the last transition.
                 # Initialized to None; will be set on first iteration since
                 # pending_query is always set to input.prompt initially.
                 result: TransitionResult | None = None
 
+                # Initialize message iteration state
+                msg_state = MessageIterationState(
+                    pending_lint_commands=pending_lint_commands,
+                )
+
                 # Main lifecycle loop
                 while not lifecycle.is_terminal:
                     # === QUERY + MESSAGE ITERATION (only if pending_query is set) ===
                     if pending_query is not None:
-                        message_iteration_complete = False
-                        tool_calls_this_turn = 0
-                        pending_tool_ids.clear()  # Reset for new iteration
-
-                        while not message_iteration_complete:
-                            # Backoff before retry (not on first attempt)
-                            if idle_retry_count > 0:
-                                # Guard against empty backoff tuple
-                                if self.config.idle_retry_backoff:
-                                    backoff_idx = min(
-                                        idle_retry_count - 1,
-                                        len(self.config.idle_retry_backoff) - 1,
-                                    )
-                                    backoff = self.config.idle_retry_backoff[
-                                        backoff_idx
-                                    ]
-                                else:
-                                    backoff = 0.0
-                                if backoff > 0:
-                                    logger.info(
-                                        f"Idle retry {idle_retry_count}: "
-                                        f"waiting {backoff}s"
-                                    )
-                                    await asyncio.sleep(backoff)
-
-                            # Create client for this attempt
-                            if self.sdk_client_factory is not None:
-                                client = self.sdk_client_factory.create(options)
-                            else:
-                                client = ClaudeSDKClient(options=options)
-
-                            try:
-                                async with client:
-                                    # Send query - only pass session_id if provided
-                                    query_start = time.time()
-                                    if pending_session_id is not None:
-                                        logger.debug(
-                                            "Session %s: sending query with session_id=%s...",
-                                            input.issue_id,
-                                            pending_session_id[:8],
-                                        )
-                                        await client.query(
-                                            pending_query, session_id=pending_session_id
-                                        )
-                                    else:
-                                        logger.debug(
-                                            "Session %s: sending query (new session)",
-                                            input.issue_id,
-                                        )
-                                        await client.query(pending_query)
-                                    first_message_received = False
-
-                                    # Define _iter_messages (captures client from scope)
-                                    # Uses pending_tool_ids to disable timeout during tool execution
-                                    async def _iter_messages() -> AsyncIterator[Any]:
-                                        stream = client.receive_response()
-                                        if idle_timeout_seconds is None:
-                                            async for msg in stream:
-                                                yield msg
-                                            return
-                                        while True:
-                                            # Disable timeout while waiting for tool results
-                                            current_timeout = (
-                                                None
-                                                if pending_tool_ids
-                                                else idle_timeout_seconds
-                                            )
-                                            try:
-                                                msg = await asyncio.wait_for(
-                                                    stream.__anext__(),
-                                                    timeout=current_timeout,
-                                                )
-                                            except StopAsyncIteration:
-                                                break
-                                            except TimeoutError as exc:
-                                                raise IdleTimeoutError(
-                                                    "SDK stream idle for "
-                                                    f"{idle_timeout_seconds:.0f} seconds"
-                                                ) from exc
-                                            yield msg
-
-                                    try:
-                                        async for message in _iter_messages():
-                                            if not first_message_received:
-                                                first_message_received = True
-                                                latency = time.time() - query_start
-                                                logger.debug(
-                                                    "Session %s: first message after %.1fs",
-                                                    input.issue_id,
-                                                    latency,
-                                                )
-                                            # Log to tracer if provided
-                                            if tracer is not None:
-                                                tracer.log_message(message)
-
-                                            # Process message types
-                                            if isinstance(message, AssistantMessage):
-                                                for block in message.content:
-                                                    if isinstance(block, TextBlock):
-                                                        if (
-                                                            self.callbacks.on_agent_text
-                                                            is not None
-                                                        ):
-                                                            self.callbacks.on_agent_text(
-                                                                input.issue_id,
-                                                                block.text,
-                                                            )
-                                                    elif isinstance(
-                                                        block, ToolUseBlock
-                                                    ):
-                                                        # Track tool calls for side effect
-                                                        # detection
-                                                        tool_calls_this_turn += 1
-                                                        # Track pending tool for timeout logic
-                                                        pending_tool_ids.add(block.id)
-                                                        if (
-                                                            self.callbacks.on_tool_use
-                                                            is not None
-                                                        ):
-                                                            self.callbacks.on_tool_use(
-                                                                input.issue_id,
-                                                                block.name,
-                                                                block.input,
-                                                            )
-                                                        # Track lint commands
-                                                        if block.name.lower() == "bash":
-                                                            cmd = block.input.get(
-                                                                "command", ""
-                                                            )
-                                                            lint_type = (
-                                                                _detect_lint_command(
-                                                                    cmd
-                                                                )
-                                                            )
-                                                            if lint_type:
-                                                                pending_lint_commands[
-                                                                    block.id
-                                                                ] = (
-                                                                    lint_type,
-                                                                    cmd,
-                                                                )
-                                                    elif isinstance(
-                                                        block, ToolResultBlock
-                                                    ):
-                                                        # Clear pending tool (result received)
-                                                        tool_use_id = getattr(
-                                                            block, "tool_use_id", None
-                                                        )
-                                                        if tool_use_id:
-                                                            pending_tool_ids.discard(
-                                                                tool_use_id
-                                                            )
-                                                        # Check for lint success
-                                                        if (
-                                                            tool_use_id
-                                                            in pending_lint_commands
-                                                        ):
-                                                            lint_type, cmd = (
-                                                                pending_lint_commands.pop(
-                                                                    tool_use_id
-                                                                )
-                                                            )
-                                                            if not getattr(
-                                                                block, "is_error", False
-                                                            ):
-                                                                lint_cache.mark_success(
-                                                                    lint_type, cmd
-                                                                )
-
-                                            elif isinstance(message, ResultMessage):
-                                                session_id = message.session_id
-                                                lifecycle_ctx.session_id = session_id
-                                                lifecycle_ctx.final_result = (
-                                                    message.result or ""
-                                                )
-
-                                        # Success! Clear pending_query and exit retry loop
-                                        stream_duration = time.time() - query_start
-                                        logger.debug(
-                                            "Session %s: stream complete after %.1fs, "
-                                            "%d tool calls",
-                                            input.issue_id,
-                                            stream_duration,
-                                            tool_calls_this_turn,
-                                        )
-                                        pending_query = None
-                                        idle_retry_count = 0
-                                        message_iteration_complete = True
-
-                                    except IdleTimeoutError:
-                                        # === CRITICAL: Always disconnect first ===
-                                        idle_duration = time.time() - query_start
-                                        logger.warning(
-                                            f"Session {input.issue_id}: idle timeout after "
-                                            f"{idle_duration:.1f}s, {tool_calls_this_turn} tool "
-                                            f"calls, first_msg={'yes' if first_message_received else 'no'}, "
-                                            "disconnecting subprocess"
-                                        )
-                                        try:
-                                            await asyncio.wait_for(
-                                                client.disconnect(),
-                                                timeout=DISCONNECT_TIMEOUT,
-                                            )
-                                        except TimeoutError:
-                                            logger.warning(
-                                                "disconnect() timed out, "
-                                                "subprocess abandoned"
-                                            )
-                                        except Exception as e:
-                                            logger.debug(
-                                                f"Error during disconnect: {e}"
-                                            )
-
-                                        # Check if we can retry
-                                        if (
-                                            idle_retry_count
-                                            >= self.config.max_idle_retries
-                                        ):
-                                            logger.error(
-                                                f"Session {input.issue_id}: max idle "
-                                                f"retries ({self.config.max_idle_retries})"
-                                                " exceeded"
-                                            )
-                                            raise IdleTimeoutError(
-                                                f"Max idle retries "
-                                                f"({self.config.max_idle_retries}) "
-                                                "exceeded"
-                                            ) from None
-
-                                        # Prepare for retry
-                                        idle_retry_count += 1
-
-                                        # Determine resume strategy
-                                        resume_id = (
-                                            session_id or lifecycle_ctx.session_id
-                                        )
-                                        if resume_id is not None:
-                                            # Have session context - resume with minimal
-                                            # prompt
-                                            pending_session_id = resume_id
-                                            pending_query = (
-                                                _get_idle_resume_prompt().format(
-                                                    issue_id=input.issue_id,
-                                                )
-                                            )
-                                            logger.info(
-                                                f"Session {input.issue_id}: retrying with "
-                                                f"resume (session_id={resume_id[:8]}..., "
-                                                f"attempt {idle_retry_count})"
-                                            )
-                                        elif tool_calls_this_turn == 0:
-                                            # No session context AND no side effects -
-                                            # safe to start fresh
-                                            pending_session_id = None
-                                            # Keep original pending_query (don't replace)
-                                            logger.info(
-                                                f"Session {input.issue_id}: retrying with "
-                                                "fresh session (no session_id, no side "
-                                                f"effects, attempt {idle_retry_count})"
-                                            )
-                                        else:
-                                            # No session context BUT side effects
-                                            # occurred - unsafe to retry
-                                            logger.error(
-                                                f"Session {input.issue_id}: cannot retry - "
-                                                f"{tool_calls_this_turn} tool calls "
-                                                "occurred without session_id"
-                                            )
-                                            raise IdleTimeoutError(
-                                                f"Cannot retry: {tool_calls_this_turn} "
-                                                "tool calls occurred without session "
-                                                "context"
-                                            ) from None
-
-                                        # Loop continues to retry
-
-                            except IdleTimeoutError:
-                                # Re-raise if we got here (means we gave up)
-                                raise
-
-                        # === END QUERY + MESSAGE ITERATION ===
+                        iter_result = await self._run_message_iteration(
+                            query=pending_query,
+                            issue_id=input.issue_id,
+                            options=options,
+                            state=msg_state,
+                            lifecycle_ctx=lifecycle_ctx,
+                            lint_cache=lint_cache,
+                            idle_timeout_seconds=idle_timeout_seconds,
+                            tracer=tracer,
+                        )
+                        # Update session_id from iteration result
+                        if iter_result.session_id is not None:
+                            session_id = iter_result.session_id
+                        pending_query = None
 
                         # Messages complete - transition lifecycle
                         result = lifecycle.on_messages_complete(
@@ -1275,7 +1281,6 @@ class AgentSessionRunner:
 
                         retry_query, should_break, result = self._handle_gate_effect(
                             input,
-                            log_path,
                             gate_result,
                             lifecycle,
                             lifecycle_ctx,
@@ -1291,7 +1296,7 @@ class AgentSessionRunner:
                                 raise IdleTimeoutError(
                                     "Cannot retry gate: session_id not received from SDK"
                                 )
-                            pending_session_id = session_id
+                            msg_state.pending_session_id = session_id
                             logger.debug(
                                 "Session %s: queueing gate retry prompt "
                                 "(%d chars, session_id=%s)",
@@ -1299,7 +1304,7 @@ class AgentSessionRunner:
                                 len(pending_query),
                                 session_id[:8],
                             )
-                            idle_retry_count = 0
+                            msg_state.idle_retry_count = 0
                             continue
 
                     # Handle RUN_REVIEW
@@ -1309,9 +1314,13 @@ class AgentSessionRunner:
                             retry_query,
                             should_break,
                             review_log,
+                            review_result,
                         ) = await self._handle_review_effect(
                             input, log_path, session_id, lifecycle, lifecycle_ctx
                         )
+                        # Update result to prevent infinite loop
+                        if review_result is not None:
+                            result = review_result
                         if review_log is not None:
                             cerberus_review_log_path = review_log
                         if should_break:
@@ -1324,7 +1333,7 @@ class AgentSessionRunner:
                                 raise IdleTimeoutError(
                                     "Cannot retry review: session_id not received from SDK"
                                 )
-                            pending_session_id = session_id
+                            msg_state.pending_session_id = session_id
                             logger.debug(
                                 "Session %s: queueing review retry prompt "
                                 "(%d chars, session_id=%s)",
@@ -1332,7 +1341,7 @@ class AgentSessionRunner:
                                 len(pending_query),
                                 session_id[:8],
                             )
-                            idle_retry_count = 0
+                            msg_state.idle_retry_count = 0
                         continue
 
         except IdleTimeoutError as e:
