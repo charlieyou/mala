@@ -800,7 +800,9 @@ class QualityGate:
                     f"(stale commits from previous runs are rejected)"
                 )
             else:
-                failure_reasons.append(f"No commit with bd-{issue_id} found in the last 30 days")
+                failure_reasons.append(
+                    f"No commit with bd-{issue_id} found in the last 30 days"
+                )
             return GateResult(
                 passed=False,
                 failure_reasons=failure_reasons,

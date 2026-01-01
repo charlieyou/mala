@@ -1,23 +1,7 @@
-"""Backwards-compatibility re-export for command_runner.
+"""Backward-compatibility shim for src.validation.command_runner.
 
-This module has been moved to src/tools/command_runner.py.
-This re-export is provided for backwards compatibility with external code.
+This module re-exports all public symbols from src.domain.validation.command_runner.
+New code should import directly from src.domain.validation.command_runner.
 """
 
-from src.tools.command_runner import (
-    DEFAULT_KILL_GRACE_SECONDS,
-    TIMEOUT_EXIT_CODE,
-    CommandResult,
-    CommandRunner,
-    run_command,
-    run_command_async,
-)
-
-__all__ = [
-    "DEFAULT_KILL_GRACE_SECONDS",
-    "TIMEOUT_EXIT_CODE",
-    "CommandResult",
-    "CommandRunner",
-    "run_command",
-    "run_command_async",
-]
+from src.domain.validation.command_runner import *  # noqa: F403

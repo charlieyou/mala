@@ -1073,7 +1073,9 @@ class TestSpecRunnerNoDecreaseMode:
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
         ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             # Should pass because 80% >= 80% baseline
@@ -1149,7 +1151,9 @@ class TestSpecRunnerNoDecreaseMode:
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
         ):
             # Execute validation with the pre-captured baseline (90%)
             # The worktree has 70% coverage, which is below baseline
@@ -1239,7 +1243,9 @@ class TestSpecRunnerNoDecreaseMode:
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
         ):
             # Override context to use worktree path for coverage check
             result = runner._run_validation_pipeline(
@@ -1441,7 +1447,9 @@ class TestSpecRunnerBaselineRefresh:
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
             patch(
                 "src.tools.locking.try_lock", return_value=True
             ),  # Get lock immediately
@@ -1516,9 +1524,11 @@ class TestSpecRunnerBaselineRefresh:
                 "src.domain.validation.worktree.remove_worktree",
                 return_value=mock_worktree,
             ),
-            patch("src.tools.command_runner.CommandRunner", FakeRunner),
-            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
-            patch("src.tools.locking.try_lock", return_value=True),
+            patch("src.infra.tools.command_runner.CommandRunner", FakeRunner),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
+            patch("src.infra.tools.locking.try_lock", return_value=True),
         ):
             result = service.refresh_if_stale(spec)
 
@@ -1575,7 +1585,9 @@ class TestSpecRunnerBaselineRefresh:
                 "src.domain.validation.worktree.create_worktree",
                 side_effect=mock_create_worktree,
             ),
-            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
         ):
             result = service.refresh_if_stale(spec)
 
@@ -1644,14 +1656,15 @@ class TestSpecRunnerBaselineRefresh:
 
         with (
             patch(
-                "src.tools.locking.try_lock", return_value=False
+                "src.infra.tools.locking.try_lock", return_value=False
             ),  # Lock held by other
             patch(
-                "src.tools.locking.wait_for_lock",
+                "src.infra.tools.locking.wait_for_lock",
                 side_effect=mock_wait_for_lock,
             ),
             patch(
-                "src.validation.coverage.run_command", side_effect=mock_git_run_fresh
+                "src.domain.validation.coverage.run_command",
+                side_effect=mock_git_run_fresh,
             ),
         ):
             result = service.refresh_if_stale(spec)
@@ -1732,8 +1745,10 @@ class TestSpecRunnerBaselineRefresh:
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
-            patch("src.tools.locking.try_lock", return_value=True),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
+            patch("src.infra.tools.locking.try_lock", return_value=True),
         ):
             result = service.refresh_if_stale(spec)
 
@@ -1826,8 +1841,10 @@ class TestSpecRunnerBaselineRefresh:
                 "src.tools.command_runner.subprocess.Popen",
                 side_effect=mock_popen_capture,
             ),
-            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
-            patch("src.tools.locking.try_lock", return_value=True),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
+            patch("src.infra.tools.locking.try_lock", return_value=True),
         ):
             service.refresh_if_stale(spec)
 
@@ -1961,7 +1978,9 @@ class TestBaselineCaptureOrder:
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
         ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
 
@@ -2063,7 +2082,9 @@ class TestBaselineCaptureOrder:
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
         ):
             # Execute validation with the pre-captured baseline (90%)
             # The worktree has 70% coverage, which is below baseline

@@ -1,29 +1,7 @@
-"""Post-commit validation runner for mala.
+"""Backward-compatibility shim for src.validation.runner.
 
-This module re-exports the validation runner:
-
-- SpecValidationRunner: Modern API using ValidationSpec (RECOMMENDED)
-
-For new code, use SpecValidationRunner directly with ValidationSpec:
-
-    from src.validation import SpecValidationRunner, build_validation_spec
-
-    runner = SpecValidationRunner(repo_path)
-    spec = build_validation_spec(scope=ValidationScope.PER_ISSUE, ...)
-    result = await runner.run_spec(spec, context)
+This module re-exports all public symbols from src.domain.validation.runner.
+New code should import directly from src.domain.validation.runner.
 """
 
-from __future__ import annotations
-
-# Re-export result types
-from .result import ValidationResult, ValidationStepResult
-
-# Re-export spec runner
-from .spec_runner import SpecValidationRunner
-
-# Silence unused import warnings for re-exports
-__all__ = [
-    "SpecValidationRunner",
-    "ValidationResult",
-    "ValidationStepResult",
-]
+from src.domain.validation.runner import *  # noqa: F403
