@@ -161,6 +161,7 @@ def log_verbose(
     message: str,
     color: str = Colors.MUTED,
     agent_id: str | None = None,
+    issue_id: str | None = None,
 ) -> None:
     """Log a message only when verbose mode is enabled.
 
@@ -172,9 +173,11 @@ def log_verbose(
         message: Message to log.
         color: Color for the message (defaults to MUTED).
         agent_id: Optional agent ID for color coding.
+        issue_id: Optional issue ID for display. When provided, shows [issue_id]
+            instead of [agent_id], but still uses agent_id for color mapping.
     """
     if _verbose_enabled:
-        log(icon, message, color, agent_id=agent_id)
+        log(icon, message, color, agent_id=agent_id, issue_id=issue_id)
 
 
 def _format_arguments(

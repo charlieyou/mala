@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from claude_agent_sdk.types import ResultMessage
 
-from src.beads_client import BeadsClient
+from src.infra.clients.beads_client import BeadsClient
 from src.orchestration.orchestrator import (
     IssueResult,
     MalaOrchestrator,
@@ -1747,7 +1747,7 @@ class TestSubprocessTerminationOnTimeout:
     @pytest.mark.asyncio
     async def test_subprocess_terminated_on_timeout(self, tmp_path: Path) -> None:
         """When a subprocess times out, it should be terminated, not left running."""
-        from src.beads_client import BeadsClient
+        from src.infra.clients.beads_client import BeadsClient
 
         warnings: list[str] = []
         beads = BeadsClient(tmp_path, log_warning=warnings.append, timeout_seconds=0.5)
@@ -1771,7 +1771,7 @@ class TestSubprocessTerminationOnTimeout:
     @pytest.mark.asyncio
     async def test_subprocess_killed_if_terminate_fails(self, tmp_path: Path) -> None:
         """If SIGTERM doesn't work, subprocess should be killed with SIGKILL."""
-        from src.beads_client import BeadsClient
+        from src.infra.clients.beads_client import BeadsClient
 
         warnings: list[str] = []
         beads = BeadsClient(tmp_path, log_warning=warnings.append, timeout_seconds=0.3)
@@ -1789,7 +1789,7 @@ class TestSubprocessTerminationOnTimeout:
     @pytest.mark.asyncio
     async def test_successful_command_not_affected(self, tmp_path: Path) -> None:
         """Fast commands should complete normally without being terminated."""
-        from src.beads_client import BeadsClient
+        from src.infra.clients.beads_client import BeadsClient
 
         beads = BeadsClient(tmp_path, timeout_seconds=10.0)
 
@@ -1802,7 +1802,7 @@ class TestSubprocessTerminationOnTimeout:
     @pytest.mark.asyncio
     async def test_command_stderr_captured(self, tmp_path: Path) -> None:
         """stderr from commands should be captured correctly."""
-        from src.beads_client import BeadsClient
+        from src.infra.clients.beads_client import BeadsClient
 
         beads = BeadsClient(tmp_path, timeout_seconds=10.0)
 
@@ -1821,7 +1821,7 @@ class TestSubprocessTerminationOnTimeout:
         """Child processes spawned by the command should also be killed on timeout."""
         import os
 
-        from src.beads_client import BeadsClient
+        from src.infra.clients.beads_client import BeadsClient
 
         beads = BeadsClient(tmp_path, timeout_seconds=0.5)
 
@@ -4349,7 +4349,7 @@ class TestOrchestratorFactory:
         """create_orchestrator uses provided MalaConfig."""
         from dataclasses import replace
 
-        from src.config import MalaConfig
+        from src.infra.io.config import MalaConfig
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig
 

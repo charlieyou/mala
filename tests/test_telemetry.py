@@ -10,7 +10,7 @@ from src.braintrust_integration import (
     BraintrustProvider,
     BraintrustSpan,
 )
-from src.telemetry import (
+from src.infra.telemetry import (
     NullSpan,
     NullTelemetryProvider,
 )

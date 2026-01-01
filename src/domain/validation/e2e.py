@@ -20,7 +20,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.config import _find_cerberus_bin_path
+from src.infra.io.config import _find_cerberus_bin_path
 from src.infra.tools.command_runner import CommandRunner
 from .helpers import (
     annotate_issue,

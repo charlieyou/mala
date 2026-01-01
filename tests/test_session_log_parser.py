@@ -545,7 +545,7 @@ class TestFileSystemLogProvider:
 
     def test_conforms_to_log_provider_protocol(self, tmp_path: Path) -> None:
         """FileSystemLogProvider should conform to LogProvider protocol."""
-        from src.protocols import LogProvider
+        from src.core.protocols import LogProvider
         from src.session_log_parser import FileSystemLogProvider
 
         provider = FileSystemLogProvider()

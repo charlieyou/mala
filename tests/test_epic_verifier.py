@@ -1251,7 +1251,7 @@ class TestEpicVerifierOrchestratorIntegration:
     ) -> None:
         """Orchestrator should use EpicVerifier instead of close_eligible_epics_async."""
         from src.orchestration.orchestrator import MalaOrchestrator
-        from src.config import MalaConfig
+        from src.infra.io.config import MalaConfig
 
         # Create orchestrator with mock beads
         config = MalaConfig()
@@ -1270,7 +1270,7 @@ class TestEpicVerifierOrchestratorIntegration:
     ) -> None:
         """Orchestrator should pass epic_override_ids to verify_and_close_eligible."""
         from src.orchestration.orchestrator import MalaOrchestrator
-        from src.config import MalaConfig
+        from src.infra.io.config import MalaConfig
 
         override_ids = {"epic-1", "epic-2"}
         config = MalaConfig()

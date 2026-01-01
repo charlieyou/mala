@@ -74,7 +74,7 @@ def bootstrap() -> None:
     # This patches the SDK before any imports can use the unpatched version
     # Note: We use MalaConfig here to read BRAINTRUST_API_KEY consistently
     # from the environment (which now includes user .env after load_user_env)
-    from ..config import MalaConfig
+    from src.infra.io.config import MalaConfig
 
     config = MalaConfig.from_env(validate=False)
     if config.braintrust_api_key:
@@ -505,7 +505,7 @@ def run(
 
     if cerberus_spawn_args is not None:
         try:
-            from ..config import _parse_cerberus_args
+            from src.infra.io.config import _parse_cerberus_args
 
             spawn_args = tuple(
                 _parse_cerberus_args(
@@ -519,7 +519,7 @@ def run(
 
     if cerberus_wait_args is not None:
         try:
-            from ..config import _parse_cerberus_args
+            from src.infra.io.config import _parse_cerberus_args
 
             wait_args = tuple(
                 _parse_cerberus_args(cerberus_wait_args, source="--cerberus-wait-args")
@@ -531,7 +531,7 @@ def run(
 
     if cerberus_env is not None:
         try:
-            from ..config import _normalize_cerberus_env, _parse_cerberus_env
+            from src.infra.io.config import _normalize_cerberus_env, _parse_cerberus_env
 
             env_map = _parse_cerberus_env(cerberus_env, source="--cerberus-env")
             config = replace(config, cerberus_env=_normalize_cerberus_env(env_map))
@@ -899,7 +899,7 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
 
         _lazy_modules[name] = BeadsClient
     elif name == "MalaConfig":
-        from ..config import MalaConfig
+        from src.infra.io.config import MalaConfig
 
         _lazy_modules[name] = MalaConfig
     elif name == "MalaOrchestrator":

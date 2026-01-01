@@ -19,7 +19,7 @@ from src.pipeline.review_runner import (
     ReviewRunner,
     ReviewRunnerConfig,
 )
-from src.protocols import CodeReviewer, GateChecker  # noqa: TC001 - needed at runtime for cast()
+from src.core.protocols import CodeReviewer, GateChecker  # noqa: TC001 - needed at runtime for cast()
 from src.domain.quality_gate import CommitResult, GateResult, ValidationEvidence
 from src.domain.validation.spec import ValidationSpec
 

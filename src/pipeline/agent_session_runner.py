@@ -950,6 +950,13 @@ class AgentSessionRunner:
                                     failure_reasons=list(gate_result.failure_reasons),
                                     issue_id=input.issue_id,
                                 )
+                                # Emit validation_result before retry so every
+                                # on_validation_started has a corresponding result
+                                self.event_sink.on_validation_result(
+                                    input.issue_id,
+                                    passed=False,
+                                    issue_id=input.issue_id,
+                                )
                             # Build follow-up prompt
                             failure_text = "\n".join(
                                 f"- {r}" for r in gate_result.failure_reasons

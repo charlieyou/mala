@@ -1342,7 +1342,13 @@ class ConsoleEventSink:
     ) -> None:
         """Log per-issue validation result."""
         if passed:
-            log_verbose("✓", "Validation passed", Colors.GREEN, agent_id=agent_id)
+            log(
+                "✓",
+                "Validation passed",
+                Colors.GREEN,
+                agent_id=agent_id,
+                issue_id=issue_id,
+            )
         else:
             log(
                 "✗",

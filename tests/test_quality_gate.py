@@ -16,7 +16,7 @@ from src.domain.validation.spec import (
 )
 from unittest.mock import patch
 
-from src.protocols import LogProvider  # noqa: TC001
+from src.core.protocols import LogProvider  # noqa: TC001
 from src.domain.quality_gate import (
     QualityGate,
     ValidationEvidence,

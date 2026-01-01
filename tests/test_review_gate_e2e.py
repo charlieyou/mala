@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from src.cerberus_review import DefaultReviewer
-from src.config import _find_cerberus_bin_path
+from src.infra.io.config import _find_cerberus_bin_path
 
 pytestmark = [pytest.mark.e2e]
 

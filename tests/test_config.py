@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import ConfigurationError, MalaConfig
+from src.infra.io.config import ConfigurationError, MalaConfig
 
 
 class TestMalaConfigDefaults:

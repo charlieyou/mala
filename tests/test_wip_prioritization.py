@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.beads_client import BeadsClient
+from src.infra.clients.beads_client import BeadsClient
 from src.orchestration.orchestrator import MalaOrchestrator
 
 

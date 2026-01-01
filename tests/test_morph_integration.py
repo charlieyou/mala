@@ -263,7 +263,7 @@ class TestMorphApiKeyConfig:
         """MalaConfig should have None morph_api_key when not set."""
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("MORPH_API_KEY", None)
-            from src.config import MalaConfig
+            from src.infra.io.config import MalaConfig
 
             config = MalaConfig.from_env(validate=False)
             assert config.morph_api_key is None
@@ -272,7 +272,7 @@ class TestMorphApiKeyConfig:
     def test_api_key_present_in_config(self) -> None:
         """MalaConfig should have morph_api_key when set."""
         with patch.dict(os.environ, {"MORPH_API_KEY": "test-key-123"}):
-            from src.config import MalaConfig
+            from src.infra.io.config import MalaConfig
 
             config = MalaConfig.from_env(validate=False)
             assert config.morph_api_key == "test-key-123"
