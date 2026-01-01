@@ -951,6 +951,9 @@ class MalaOrchestrator:
             if isinstance(released, int) and released > 0:
                 self.event_sink.on_locks_released(released)
             remove_run_marker(run_metadata.run_id)
+            # Clean up debug logging handler to prevent file handle leaks
+            # (idempotent - safe to call even if save() is called later)
+            run_metadata.cleanup()
 
         success_count = sum(1 for r in self.completed if r.success)
         run_validation_passed = True

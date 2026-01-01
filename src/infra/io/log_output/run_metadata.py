@@ -21,7 +21,7 @@ from src.core.models import (
 from src.infra.tools.env import get_lock_dir, get_repo_runs_dir
 
 
-def configure_debug_logging(repo_path: Path, run_id: str) -> Path:
+def configure_debug_logging(repo_path: Path, run_id: str) -> Path | None:
     """Configure Python logging to write debug logs to a file.
 
     Creates a debug log file alongside run metadata at:
@@ -29,45 +29,61 @@ def configure_debug_logging(repo_path: Path, run_id: str) -> Path:
 
     All loggers in the 'src' namespace will write DEBUG+ messages to this file.
 
+    This function is best-effort: if the log directory cannot be created or
+    the log file cannot be opened (e.g., read-only filesystem, permission
+    denied), it returns None and the run continues without debug logging.
+
+    Set MALA_DISABLE_DEBUG_LOG=1 to disable debug logging entirely.
+
     Args:
         repo_path: Repository path for log directory.
         run_id: Run ID (UUID) for filename.
 
     Returns:
-        Path to the debug log file.
+        Path to the debug log file, or None if logging could not be configured
+        or is disabled via environment variable.
     """
-    runs_dir = get_repo_runs_dir(repo_path)
-    runs_dir.mkdir(parents=True, exist_ok=True)
+    # Allow opt-out via environment variable
+    if os.environ.get("MALA_DISABLE_DEBUG_LOG") == "1":
+        return None
 
-    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
-    short_id = run_id[:8]
-    log_path = runs_dir / f"{timestamp}_{short_id}.debug.log"
+    try:
+        runs_dir = get_repo_runs_dir(repo_path)
+        runs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create file handler for debug logs
-    handler = logging.FileHandler(log_path)
-    handler.setLevel(logging.DEBUG)
-    handler.setFormatter(
-        logging.Formatter(
-            "%(asctime)s %(levelname)s %(name)s: %(message)s",
-            datefmt="%H:%M:%S",
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
+        short_id = run_id[:8]
+        log_path = runs_dir / f"{timestamp}_{short_id}.debug.log"
+
+        # Create file handler for debug logs
+        handler = logging.FileHandler(log_path)
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)s %(name)s: %(message)s",
+                datefmt="%H:%M:%S",
+            )
         )
-    )
-    # Tag the handler so we can identify it later
-    handler.set_name(f"mala_debug_{run_id}")
+        # Tag the handler so we can identify it later
+        handler.set_name(f"mala_debug_{run_id}")
 
-    # Add handler to root logger for 'src' namespace
-    src_logger = logging.getLogger("src")
-    src_logger.setLevel(logging.DEBUG)
+        # Add handler to root logger for 'src' namespace
+        src_logger = logging.getLogger("src")
+        src_logger.setLevel(logging.DEBUG)
 
-    # Remove any previous mala debug handlers to avoid duplicates/leaks
-    for existing in src_logger.handlers[:]:
-        if getattr(existing, "name", "").startswith("mala_debug_"):
-            existing.close()
-            src_logger.removeHandler(existing)
+        # Remove any previous mala debug handlers to avoid duplicates/leaks
+        for existing in src_logger.handlers[:]:
+            if getattr(existing, "name", "").startswith("mala_debug_"):
+                existing.close()
+                src_logger.removeHandler(existing)
 
-    src_logger.addHandler(handler)
+        src_logger.addHandler(handler)
 
-    return log_path
+        return log_path
+    except OSError:
+        # Best-effort: if we can't create the log file, continue without it
+        # This handles read-only filesystems, permission denied, disk full, etc.
+        return None
 
 
 def cleanup_debug_logging(run_id: str) -> bool:
@@ -421,6 +437,18 @@ class RunMetadata:
 
         return metadata
 
+    def cleanup(self) -> None:
+        """Clean up resources associated with this run.
+
+        This method is idempotent and safe to call multiple times.
+        It cleans up the debug logging handler to prevent file handle leaks.
+
+        Should be called in a finally block to ensure cleanup happens even
+        if the run crashes or is aborted before save() is called.
+        """
+        if self.debug_log_path is not None:
+            cleanup_debug_logging(self.run_id)
+
     def save(self) -> Path:
         """Save run metadata to JSON file.
 
@@ -434,9 +462,8 @@ class RunMetadata:
         """
         self.completed_at = datetime.now(UTC)
 
-        # Clean up debug logging handler before saving
-        if self.debug_log_path is not None:
-            cleanup_debug_logging(self.run_id)
+        # Clean up debug logging handler before saving (idempotent)
+        self.cleanup()
 
         # Use repo-specific subdirectory
         runs_dir = get_repo_runs_dir(self.repo_path)

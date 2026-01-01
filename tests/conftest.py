@@ -36,6 +36,10 @@ def pytest_configure(config: pytest.Config) -> None:
     # Remove BRAINTRUST_API_KEY to disable Braintrust tracing
     os.environ.pop("BRAINTRUST_API_KEY", None)
 
+    # Disable debug logging in tests for better test isolation
+    # (avoids disk I/O and global logging state changes in each test)
+    os.environ["MALA_DISABLE_DEBUG_LOG"] = "1"
+
     # Redirect run metadata to /tmp to avoid polluting user config
     os.environ["MALA_RUNS_DIR"] = "/tmp/mala-test-runs"
 
