@@ -30,3 +30,8 @@ uv run pytest -m integration -n auto --reruns 2   # Parallel + auto-retry
 - **Parallel execution**: Use `-n auto` for parallel test runs (pytest-xdist)
 - **Flaky test retries**: Use `--reruns N` to auto-retry failed tests (pytest-rerunfailures)
 - **Unit/Integration/E2E**: Use markers `unit`, `integration`, `e2e` to select categories
+
+## Code Migration Rules
+
+- **No backward-compatibility shims**: When moving/renaming modules, update all imports directly. Never create re-export shims.
+- **No re-exports**: Don't create modules that just import and re-export from elsewhere. If code moves, fix the imports.
