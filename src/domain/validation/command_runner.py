@@ -1,10 +1,10 @@
 """Backwards-compatibility re-export for command_runner.
 
-This module has been moved to src/tools/command_runner.py.
+This module re-exports from src.infra.tools.command_runner.
 This re-export is provided for backwards compatibility with external code.
 """
 
-from src.tools.command_runner import (
+from src.infra.tools.command_runner import (
     DEFAULT_KILL_GRACE_SECONDS,
     TIMEOUT_EXIT_CODE,
     CommandResult,

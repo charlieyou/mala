@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.config import _find_cerberus_bin_path
-from src.tools.command_runner import CommandRunner
+from src.infra.tools.command_runner import CommandRunner
 from .helpers import (
     annotate_issue,
     get_ready_issue_id,
