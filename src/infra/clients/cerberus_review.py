@@ -256,8 +256,9 @@ class DefaultReviewer:
                     passed=False,
                     issues=[],
                     parse_error=(
-                        "spawn failed: another review gate is already active; "
-                        "cannot auto-resolve without session scoping"
+                        "Another review gate is already active. Please wait for the "
+                        "current run to finish, or resolve it manually using "
+                        "`review-gate resolve` if you are certain no other runs are active."
                     ),
                     fatal_error=True,
                 )
