@@ -2,10 +2,11 @@
 
 ## Context & Goals
 - **Spec**: `docs/2026-01-01-architecture-review.md`
+- **Review Status**: Passed (gemini, claude) / Needs Work addressed (codex)
 - Implement the 3 high-priority refactors identified in the architecture review:
-  1. EventSink base class to eliminate duplication
-  2. AgentSessionRunner.run_session extraction to reduce complexity (CCN 84 → <20)
-  3. MalaOrchestrator split with IssueExecutionCoordinator + legacy init removal
+  1. EventSink base class to eliminate duplication (NullEventSink <20 lines)
+  2. AgentSessionRunner.run_session extraction to reduce complexity (675 → <100 lines)
+  3. MalaOrchestrator split with IssueExecutionCoordinator + legacy init removal (1565 → <1000 lines)
 - Reduce complexity and duplication without behavioral changes; deliver as incremental PRs
 - Target maintainability for contributors modifying events, session flow, and orchestration logic
 
@@ -25,6 +26,7 @@
 - PRs are incremental and independent; sequence is EventSink → AgentSessionRunner → MalaOrchestrator
 - Existing tests cover behavior sufficiently to catch regressions
 - The `MalaEventSink` protocol is stable; no new events need adding during this refactor
+- **Verified**: `MalaEventSink` is decorated with `@runtime_checkable` (line 55 of event_sink.py), so `isinstance()` checks will work
 
 ### Implementation Constraints
 - Extend existing modules; do not add new services
@@ -45,7 +47,7 @@
 ## High-Level Approach
 1. **PR 1 (EventSink)**: Introduce a no-op `BaseEventSink` class, reducing duplication and simplifying `NullEventSink` to a simple alias or thin subclass.
 2. **PR 2 (AgentSessionRunner)**: Extract `run_session` into focused helper methods (`_build_sdk_options()`, `_run_message_iteration()`, `_handle_log_waiting()`, `_handle_gate_effect()`, `_handle_review_effect()`) and add unit tests.
-3. **PR 3 (MalaOrchestrator)**: Create `IssueExecutionCoordinator` to hold execution loop logic, remove legacy init path, and reduce `MalaOrchestrator` to a thin facade.
+3. **PR 3 (MalaOrchestrator)**: Create `IssueExecutionCoordinator` to hold execution loop logic, remove legacy init path entirely, and update ~55 test locations to use factory pattern.
 
 ## File Existence Verification
 
@@ -53,12 +55,14 @@
 |------|--------|-------|
 | `src/pipeline/agent_session_runner.py` | Exists | 1064 lines, run_session at 389-1064 |
 | `src/orchestrator.py` | Exists | 1565 lines, dual init paths |
-| `src/infra/io/event_sink.py` | Exists | 1396 lines, 38 event methods |
-| `src/core/protocols.py` | Exists | Protocol definitions |
+| `src/infra/io/event_sink.py` | Exists | 1396 lines, 38 event methods, `@runtime_checkable` on line 55 |
+| `src/core/protocols.py` | Exists | Protocol definitions including `IssueProvider` |
+| `src/pipeline/__init__.py` | Exists | Pipeline module exports |
 | `src/pipeline/issue_execution_coordinator.py` | **New** | To be created in PR 3 |
 | `tests/test_issue_execution_coordinator.py` | **New** | To be created in PR 3 |
 | `tests/test_event_sink.py` | Exists | Extend for BaseEventSink tests |
 | `tests/test_agent_session_runner.py` | Exists | Extend for helper method tests |
+| `tests/conftest.py` | Exists | Add `make_orchestrator()` fixture in PR 3 |
 
 ## Detailed Plan
 
@@ -107,9 +111,13 @@
 - **Depends on**: Task 2
 - **Changes**:
   - `src/pipeline/agent_session_runner.py`:
-    - Create `async def _run_message_iteration(self, client, input, lifecycle_ctx, ...) -> tuple[bool, int]`
+    - Create `MessageIterationContext` dataclass to hold mutable state:
+      - `session_id: str | None`
+      - `tool_calls_count: int`
+      - `pending_lint_commands: dict[str, tuple[str, str]]`
+    - Create `async def _run_message_iteration(self, client, input, lifecycle_ctx, iter_ctx: MessageIterationContext) -> bool`
     - Move lines 516-748 (message iteration with idle retry) into this helper
-    - Returns `(success: bool, tool_calls_count: int)`
+    - Returns `success: bool`; mutable state updated via `iter_ctx`
     - Handle `IdleTimeoutError` internally with retry logic
   - `tests/test_agent_session_runner.py`: Add unit tests for `_run_message_iteration()`:
     - Test normal message flow
@@ -177,9 +185,13 @@
   - **New**: `src/pipeline/issue_execution_coordinator.py`:
     - Create `IssueExecutionCoordinator` class with protocol-based dependencies
     - Constructor takes: `beads: IssueProvider`, `event_sink: MalaEventSink`, `config: CoordinatorConfig`
+    - Note: `IssueProvider` is imported from `src.core.protocols`
     - Create `CoordinatorConfig` dataclass with: `max_agents`, `max_issues`, `epic_id`, `only_ids`, `prioritize_wip`, `focus`
     - Implement `async def run_loop(self, spawn_callback, finalize_callback) -> int`
     - Implement `async def abort_active_tasks(self, reason: str) -> None`
+  - `src/pipeline/__init__.py`:
+    - Add import: `from src.pipeline.issue_execution_coordinator import IssueExecutionCoordinator, CoordinatorConfig`
+    - Add to `__all__`: `"IssueExecutionCoordinator"`, `"CoordinatorConfig"`
   - **New**: `tests/test_issue_execution_coordinator.py`:
     - Test coordinator with mock `IssueProvider` and `NullEventSink`
     - Test spawn/completion flow without SDK
@@ -188,7 +200,7 @@
   - Run `uv run pytest tests/test_issue_execution_coordinator.py -v`
   - Run `uvx ty check`
 - **Rollback**:
-  - Delete new files
+  - Delete new files, revert `__init__.py` changes
 
 ### Task 8: Migrate MalaOrchestrator to use IssueExecutionCoordinator (PR 3, subtask 3b)
 - **Goal**: Update orchestrator to delegate to coordinator
@@ -208,7 +220,7 @@
 
 ### Task 9: Remove legacy init from MalaOrchestrator (PR 3, subtask 3c)
 - **Goal**: Remove legacy initialization path entirely
-- **Covers**: AC #3 (legacy init removed; orchestrator <400 lines)
+- **Covers**: AC #3 (legacy init removed)
 - **Depends on**: Task 8
 - **Changes**:
   - `src/orchestrator.py`:
@@ -216,16 +228,24 @@
     - Remove `_init_legacy` method entirely
     - Keep only factory-based initialization
     - Update `__init__` to require factory parameters (remove defaults)
-    - Update any internal callers if found
-  - `tests/test_orchestrator.py`: Update tests that use legacy init pattern
-  - `src/cli.py`: Verify uses factory pattern (should already)
+  - **Test files requiring updates** (55+ locations use legacy `MalaOrchestrator()` constructor):
+    - `tests/test_orchestrator.py` (~45 locations) - primary test file
+    - `tests/test_epic_verifier.py` (2 locations)
+    - `tests/test_run_level_validation.py` (4 locations)
+    - `tests/test_wip_prioritization.py` (4 locations)
+    - `tests/test_morph_integration.py` (1 location)
+  - Create helper fixture `make_orchestrator()` in `tests/conftest.py` that uses factory pattern
+  - Update all test files to use the new fixture or factory pattern
+  - `src/cli.py`: Verify uses factory pattern (should already via `create_orchestrator()`)
 - **Verification**:
   - Run `uv run pytest tests/test_orchestrator.py -v`
   - Run `uv run pytest -m "unit or integration"` - full test suite passes
-  - Verify `src/orchestrator.py` is <400 lines
-  - Verify no legacy init usage remains (grep for direct constructor calls)
+  - Verify no legacy init usage remains: `grep -r "MalaOrchestrator(" tests/ src/`
+  - Verify `src/orchestrator.py` line count significantly reduced (target: <1000 lines after coordinator extraction)
 - **Rollback**:
   - Revert commit
+
+**Note on line count target**: The original spec target of <400 lines is not achievable with IssueExecutionCoordinator extraction alone (~275 lines moved). The realistic target is <1000 lines. Achieving <400 lines would require additional extraction of `spawn_agent`, `run_implementer`, and validation logic into separate modules, which is out of scope for this plan.
 
 ## Risks, Edge Cases & Breaking Changes
 
@@ -260,14 +280,16 @@
   - Run full suite: `uv run pytest -m "unit or integration" -n auto`
 - **Manual Verification**
   - Review diff to confirm no behavioral changes
-  - Line count checks: NullEventSink <20, run_session <100, orchestrator.py <400
+  - Line count checks: NullEventSink <20, run_session <100, orchestrator.py <1000
 
 ### Acceptance Criteria Coverage
 | Spec AC | Covered By |
 |---------|------------|
 | AC #1: EventSink single source; new event updates 2 places; NullEventSink <20 lines | Task 1 |
 | AC #2: run_session <100 lines; helpers testable; no behavior change | Tasks 2-6 |
-| AC #3: legacy init removed; orchestrator <400 lines; coordinator testable | Tasks 7-9 |
+| AC #3: legacy init removed; coordinator testable; orchestrator significantly reduced | Tasks 7-9 |
+
+**Note**: AC #3 orchestrator line count target revised from <400 to <1000 (see Task 9 note).
 
 ## Rollback Strategy (Plan-Level)
 - Revert PRs in reverse order: PR 3 → PR 2 → PR 1
@@ -276,4 +298,10 @@
 - No data migrations; no cleanup beyond file reverts
 
 ## Open Questions
-- None identified. All design decisions resolved during interview phase.
+- None remaining. All review findings addressed:
+  - ✅ Protocol `isinstance` check: Confirmed `MalaEventSink` is `@runtime_checkable`
+  - ✅ Line-count targets: Revised orchestrator target from <400 to <1000 (realistic)
+  - ✅ Legacy init test locations: Enumerated 55+ locations across 5 test files
+  - ✅ `_run_message_iteration` return type: Added `MessageIterationContext` dataclass
+  - ✅ `__init__.py` update: Added to Task 7
+  - ✅ `IssueProvider` import path: Clarified in Task 7
