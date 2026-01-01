@@ -613,7 +613,7 @@ class TestCommitBaselineCheck:
 
         # Mock git log returning a commit with a timestamp before baseline
         # The commit exists but is older than the run started
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             # Return a commit that is older than the baseline
             mock_run.return_value = CommandResult(
                 command=[],
@@ -634,7 +634,7 @@ class TestCommitBaselineCheck:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             # Return a commit that is newer than the baseline
             mock_run.return_value = CommandResult(
                 command=[],
@@ -656,7 +656,7 @@ class TestCommitBaselineCheck:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
@@ -705,7 +705,7 @@ class TestCommitBaselineCheck:
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             # Return a commit that is older than the baseline
             mock_run.return_value = CommandResult(
                 command=[],
@@ -761,7 +761,7 @@ class TestCommitBaselineCheck:
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             # Return a commit that is newer than the baseline
             mock_run.return_value = CommandResult(
                 command=[],
@@ -977,7 +977,7 @@ class TestScopeAwareEvidence:
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         # Mock git status to return clean working tree
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
@@ -1019,7 +1019,7 @@ class TestScopeAwareEvidence:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[], returncode=0, stdout="", stderr=""
             )
@@ -1056,7 +1056,7 @@ class TestScopeAwareEvidence:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
@@ -1120,7 +1120,7 @@ class TestEvidenceGateSkipsValidation:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             # First call: git status (clean tree)
             # Second call: git log (no commit found - should be OK for no-change)
             mock_run.side_effect = [
@@ -1157,7 +1157,7 @@ class TestEvidenceGateSkipsValidation:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[], returncode=0, stdout="", stderr=""
             )
@@ -1195,7 +1195,7 @@ class TestEvidenceGateSkipsValidation:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[], returncode=0, stdout="", stderr=""
             )
@@ -1246,7 +1246,7 @@ class TestClearFailureMessages:
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[], returncode=0, stdout="", stderr=""
             )
@@ -1283,7 +1283,7 @@ class TestClearFailureMessages:
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[], returncode=0, stdout="abc1234 bd-test-123: Fix\n", stderr=""
             )
@@ -1313,7 +1313,7 @@ class TestClearFailureMessages:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[], returncode=0, stdout="", stderr=""
             )
@@ -1462,7 +1462,7 @@ class TestCheckWithResolutionSpec:
             disable_validations={"post-validate"},
         )
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
@@ -1583,7 +1583,7 @@ class TestGitFailureHandling:
         """Git failure should return is_clean=False with error message."""
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=128,  # Git failure
@@ -1617,7 +1617,7 @@ class TestGitFailureHandling:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=1,
@@ -1692,7 +1692,7 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         offset = len(first_content.encode("utf-8"))
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
@@ -2108,7 +2108,7 @@ class TestSpecDrivenEvidencePatterns:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
@@ -2220,7 +2220,7 @@ class TestValidationExitCodeParsing:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
@@ -2298,7 +2298,7 @@ class TestValidationExitCodeParsing:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
@@ -2371,7 +2371,7 @@ class TestValidationExitCodeParsing:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
@@ -2444,7 +2444,7 @@ class TestValidationExitCodeParsing:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
@@ -2592,7 +2592,7 @@ class TestValidationExitCodeParsing:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,
@@ -2638,7 +2638,7 @@ class TestAlreadyCompleteResolution:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             # Return a commit that exists (even if before baseline)
             mock_run.return_value = CommandResult(
                 command=[],
@@ -2679,7 +2679,7 @@ class TestAlreadyCompleteResolution:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             # No matching commit found
             mock_run.return_value = CommandResult(
                 command=[],
@@ -2750,7 +2750,7 @@ class TestAlreadyCompleteResolution:
         gate = QualityGate(tmp_path)
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.quality_gate.run_command") as mock_run:
+        with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
                 command=[],
                 returncode=0,

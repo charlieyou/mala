@@ -1073,7 +1073,7 @@ class TestSpecRunnerNoDecreaseMode:
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.validation.coverage.run_command", side_effect=mock_git_run),
+            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
         ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             # Should pass because 80% >= 80% baseline
@@ -1149,7 +1149,7 @@ class TestSpecRunnerNoDecreaseMode:
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.validation.coverage.run_command", side_effect=mock_git_run),
+            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
         ):
             # Execute validation with the pre-captured baseline (90%)
             # The worktree has 70% coverage, which is below baseline
@@ -1239,7 +1239,7 @@ class TestSpecRunnerNoDecreaseMode:
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.validation.coverage.run_command", side_effect=mock_git_run),
+            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
         ):
             # Override context to use worktree path for coverage check
             result = runner._run_validation_pipeline(
@@ -1430,18 +1430,18 @@ class TestSpecRunnerBaselineRefresh:
 
         with (
             patch(
-                "src.validation.worktree.create_worktree",
+                "src.domain.validation.worktree.create_worktree",
                 return_value=mock_worktree,
             ),
             patch(
-                "src.validation.worktree.remove_worktree",
+                "src.domain.validation.worktree.remove_worktree",
                 return_value=mock_worktree,
             ),
             patch(
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.validation.coverage.run_command", side_effect=mock_git_run),
+            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
             patch(
                 "src.tools.locking.try_lock", return_value=True
             ),  # Get lock immediately
@@ -1509,15 +1509,15 @@ class TestSpecRunnerBaselineRefresh:
 
         with (
             patch(
-                "src.validation.worktree.create_worktree",
+                "src.domain.validation.worktree.create_worktree",
                 return_value=mock_worktree,
             ),
             patch(
-                "src.validation.worktree.remove_worktree",
+                "src.domain.validation.worktree.remove_worktree",
                 return_value=mock_worktree,
             ),
             patch("src.tools.command_runner.CommandRunner", FakeRunner),
-            patch("src.validation.coverage.run_command", side_effect=mock_git_run),
+            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
             patch("src.tools.locking.try_lock", return_value=True),
         ):
             result = service.refresh_if_stale(spec)
@@ -1572,10 +1572,10 @@ class TestSpecRunnerBaselineRefresh:
 
         with (
             patch(
-                "src.validation.worktree.create_worktree",
+                "src.domain.validation.worktree.create_worktree",
                 side_effect=mock_create_worktree,
             ),
-            patch("src.validation.coverage.run_command", side_effect=mock_git_run),
+            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
         ):
             result = service.refresh_if_stale(spec)
 
@@ -1721,18 +1721,18 @@ class TestSpecRunnerBaselineRefresh:
 
         with (
             patch(
-                "src.validation.worktree.create_worktree",
+                "src.domain.validation.worktree.create_worktree",
                 side_effect=mock_create_worktree,
             ),
             patch(
-                "src.validation.worktree.remove_worktree",
+                "src.domain.validation.worktree.remove_worktree",
                 return_value=mock_worktree,
             ),
             patch(
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.validation.coverage.run_command", side_effect=mock_git_run),
+            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
             patch("src.tools.locking.try_lock", return_value=True),
         ):
             result = service.refresh_if_stale(spec)
@@ -1815,18 +1815,18 @@ class TestSpecRunnerBaselineRefresh:
 
         with (
             patch(
-                "src.validation.worktree.create_worktree",
+                "src.domain.validation.worktree.create_worktree",
                 return_value=mock_worktree,
             ),
             patch(
-                "src.validation.worktree.remove_worktree",
+                "src.domain.validation.worktree.remove_worktree",
                 return_value=mock_worktree,
             ),
             patch(
                 "src.tools.command_runner.subprocess.Popen",
                 side_effect=mock_popen_capture,
             ),
-            patch("src.validation.coverage.run_command", side_effect=mock_git_run),
+            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
             patch("src.tools.locking.try_lock", return_value=True),
         ):
             service.refresh_if_stale(spec)
@@ -1961,7 +1961,7 @@ class TestBaselineCaptureOrder:
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.validation.coverage.run_command", side_effect=mock_git_run),
+            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
         ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
 
@@ -2063,7 +2063,7 @@ class TestBaselineCaptureOrder:
                 "src.tools.command_runner.subprocess.Popen",
                 return_value=mock_proc,
             ),
-            patch("src.validation.coverage.run_command", side_effect=mock_git_run),
+            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
         ):
             # Execute validation with the pre-captured baseline (90%)
             # The worktree has 70% coverage, which is below baseline

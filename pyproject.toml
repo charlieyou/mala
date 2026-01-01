@@ -174,6 +174,12 @@ forbidden_modules = [
     "src.infra.hooks",
     "src.infra.io",
     "src.infra.tools",
+    # New domain paths (shims redirect to these)
+    "src.domain",
+    "src.domain.lifecycle",
+    "src.domain.quality_gate",
+    "src.domain.validation",
+    "src.domain.prompts",
     # Note: src.config is allowed - CLI reads mala.toml configuration
 ]
 # Allow indirect imports through orchestration layer (e.g., cli -> cli_support -> tools)
@@ -192,6 +198,12 @@ source_modules = [
     "src.quality_gate",
     "src.validation",
     "src.prompts",
+    # New domain paths
+    "src.domain",
+    "src.domain.lifecycle",
+    "src.domain.quality_gate",
+    "src.domain.validation",
+    "src.domain.prompts",
     # Note: src.models has its own stricter "Models is leaf" contract
 ]
 forbidden_modules = [
@@ -256,6 +268,12 @@ source_modules = [
     "src.validation",
     "src.models",
     "src.prompts",
+    # New domain paths
+    "src.domain",
+    "src.domain.lifecycle",
+    "src.domain.quality_gate",
+    "src.domain.validation",
+    "src.domain.prompts",
 ]
 forbidden_modules = [
     "anthropic",
@@ -310,6 +328,12 @@ source_modules = [
     "src.infra.hooks",
     "src.infra.io",
     "src.infra.tools",
+    # New domain paths
+    "src.domain",
+    "src.domain.lifecycle",
+    "src.domain.quality_gate",
+    "src.domain.validation",
+    "src.domain.prompts",
 ]
 forbidden_modules = ["typer"]
 
@@ -333,6 +357,12 @@ forbidden_modules = [
     "src.orchestrator_factory",
     "src.orchestrator_types",
     "src.cli_support",
+    # New domain paths
+    "src.domain",
+    "src.domain.lifecycle",
+    "src.domain.quality_gate",
+    "src.domain.validation",
+    "src.domain.prompts",
 ]
 
 # -----------------------------------------------------------------------------
@@ -428,6 +458,12 @@ forbidden_modules = [
     "src.infra.hooks",
     "src.infra.io",
     "src.infra.tools",
+    # New domain paths
+    "src.domain",
+    "src.domain.lifecycle",
+    "src.domain.quality_gate",
+    "src.domain.validation",
+    "src.domain.prompts",
 ]
 
 # -----------------------------------------------------------------------------
@@ -476,6 +512,12 @@ forbidden_modules = [
     "src.infra.hooks",
     "src.infra.io",
     "src.infra.tools",
+    # New domain paths
+    "src.domain",
+    "src.domain.lifecycle",
+    "src.domain.quality_gate",
+    "src.domain.validation",
+    "src.domain.prompts",
 ]
 
 # -----------------------------------------------------------------------------
@@ -524,6 +566,12 @@ forbidden_modules = [
     "src.infra.hooks",
     "src.infra.io",
     "src.infra.tools",
+    # New domain paths
+    "src.domain",
+    "src.domain.lifecycle",
+    "src.domain.quality_gate",
+    "src.domain.validation",
+    "src.domain.prompts",
 ]
 
 # -----------------------------------------------------------------------------
@@ -594,6 +642,12 @@ forbidden_modules = [
     "src.infra.mcp",
     "src.infra.git_utils",
     "src.infra.telemetry",
+    # New domain paths
+    "src.domain",
+    "src.domain.lifecycle",
+    "src.domain.quality_gate",
+    "src.domain.validation",
+    "src.domain.prompts",
 ]
 
 # -----------------------------------------------------------------------------
@@ -655,4 +709,10 @@ forbidden_modules = [
     "src.tools",
     "src.issue_manager",
     "src.core",
+    # New domain paths
+    "src.domain",
+    "src.domain.lifecycle",
+    "src.domain.quality_gate",
+    "src.domain.validation",
+    "src.domain.prompts",
 ]
