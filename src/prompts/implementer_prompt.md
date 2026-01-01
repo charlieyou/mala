@@ -130,16 +130,19 @@ Verify before committing:
 
 If issues found, fix them and re-run quality checks.
 
-### 6. Commit BEFORE Releasing Locks
+### 6. Commit and Close Issue
 ```bash
 git status             # Review changes
 git add <files>        # Stage YOUR code files only
 git commit -m "bd-{issue_id}: <summary>"
+
+# Close the issue after successful commit
+bd close {issue_id}
 ```
 
 **CRITICAL: Only release locks AFTER successful commit!**
 - Do NOT push - only commit locally
-- Do NOT commit `.beads/issues.jsonl` - orchestrator handles that
+- Close the issue with `bd close` after committing (this updates `.beads/issues.jsonl`)
 
 ### 6a. If No Code Changes Required
 
@@ -171,16 +174,17 @@ ISSUE_ALREADY_COMPLETE: Work committed in 238e17f (bd-issue-123: Add feature X)
 
 After outputting the marker, proceed to release locks (step 7).
 
-### 7. Release Locks (after commit)
+### 7. Release Locks (after commit and close)
 ```bash
 # Verify commit succeeded
 git log -1 --oneline
 
-# NOW release locks (after commit is safe)
+# Verify issue is closed
+bd show {issue_id} --json | grep -q '"status":"closed"'
+
+# NOW release locks (after commit and close are safe)
 lock-release-all.sh
 ```
-
-**Note:** Do NOT call `bd close` - the orchestrator closes issues after the quality gate passes.
 
 ## Output
 
