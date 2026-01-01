@@ -1186,6 +1186,37 @@ def test_run_coverage_threshold_invalid_over_100(
     assert "150.0" in error_msg
 
 
+def test_run_epic_and_orphans_only_mutually_exclusive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --epic and --orphans-only cannot be used together."""
+    cli = _reload_cli(monkeypatch)
+    monkeypatch.setenv("MORPH_API_KEY", "test-key")
+
+    logs: list[tuple[object, ...]] = []
+
+    def _log(*args: object, **_kwargs: object) -> None:
+        logs.append(args)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "log", _log)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            epic="epic-1",
+            orphans_only=True,
+        )
+
+    assert excinfo.value.exit_code == 1
+    error_msg = str(logs[-1])
+    assert "--epic" in error_msg
+    assert "--orphans-only" in error_msg
+    assert "mutually exclusive" in error_msg
+
+
 def test_env_overrides_runs_dir_from_dotenv(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

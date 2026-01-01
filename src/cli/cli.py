@@ -440,6 +440,16 @@ def run(
         )
         raise typer.Exit(1)
 
+    # Validate --epic and --orphans-only are mutually exclusive
+    if epic and orphans_only:
+        log(
+            "✗",
+            "--epic and --orphans-only are mutually exclusive. "
+            "--epic filters to children of an epic, while --orphans-only filters to issues without a parent epic.",
+            Colors.RED,
+        )
+        raise typer.Exit(1)
+
     # Parse --epic-override flag into a set of epic IDs
     epic_override_ids: set[str] | None = None
     if epic_override:
