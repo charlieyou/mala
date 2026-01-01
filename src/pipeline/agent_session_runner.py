@@ -62,6 +62,7 @@ if TYPE_CHECKING:
         ReviewOutcome,
         TransitionResult,
     )
+    from src.domain.quality_gate import GateResult
     from src.core.models import IssueResolution
     from src.core.protocols import ReviewIssueProtocol
     from src.infra.telemetry import TelemetrySpan
@@ -181,6 +182,24 @@ LogOffsetCallback = Callable[[Path, int], int]
 # Callbacks for SDK message streaming events
 ToolUseCallback = Callable[[str, str, dict[str, Any] | None], None]
 AgentTextCallback = Callable[[str, str], None]
+
+
+@dataclass
+class MessageIterationContext:
+    """Mutable state for message iteration within a session.
+
+    Passed by reference to helpers to avoid complex return types.
+    Tracks state that evolves during SDK message streaming.
+
+    Attributes:
+        session_id: SDK session ID (updated when ResultMessage received).
+        tool_calls_count: Number of tool calls in the current iteration.
+        pending_lint_commands: Map of tool_use_id to (lint_type, command).
+    """
+
+    session_id: str | None = None
+    tool_calls_count: int = 0
+    pending_lint_commands: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -389,6 +408,424 @@ class AgentSessionRunner:
 
         return pre_tool_hooks, stop_hooks
 
+    def _build_sdk_options(
+        self,
+        agent_id: str,
+        pre_tool_hooks: list[object],
+        stop_hooks: list[object],
+        agent_env: dict[str, str],
+    ) -> Any:
+        """Build SDK client options for the session.
+
+        Args:
+            agent_id: The agent ID for this session.
+            pre_tool_hooks: PreToolUse hooks for the session.
+            stop_hooks: Stop hooks for the session.
+            agent_env: Environment variables for the agent.
+
+        Returns:
+            ClaudeAgentOptions configured for this session.
+        """
+        from claude_agent_sdk import ClaudeAgentOptions
+        from claude_agent_sdk.types import HookMatcher
+
+        return ClaudeAgentOptions(
+            cwd=str(self.config.repo_path),
+            permission_mode="bypassPermissions",
+            model="opus",
+            system_prompt={"type": "preset", "preset": "claude_code"},
+            setting_sources=["project", "user"],
+            mcp_servers=get_mcp_servers(
+                self.config.repo_path,
+                morph_api_key=self.config.morph_api_key,
+                morph_enabled=self.config.morph_enabled,
+            ),
+            disallowed_tools=get_disallowed_tools(self.config.morph_enabled),
+            env=agent_env,
+            hooks={
+                "PreToolUse": [
+                    HookMatcher(
+                        matcher=None,
+                        hooks=pre_tool_hooks,  # type: ignore[arg-type]
+                    )
+                ],
+                "Stop": [HookMatcher(matcher=None, hooks=stop_hooks)],  # type: ignore[arg-type]
+            },
+        )
+
+    async def _handle_log_waiting(
+        self,
+        session_id: str | None,
+        issue_id: str,
+        log_path: Path | None,
+        lifecycle: ImplementerLifecycle,
+        lifecycle_ctx: LifecycleContext,
+        log_file_wait_timeout: float,
+        log_file_poll_interval: float = 0.5,
+    ) -> tuple[Path | None, TransitionResult]:
+        """Handle WAIT_FOR_LOG effect - wait for log file to become available.
+
+        Args:
+            session_id: Current SDK session ID.
+            issue_id: Issue ID for logging.
+            log_path: Current log path (may be None).
+            lifecycle: Lifecycle state machine.
+            lifecycle_ctx: Lifecycle context.
+            log_file_wait_timeout: Max seconds to wait for log file.
+            log_file_poll_interval: Seconds between poll attempts.
+
+        Returns:
+            Tuple of (updated log_path, TransitionResult from log ready/timeout).
+        """
+        if self.callbacks.get_log_path is None:
+            raise ValueError("get_log_path callback must be set")
+        new_log_path = self.callbacks.get_log_path(session_id)  # type: ignore[arg-type]
+
+        # Reset log_offset if log file changed (new session started)
+        # This prevents using a stale offset from a previous session's
+        # larger log file when parsing a new, smaller log file
+        if log_path is not None and new_log_path != log_path:
+            logger.info(
+                "Session %s: log path changed from %s to %s, "
+                "resetting log_offset from %d to 0",
+                issue_id,
+                log_path.name,
+                new_log_path.name,
+                lifecycle_ctx.retry_state.log_offset,
+            )
+            lifecycle_ctx.retry_state.log_offset = 0
+
+        log_path = new_log_path
+        if self.event_sink is not None:
+            self.event_sink.on_log_waiting(issue_id)
+
+        # Wait for log file
+        wait_elapsed = 0.0
+        while not log_path.exists():
+            if wait_elapsed >= log_file_wait_timeout:
+                result = lifecycle.on_log_timeout(lifecycle_ctx, str(log_path))
+                if self.event_sink is not None:
+                    self.event_sink.on_log_timeout(issue_id, str(log_path))
+                return log_path, result
+            await asyncio.sleep(log_file_poll_interval)
+            wait_elapsed += log_file_poll_interval
+
+        if log_path.exists():
+            if self.event_sink is not None:
+                self.event_sink.on_log_ready(issue_id)
+        result = lifecycle.on_log_ready(lifecycle_ctx)
+        return log_path, result
+
+    def _handle_gate_effect(
+        self,
+        input: AgentSessionInput,
+        log_path: Path,
+        gate_result: GateResult,
+        lifecycle: ImplementerLifecycle,
+        lifecycle_ctx: LifecycleContext,
+        new_offset: int,
+    ) -> tuple[str | None, bool, TransitionResult]:
+        """Handle RUN_GATE effect - process gate result and emit events.
+
+        Args:
+            input: Session input with issue_id.
+            log_path: Path to log file.
+            gate_result: Result from gate check callback.
+            lifecycle: Lifecycle state machine.
+            lifecycle_ctx: Lifecycle context.
+            new_offset: New log offset after gate check.
+
+        Returns:
+            Tuple of (pending_query for retry or None, should_break, transition_result).
+        """
+        result = lifecycle.on_gate_result(lifecycle_ctx, gate_result, new_offset)
+
+        if result.effect == Effect.COMPLETE_SUCCESS:
+            if self.event_sink is not None:
+                self.event_sink.on_gate_passed(
+                    input.issue_id,
+                    issue_id=input.issue_id,
+                )
+                self.event_sink.on_validation_result(
+                    input.issue_id,
+                    passed=True,
+                    issue_id=input.issue_id,
+                )
+            return None, True, result  # break
+
+        if result.effect == Effect.COMPLETE_FAILURE:
+            if self.event_sink is not None:
+                self.event_sink.on_gate_failed(
+                    input.issue_id,
+                    lifecycle_ctx.retry_state.gate_attempt,
+                    self.config.max_gate_retries,
+                    issue_id=input.issue_id,
+                )
+                self.event_sink.on_gate_result(
+                    input.issue_id,
+                    passed=False,
+                    failure_reasons=list(gate_result.failure_reasons),
+                    issue_id=input.issue_id,
+                )
+                self.event_sink.on_validation_result(
+                    input.issue_id,
+                    passed=False,
+                    issue_id=input.issue_id,
+                )
+            return None, True, result  # break
+
+        if result.effect == Effect.SEND_GATE_RETRY:
+            if self.event_sink is not None:
+                self.event_sink.on_gate_retry(
+                    input.issue_id,
+                    lifecycle_ctx.retry_state.gate_attempt,
+                    self.config.max_gate_retries,
+                    issue_id=input.issue_id,
+                )
+                self.event_sink.on_gate_result(
+                    input.issue_id,
+                    passed=False,
+                    failure_reasons=list(gate_result.failure_reasons),
+                    issue_id=input.issue_id,
+                )
+                # Emit validation_result before retry so every
+                # on_validation_started has a corresponding result
+                self.event_sink.on_validation_result(
+                    input.issue_id,
+                    passed=False,
+                    issue_id=input.issue_id,
+                )
+            # Build follow-up prompt
+            failure_text = "\n".join(f"- {r}" for r in gate_result.failure_reasons)
+            pending_query = _get_gate_followup_prompt().format(
+                attempt=lifecycle_ctx.retry_state.gate_attempt,
+                max_attempts=self.config.max_gate_retries,
+                failure_reasons=failure_text,
+                issue_id=input.issue_id,
+            )
+            return pending_query, False, result  # continue with retry
+
+        # RUN_REVIEW or other effects - pass through
+        return None, False, result
+
+    async def _handle_review_effect(
+        self,
+        input: AgentSessionInput,
+        log_path: Path,
+        session_id: str | None,
+        lifecycle: ImplementerLifecycle,
+        lifecycle_ctx: LifecycleContext,
+    ) -> tuple[str | None, bool, str | None]:
+        """Handle RUN_REVIEW effect - run review and process result.
+
+        Args:
+            input: Session input with issue_id, description, baseline.
+            log_path: Path to log file.
+            session_id: Current SDK session ID.
+            lifecycle: Lifecycle state machine.
+            lifecycle_ctx: Lifecycle context.
+
+        Returns:
+            Tuple of (pending_query for retry or None, should_break, cerberus_log_path).
+        """
+        cerberus_review_log_path: str | None = None
+
+        # Emit gate passed events when first entering review
+        # (review_attempt == 1 means gate just passed)
+        if (
+            lifecycle_ctx.retry_state.review_attempt == 1
+            and self.event_sink is not None
+        ):
+            self.event_sink.on_gate_passed(
+                input.issue_id,
+                issue_id=input.issue_id,
+            )
+            self.event_sink.on_validation_result(
+                input.issue_id,
+                passed=True,
+                issue_id=input.issue_id,
+            )
+
+        # Check no-progress before running review
+        if (
+            lifecycle_ctx.retry_state.review_attempt > 1
+            and self.callbacks.on_review_no_progress is not None
+        ):
+            current_commit = (
+                lifecycle_ctx.last_gate_result.commit_hash
+                if lifecycle_ctx.last_gate_result
+                else None
+            )
+            no_progress = self.callbacks.on_review_no_progress(
+                log_path,
+                lifecycle_ctx.retry_state.log_offset,
+                lifecycle_ctx.retry_state.previous_commit_hash,
+                current_commit,
+            )
+            if no_progress:
+                if self.event_sink is not None:
+                    self.event_sink.on_review_skipped_no_progress(input.issue_id)
+                # Create synthetic failed review
+                from src.infra.clients.cerberus_review import ReviewResult
+
+                synthetic = ReviewResult(passed=False, issues=[], parse_error=None)
+                new_offset = (
+                    self.callbacks.get_log_offset(
+                        log_path,
+                        lifecycle_ctx.retry_state.log_offset,
+                    )
+                    if self.callbacks.get_log_offset
+                    else 0
+                )
+                lifecycle.on_review_result(
+                    lifecycle_ctx,
+                    synthetic,
+                    new_offset,
+                    no_progress=True,
+                )
+                return None, True, cerberus_review_log_path  # break
+
+        if self.event_sink is not None:
+            self.event_sink.on_review_started(
+                input.issue_id,
+                lifecycle_ctx.retry_state.review_attempt,
+                self.config.max_review_retries,
+                issue_id=input.issue_id,
+            )
+
+        if self.callbacks.on_review_check is None:
+            raise ValueError("on_review_check callback must be set")
+
+        logger.debug(
+            "Session %s: starting review (attempt %d/%d, session_id=%s)",
+            input.issue_id,
+            lifecycle_ctx.retry_state.review_attempt,
+            self.config.max_review_retries,
+            lifecycle_ctx.session_id[:8] if lifecycle_ctx.session_id else None,
+        )
+        review_start = time.time()
+        review_result = await self.callbacks.on_review_check(
+            input.issue_id,
+            input.issue_description,
+            input.baseline_commit,
+            lifecycle_ctx.session_id,
+            lifecycle_ctx.retry_state,
+        )
+        review_duration = time.time() - review_start
+        issue_count = len(review_result.issues) if review_result.issues else 0
+        blocking = (
+            sum(
+                1
+                for i in review_result.issues
+                if i.priority is not None and i.priority <= 1
+            )
+            if review_result.issues
+            else 0
+        )
+        logger.debug(
+            "Session %s: review completed in %.1fs "
+            "(passed=%s, issues=%d, blocking=%d, parse_error=%s)",
+            input.issue_id,
+            review_duration,
+            review_result.passed,
+            issue_count,
+            blocking,
+            review_result.parse_error,
+        )
+
+        # Check for fatal error
+        if review_result.fatal_error:
+            if self.callbacks.on_abort is not None:
+                self.callbacks.on_abort(
+                    review_result.parse_error or "Unrecoverable review error"
+                )
+
+        # Capture Cerberus review log if available
+        log_attr = getattr(review_result, "review_log_path", None)
+        if log_attr is not None:
+            cerberus_review_log_path = str(log_attr)
+
+        # Get new log offset
+        new_offset = (
+            self.callbacks.get_log_offset(
+                log_path,
+                lifecycle_ctx.retry_state.log_offset,
+            )
+            if self.callbacks.get_log_offset
+            else 0
+        )
+
+        result = lifecycle.on_review_result(lifecycle_ctx, review_result, new_offset)
+
+        if result.effect == Effect.COMPLETE_SUCCESS:
+            if self.event_sink is not None:
+                self.event_sink.on_review_passed(
+                    input.issue_id,
+                    issue_id=input.issue_id,
+                )
+            return None, True, cerberus_review_log_path  # break
+
+        if result.effect == Effect.COMPLETE_FAILURE:
+            return None, True, cerberus_review_log_path  # break
+
+        # parse_error retry: lifecycle returns RUN_REVIEW to re-run
+        # review without prompting agent (no code changes needed)
+        if result.effect == Effect.RUN_REVIEW:
+            if self.event_sink is not None:
+                self.event_sink.on_warning(
+                    f"Review tool error: {review_result.parse_error}; retrying",
+                    agent_id=input.issue_id,
+                )
+            return None, False, cerberus_review_log_path  # continue (re-run review)
+
+        if result.effect == Effect.SEND_REVIEW_RETRY:
+            # Log review retry trigger
+            blocking_count = (
+                sum(
+                    1
+                    for i in review_result.issues
+                    if i.priority is not None and i.priority <= 1
+                )
+                if review_result.issues
+                else 0
+            )
+            logger.debug(
+                "Session %s: SEND_REVIEW_RETRY triggered "
+                "(attempt %d/%d, %d blocking issues)",
+                input.issue_id,
+                lifecycle_ctx.retry_state.review_attempt,
+                self.config.max_review_retries,
+                blocking_count,
+            )
+
+            # Emit review retry event
+            if self.event_sink is not None:
+                self.event_sink.on_review_retry(
+                    input.issue_id,
+                    lifecycle_ctx.retry_state.review_attempt,
+                    self.config.max_review_retries,
+                    error_count=blocking_count or None,
+                    parse_error=review_result.parse_error,
+                    issue_id=input.issue_id,
+                )
+
+            # Build follow-up prompt for legitimate review issues
+            from src.infra.clients.cerberus_review import format_review_issues
+
+            review_issues_text = format_review_issues(
+                review_result.issues,  # type: ignore[arg-type]
+                base_path=self.config.repo_path,
+            )
+            pending_query = _get_review_followup_prompt().format(
+                attempt=lifecycle_ctx.retry_state.review_attempt,
+                max_attempts=self.config.max_review_retries,
+                review_issues=review_issues_text,
+                issue_id=input.issue_id,
+            )
+            return pending_query, False, cerberus_review_log_path  # continue with retry
+
+        return None, False, cerberus_review_log_path  # continue
+
     async def run_session(
         self,
         input: AgentSessionInput,
@@ -412,14 +849,12 @@ class AgentSessionRunner:
         # Defer SDK imports to runtime
         from claude_agent_sdk import (
             AssistantMessage,
-            ClaudeAgentOptions,
             ClaudeSDKClient,
             ResultMessage,
             TextBlock,
             ToolResultBlock,
             ToolUseBlock,
         )
-        from claude_agent_sdk.types import HookMatcher
 
         # Generate agent ID
         agent_id = f"{input.issue_id}-{uuid.uuid4().hex[:8]}"
@@ -445,29 +880,9 @@ class AgentSessionRunner:
         )
         agent_env = self._build_agent_env(agent_id)
 
-        # Build SDK options
-        options = ClaudeAgentOptions(
-            cwd=str(self.config.repo_path),
-            permission_mode="bypassPermissions",
-            model="opus",
-            system_prompt={"type": "preset", "preset": "claude_code"},
-            setting_sources=["project", "user"],
-            mcp_servers=get_mcp_servers(
-                self.config.repo_path,
-                morph_api_key=self.config.morph_api_key,
-                morph_enabled=self.config.morph_enabled,
-            ),
-            disallowed_tools=get_disallowed_tools(self.config.morph_enabled),
-            env=agent_env,
-            hooks={
-                "PreToolUse": [
-                    HookMatcher(
-                        matcher=None,
-                        hooks=pre_tool_hooks,  # type: ignore[arg-type]
-                    )
-                ],
-                "Stop": [HookMatcher(matcher=None, hooks=stop_hooks)],  # type: ignore[arg-type]
-            },
+        # Build SDK options using helper
+        options = self._build_sdk_options(
+            agent_id, pre_tool_hooks, stop_hooks, agent_env
         )
 
         # Session state - session_id MUST be initialized to None here to avoid
@@ -822,62 +1237,27 @@ class AgentSessionRunner:
 
                     # Handle WAIT_FOR_LOG
                     if result.effect == Effect.WAIT_FOR_LOG:
-                        if self.callbacks.get_log_path is None:
-                            raise ValueError("get_log_path callback must be set")
-                        new_log_path = self.callbacks.get_log_path(session_id)  # type: ignore[arg-type]
-
-                        # Reset log_offset if log file changed (new session started)
-                        # This prevents using a stale offset from a previous session's
-                        # larger log file when parsing a new, smaller log file
-                        if log_path is not None and new_log_path != log_path:
-                            logger.info(
-                                "Session %s: log path changed from %s to %s, "
-                                "resetting log_offset from %d to 0",
-                                input.issue_id,
-                                log_path.name,
-                                new_log_path.name,
-                                lifecycle_ctx.retry_state.log_offset,
-                            )
-                            lifecycle_ctx.retry_state.log_offset = 0
-
-                        log_path = new_log_path
-                        if self.event_sink is not None:
-                            self.event_sink.on_log_waiting(input.issue_id)
-
-                        # Wait for log file
-                        wait_elapsed = 0.0
-                        while not log_path.exists():
-                            if wait_elapsed >= log_file_wait_timeout:
-                                result = lifecycle.on_log_timeout(
-                                    lifecycle_ctx, str(log_path)
-                                )
-                                if self.event_sink is not None:
-                                    self.event_sink.on_log_timeout(
-                                        input.issue_id, str(log_path)
-                                    )
-                                break
-                            await asyncio.sleep(log_file_poll_interval)
-                            wait_elapsed += log_file_poll_interval
-
+                        log_path, result = await self._handle_log_waiting(
+                            session_id,
+                            input.issue_id,
+                            log_path,
+                            lifecycle,
+                            lifecycle_ctx,
+                            log_file_wait_timeout,
+                            log_file_poll_interval,
+                        )
                         if lifecycle.state == LifecycleState.FAILED:
                             final_result = lifecycle_ctx.final_result
                             break
-
-                        if log_path.exists():
-                            if self.event_sink is not None:
-                                self.event_sink.on_log_ready(input.issue_id)
-                        result = lifecycle.on_log_ready(lifecycle_ctx)
 
                     # Handle RUN_GATE
                     if result.effect == Effect.RUN_GATE:
                         # Emit validation started BEFORE the gate check
                         if self.event_sink is not None:
                             self.event_sink.on_validation_started(
-                                input.issue_id,  # agent_id for color mapping
-                                issue_id=input.issue_id,  # for display
+                                input.issue_id,
+                                issue_id=input.issue_id,
                             )
-
-                        if self.event_sink is not None:
                             self.event_sink.on_gate_started(
                                 input.issue_id,
                                 lifecycle_ctx.retry_state.gate_attempt,
@@ -889,86 +1269,24 @@ class AgentSessionRunner:
                             raise ValueError("on_gate_check callback must be set")
 
                         assert log_path is not None
-                        (
-                            gate_result,
-                            new_offset,
-                        ) = await self.callbacks.on_gate_check(
+                        gate_result, new_offset = await self.callbacks.on_gate_check(
                             input.issue_id, log_path, lifecycle_ctx.retry_state
                         )
 
-                        result = lifecycle.on_gate_result(
-                            lifecycle_ctx, gate_result, new_offset
+                        retry_query, should_break, result = self._handle_gate_effect(
+                            input,
+                            log_path,
+                            gate_result,
+                            lifecycle,
+                            lifecycle_ctx,
+                            new_offset,
                         )
-
-                        if result.effect == Effect.COMPLETE_SUCCESS:
-                            if self.event_sink is not None:
-                                self.event_sink.on_gate_passed(
-                                    input.issue_id,
-                                    issue_id=input.issue_id,
-                                )
-                                self.event_sink.on_validation_result(
-                                    input.issue_id,
-                                    passed=True,
-                                    issue_id=input.issue_id,
-                                )
+                        if should_break:
                             final_result = lifecycle_ctx.final_result
                             break
-
-                        if result.effect == Effect.COMPLETE_FAILURE:
-                            if self.event_sink is not None:
-                                self.event_sink.on_gate_failed(
-                                    input.issue_id,
-                                    lifecycle_ctx.retry_state.gate_attempt,
-                                    self.config.max_gate_retries,
-                                    issue_id=input.issue_id,
-                                )
-                                self.event_sink.on_gate_result(
-                                    input.issue_id,
-                                    passed=False,
-                                    failure_reasons=list(gate_result.failure_reasons),
-                                    issue_id=input.issue_id,
-                                )
-                                self.event_sink.on_validation_result(
-                                    input.issue_id,
-                                    passed=False,
-                                    issue_id=input.issue_id,
-                                )
-                            final_result = lifecycle_ctx.final_result
-                            break
-
-                        if result.effect == Effect.SEND_GATE_RETRY:
-                            if self.event_sink is not None:
-                                self.event_sink.on_gate_retry(
-                                    input.issue_id,
-                                    lifecycle_ctx.retry_state.gate_attempt,
-                                    self.config.max_gate_retries,
-                                    issue_id=input.issue_id,
-                                )
-                                self.event_sink.on_gate_result(
-                                    input.issue_id,
-                                    passed=False,
-                                    failure_reasons=list(gate_result.failure_reasons),
-                                    issue_id=input.issue_id,
-                                )
-                                # Emit validation_result before retry so every
-                                # on_validation_started has a corresponding result
-                                self.event_sink.on_validation_result(
-                                    input.issue_id,
-                                    passed=False,
-                                    issue_id=input.issue_id,
-                                )
-                            # Build follow-up prompt
-                            failure_text = "\n".join(
-                                f"- {r}" for r in gate_result.failure_reasons
-                            )
-                            pending_query = _get_gate_followup_prompt().format(
-                                attempt=lifecycle_ctx.retry_state.gate_attempt,
-                                max_attempts=self.config.max_gate_retries,
-                                failure_reasons=failure_text,
-                                issue_id=input.issue_id,
-                            )
-                            # session_id must be set for gate retries - fail fast if
-                            # SDK didn't provide one
+                        if retry_query is not None:
+                            pending_query = retry_query
+                            # session_id must be set for gate retries
                             if session_id is None:
                                 raise IdleTimeoutError(
                                     "Cannot retry gate: session_id not received from SDK"
@@ -986,216 +1304,22 @@ class AgentSessionRunner:
 
                     # Handle RUN_REVIEW
                     if result.effect == Effect.RUN_REVIEW:
-                        # Emit gate passed events when first entering review
-                        # (review_attempt == 1 means gate just passed)
-                        # This ensures every on_validation_started has a corresponding
-                        # on_validation_result
-                        if (
-                            lifecycle_ctx.retry_state.review_attempt == 1
-                            and self.event_sink is not None
-                        ):
-                            self.event_sink.on_gate_passed(
-                                input.issue_id,
-                                issue_id=input.issue_id,
-                            )
-                            self.event_sink.on_validation_result(
-                                input.issue_id,
-                                passed=True,
-                                issue_id=input.issue_id,
-                            )
-
-                        # Check no-progress before running review
-                        if (
-                            lifecycle_ctx.retry_state.review_attempt > 1
-                            and self.callbacks.on_review_no_progress is not None
-                        ):
-                            current_commit = (
-                                lifecycle_ctx.last_gate_result.commit_hash
-                                if lifecycle_ctx.last_gate_result
-                                else None
-                            )
-                            no_progress = self.callbacks.on_review_no_progress(
-                                log_path,  # type: ignore[arg-type]
-                                lifecycle_ctx.retry_state.log_offset,
-                                lifecycle_ctx.retry_state.previous_commit_hash,
-                                current_commit,
-                            )
-                            if no_progress:
-                                if self.event_sink is not None:
-                                    self.event_sink.on_review_skipped_no_progress(
-                                        input.issue_id
-                                    )
-                                # Create synthetic failed review
-                                from src.infra.clients.cerberus_review import ReviewResult
-
-                                synthetic = ReviewResult(
-                                    passed=False, issues=[], parse_error=None
-                                )
-                                new_offset = (
-                                    self.callbacks.get_log_offset(
-                                        log_path,  # type: ignore[arg-type]
-                                        lifecycle_ctx.retry_state.log_offset,
-                                    )
-                                    if self.callbacks.get_log_offset
-                                    else 0
-                                )
-                                result = lifecycle.on_review_result(
-                                    lifecycle_ctx,
-                                    synthetic,
-                                    new_offset,
-                                    no_progress=True,
-                                )
-                                final_result = lifecycle_ctx.final_result
-                                break
-
-                        if self.event_sink is not None:
-                            self.event_sink.on_review_started(
-                                input.issue_id,
-                                lifecycle_ctx.retry_state.review_attempt,
-                                self.config.max_review_retries,
-                                issue_id=input.issue_id,
-                            )
-
-                        if self.callbacks.on_review_check is None:
-                            raise ValueError("on_review_check callback must be set")
-
-                        logger.debug(
-                            "Session %s: starting review (attempt %d/%d, session_id=%s)",
-                            input.issue_id,
-                            lifecycle_ctx.retry_state.review_attempt,
-                            self.config.max_review_retries,
-                            lifecycle_ctx.session_id[:8]
-                            if lifecycle_ctx.session_id
-                            else None,
+                        assert log_path is not None
+                        (
+                            retry_query,
+                            should_break,
+                            review_log,
+                        ) = await self._handle_review_effect(
+                            input, log_path, session_id, lifecycle, lifecycle_ctx
                         )
-                        review_start = time.time()
-                        review_result = await self.callbacks.on_review_check(
-                            input.issue_id,
-                            input.issue_description,
-                            input.baseline_commit,
-                            lifecycle_ctx.session_id,
-                            lifecycle_ctx.retry_state,
-                        )
-                        review_duration = time.time() - review_start
-                        issue_count = (
-                            len(review_result.issues) if review_result.issues else 0
-                        )
-                        blocking = (
-                            sum(
-                                1
-                                for i in review_result.issues
-                                if i.priority is not None and i.priority <= 1
-                            )
-                            if review_result.issues
-                            else 0
-                        )
-                        logger.debug(
-                            "Session %s: review completed in %.1fs "
-                            "(passed=%s, issues=%d, blocking=%d, parse_error=%s)",
-                            input.issue_id,
-                            review_duration,
-                            review_result.passed,
-                            issue_count,
-                            blocking,
-                            review_result.parse_error,
-                        )
-
-                        # Check for fatal error
-                        if review_result.fatal_error:
-                            if self.callbacks.on_abort is not None:
-                                self.callbacks.on_abort(
-                                    review_result.parse_error
-                                    or "Unrecoverable review error"
-                                )
-
-                        # Capture Cerberus review log if available
-                        log_attr = getattr(review_result, "review_log_path", None)
-                        if log_attr is not None:
-                            cerberus_review_log_path = str(log_attr)
-
-                        # Get new log offset
-                        new_offset = (
-                            self.callbacks.get_log_offset(
-                                log_path,  # type: ignore[arg-type]
-                                lifecycle_ctx.retry_state.log_offset,
-                            )
-                            if self.callbacks.get_log_offset
-                            else 0
-                        )
-
-                        result = lifecycle.on_review_result(
-                            lifecycle_ctx, review_result, new_offset
-                        )
-
-                        if result.effect == Effect.COMPLETE_SUCCESS:
-                            if self.event_sink is not None:
-                                self.event_sink.on_review_passed(
-                                    input.issue_id,
-                                    issue_id=input.issue_id,
-                                )
+                        if review_log is not None:
+                            cerberus_review_log_path = review_log
+                        if should_break:
                             final_result = lifecycle_ctx.final_result
                             break
-
-                        if result.effect == Effect.COMPLETE_FAILURE:
-                            final_result = lifecycle_ctx.final_result
-                            break
-
-                        # parse_error retry: lifecycle returns RUN_REVIEW to re-run
-                        # review without prompting agent (no code changes needed)
-                        if result.effect == Effect.RUN_REVIEW:
-                            if self.event_sink is not None:
-                                self.event_sink.on_warning(
-                                    f"Review tool error: {review_result.parse_error}; retrying",
-                                    agent_id=input.issue_id,
-                                )
-                            continue
-
-                        if result.effect == Effect.SEND_REVIEW_RETRY:
-                            # Log review retry trigger
-                            blocking_count = (
-                                sum(
-                                    1
-                                    for i in review_result.issues
-                                    if i.priority is not None and i.priority <= 1
-                                )
-                                if review_result.issues
-                                else 0
-                            )
-                            logger.debug(
-                                "Session %s: SEND_REVIEW_RETRY triggered "
-                                "(attempt %d/%d, %d blocking issues)",
-                                input.issue_id,
-                                lifecycle_ctx.retry_state.review_attempt,
-                                self.config.max_review_retries,
-                                blocking_count,
-                            )
-
-                            # Emit review retry event
-                            if self.event_sink is not None:
-                                self.event_sink.on_review_retry(
-                                    input.issue_id,
-                                    lifecycle_ctx.retry_state.review_attempt,
-                                    self.config.max_review_retries,
-                                    error_count=blocking_count or None,
-                                    parse_error=review_result.parse_error,
-                                    issue_id=input.issue_id,
-                                )
-
-                            # Build follow-up prompt for legitimate review issues
-                            from src.infra.clients.cerberus_review import format_review_issues
-
-                            review_issues_text = format_review_issues(
-                                review_result.issues,  # type: ignore[arg-type]
-                                base_path=self.config.repo_path,
-                            )
-                            pending_query = _get_review_followup_prompt().format(
-                                attempt=lifecycle_ctx.retry_state.review_attempt,
-                                max_attempts=self.config.max_review_retries,
-                                review_issues=review_issues_text,
-                                issue_id=input.issue_id,
-                            )
-                            # session_id must be set for review retries - fail fast if
-                            # SDK didn't provide one
+                        if retry_query is not None:
+                            pending_query = retry_query
+                            # session_id must be set for review retries
                             if session_id is None:
                                 raise IdleTimeoutError(
                                     "Cannot retry review: session_id not received from SDK"
@@ -1209,7 +1333,7 @@ class AgentSessionRunner:
                                 session_id[:8],
                             )
                             idle_retry_count = 0
-                            continue
+                        continue
 
         except IdleTimeoutError as e:
             lifecycle.on_error(lifecycle_ctx, e)
