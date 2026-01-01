@@ -635,17 +635,26 @@ class MalaEventSink(Protocol):
         ...
 
 
-class NullEventSink:
-    """No-op event sink for testing.
+class BaseEventSink:
+    """Base event sink with no-op implementations of all protocol methods.
 
-    All methods are implemented as no-ops, allowing tests to run the
-    orchestrator without producing console output or other side effects.
+    Provides default no-op implementations for all MalaEventSink protocol
+    methods. Subclasses can override only the methods they need to handle.
+
+    This eliminates the need to implement all 46 methods when creating a
+    new event sink - just inherit from BaseEventSink and override what
+    you need.
 
     Example:
-        sink = NullEventSink()
-        orchestrator = MalaOrchestrator(..., event_sink=sink)
-        await orchestrator.run()  # No console output
+        class MyEventSink(BaseEventSink):
+            def on_agent_started(self, agent_id: str, issue_id: str) -> None:
+                print(f"Agent {agent_id} started on {issue_id}")
+            # All other methods are no-ops by default
     """
+
+    # -------------------------------------------------------------------------
+    # Run lifecycle
+    # -------------------------------------------------------------------------
 
     def on_run_started(self, config: EventRunConfig) -> None:
         pass
@@ -668,6 +677,10 @@ class NullEventSink:
     def on_no_more_issues(self, reason: str) -> None:
         pass
 
+    # -------------------------------------------------------------------------
+    # Agent lifecycle
+    # -------------------------------------------------------------------------
+
     def on_agent_started(self, agent_id: str, issue_id: str) -> None:
         pass
 
@@ -684,6 +697,10 @@ class NullEventSink:
     def on_claim_failed(self, agent_id: str, issue_id: str) -> None:
         pass
 
+    # -------------------------------------------------------------------------
+    # SDK message streaming
+    # -------------------------------------------------------------------------
+
     def on_tool_use(
         self,
         agent_id: str,
@@ -695,6 +712,10 @@ class NullEventSink:
 
     def on_agent_text(self, agent_id: str, text: str) -> None:
         pass
+
+    # -------------------------------------------------------------------------
+    # Quality gate events
+    # -------------------------------------------------------------------------
 
     def on_gate_started(
         self,
@@ -739,6 +760,10 @@ class NullEventSink:
     ) -> None:
         pass
 
+    # -------------------------------------------------------------------------
+    # Codex review events
+    # -------------------------------------------------------------------------
+
     def on_review_started(
         self,
         agent_id: str,
@@ -766,6 +791,10 @@ class NullEventSink:
     ) -> None:
         pass
 
+    # -------------------------------------------------------------------------
+    # Fixer agent events
+    # -------------------------------------------------------------------------
+
     def on_fixer_started(
         self,
         attempt: int,
@@ -778,6 +807,10 @@ class NullEventSink:
 
     def on_fixer_failed(self, reason: str) -> None:
         pass
+
+    # -------------------------------------------------------------------------
+    # Issue lifecycle
+    # -------------------------------------------------------------------------
 
     def on_issue_closed(self, agent_id: str, issue_id: str) -> None:
         pass
@@ -810,6 +843,10 @@ class NullEventSink:
     ) -> None:
         pass
 
+    # -------------------------------------------------------------------------
+    # Warnings and diagnostics
+    # -------------------------------------------------------------------------
+
     def on_warning(self, message: str, agent_id: str | None = None) -> None:
         pass
 
@@ -837,7 +874,10 @@ class NullEventSink:
     def on_tasks_aborting(self, count: int, reason: str) -> None:
         pass
 
+    # -------------------------------------------------------------------------
     # Epic verification lifecycle
+    # -------------------------------------------------------------------------
+
     def on_epic_verification_started(self, epic_id: str) -> None:
         pass
 
@@ -868,7 +908,10 @@ class NullEventSink:
     ) -> None:
         pass
 
+    # -------------------------------------------------------------------------
     # Pipeline module events
+    # -------------------------------------------------------------------------
+
     def on_lifecycle_state(self, agent_id: str, state: str) -> None:
         pass
 
@@ -893,7 +936,23 @@ class NullEventSink:
         pass
 
 
-class ConsoleEventSink:
+class NullEventSink(BaseEventSink):
+    """No-op event sink for testing.
+
+    Inherits all no-op implementations from BaseEventSink. This class exists
+    for backward compatibility and semantic clarity - use NullEventSink when
+    you explicitly want no side effects (e.g., in tests).
+
+    Example:
+        sink = NullEventSink()
+        orchestrator = MalaOrchestrator(..., event_sink=sink)
+        await orchestrator.run()  # No console output
+    """
+
+    pass
+
+
+class ConsoleEventSink(BaseEventSink):
     """Event sink that outputs to the console using existing log helpers.
 
     Implements all MalaEventSink methods, delegating to log(), log_tool(),
@@ -1509,5 +1568,7 @@ class ConsoleEventSink:
         log_tool(tool_name, agent_id=f"fixer-{attempt}", arguments=arguments)
 
 
-# Verify ConsoleEventSink implements MalaEventSink at import time
+# Verify all event sinks implement MalaEventSink at import time
+assert isinstance(BaseEventSink(), MalaEventSink)
+assert isinstance(NullEventSink(), MalaEventSink)
 assert isinstance(ConsoleEventSink(), MalaEventSink)

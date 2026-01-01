@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from src.infra.io.event_sink import (
     MalaEventSink,
+    BaseEventSink,
     NullEventSink,
     EventRunConfig,
     ConsoleEventSink,
@@ -81,6 +82,165 @@ class TestEventRunConfig:
         assert config.max_issues is None
 
 
+class TestBaseEventSink:
+    """Tests for BaseEventSink implementation."""
+
+    def test_implements_protocol(self) -> None:
+        """BaseEventSink implements MalaEventSink protocol."""
+        sink = BaseEventSink()
+        # Protocol structural subtyping - if it quacks like a duck...
+        # This verifies all required methods exist with compatible signatures
+        assert isinstance(sink, MalaEventSink)
+
+    def test_protocol_coverage(self) -> None:
+        """Verify all protocol methods are implemented in BaseEventSink.
+
+        This test ensures protocol and implementation stay in sync.
+        """
+        # Get all public methods from the protocol (excluding dunder methods)
+        protocol_methods = {
+            name
+            for name in dir(MalaEventSink)
+            if not name.startswith("_") and callable(getattr(MalaEventSink, name, None))
+        }
+
+        # Get all public methods from BaseEventSink
+        sink_methods = {
+            name
+            for name in dir(BaseEventSink)
+            if not name.startswith("_") and callable(getattr(BaseEventSink, name, None))
+        }
+
+        # All protocol methods should be in the sink
+        missing = protocol_methods - sink_methods
+        assert not missing, f"BaseEventSink missing protocol methods: {missing}"
+
+    def test_all_methods_are_no_ops(self) -> None:
+        """All BaseEventSink methods execute without side effects."""
+        sink = BaseEventSink()
+        config = EventRunConfig(
+            repo_path="/tmp/repo",
+            max_agents=2,
+            timeout_minutes=30,
+            max_issues=10,
+            max_gate_retries=3,
+            max_review_retries=2,
+        )
+
+        # Run lifecycle - all should return None (no side effects)
+        assert sink.on_run_started(config) is None
+        assert sink.on_run_completed(5, 10, True) is None
+        assert sink.on_ready_issues(["issue-1", "issue-2"]) is None
+        assert sink.on_waiting_for_agents(3) is None
+        assert sink.on_no_more_issues("none_ready") is None
+
+        # Agent lifecycle
+        assert sink.on_agent_started("agent-1", "issue-1") is None
+        assert sink.on_agent_completed("agent-1", "issue-1", True, 60.0, "Done") is None
+        assert sink.on_claim_failed("agent-1", "issue-1") is None
+
+        # SDK message streaming
+        assert (
+            sink.on_tool_use("agent-1", "Read", "file.py", {"path": "file.py"}) is None
+        )
+        assert sink.on_agent_text("agent-1", "Working on it...") is None
+
+        # Quality gate events
+        assert sink.on_gate_started("agent-1", 1, 3) is None
+        assert sink.on_gate_started(None, 1, 3) is None  # run-level
+        assert sink.on_gate_passed("agent-1") is None
+        assert sink.on_gate_passed(None) is None  # run-level
+        assert sink.on_gate_failed("agent-1", 3, 3) is None
+        assert sink.on_gate_retry("agent-1", 2, 3) is None
+        assert sink.on_gate_result("agent-1", True) is None
+        assert (
+            sink.on_gate_result("agent-1", False, ["lint failed", "tests failed"])
+            is None
+        )
+        assert sink.on_gate_result(None, True) is None  # run-level
+
+        # Codex review events
+        assert sink.on_review_started("agent-1", 1, 2) is None
+        assert sink.on_review_passed("agent-1") is None
+        assert sink.on_review_retry("agent-1", 2, 2, error_count=5) is None
+        assert sink.on_review_retry("agent-1", 2, 2, parse_error="Invalid JSON") is None
+
+        # Fixer agent events
+        assert sink.on_fixer_started(1, 3) is None
+        assert sink.on_fixer_completed("Fixed lint errors") is None
+        assert sink.on_fixer_failed("timeout") is None
+
+        # Issue lifecycle
+        assert sink.on_issue_closed("agent-1", "issue-1") is None
+        assert (
+            sink.on_issue_completed("agent-1", "issue-1", True, 120.5, "Done") is None
+        )
+        assert (
+            sink.on_issue_completed("agent-1", "issue-2", False, 60.0, "Failed") is None
+        )
+        assert sink.on_epic_closed("agent-1") is None
+        assert sink.on_validation_started("agent-1") is None
+        assert sink.on_validation_result("agent-1", True) is None
+
+        # Warnings and diagnostics
+        assert sink.on_warning("Something went wrong") is None
+        assert sink.on_warning("Agent issue", agent_id="agent-1") is None
+        assert sink.on_log_timeout("agent-1", "/tmp/log.jsonl") is None
+        assert sink.on_locks_cleaned("agent-1", 3) is None
+        assert sink.on_locks_released(5) is None
+        assert sink.on_issues_committed() is None
+        assert sink.on_run_metadata_saved("/tmp/run.json") is None
+        assert sink.on_run_level_validation_disabled() is None
+        assert sink.on_abort_requested("Fatal error occurred") is None
+        assert sink.on_tasks_aborting(3, "Unrecoverable error") is None
+
+        # Epic verification lifecycle
+        assert sink.on_epic_verification_started("epic-1") is None
+        assert sink.on_epic_verification_passed("epic-1", 0.95) is None
+        assert (
+            sink.on_epic_verification_failed("epic-1", 2, ["issue-1", "issue-2"])
+            is None
+        )
+        assert (
+            sink.on_epic_verification_human_review(
+                "epic-1", "Low confidence", "issue-3"
+            )
+            is None
+        )
+        assert (
+            sink.on_epic_remediation_created("epic-1", "issue-4", "Criterion text here")
+            is None
+        )
+
+    def test_can_be_subclassed_for_selective_override(self) -> None:
+        """BaseEventSink can be subclassed with selective method overrides."""
+
+        class CustomSink(BaseEventSink):
+            """Custom sink that only tracks agent starts."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.started_agents: list[str] = []
+
+            def on_agent_started(self, agent_id: str, issue_id: str) -> None:
+                self.started_agents.append(agent_id)
+
+        sink = CustomSink()
+
+        # Custom method tracks calls
+        sink.on_agent_started("agent-1", "issue-1")
+        sink.on_agent_started("agent-2", "issue-2")
+        assert sink.started_agents == ["agent-1", "agent-2"]
+
+        # Other methods are still no-ops
+        sink.on_agent_completed("agent-1", "issue-1", True, 60.0, "Done")
+        sink.on_gate_passed("agent-1")
+        # No error raised, no side effects
+
+        # Subclass still implements protocol
+        assert isinstance(sink, MalaEventSink)
+
+
 class TestNullEventSink:
     """Tests for NullEventSink implementation."""
 
@@ -90,6 +250,11 @@ class TestNullEventSink:
         # Protocol structural subtyping - if it quacks like a duck...
         # This verifies all required methods exist with compatible signatures
         assert isinstance(sink, MalaEventSink)
+
+    def test_inherits_from_base_event_sink(self) -> None:
+        """NullEventSink inherits from BaseEventSink."""
+        sink = NullEventSink()
+        assert isinstance(sink, BaseEventSink)
 
     def test_all_methods_are_no_ops(self) -> None:
         """All NullEventSink methods execute without side effects."""
@@ -283,6 +448,11 @@ class TestConsoleEventSink:
         sink = ConsoleEventSink()
         # Protocol structural subtyping
         assert isinstance(sink, MalaEventSink)
+
+    def test_inherits_from_base_event_sink(self) -> None:
+        """ConsoleEventSink inherits from BaseEventSink."""
+        sink = ConsoleEventSink()
+        assert isinstance(sink, BaseEventSink)
 
     def test_protocol_coverage(self) -> None:
         """Verify all protocol methods are implemented in ConsoleEventSink."""
