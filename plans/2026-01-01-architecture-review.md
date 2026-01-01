@@ -6,9 +6,11 @@
 
 ## Method
 
+> **Note**: File paths updated to reflect post-iy6l structure (mala-iy6l must complete first).
+
 - **Tools run**: lizard (complexity analysis), grimp (import graph analysis)
-- **Entry points reviewed**: `src/main.py`, `src/cli.py`, `src/orchestrator.py`
-- **Key files scanned**: `src/orchestrator.py` (1564 LOC), `src/infra/io/event_sink.py` (1396 LOC), `src/infra/epic_verifier.py` (1247 LOC), `src/pipeline/agent_session_runner.py` (1055 LOC), `src/cli.py` (922 LOC)
+- **Entry points reviewed**: `src/cli/main.py`, `src/cli/cli.py`, `src/orchestration/orchestrator.py`
+- **Key files scanned**: `src/orchestration/orchestrator.py` (1564 LOC), `src/infra/io/event_sink.py` (1396 LOC), `src/infra/epic_verifier.py` (1247 LOC), `src/pipeline/agent_session_runner.py` (1055 LOC), `src/cli/cli.py` (922 LOC)
 - **Hotspot inventory**:
   - `run_session` (CCN 84, 501 NLOC) - extreme complexity
   - `_run_refresh` in coverage.py (CCN 54, 173 NLOC)
@@ -24,12 +26,12 @@
 
 | # | Priority | Issue | Primary File | Key Metric |
 |---|----------|-------|--------------|------------|
-| 1 | High | `run_session` monolithic method | `agent_session_runner.py:380-1055` | CCN 84, 675 lines |
-| 2 | High | `MalaOrchestrator` mixed concerns | `orchestrator.py` | 1564 LOC, 31 imports |
+| 1 | High | `run_session` monolithic method | `pipeline/agent_session_runner.py:380-1055` | CCN 84, 675 lines |
+| 2 | High | `MalaOrchestrator` mixed concerns | `orchestration/orchestrator.py` | 1564 LOC, 31 imports |
 | 3 | High | EventSink duplication | `infra/io/event_sink.py` | ~45 methods duplicated |
 | 4 | Medium | EpicVerifier duplicated flow | `infra/epic_verifier.py` | 2 methods with near-identical logic |
-| 5 | Medium | CLI run command complexity | `cli.py:241-572` | CCN 28, 281 NLOC |
-| 6 | Medium | `_run_refresh` complexity | `validation/coverage.py` | CCN 54, 173 NLOC |
+| 5 | Medium | CLI run command complexity | `cli/cli.py:241-572` | CCN 28, 281 NLOC |
+| 6 | Medium | `_run_refresh` complexity | `domain/validation/coverage.py` | CCN 54, 173 NLOC |
 | 7 | Low | Protocol definitions scattered | Multiple files | 5+ locations |
 | 8 | Low | Prompt loading inconsistency | Multiple files | Mixed caching patterns |
 
@@ -72,7 +74,7 @@
 
 ### [High] MalaOrchestrator mixes configuration, wiring, and runtime orchestration
 
-**Primary files**: `src/orchestrator.py:301-755` (initialization), `src/orchestrator.py:1351-1449` (main loop)
+**Primary files**: `src/orchestration/orchestrator.py:301-755` (initialization), `src/orchestration/orchestrator.py:1351-1449` (main loop)
 **Category**: Cohesion | Boundaries
 **Type**: task
 **Confidence**: High
@@ -166,7 +168,7 @@
 
 ### [Medium] CLI run command embeds configuration parsing logic
 
-**Primary files**: `src/cli.py:241-572`
+**Primary files**: `src/cli/cli.py:241-572`
 **Category**: Cohesion | Testability
 **Type**: task
 **Confidence**: Medium
@@ -196,7 +198,7 @@ The `run` command function (281 NLOC, CCN 28) mixes Typer parameter handling wit
 
 ### [Medium] validation/coverage.py _run_refresh is a 233-line function
 
-**Primary files**: `src/validation/coverage.py:461-694`
+**Primary files**: `src/domain/validation/coverage.py:461-694`
 **Category**: Complexity
 **Type**: task
 **Confidence**: High
@@ -256,13 +258,13 @@ Protocol definitions are spread across multiple modules: `src/core/protocols.py`
 
 ### [Low] Prompt template loading patterns differ across modules
 
-**Primary files**: `src/orchestrator.py:121-136`, `src/pipeline/agent_session_runner.py:73-82`, `src/infra/epic_verifier.py:86-93`
+**Primary files**: `src/orchestration/orchestrator.py:121-136`, `src/pipeline/agent_session_runner.py:73-82`, `src/infra/epic_verifier.py:86-93`
 **Category**: Duplication
 **Type**: chore
 **Confidence**: Medium
 **Source**: synthesis
 **Context**:
-Multiple modules have prompt loading functions that follow similar patterns. In `orchestrator.py` and `agent_session_runner.py`, these use `@functools.cache` decorators (`_get_implementer_prompt()`, `_get_review_followup_prompt()`, `_get_idle_resume_prompt()`). However, `_load_prompt_template()` in `src/infra/epic_verifier.py:86` does NOT use caching - it reads the file on every call and also does template escaping inline.
+Multiple modules have prompt loading functions that follow similar patterns. In `orchestration/orchestrator.py` and `pipeline/agent_session_runner.py`, these use `@functools.cache` decorators (`_get_implementer_prompt()`, `_get_review_followup_prompt()`, `_get_idle_resume_prompt()`). However, `_load_prompt_template()` in `src/infra/epic_verifier.py:86` does NOT use caching - it reads the file on every call and also does template escaping inline.
 
 **Fix**:
 1. Create a `src/prompts/__init__.py` with a generic `load_prompt(name: str) -> str` function using `@cache`

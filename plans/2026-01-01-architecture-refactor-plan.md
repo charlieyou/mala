@@ -30,7 +30,7 @@
 
 ### Implementation Constraints
 - Extend existing modules; do not add new services
-- Remove legacy init path in `src/orchestrator.py` without adding backward-compatibility shims
+- Remove legacy init path in `src/orchestration/orchestrator.py` without adding backward-compatibility shims
 - Follow existing patterns: `SessionCallbacks`, protocol-based DI, dataclass I/O
 - Helper extraction pattern: follow existing `_build_hooks()`, `_build_agent_env()` style
 

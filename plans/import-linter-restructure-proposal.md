@@ -1,7 +1,9 @@
 # Import Linter Restructure Proposal
 
 **Date**: 2024-12-31
-**Status**: Proposal (Revision 3)
+**Status**: Proposal (Revision 4 - No Shims)
+
+> **Revision 4 Update**: This revision removes all shim/re-export references. All migrations use direct import updates per CLAUDE.md rules: "No backward-compatibility shims" and "No re-exports".
 
 ---
 
@@ -44,8 +46,8 @@ src/
 
 ### In Scope
 
-- Phase 1: Generator script for current contract configuration
-- Phase 2: Gradual package migration with compatibility shims
+- ~~Phase 1: Generator script~~ (Cancelled - manual updates sufficient)
+- Phase 2: Gradual package migration with direct import updates (no shims)
 - Phase 3: Simplified layer-based contracts
 
 ### Non-Goals
@@ -61,13 +63,13 @@ src/
 ### Assumptions
 
 1. All existing imports are valid and pass current contracts
-2. External tools (IDEs, CI) can handle Python package re-exports
+2. External tools (IDEs, CI) handle import path changes correctly
 3. The team prefers incremental migration over big-bang rewrites
 
 ### Constraints
 
 1. Each phase must be independently deployable
-2. Compatibility shims must be maintained for a defined period (2 weeks minimum)
+2. **No shims or re-exports**: All imports must be updated directly when modules move
 3. No changes to public module interfaces
 
 ---
@@ -236,36 +238,19 @@ If Phase 1 causes issues:
 
 ### Phase 2: Gradual Package Migration
 
-**Goal**: Reorganize flat modules into layer-based packages while maintaining backward compatibility.
+**Goal**: Reorganize flat modules into layer-based packages with direct import updates.
 
-**Dependencies**: Phase 1 should be complete (generator can update contracts for new paths)
+**Dependencies**: None (Phase 1 cancelled)
 
-#### Important: Package Shimming Strategy
+#### Important: Direct Import Update Strategy
 
-Moving packages (directories with `__init__.py`) requires special handling to support sub-module imports.
+**No shims or re-exports.** When moving modules:
+1. Move the file to the new location
+2. Update ALL imports across the codebase to use the new path
+3. Delete the old file/directory entirely
+4. Update import-linter contracts
 
-**For module shims** (single .py files):
-```python
-# src/models.py (shim for moved module)
-from src.core.models import Model1, Model2, ValidationResult  # Explicit re-exports
-# OR if many exports:
-from src.core.models import *  # noqa: F401,F403
-__all__ = ["Model1", "Model2", "ValidationResult"]  # Make exports explicit
-```
-
-**For package shims** (directories):
-```python
-# src/tools/__init__.py (shim for moved package)
-import sys
-from src.infra.tools import *  # noqa: F401,F403
-
-# Enable sub-module imports: from src.tools.locking import ...
-# by redirecting the package path
-from src.infra import tools as _new_tools
-sys.modules[__name__].__path__ = _new_tools.__path__  # type: ignore[attr-defined]
-```
-
-This ensures `from src.tools.locking import FileLock` continues to work.
+This is a pure refactor - each migration PR updates all imports atomically.
 
 #### Task 2a: Create `src/core/` Package
 
@@ -274,9 +259,9 @@ This ensures `from src.tools.locking import FileLock` continues to work.
 2. Move `src/models.py` → `src/core/models.py`
 3. Move `src/protocols.py` → `src/core/protocols.py`
 4. Move `src/log_events.py` → `src/core/log_events.py`
-5. Create shims at old paths with explicit re-exports
-6. Update generator script to handle both paths
-7. Update contracts to include new paths
+5. Update all imports across codebase (use grep/sed or IDE refactor)
+6. Delete old files at root level
+7. Update contracts to use new paths
 
 **Verification**:
 ```bash
@@ -289,10 +274,7 @@ uv run mala --help
 ```
 
 **Rollback**:
-1. Revert file moves (git revert or manual)
-2. Delete `src/core/` directory
-3. Delete shim files
-4. Regenerate contracts with original paths
+1. Revert commit (git revert)
 
 #### Task 2b: Create `src/infra/` Package
 
@@ -318,12 +300,12 @@ uv run mala --help
    ├── epic_verifier.py
    └── issue_manager.py
    ```
-2. Move existing packages with package shims:
-   - `src/tools/` → `src/infra/tools/` (with package shim)
-   - `src/log_output/` → `src/infra/io/log_output/` (with package shim)
-   - `src/hooks/` → `src/infra/hooks/` (with package shim)
-3. Move standalone modules with module shims
-4. Update generator script and contracts
+2. Move existing packages (update all imports, delete old directories):
+   - `src/tools/` → `src/infra/tools/`
+   - `src/log_output/` → `src/infra/io/log_output/`
+   - `src/hooks/` → `src/infra/hooks/`
+3. Move standalone modules (update all imports, delete old files)
+4. Update contracts
 
 **Verification**: Same as 2a
 
@@ -340,10 +322,10 @@ uv run mala --help
    ├── quality_gate.py
    └── prompts.py
    ```
-2. Move `src/validation/` → `src/domain/validation/` (with package shim)
-3. Move `src/prompts.py` → `src/domain/prompts.py` (with module shim - note: prompts is a single file, not a package)
-4. Move standalone modules with module shims
-5. Update generator script and contracts
+2. Move `src/validation/` → `src/domain/validation/` (update all imports, delete old directory)
+3. Move `src/prompts.py` → `src/domain/prompts.py` (update all imports, delete old file)
+4. Move standalone modules (update all imports, delete old files)
+5. Update contracts
 
 **Verification**: Same as 2a
 
@@ -361,8 +343,9 @@ uv run mala --help
    ├── types.py        # from orchestrator_types.py
    └── cli_support.py
    ```
-2. Create module shims at old paths
-3. Update generator script and contracts
+2. Update all imports across codebase
+3. Delete old files at root level
+4. Update contracts
 
 **Verification**: Same as 2a
 
@@ -378,28 +361,13 @@ uv run mala --help
    ├── main.py
    └── cli.py
    ```
-2. Create module shims at old paths
-3. Update generator script and contracts
+2. Update all imports across codebase
+3. Delete old files at root level
+4. Update contracts
 
 **Verification**: Same as 2a
 
 **Rollback**: Same pattern as 2a
-
-#### Shim Compatibility Window
-
-- **Duration**: Shims remain for minimum 2 weeks after Phase 2 completion
-- **Deprecation warnings**: Add `warnings.warn()` to shims after 1 week:
-  ```python
-  import warnings
-  warnings.warn(
-      "Importing from src.models is deprecated. Use src.core.models instead.",
-      DeprecationWarning,
-      stacklevel=2,
-  )
-  from src.core.models import *  # noqa: F401,F403
-  ```
-- **Removal criteria**: All internal imports migrated, no external consumers
-- **Exit signal**: CI check that old import paths are unused (grep for old paths)
 
 ---
 
@@ -407,7 +375,7 @@ uv run mala --help
 
 **Goal**: Replace 15 complex contracts with 10 cleaner contracts (1 layers + 9 forbidden/independence).
 
-**Dependencies**: Phase 2 fully complete, all shims in place, all tests passing
+**Dependencies**: Phase 2 fully complete, all tests passing
 
 #### Preserved Constraints
 
@@ -589,22 +557,20 @@ Based on team decision:
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|------------|--------|------------|
-| Circular imports from shims | Medium | High | Test each shim immediately after creation |
-| IDE confusion with dual paths | Low | Low | VSCode/PyCharm handle re-exports well |
-| External tools break | Low | Medium | Shims maintain backward compatibility |
+| Missed import updates | Medium | High | Use grep/IDE refactor to find all occurrences before deleting old paths |
+| Circular imports introduced | Low | High | import-linter catches these |
 | Missed special constraints in Phase 3 | Medium | Medium | Explicit constraint mapping table above |
 
 ### Edge Cases
 
-1. **Dynamic imports**: `importlib.import_module("src.models")` will still work via shims
-2. **Type-checking imports**: `if TYPE_CHECKING:` blocks may need updates for new paths
-3. **`__all__` in packages**: Ensure re-exported names are in shim `__all__`
+1. **Dynamic imports**: `importlib.import_module("src.models")` must be updated to new paths
+2. **Type-checking imports**: `if TYPE_CHECKING:` blocks must be updated for new paths
+3. **String-based imports**: Search for quoted module paths in config files, tests
 
 ### Breaking Changes
 
-- **None during Phases 1-2**: Shims maintain full backward compatibility
-- **Phase 3 shim removal**: Breaking change for any code using old import paths
-  - Mitigated by deprecation warnings and compatibility window
+- **Each phase is a breaking change** for any code using old import paths
+- Mitigated by updating all imports atomically in the same PR
 
 ---
 
@@ -627,9 +593,9 @@ uv run mala --help                      # CLI smoke test
 
 | Area | Risk | Test Coverage |
 |------|------|---------------|
-| Package shims (src.tools, src.hooks, src.validation) | High - sub-module imports | Add tests: `from src.tools.locking import FileLock` |
+| Moved packages (src.infra.tools, src.infra.hooks, src.domain.validation) | Medium | Existing tests use new import paths |
 | Circular import detection | Medium | import-linter catches these |
-| Generator contract equivalence | Medium | Diff before/after in CI |
+| Dynamic/string imports | Medium | Grep for old paths before each migration |
 
 ### End-to-End Validation
 
@@ -655,11 +621,8 @@ uv run pytest -m "unit or integration"  # Verify tests pass
 
 If issues discovered post-merge:
 
-1. **Phase 1**: Delete generator script and CI job - contracts unchanged
-2. **Phase 2**:
-   - Keep shims indefinitely OR
-   - Revert file moves and delete new packages
-   - Regenerate contracts with original paths
+1. **Phase 1**: ~~Delete generator script and CI job~~ (cancelled)
+2. **Phase 2**: Revert the migration commit(s) - all imports restored atomically
 3. **Phase 3**: Restore original 15 contracts from git history
 
 ### Rollback Timeline
@@ -672,8 +635,8 @@ If issues discovered post-merge:
 
 ## Open Questions
 
-1. **CI vs pre-commit for generator**: Team preference? CI validation recommended for visibility.
-2. **Shim duration**: 2 weeks sufficient? Any external consumers to coordinate with?
+1. ~~**CI vs pre-commit for generator**~~: Phase 1 cancelled
+2. ~~**Shim duration**~~: No shims - direct import updates only
 3. **Phase 3 timing**: Proceed immediately after Phase 2, or wait for stabilization period?
 
 ---
@@ -682,8 +645,8 @@ If issues discovered post-merge:
 
 | Phase | Scope | Dependencies |
 |-------|-------|--------------|
-| 1 | Generator script + CI integration | None |
-| 2a | Create `src/core/` | Phase 1 |
+| ~~1~~ | ~~Generator script + CI integration~~ | Cancelled |
+| 2a | Create `src/core/` | None |
 | 2b | Create `src/infra/` | Phase 2a |
 | 2c | Create `src/domain/` | Phase 2b |
 | 2d | Create `src/orchestration/` | Phase 2c |
@@ -696,10 +659,10 @@ Phases can be done as independent PRs. Each PR must pass all verification steps 
 
 ## Decision
 
-- [ ] Proceed with Phase 1 (generator script)
-- [ ] Proceed with Phase 2a (src/core/)
+- [x] ~~Proceed with Phase 1 (generator script)~~ Cancelled
+- [x] Proceed with Phase 2a-2e (package migrations with direct import updates)
+- [ ] Proceed with Phase 3 (simplified contracts)
 - [ ] Defer restructuring
-- [ ] Alternative approach: _______________
 
 ---
 
