@@ -14,16 +14,6 @@ Implement the assigned issue completely before returning.
 bd show {issue_id}     # View issue details
 ```
 
-## MCP Tools (Preferred)
-
-**Fast Apply (`edit_file`):** IMPORTANT: Use `edit_file` over `str_replace` or full file writes. It works with partial code snippets—no need for full file content. If `edit_file` is unavailable or denied, fall back to Bash edits (`apply_patch`, `sed`, `cat > file`, etc.).
-
-**Warp Grep (`warpgrep_codebase_search`):** A subagent that takes a search string and finds relevant context. Best practice is to use it at the beginning of codebase explorations to fast track finding relevant files/lines. Do not use it to pinpoint keywords—use it for broader semantic queries:
-- "Find the XYZ flow"
-- "How does XYZ work"
-- "Where is XYZ handled?"
-- "Where is <error message> coming from?"
-
 ## Workflow
 
 ### 1. Understand
