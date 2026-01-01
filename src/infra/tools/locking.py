@@ -373,7 +373,10 @@ def _cli_main() -> int:
         2: Usage error (missing env vars, invalid arguments)
     """
     if len(sys.argv) < 2:
-        print("Usage: python -m src.infra.tools.locking <command> [args...]", file=sys.stderr)
+        print(
+            "Usage: python -m src.infra.tools.locking <command> [args...]",
+            file=sys.stderr,
+        )
         print(
             "Commands: try, wait, check, holder, release, release-all", file=sys.stderr
         )
@@ -401,7 +404,10 @@ def _cli_main() -> int:
 
     if command == "try":
         if len(sys.argv) != 3:
-            print("Usage: python -m src.infra.tools.locking try <filepath>", file=sys.stderr)
+            print(
+                "Usage: python -m src.infra.tools.locking try <filepath>",
+                file=sys.stderr,
+            )
             return 2
         filepath = sys.argv[2]
         if try_lock(filepath, agent_id, repo_namespace):  # type: ignore[arg-type]
@@ -425,7 +431,8 @@ def _cli_main() -> int:
     elif command == "check":
         if len(sys.argv) != 3:
             print(
-                "Usage: python -m src.infra.tools.locking check <filepath>", file=sys.stderr
+                "Usage: python -m src.infra.tools.locking check <filepath>",
+                file=sys.stderr,
             )
             return 2
         filepath = sys.argv[2]
@@ -437,7 +444,8 @@ def _cli_main() -> int:
     elif command == "holder":
         if len(sys.argv) != 3:
             print(
-                "Usage: python -m src.infra.tools.locking holder <filepath>", file=sys.stderr
+                "Usage: python -m src.infra.tools.locking holder <filepath>",
+                file=sys.stderr,
             )
             return 2
         filepath = sys.argv[2]
@@ -449,7 +457,8 @@ def _cli_main() -> int:
     elif command == "release":
         if len(sys.argv) != 3:
             print(
-                "Usage: python -m src.infra.tools.locking release <filepath>", file=sys.stderr
+                "Usage: python -m src.infra.tools.locking release <filepath>",
+                file=sys.stderr,
             )
             return 2
         filepath = sys.argv[2]
@@ -462,7 +471,9 @@ def _cli_main() -> int:
 
     elif command == "release-all":
         if len(sys.argv) != 2:
-            print("Usage: python -m src.infra.tools.locking release-all", file=sys.stderr)
+            print(
+                "Usage: python -m src.infra.tools.locking release-all", file=sys.stderr
+            )
             return 2
         cleanup_agent_locks(agent_id)  # type: ignore[arg-type]
         return 0
