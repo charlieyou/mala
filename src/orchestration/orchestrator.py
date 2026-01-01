@@ -10,24 +10,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast, overload
 
-from src.core.models import RetryConfig
 from src.domain.quality_gate import QUALITY_GATE_IGNORED_COMMANDS, QualityGate
 from src.domain.validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
-from src.infra.clients.beads_client import BeadsClient
-from src.infra.clients.braintrust_integration import BraintrustProvider
-from src.infra.clients.cerberus_review import DefaultReviewer
-from src.infra.epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
 from src.infra.git_utils import (
     get_baseline_for_issue,
     get_git_branch_async,
     get_git_commit_async,
     get_issue_commits_async,
 )
-from src.infra.io.config import MalaConfig
-from src.infra.io.event_sink import ConsoleEventSink
+from src.infra.clients.cerberus_review import DefaultReviewer
 from src.infra.io.log_output.console import (
     is_verbose_enabled,
     truncate_text,
@@ -69,21 +63,20 @@ from src.pipeline.review_runner import (
     ReviewRunner,
     ReviewRunnerConfig,
 )
+from src.pipeline.issue_execution_coordinator import (
+    CoordinatorConfig,
+    IssueExecutionCoordinator,
+)
 from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
     RunLevelValidationInput,
 )
-from src.infra.io.session_log_parser import FileSystemLogProvider
-from src.infra.telemetry import NullTelemetryProvider
-
-from .types import DEFAULT_AGENT_TIMEOUT_MINUTES
 
 if TYPE_CHECKING:
     from src.core.models import IssueResolution
     from src.core.protocols import (
         CodeReviewer,
-        EpicVerificationModel,
         GateChecker,
         GateResultProtocol,
         IssueProvider,
@@ -96,6 +89,8 @@ if TYPE_CHECKING:
     from src.domain.quality_gate import GateResult
     from src.domain.validation.spec import ValidationSpec
     from src.infra.clients.cerberus_review import ReviewResult
+    from src.infra.epic_verifier import EpicVerifier
+    from src.infra.io.config import MalaConfig
     from src.infra.io.event_sink import EventRunConfig, MalaEventSink
     from src.infra.telemetry import TelemetryProvider
 
@@ -399,9 +394,8 @@ class MalaOrchestrator:
         _event_sink: MalaEventSink | None = None,
         _epic_verifier: EpicVerifier | None = None,
     ):
-        # Detect which initialization path to use
+        # Factory path: use pre-computed config and dependencies
         if _config is not None:
-            # Factory path: use pre-computed config and dependencies
             self._init_from_factory(
                 _config,
                 _mala_config,
@@ -414,35 +408,50 @@ class MalaOrchestrator:
                 _event_sink,
                 _epic_verifier,
             )
-        else:
-            # Legacy path: compute everything from individual parameters
-            if repo_path is None:
-                raise ValueError("repo_path is required for legacy initialization")
-            self._init_legacy(
-                repo_path=repo_path,
-                max_agents=max_agents,
-                timeout_minutes=timeout_minutes,
-                max_issues=max_issues,
-                epic_id=epic_id,
-                only_ids=only_ids,
-                braintrust_enabled=braintrust_enabled,
-                max_gate_retries=max_gate_retries,
-                max_review_retries=max_review_retries,
-                disable_validations=disable_validations,
-                coverage_threshold=coverage_threshold,
-                morph_enabled=morph_enabled,
-                prioritize_wip=prioritize_wip,
-                focus=focus,
-                cli_args=cli_args,
-                issue_provider=issue_provider,
-                code_reviewer=code_reviewer,
-                gate_checker=gate_checker,
-                log_provider=log_provider,
-                telemetry_provider=telemetry_provider,
-                event_sink=event_sink,
-                config=config,
-                epic_override_ids=epic_override_ids,
-            )
+            return
+
+        # Legacy path: delegate to factory
+        # This maintains backward compatibility while using the factory internally
+        if repo_path is None:
+            raise ValueError("repo_path is required for legacy initialization")
+
+        from src.orchestration.factory import (
+            OrchestratorConfig,
+            OrchestratorDependencies,
+            create_orchestrator,
+        )
+
+        orch_config = OrchestratorConfig(
+            repo_path=repo_path,
+            max_agents=max_agents,
+            timeout_minutes=timeout_minutes,
+            max_issues=max_issues,
+            epic_id=epic_id,
+            only_ids=only_ids,
+            braintrust_enabled=braintrust_enabled,
+            max_gate_retries=max_gate_retries,
+            max_review_retries=max_review_retries,
+            disable_validations=disable_validations,
+            coverage_threshold=coverage_threshold,
+            morph_enabled=morph_enabled,
+            prioritize_wip=prioritize_wip,
+            focus=focus,
+            cli_args=cli_args,
+            epic_override_ids=epic_override_ids,
+        )
+
+        deps = OrchestratorDependencies(
+            issue_provider=issue_provider,
+            code_reviewer=code_reviewer,
+            gate_checker=gate_checker,
+            log_provider=log_provider,
+            telemetry_provider=telemetry_provider,
+            event_sink=event_sink,
+        )
+
+        # Create orchestrator via factory and copy attributes
+        temp = create_orchestrator(orch_config, mala_config=config, deps=deps)
+        self.__dict__.update(temp.__dict__)
 
     def _init_from_factory(
         self,
@@ -516,181 +525,6 @@ class MalaOrchestrator:
         # Build pipeline runners
         self._init_pipeline_runners()
 
-    def _init_legacy(
-        self,
-        repo_path: Path,
-        max_agents: int | None,
-        timeout_minutes: int | None,
-        max_issues: int | None,
-        epic_id: str | None,
-        only_ids: set[str] | None,
-        braintrust_enabled: bool | None,
-        max_gate_retries: int,
-        max_review_retries: int,
-        disable_validations: set[str] | None,
-        coverage_threshold: float | None,
-        morph_enabled: bool | None,
-        prioritize_wip: bool,
-        focus: bool,
-        cli_args: dict[str, object] | None,
-        issue_provider: IssueProvider | None,
-        code_reviewer: CodeReviewer | None,
-        gate_checker: GateChecker | None,
-        log_provider: LogProvider | None,
-        telemetry_provider: TelemetryProvider | None,
-        event_sink: MalaEventSink | None,
-        config: MalaConfig | None,
-        epic_override_ids: set[str] | None,
-        debug_log: bool = False,
-    ) -> None:
-        """Initialize using legacy individual parameters."""
-        import os
-        import shutil
-
-        self.repo_path = repo_path.resolve()
-        self.max_agents = max_agents
-        # Use default timeout if not specified
-        effective_timeout = (
-            timeout_minutes if timeout_minutes else DEFAULT_AGENT_TIMEOUT_MINUTES
-        )
-        self.timeout_seconds = effective_timeout * 60
-        self.max_issues = max_issues
-        self.epic_id = epic_id
-        self.only_ids = only_ids
-
-        # Use config if provided, otherwise load from environment
-        self._mala_config = (
-            config if config is not None else MalaConfig.from_env(validate=False)
-        )
-
-        # Derive feature flags from config if not explicitly provided
-        if braintrust_enabled is not None:
-            self.braintrust_enabled = braintrust_enabled
-        else:
-            self.braintrust_enabled = self._mala_config.braintrust_enabled
-
-        if morph_enabled is not None:
-            self.morph_enabled = morph_enabled
-        else:
-            self.morph_enabled = self._mala_config.morph_enabled
-
-        self.max_gate_retries = max_gate_retries
-        self.max_review_retries = max_review_retries
-        self.disable_validations = disable_validations
-        self._disabled_validations = (
-            set(disable_validations) if disable_validations else set()
-        )
-        self.coverage_threshold = coverage_threshold
-        self.prioritize_wip = prioritize_wip
-        self.focus = focus
-        self.cli_args = cli_args
-        self.epic_override_ids = epic_override_ids or set()
-        self.debug_log = debug_log
-
-        # Initialize runtime state
-        self._init_runtime_state()
-
-        # Initialize dependencies
-        self.log_provider: LogProvider = (
-            FileSystemLogProvider() if log_provider is None else log_provider
-        )
-
-        self.quality_gate: GateChecker = (
-            QualityGate(self.repo_path, log_provider=self.log_provider)
-            if gate_checker is None
-            else gate_checker
-        )
-
-        self.event_sink: MalaEventSink = (
-            ConsoleEventSink() if event_sink is None else event_sink
-        )
-
-        def log_warning(msg: str) -> None:
-            self.event_sink.on_warning(msg)
-
-        self.beads: IssueProvider = (
-            BeadsClient(self.repo_path, log_warning=log_warning)
-            if issue_provider is None
-            else issue_provider
-        )
-
-        # EpicVerifier setup
-        if isinstance(self.beads, BeadsClient):
-            verification_model = ClaudeEpicVerificationModel(
-                timeout_ms=self.timeout_seconds * 1000,
-                retry_config=RetryConfig(),
-                repo_path=self.repo_path,
-            )
-            self.epic_verifier: EpicVerifier | None = EpicVerifier(
-                beads=self.beads,
-                model=cast("EpicVerificationModel", verification_model),
-                repo_path=self.repo_path,
-                event_sink=self.event_sink,
-                lock_manager=True,
-            )
-        else:
-            self.epic_verifier = None
-
-        # Check review availability
-        self.review_disabled_reason: str | None = None
-        if code_reviewer is None and "review" not in self._disabled_validations:
-            review_gate_path = (
-                self._mala_config.cerberus_bin_path / "review-gate"
-                if self._mala_config.cerberus_bin_path
-                else None
-            )
-            if review_gate_path is None:
-                cerberus_env_dict = dict(self._mala_config.cerberus_env)
-                if "PATH" in cerberus_env_dict:
-                    effective_path = (
-                        cerberus_env_dict["PATH"]
-                        + os.pathsep
-                        + os.environ.get("PATH", "")
-                    )
-                else:
-                    effective_path = os.environ.get("PATH", "")
-                if shutil.which("review-gate", path=effective_path) is None:
-                    self.review_disabled_reason = (
-                        "cerberus plugin not detected (review-gate unavailable)"
-                    )
-            elif not review_gate_path.exists():
-                self.review_disabled_reason = (
-                    f"review-gate missing at {review_gate_path}"
-                )
-            elif not review_gate_path.is_file():
-                self.review_disabled_reason = (
-                    f"review-gate path is not a file: {review_gate_path}"
-                )
-            elif not os.access(review_gate_path, os.X_OK):
-                self.review_disabled_reason = (
-                    f"review-gate not executable at {review_gate_path}"
-                )
-
-            if self.review_disabled_reason:
-                self._disabled_validations.add("review")
-
-        self.code_reviewer: CodeReviewer = (
-            DefaultReviewer(
-                repo_path=self.repo_path,
-                bin_path=self._mala_config.cerberus_bin_path,
-                spawn_args=self._mala_config.cerberus_spawn_args,
-                wait_args=self._mala_config.cerberus_wait_args,
-                env=dict(self._mala_config.cerberus_env),
-            )
-            if code_reviewer is None
-            else code_reviewer
-        )
-
-        if telemetry_provider is not None:
-            self.telemetry_provider: TelemetryProvider = telemetry_provider
-        elif self.braintrust_enabled:
-            self.telemetry_provider = BraintrustProvider()
-        else:
-            self.telemetry_provider = NullTelemetryProvider()
-
-        # Build pipeline runners
-        self._init_pipeline_runners()
-
     def _init_runtime_state(self) -> None:
         """Initialize runtime state that's common to both init paths."""
         self.active_tasks: dict[str, asyncio.Task[IssueResult]] = {}
@@ -747,6 +581,21 @@ class MalaOrchestrator:
             event_sink=self.event_sink,
         )
 
+        # IssueExecutionCoordinator
+        coordinator_config = CoordinatorConfig(
+            max_agents=self.max_agents,
+            max_issues=self.max_issues,
+            epic_id=self.epic_id,
+            only_ids=self.only_ids,
+            prioritize_wip=self.prioritize_wip,
+            focus=self.focus,
+        )
+        self.issue_coordinator = IssueExecutionCoordinator(
+            beads=self.beads,
+            event_sink=self.event_sink,
+            config=coordinator_config,
+        )
+
     # Backward compatibility: expose _config as alias for _mala_config
     @property
     def _config(self) -> MalaConfig:
@@ -770,7 +619,8 @@ class MalaOrchestrator:
             return
         self.abort_run = True
         self.abort_reason = reason
-        self.event_sink.on_abort_requested(reason)
+        # Sync with coordinator
+        self.issue_coordinator.request_abort(reason)
 
     def _is_review_enabled(self) -> bool:
         """Return whether review should run for this orchestrator instance."""
@@ -1280,11 +1130,13 @@ class MalaOrchestrator:
         """Spawn a new agent task for an issue. Returns True if spawned."""
         if not await self.beads.claim_async(issue_id):
             self.failed_issues.add(issue_id)
+            self.issue_coordinator.mark_failed(issue_id)
             self.event_sink.on_claim_failed(issue_id, issue_id)
             return False
 
         task = asyncio.create_task(self.run_implementer(issue_id))
         self.active_tasks[issue_id] = task
+        self.issue_coordinator.register_task(issue_id, task)
         self.event_sink.on_agent_started(issue_id, issue_id)
         return True
 
@@ -1358,102 +1210,46 @@ class MalaOrchestrator:
     async def _run_main_loop(self, run_metadata: RunMetadata) -> int:
         """Run the main agent spawning and completion loop.
 
+        Delegates to IssueExecutionCoordinator for the main loop logic.
         Returns the number of issues spawned.
         """
-        issues_spawned = 0
-        while True:
-            if self.abort_run:
-                await self._abort_active_tasks(run_metadata)
-                break
 
-            limit_reached = (
-                self.max_issues is not None and issues_spawned >= self.max_issues
-            )
-
-            suppress_warn_ids = None
-            if self.only_ids:
-                suppress_warn_ids = (
-                    self.failed_issues
-                    | set(self.active_tasks.keys())
-                    | {result.issue_id for result in self.completed}
+        async def finalize_callback(
+            issue_id: str, task: asyncio.Task  # type: ignore[type-arg]
+        ) -> None:
+            """Finalize a completed task."""
+            try:
+                result = task.result()
+            except asyncio.CancelledError:
+                result = IssueResult(
+                    issue_id=issue_id,
+                    agent_id=self.agent_ids.get(issue_id, "unknown"),
+                    success=False,
+                    summary=(
+                        f"Aborted due to unrecoverable error: {self.issue_coordinator.abort_reason}"
+                        if self.issue_coordinator.abort_reason
+                        else "Aborted due to unrecoverable error"
+                    ),
                 )
-            ready = (
-                await self.beads.get_ready_async(
-                    self.failed_issues,
-                    epic_id=self.epic_id,
-                    only_ids=self.only_ids,
-                    suppress_warn_ids=suppress_warn_ids,
-                    prioritize_wip=self.prioritize_wip,
-                    focus=self.focus,
+            except Exception as e:
+                result = IssueResult(
+                    issue_id=issue_id,
+                    agent_id=self.agent_ids.get(issue_id, "unknown"),
+                    success=False,
+                    summary=str(e),
                 )
-                if not limit_reached
-                else []
-            )
+            await self._finalize_issue_result(issue_id, result, run_metadata)
+            self.issue_coordinator.mark_completed(issue_id)
 
-            if ready:
-                self.event_sink.on_ready_issues(list(ready))
+        async def abort_callback() -> None:
+            """Abort all active tasks."""
+            await self._abort_active_tasks(run_metadata)
 
-            while (
-                self.max_agents is None or len(self.active_tasks) < self.max_agents
-            ) and ready:
-                issue_id = ready.pop(0)
-                if issue_id not in self.active_tasks:
-                    if await self.spawn_agent(issue_id):
-                        issues_spawned += 1
-                        if (
-                            self.max_issues is not None
-                            and issues_spawned >= self.max_issues
-                        ):
-                            break
-
-            if not self.active_tasks:
-                if limit_reached:
-                    self.event_sink.on_no_more_issues(
-                        f"limit_reached ({self.max_issues})"
-                    )
-                elif not ready:
-                    self.event_sink.on_no_more_issues("none_ready")
-                break
-
-            self.event_sink.on_waiting_for_agents(len(self.active_tasks))
-            done, _ = await asyncio.wait(
-                self.active_tasks.values(),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            for task in done:
-                for issue_id, t in list(self.active_tasks.items()):
-                    if t is task:
-                        try:
-                            result = task.result()
-                        except asyncio.CancelledError:
-                            result = IssueResult(
-                                issue_id=issue_id,
-                                agent_id=self.agent_ids.get(issue_id, "unknown"),
-                                success=False,
-                                summary=(
-                                    f"Aborted due to unrecoverable error: {self.abort_reason}"
-                                    if self.abort_reason
-                                    else "Aborted due to unrecoverable error"
-                                ),
-                            )
-                        except Exception as e:
-                            result = IssueResult(
-                                issue_id=issue_id,
-                                agent_id=self.agent_ids.get(issue_id, "unknown"),
-                                success=False,
-                                summary=str(e),
-                            )
-                        await self._finalize_issue_result(
-                            issue_id, result, run_metadata
-                        )
-                        break
-
-            if self.abort_run:
-                await self._abort_active_tasks(run_metadata)
-                break
-
-        return issues_spawned
+        return await self.issue_coordinator.run_loop(
+            spawn_callback=self.spawn_agent,
+            finalize_callback=finalize_callback,
+            abort_callback=abort_callback,
+        )
 
     async def _finalize_run(
         self,

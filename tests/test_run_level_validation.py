@@ -634,9 +634,9 @@ class TestRunLevelValidationIntegration:
     """Integration tests for Gate 4 in the orchestrator run() method."""
 
     @pytest.mark.asyncio
-    async def test_run_calls_gate4_after_issues_complete(self, tmp_path: Path) -> None:
+    async def test_run_calls_gate4_after_issues_complete(self, tmp_path: Path, make_orchestrator) -> None:
         """run() should call run-level validation after all issues complete."""
-        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
         gate4_called = False
 
@@ -706,7 +706,7 @@ class TestRunLevelValidationIntegration:
         self, tmp_path: Path
     ) -> None:
         """run() should return 0 successes if Gate 4 fails."""
-        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
         first_call = True
 
@@ -770,9 +770,9 @@ class TestRunLevelValidationIntegration:
         assert total == 1
 
     @pytest.mark.asyncio
-    async def test_run_skips_gate4_when_no_successes(self, tmp_path: Path) -> None:
+    async def test_run_skips_gate4_when_no_successes(self, tmp_path: Path, make_orchestrator) -> None:
         """run() should skip Gate 4 when there are no successful issues."""
-        orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
+        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
         gate4_called = False
 
@@ -842,9 +842,9 @@ class TestRunLevelValidationIntegration:
         assert gate4_called is False
 
     @pytest.mark.asyncio
-    async def test_run_skips_gate4_when_disabled(self, tmp_path: Path) -> None:
+    async def test_run_skips_gate4_when_disabled(self, tmp_path: Path, make_orchestrator) -> None:
         """run() should skip Gate 4 when run-level-validate is disabled."""
-        orchestrator = MalaOrchestrator(
+        orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
             disable_validations={"run-level-validate"},

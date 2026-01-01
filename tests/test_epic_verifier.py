@@ -1255,7 +1255,7 @@ class TestEpicVerifierOrchestratorIntegration:
 
         # Create orchestrator with mock beads
         config = MalaConfig()
-        orchestrator = MalaOrchestrator(
+        orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
             config=config,
@@ -1274,7 +1274,7 @@ class TestEpicVerifierOrchestratorIntegration:
 
         override_ids = {"epic-1", "epic-2"}
         config = MalaConfig()
-        orchestrator = MalaOrchestrator(
+        orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
             config=config,

@@ -25,9 +25,9 @@ def make_subprocess_result(
 
 
 @pytest.fixture
-def orchestrator(tmp_path: Path) -> MalaOrchestrator:
+def orchestrator(tmp_path: Path, make_orchestrator) -> MalaOrchestrator:
     """Create an orchestrator with a temporary repo path."""
-    return MalaOrchestrator(
+    return make_orchestrator(
         repo_path=tmp_path,
         max_agents=2,
         timeout_minutes=1,
@@ -241,14 +241,14 @@ class TestWipFetchWorkaround:
 class TestOrchestratorPrioritizeWip:
     """Test orchestrator stores and uses prioritize_wip flag."""
 
-    def test_orchestrator_stores_prioritize_wip(self, tmp_path: Path) -> None:
+    def test_orchestrator_stores_prioritize_wip(self, tmp_path: Path, make_orchestrator) -> None:
         """Orchestrator should store prioritize_wip parameter."""
-        orch = MalaOrchestrator(repo_path=tmp_path, prioritize_wip=True)
+        orch = make_orchestrator(repo_path=tmp_path, prioritize_wip=True)
         assert orch.prioritize_wip is True
 
-    def test_orchestrator_default_prioritize_wip_is_false(self, tmp_path: Path) -> None:
+    def test_orchestrator_default_prioritize_wip_is_false(self, tmp_path: Path, make_orchestrator) -> None:
         """Default prioritize_wip should be False."""
-        orch = MalaOrchestrator(repo_path=tmp_path)
+        orch = make_orchestrator(repo_path=tmp_path)
         assert orch.prioritize_wip is False
 
 

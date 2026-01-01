@@ -371,7 +371,7 @@ class TestMorphEnabledGating:
         from src.orchestration.orchestrator import MalaOrchestrator
 
         # Create orchestrator with morph disabled
-        orchestrator = MalaOrchestrator(
+        orchestrator = make_orchestrator(
             repo_path=Path("/tmp/repo"),
             morph_enabled=False,
         )

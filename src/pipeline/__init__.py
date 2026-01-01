@@ -7,6 +7,7 @@ and can be tested in isolation.
 Modules:
     agent_session_runner: Agent session execution with SDK streaming
     gate_runner: Quality gate checking with retry/fixer logic
+    issue_execution_coordinator: Main loop coordination for issue processing
     run_coordinator: Run-level coordination and validation
 """
 
@@ -25,6 +26,10 @@ from src.pipeline.gate_runner import (
     PerIssueGateInput,
     PerIssueGateOutput,
 )
+from src.pipeline.issue_execution_coordinator import (
+    CoordinatorConfig,
+    IssueExecutionCoordinator,
+)
 from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
@@ -38,8 +43,10 @@ __all__ = [
     "AgentSessionInput",
     "AgentSessionOutput",
     "AgentSessionRunner",
+    "CoordinatorConfig",
     "GateRunner",
     "GateRunnerConfig",
+    "IssueExecutionCoordinator",
     "PerIssueGateInput",
     "PerIssueGateOutput",
     "RunCoordinator",
