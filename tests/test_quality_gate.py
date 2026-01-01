@@ -9,7 +9,11 @@ import json
 from pathlib import Path
 from typing import cast
 from src.infra.tools.command_runner import CommandResult
-from src.domain.validation.spec import CommandKind, ValidationScope, build_validation_spec
+from src.domain.validation.spec import (
+    CommandKind,
+    ValidationScope,
+    build_validation_spec,
+)
 from unittest.mock import patch
 
 from src.protocols import LogProvider  # noqa: TC001
@@ -1628,7 +1632,9 @@ class TestGitFailureHandling:
         assert "git error" in output.lower()
         assert "not a git repository" in output
 
-    def test_no_change_resolution_passes_without_git_check(self, tmp_path: Path) -> None:
+    def test_no_change_resolution_passes_without_git_check(
+        self, tmp_path: Path
+    ) -> None:
         """No-change resolution should pass without checking git status.
 
         This is intentional: parallel agents may have uncommitted changes in the

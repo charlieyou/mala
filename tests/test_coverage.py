@@ -610,7 +610,9 @@ class TestIsBaselineStale:
             stderr="",
         )
 
-        with patch("src.domain.validation.coverage.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.coverage.run_command", return_value=mock_result
+        ):
             result = is_baseline_stale(report, tmp_path)
 
         assert result is True
@@ -680,7 +682,9 @@ class TestIsBaselineStale:
             stdout="",
             stderr="fatal: not a git repository",
         )
-        with patch("src.domain.validation.coverage.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.coverage.run_command", return_value=mock_result
+        ):
             result = is_baseline_stale(report, tmp_path)
 
         assert result is True

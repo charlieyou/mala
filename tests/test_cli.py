@@ -40,7 +40,8 @@ class TestImportSafety:
         deleted_modules = [
             mod_name
             for mod_name in sys.modules.keys()
-            if mod_name.startswith("src.cli") or mod_name.startswith("src.infra.tools.env")
+            if mod_name.startswith("src.cli")
+            or mod_name.startswith("src.infra.tools.env")
         ]
         for mod_name in deleted_modules:
             del sys.modules[mod_name]
@@ -56,7 +57,9 @@ class TestImportSafety:
             # (cli_support re-exports load_user_env from tools.env)
             with (
                 patch("src.infra.tools.env.load_user_env", mock_load_user_env),
-                patch("src.orchestration.cli_support.load_user_env", mock_load_user_env),
+                patch(
+                    "src.orchestration.cli_support.load_user_env", mock_load_user_env
+                ),
             ):
                 # Force reimport of cli module
                 if "src.cli" in sys.modules:
@@ -131,7 +134,8 @@ class TestImportSafety:
         deleted_modules = [
             mod_name
             for mod_name in sys.modules.keys()
-            if mod_name.startswith("src.cli") or mod_name.startswith("src.infra.tools.env")
+            if mod_name.startswith("src.cli")
+            or mod_name.startswith("src.infra.tools.env")
         ]
         for mod_name in deleted_modules:
             del sys.modules[mod_name]
@@ -563,9 +567,13 @@ def test_status_no_running_instance(
     monkeypatch.setattr(src.orchestration.cli_support, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
     # Mock to return no running instances - patch cli_support where cli imports from
-    monkeypatch.setattr(src.orchestration.cli_support, "get_running_instances_for_dir", lambda _: [])
     monkeypatch.setattr(
-        src.infra.io.log_output.run_metadata, "get_running_instances_for_dir", lambda _: []
+        src.orchestration.cli_support, "get_running_instances_for_dir", lambda _: []
+    )
+    monkeypatch.setattr(
+        src.infra.io.log_output.run_metadata,
+        "get_running_instances_for_dir",
+        lambda _: [],
     )
 
     cli.status()

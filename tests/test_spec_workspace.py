@@ -297,7 +297,9 @@ class TestSetupWorkspaceBaseline:
                 )
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run):
+        with patch(
+            "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+        ):
             workspace = setup_workspace(
                 spec=spec,
                 context=context_in_place,
@@ -404,7 +406,9 @@ class TestSetupWorkspaceErrors:
         mock_worktree.error = "Baseline refresh failed"
 
         with (
-            patch("src.domain.validation.coverage.run_command", side_effect=mock_git_run),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
             patch(
                 "src.domain.validation.worktree.create_worktree",
                 return_value=mock_worktree,

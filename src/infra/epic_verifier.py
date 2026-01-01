@@ -476,9 +476,10 @@ class EpicVerifier:
                 blocking_ids: list[str] = []
                 informational_ids: list[str] = []
                 if verdict.unmet_criteria:
-                    blocking_ids, informational_ids = await self.create_remediation_issues(
-                        epic_id, verdict, context
-                    )
+                    (
+                        blocking_ids,
+                        informational_ids,
+                    ) = await self.create_remediation_issues(epic_id, verdict, context)
                     remediation_issues.extend(blocking_ids)
                     remediation_issues.extend(informational_ids)
 
@@ -851,9 +852,10 @@ class EpicVerifier:
                 blocking_ids: list[str] = []
                 informational_ids: list[str] = []
                 if verdict.unmet_criteria:
-                    blocking_ids, informational_ids = await self.create_remediation_issues(
-                        epic_id, verdict, context
-                    )
+                    (
+                        blocking_ids,
+                        informational_ids,
+                    ) = await self.create_remediation_issues(epic_id, verdict, context)
                     remediation_issues.extend(blocking_ids)
                     remediation_issues.extend(informational_ids)
 
@@ -1156,7 +1158,7 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
 {criterion.evidence}
 
 ## Priority
-{priority_label} ({'blocking' if is_blocking else 'informational'})
+{priority_label} ({"blocking" if is_blocking else "informational"})
 
 ## Resolution
 {blocking_note} When complete, close this issue.

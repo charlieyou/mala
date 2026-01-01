@@ -533,8 +533,12 @@ class TestRunOrchestrationLoop:
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.release_run_locks"),
         ):
             result = await orchestrator.run()
@@ -584,8 +588,12 @@ class TestRunOrchestrationLoop:
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ),
             patch.object(orchestrator, "spawn_agent", side_effect=mock_spawn),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
@@ -655,8 +663,12 @@ class TestFailedTaskResetsIssue:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
@@ -719,8 +731,12 @@ class TestFailedTaskResetsIssue:
             patch.object(
                 orchestrator.beads, "reset_async", side_effect=mock_reset_async
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
@@ -1394,7 +1410,9 @@ class TestOrchestratorQualityGateIntegration:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -1455,7 +1473,9 @@ class TestOrchestratorQualityGateIntegration:
             patch.object(
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -1569,8 +1589,12 @@ class TestAsyncBeadsClientWithTimeout:
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ) as mock_ready,
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.release_run_locks"),
         ):
             await orchestrator.run()
@@ -1639,8 +1663,14 @@ class TestMissingLogFile:
         # Patch ClaudeSDKClient to return our mock
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
-            patch("src.orchestration.orchestrator.get_git_commit_async", return_value="abc123"),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="abc123",
+            ),
             # TracedAgentExecution removed - telemetry_provider injected via constructor
         ):
             start = time.monotonic()
@@ -1695,8 +1725,14 @@ class TestMissingLogFile:
 
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
-            patch("src.orchestration.orchestrator.get_git_commit_async", return_value="abc123"),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="abc123",
+            ),
             # TracedAgentExecution removed - telemetry_provider injected via constructor
         ):
             result = await orchestrator.run_implementer("issue-xyz")
@@ -1891,8 +1927,14 @@ class TestAgentEnvInheritance:
         try:
             with (
                 patch("claude_agent_sdk.ClaudeSDKClient", MockClient),
-                patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
-                patch("src.orchestration.orchestrator.get_git_commit_async", return_value="abc123"),
+                patch(
+                    "src.orchestration.orchestrator.get_git_branch_async",
+                    return_value="main",
+                ),
+                patch(
+                    "src.orchestration.orchestrator.get_git_commit_async",
+                    return_value="abc123",
+                ),
                 # TracedAgentExecution removed - telemetry_provider injected via constructor
             ):
                 await orchestrator.run_implementer("test-issue")
@@ -1945,8 +1987,14 @@ class TestLockDirNestedCreation:
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=nested_lock_dir),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir",
+                return_value=nested_lock_dir,
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_runs_dir",
+                return_value=tmp_path / "runs",
+            ),
             patch("src.orchestration.orchestrator.release_run_locks"),
         ):
             # This should not raise even though parent dirs don't exist
@@ -2031,7 +2079,9 @@ class TestGateFlowSequencing:
             patch.object(
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2111,7 +2161,9 @@ class TestGateFlowSequencing:
             patch.object(
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2190,7 +2242,9 @@ class TestRetryExhaustion:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2255,7 +2309,9 @@ class TestRetryExhaustion:
             patch.object(
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2334,7 +2390,9 @@ class TestRunLevelValidation:
             patch.object(
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2416,7 +2474,9 @@ class TestRunLevelValidation:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2497,7 +2557,9 @@ class TestRunLevelValidation:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2604,7 +2666,9 @@ class TestValidationResultMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
         ):
@@ -2713,7 +2777,9 @@ class TestValidationResultMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
         ):
@@ -2821,7 +2887,9 @@ class TestResolutionRecordingInMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2911,7 +2979,9 @@ class TestResolutionRecordingInMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -2993,7 +3063,9 @@ class TestResolutionRecordingInMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -3107,7 +3179,9 @@ class TestEpicClosureAfterChildCompletion:
                 side_effect=mock_verify_and_close_epic,
             ),
             patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -3180,7 +3254,9 @@ class TestEpicClosureAfterChildCompletion:
             patch.object(
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -3284,7 +3360,9 @@ class TestEpicClosureAfterChildCompletion:
                 side_effect=mock_verify_and_close_epic,
             ),
             patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -3384,7 +3462,9 @@ class TestEpicClosureAfterChildCompletion:
                 side_effect=mock_verify_and_close_epic,
             ),
             patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
@@ -3439,7 +3519,10 @@ class TestQualityGateAsync:
             return (mock_gate_result, 0)
 
         with (
-            patch("src.orchestration.orchestrator.asyncio.to_thread", side_effect=mock_to_thread),
+            patch(
+                "src.orchestration.orchestrator.asyncio.to_thread",
+                side_effect=mock_to_thread,
+            ),
         ):
             result, offset = await orchestrator._run_quality_gate_async(
                 "test-issue", log_path, retry_state
@@ -3541,7 +3624,9 @@ class TestFailedRunQualityGateEvidence:
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
+            ),
             patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
             patch("src.orchestration.orchestrator.release_run_locks"),
             # Mock subprocess to return no commit found
@@ -3661,11 +3746,20 @@ class TestBaselineCommitSelection:
 
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
             # HEAD commit for fresh issue
-            patch("src.orchestration.orchestrator.get_git_commit_async", return_value="headabc123"),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="headabc123",
+            ),
             # No prior commits for this issue
-            patch("src.orchestration.orchestrator.get_baseline_for_issue", return_value=None),
+            patch(
+                "src.orchestration.orchestrator.get_baseline_for_issue",
+                return_value=None,
+            ),
             patch.object(
                 orchestrator.code_reviewer,
                 "__call__",
@@ -3744,11 +3838,18 @@ class TestBaselineCommitSelection:
 
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
-            patch("src.orchestration.orchestrator.get_git_commit_async", return_value="currenthead"),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="currenthead",
+            ),
             # Prior commits exist - return parent of first commit
             patch(
-                "src.orchestration.orchestrator.get_baseline_for_issue", return_value="parentofirst"
+                "src.orchestration.orchestrator.get_baseline_for_issue",
+                return_value="parentofirst",
             ),
             patch.object(
                 orchestrator.code_reviewer,
@@ -3817,7 +3918,10 @@ class TestBaselineCommitSelection:
 
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
             patch(
                 "src.orchestration.orchestrator.get_git_commit_async",
                 side_effect=mock_get_git_commit_async,
@@ -3944,12 +4048,18 @@ class TestReviewUsesIssueCommits:
 
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
             patch(
                 "src.orchestration.orchestrator.get_git_commit_async",
                 side_effect=mock_get_git_commit_async,
             ),
-            patch("src.orchestration.orchestrator.get_baseline_for_issue", return_value=None),
+            patch(
+                "src.orchestration.orchestrator.get_baseline_for_issue",
+                return_value=None,
+            ),
             patch(
                 "src.orchestration.orchestrator.get_issue_commits_async",
                 return_value=issue_commits,
@@ -4018,8 +4128,14 @@ class TestRunSync:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir",
+                return_value=tmp_path / "locks",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_runs_dir",
+                return_value=tmp_path / "runs",
+            ),
             patch("src.orchestration.orchestrator.write_run_marker"),
             patch("src.orchestration.orchestrator.remove_run_marker"),
         ):
@@ -4103,8 +4219,14 @@ class TestEventSinkIntegration:
                 new_callable=AsyncMock,
                 return_value=[],  # No ready issues
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir",
+                return_value=tmp_path / "locks",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_runs_dir",
+                return_value=tmp_path / "runs",
+            ),
             patch("src.orchestration.orchestrator.write_run_marker"),
             patch("src.orchestration.orchestrator.remove_run_marker"),
         ):
@@ -4144,8 +4266,14 @@ class TestEventSinkIntegration:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
-            patch("src.orchestration.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
+            patch(
+                "src.orchestration.orchestrator.get_lock_dir",
+                return_value=tmp_path / "locks",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_runs_dir",
+                return_value=tmp_path / "runs",
+            ),
             patch("src.orchestration.orchestrator.write_run_marker"),
             patch("src.orchestration.orchestrator.remove_run_marker"),
         ):

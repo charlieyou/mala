@@ -153,7 +153,9 @@ class SpecResultBuilder:
         Returns:
             MetaValidationResult for run metadata.
         """
-        from src.infra.io.log_output.run_metadata import ValidationResult as MetaValidationResult
+        from src.infra.io.log_output.run_metadata import (
+            ValidationResult as MetaValidationResult,
+        )
 
         e2e_passed = SpecResultBuilder.derive_e2e_passed(result)
         failed_commands = (

@@ -185,7 +185,9 @@ class TestCreateWorktree:
             stderr="fatal: not a git repository",
         )
 
-        with patch("src.domain.validation.worktree.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.worktree.run_command", return_value=mock_result
+        ):
             with patch("shutil.rmtree"):
                 ctx = create_worktree(
                     repo_path=tmp_path / "repo",
@@ -211,7 +213,9 @@ class TestCreateWorktree:
 
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.worktree.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.worktree.run_command", return_value=mock_result
+        ):
             ctx = create_worktree(
                 repo_path=tmp_path / "repo",
                 commit_sha="abc123",
@@ -230,7 +234,9 @@ class TestCreateWorktree:
     ) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.worktree.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.worktree.run_command", return_value=mock_result
+        ):
             ctx1 = create_worktree(
                 repo_path=tmp_path / "repo",
                 commit_sha="abc123",
@@ -271,7 +277,9 @@ class TestRemoveWorktree:
     def test_remove_success(self, created_ctx: WorktreeContext) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.worktree.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.worktree.run_command", return_value=mock_result
+        ):
             ctx = remove_worktree(created_ctx, validation_passed=True)
 
         assert ctx.state == WorktreeState.REMOVED
@@ -301,7 +309,9 @@ class TestRemoveWorktree:
         # keep_on_failure is False by default
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.worktree.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.worktree.run_command", return_value=mock_result
+        ):
             ctx = remove_worktree(created_ctx, validation_passed=False)
 
         assert ctx.state == WorktreeState.REMOVED
@@ -395,7 +405,9 @@ class TestCleanupStaleWorktrees:
 
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.worktree.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.worktree.run_command", return_value=mock_result
+        ):
             cleaned = cleanup_stale_worktrees(tmp_path / "repo", config, run_id="run-1")
 
         # Should clean 2 worktrees from run-1 only
@@ -411,7 +423,9 @@ class TestCleanupStaleWorktrees:
 
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.worktree.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.worktree.run_command", return_value=mock_result
+        ):
             cleaned = cleanup_stale_worktrees(tmp_path / "repo", config)
 
         assert cleaned == 3
@@ -424,7 +438,9 @@ class TestCleanupStaleWorktrees:
 
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.worktree.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.worktree.run_command", return_value=mock_result
+        ):
             cleanup_stale_worktrees(tmp_path / "repo", config, run_id="run-1")
 
         # Parent directories should be removed if empty
@@ -462,7 +478,9 @@ class TestErrorFormatting:
             stderr=long_stderr,
         )
 
-        with patch("src.domain.validation.worktree.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.worktree.run_command", return_value=mock_result
+        ):
             with patch("shutil.rmtree"):
                 ctx = create_worktree(
                     repo_path=tmp_path / "repo",
@@ -567,7 +585,9 @@ class TestPathValidation:
         """Valid path components should be accepted."""
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.worktree.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.worktree.run_command", return_value=mock_result
+        ):
             ctx = create_worktree(
                 repo_path=tmp_path / "repo",
                 commit_sha="abc123",
@@ -622,7 +642,9 @@ class TestRemoveWorktreeFailurePropagation:
         )
         # But directory doesn't exist (already deleted somehow)
         with (
-            patch("src.domain.validation.worktree.run_command", return_value=mock_git_fail),
+            patch(
+                "src.domain.validation.worktree.run_command", return_value=mock_git_fail
+            ),
             patch.object(Path, "exists", return_value=False),
         ):
             ctx = remove_worktree(created_ctx, validation_passed=True)
@@ -643,7 +665,10 @@ class TestRemoveWorktreeFailurePropagation:
             raise OSError("Permission denied")
 
         with (
-            patch("src.domain.validation.worktree.run_command", return_value=mock_git_success),
+            patch(
+                "src.domain.validation.worktree.run_command",
+                return_value=mock_git_success,
+            ),
             patch("shutil.rmtree", side_effect=mock_rmtree),
         ):
             ctx = remove_worktree(created_ctx, validation_passed=True)
@@ -685,7 +710,9 @@ class TestRemoveWorktreeFailurePropagation:
             stderr="fatal: worktree has uncommitted changes",
         )
 
-        with patch("src.domain.validation.worktree.run_command", return_value=mock_git_fail):
+        with patch(
+            "src.domain.validation.worktree.run_command", return_value=mock_git_fail
+        ):
             result_ctx = remove_worktree(ctx, validation_passed=True)
 
         # Should fail
@@ -726,7 +753,9 @@ class TestRemoveWorktreeFailurePropagation:
             command=[], returncode=1, stdout="", stderr="git worktree remove failed"
         )
 
-        with patch("src.domain.validation.worktree.run_command", return_value=mock_git_fail):
+        with patch(
+            "src.domain.validation.worktree.run_command", return_value=mock_git_fail
+        ):
             result_ctx = remove_worktree(ctx, validation_passed=True)
 
         # Should fail (git command failed)

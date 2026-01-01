@@ -168,7 +168,10 @@ class TestE2ERunnerRun:
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("src.domain.validation.helpers.run_command", side_effect=mock_run_command),
+            patch(
+                "src.domain.validation.helpers.run_command",
+                side_effect=mock_run_command,
+            ),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
         ):
@@ -200,7 +203,10 @@ class TestE2ERunnerRun:
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("src.domain.validation.helpers.run_command", return_value=mock_run_result),
+            patch(
+                "src.domain.validation.helpers.run_command",
+                return_value=mock_run_result,
+            ),
             patch("tempfile.mkdtemp", return_value="/tmp/test-fixture"),
             patch("pathlib.Path.exists", return_value=True),
             patch("pathlib.Path.mkdir"),
@@ -228,7 +234,10 @@ class TestE2ERunnerRun:
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("src.domain.validation.helpers.run_command", side_effect=mock_run_command),
+            patch(
+                "src.domain.validation.helpers.run_command",
+                side_effect=mock_run_command,
+            ),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
         ):
@@ -256,7 +265,10 @@ class TestE2ERunnerRun:
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("src.domain.validation.helpers.run_command", side_effect=mock_run_command),
+            patch(
+                "src.domain.validation.helpers.run_command",
+                side_effect=mock_run_command,
+            ),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree", side_effect=mock_rmtree),
         ):
@@ -277,7 +289,10 @@ class TestE2ERunnerRun:
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("src.domain.validation.helpers.run_command", side_effect=mock_run_command),
+            patch(
+                "src.domain.validation.helpers.run_command",
+                side_effect=mock_run_command,
+            ),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree") as mock_rmtree,
         ):
@@ -323,11 +338,19 @@ class TestE2ERunnerRun:
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("src.domain.validation.helpers.run_command", side_effect=mock_run_command),
-            patch("src.infra.tools.command_runner.subprocess.Popen", side_effect=mock_popen),
+            patch(
+                "src.domain.validation.helpers.run_command",
+                side_effect=mock_run_command,
+            ),
+            patch(
+                "src.infra.tools.command_runner.subprocess.Popen",
+                side_effect=mock_popen,
+            ),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
-            patch("src.infra.tools.command_runner.os.killpg"),  # Mock process group kill
+            patch(
+                "src.infra.tools.command_runner.os.killpg"
+            ),  # Mock process group kill
         ):
             (tmp_path / "fixture").mkdir()
             (tmp_path / "fixture" / "tests").mkdir()
@@ -430,7 +453,9 @@ class TestInitFixtureRepo:
 
     def test_returns_none_on_success(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        with patch("src.domain.validation.helpers.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.helpers.run_command", return_value=mock_result
+        ):
             result = init_fixture_repo(tmp_path)
             assert result is None
 
@@ -438,7 +463,9 @@ class TestInitFixtureRepo:
         mock_result = CommandResult(
             command=[], returncode=1, stdout="", stderr="git init failed"
         )
-        with patch("src.domain.validation.helpers.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.helpers.run_command", return_value=mock_result
+        ):
             result = init_fixture_repo(tmp_path)
             assert result is not None
             assert "fixture setup failed" in result
@@ -454,13 +481,17 @@ class TestGetReadyIssueId:
             stdout='[{"id": "test-123", "title": "Fix bug"}]',
             stderr="",
         )
-        with patch("src.domain.validation.helpers.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.helpers.run_command", return_value=mock_result
+        ):
             result = get_ready_issue_id(tmp_path)
             assert result == "test-123"
 
     def test_returns_none_on_failure(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=1, stdout="", stderr="")
-        with patch("src.domain.validation.helpers.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.helpers.run_command", return_value=mock_result
+        ):
             result = get_ready_issue_id(tmp_path)
             assert result is None
 
@@ -468,13 +499,17 @@ class TestGetReadyIssueId:
         mock_result = CommandResult(
             command=[], returncode=0, stdout="not json", stderr=""
         )
-        with patch("src.domain.validation.helpers.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.helpers.run_command", return_value=mock_result
+        ):
             result = get_ready_issue_id(tmp_path)
             assert result is None
 
     def test_returns_none_on_empty_list(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="[]", stderr="")
-        with patch("src.domain.validation.helpers.run_command", return_value=mock_result):
+        with patch(
+            "src.domain.validation.helpers.run_command", return_value=mock_result
+        ):
             result = get_ready_issue_id(tmp_path)
             assert result is None
 

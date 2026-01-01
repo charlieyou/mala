@@ -277,7 +277,9 @@ class TestSpecValidationRunner:
     ) -> None:
         """Test run_spec with a single passing command."""
         mock_proc = mock_popen_success(stdout="hello\n", stderr="", returncode=0)
-        with patch("src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+        with patch(
+            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
             assert result.passed is True
             assert len(result.steps) == 1
@@ -295,7 +297,9 @@ class TestSpecValidationRunner:
     ) -> None:
         """Test run_spec with a single failing command."""
         mock_proc = mock_popen_success(stdout="", stderr="error occurred", returncode=1)
-        with patch("src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+        with patch(
+            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
             assert result.passed is False
             assert len(result.steps) == 1
@@ -329,7 +333,9 @@ class TestSpecValidationRunner:
         )
 
         mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
-        with patch("src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+        with patch(
+            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is True
             assert len(result.steps) == 3
@@ -539,7 +545,9 @@ class TestSpecValidationRunner:
         mock_proc = mock_popen_success(
             stdout="stdout content\n", stderr="stderr content\n", returncode=0
         )
-        with patch("src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+        with patch(
+            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
             assert result.passed is True
 
@@ -579,7 +587,9 @@ class TestSpecValidationRunner:
         )
 
         mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
-        with patch("src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+        with patch(
+            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is True
             assert result.coverage_result is not None
@@ -614,7 +624,9 @@ class TestSpecValidationRunner:
         )
 
         mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
-        with patch("src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+        with patch(
+            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is False
             assert result.coverage_result is not None
@@ -644,7 +656,9 @@ class TestSpecValidationRunner:
         )
 
         mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
-        with patch("src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+        with patch(
+            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
             assert result.passed is False
             assert result.coverage_result is not None
@@ -728,7 +742,9 @@ class TestSpecValidationRunner:
     ) -> None:
         """Test run_spec async wrapper."""
         mock_proc = mock_popen_success(stdout="ok", stderr="", returncode=0)
-        with patch("src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+        with patch(
+            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = await runner.run_spec(basic_spec, context, log_dir=tmp_path)
             assert result.passed is True
 
@@ -748,7 +764,9 @@ class TestSpecValidationRunner:
         mock_proc.pid = 12345
         mock_proc.returncode = None
 
-        with patch("src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+        with patch(
+            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
             assert result.passed is False
             assert result.steps[0].returncode == 124
@@ -919,7 +937,8 @@ class TestSpecValidationRunner:
                 return_value=mock_worktree_created,
             ),
             patch(
-                "src.domain.validation.spec_workspace.remove_worktree", side_effect=mock_remove
+                "src.domain.validation.spec_workspace.remove_worktree",
+                side_effect=mock_remove,
             ),
             patch(
                 "src.infra.tools.command_runner.subprocess.Popen",
@@ -987,7 +1006,8 @@ class TestSpecValidationRunner:
                 return_value=mock_worktree_created,
             ),
             patch(
-                "src.domain.validation.spec_workspace.remove_worktree", side_effect=mock_remove
+                "src.domain.validation.spec_workspace.remove_worktree",
+                side_effect=mock_remove,
             ),
             patch(
                 "src.infra.tools.command_runner.subprocess.Popen",
@@ -2168,7 +2188,9 @@ class TestSpecCommandExecutor:
         )
 
         mock_proc = mock_popen_success(stdout="hello\n", stderr="", returncode=0)
-        with patch("src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+        with patch(
+            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             output = executor.execute(input)
 
         assert not output.failed
@@ -2201,7 +2223,9 @@ class TestSpecCommandExecutor:
         )
 
         mock_proc = mock_popen_success(stdout="", stderr="error occurred", returncode=1)
-        with patch("src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+        with patch(
+            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             output = executor.execute(input)
 
         assert output.failed is True
@@ -2363,7 +2387,9 @@ class TestSpecCommandExecutor:
         mock_proc = mock_popen_success(
             stdout="stdout content\n", stderr="stderr content\n", returncode=0
         )
-        with patch("src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc):
+        with patch(
+            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
+        ):
             executor.execute(input)
 
         # Check log files were created
@@ -2424,7 +2450,8 @@ class TestSpecCommandExecutor:
 
         with (
             patch(
-                "src.domain.validation.spec_executor.LintCache.should_skip", return_value=True
+                "src.domain.validation.spec_executor.LintCache.should_skip",
+                return_value=True,
             ),
             patch(
                 "src.infra.tools.command_runner.subprocess.Popen",

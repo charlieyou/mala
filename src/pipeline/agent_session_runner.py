@@ -579,7 +579,9 @@ class AgentSessionRunner:
                                         while True:
                                             # Disable timeout while waiting for tool results
                                             current_timeout = (
-                                                None if pending_tool_ids else idle_timeout_seconds
+                                                None
+                                                if pending_tool_ids
+                                                else idle_timeout_seconds
                                             )
                                             try:
                                                 msg = await asyncio.wait_for(
@@ -663,7 +665,9 @@ class AgentSessionRunner:
                                                             block, "tool_use_id", None
                                                         )
                                                         if tool_use_id:
-                                                            pending_tool_ids.discard(tool_use_id)
+                                                            pending_tool_ids.discard(
+                                                                tool_use_id
+                                                            )
                                                         # Check for lint success
                                                         if (
                                                             tool_use_id
@@ -986,7 +990,9 @@ class AgentSessionRunner:
                             input.issue_id,
                             lifecycle_ctx.retry_state.review_attempt,
                             self.config.max_review_retries,
-                            lifecycle_ctx.session_id[:8] if lifecycle_ctx.session_id else None,
+                            lifecycle_ctx.session_id[:8]
+                            if lifecycle_ctx.session_id
+                            else None,
                         )
                         review_start = time.time()
                         review_result = await self.callbacks.on_review_check(
@@ -997,11 +1003,18 @@ class AgentSessionRunner:
                             lifecycle_ctx.retry_state,
                         )
                         review_duration = time.time() - review_start
-                        issue_count = len(review_result.issues) if review_result.issues else 0
-                        blocking = sum(
-                            1 for i in review_result.issues
-                            if i.priority is not None and i.priority <= 1
-                        ) if review_result.issues else 0
+                        issue_count = (
+                            len(review_result.issues) if review_result.issues else 0
+                        )
+                        blocking = (
+                            sum(
+                                1
+                                for i in review_result.issues
+                                if i.priority is not None and i.priority <= 1
+                            )
+                            if review_result.issues
+                            else 0
+                        )
                         logger.debug(
                             "Session %s: review completed in %.1fs "
                             "(passed=%s, issues=%d, blocking=%d, parse_error=%s)",
@@ -1062,11 +1075,15 @@ class AgentSessionRunner:
 
                         if result.effect == Effect.SEND_REVIEW_RETRY:
                             # Log review retry trigger
-                            blocking_count = sum(
-                                1
-                                for i in review_result.issues
-                                if i.priority is not None and i.priority <= 1
-                            ) if review_result.issues else 0
+                            blocking_count = (
+                                sum(
+                                    1
+                                    for i in review_result.issues
+                                    if i.priority is not None and i.priority <= 1
+                                )
+                                if review_result.issues
+                                else 0
+                            )
                             logger.debug(
                                 "Session %s: SEND_REVIEW_RETRY triggered "
                                 "(attempt %d/%d, %d blocking issues)",

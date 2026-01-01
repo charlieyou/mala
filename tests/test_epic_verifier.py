@@ -389,7 +389,9 @@ class TestRemediationIssueCreation:
         """Mixed P1 and P3 criteria should create both blocking and advisory issues."""
         mock_beads.find_issue_by_tag_async = AsyncMock(return_value=None)
         issue_ids = iter(["blocking-1", "advisory-1"])
-        mock_beads.create_issue_async = AsyncMock(side_effect=lambda **_: next(issue_ids))
+        mock_beads.create_issue_async = AsyncMock(
+            side_effect=lambda **_: next(issue_ids)
+        )
 
         verdict = EpicVerdict(
             passed=False,

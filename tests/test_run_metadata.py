@@ -356,7 +356,8 @@ class TestRunMetadataSerialization:
                 return Path(tmpdir) / "-tmp-test-repo"
 
             with patch(
-                "src.infra.io.log_output.run_metadata.get_repo_runs_dir", mock_get_repo_runs_dir
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                mock_get_repo_runs_dir,
             ):
                 # Save
                 path = metadata_with_issues.save()
@@ -434,7 +435,8 @@ class TestRunMetadataSerialization:
                 return Path(tmpdir) / "-home-user-my-project"
 
             with patch(
-                "src.infra.io.log_output.run_metadata.get_repo_runs_dir", mock_get_repo_runs_dir
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                mock_get_repo_runs_dir,
             ):
                 path = metadata.save()
 
@@ -610,7 +612,8 @@ class TestRunMarkers:
             lock_dir = Path(tmpdir)
 
             with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir",
+                return_value=lock_dir,
             ):
                 # Write marker
                 path = write_run_marker(
@@ -645,7 +648,8 @@ class TestRunMarkers:
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_dir = Path(tmpdir)
             with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir",
+                return_value=lock_dir,
             ):
                 path = _get_marker_path("my-run-id")
                 assert path == lock_dir / "run-my-run-id.marker"
@@ -659,7 +663,8 @@ class TestGetRunningInstances:
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_dir = Path(tmpdir)
             with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir",
+                return_value=lock_dir,
             ):
                 instances = get_running_instances()
                 assert instances == []
@@ -706,7 +711,8 @@ class TestGetRunningInstances:
             )
 
             with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir",
+                return_value=lock_dir,
             ):
                 instances = get_running_instances()
 
@@ -734,7 +740,8 @@ class TestGetRunningInstances:
             )
 
             with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir",
+                return_value=lock_dir,
             ):
                 # Mock _is_process_running to return False for stale PID
                 with patch(
@@ -771,7 +778,8 @@ class TestGetRunningInstances:
             )
 
             with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir",
+                return_value=lock_dir,
             ):
                 instances = get_running_instances()
 
@@ -818,7 +826,8 @@ class TestGetRunningInstances:
             )
 
             with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir",
+                return_value=lock_dir,
             ):
                 # Filter for target directory
                 target_instances = get_running_instances_for_dir(target_dir)
@@ -879,9 +888,7 @@ class TestDebugLogging:
 
                 # Verify handler was added
                 src_logger = logging.getLogger("src")
-                handler_names = [
-                    getattr(h, "name", "") for h in src_logger.handlers
-                ]
+                handler_names = [getattr(h, "name", "") for h in src_logger.handlers]
                 assert f"mala_debug_{run_id}" in handler_names
                 assert log_path.exists()
 
@@ -930,12 +937,8 @@ class TestDebugLogging:
 
                 # Verify handler was added
                 src_logger = logging.getLogger("src")
-                handler_names = [
-                    getattr(h, "name", "") for h in src_logger.handlers
-                ]
-                assert any(
-                    name.startswith("mala_debug_") for name in handler_names
-                )
+                handler_names = [getattr(h, "name", "") for h in src_logger.handlers]
+                assert any(name.startswith("mala_debug_") for name in handler_names)
 
                 # Save should clean up the handler
                 metadata.save()
@@ -967,9 +970,7 @@ class TestDebugLogging:
                 configure_debug_logging(Path("/tmp/repo"), run_id_1)
 
                 src_logger = logging.getLogger("src")
-                handler_names = [
-                    getattr(h, "name", "") for h in src_logger.handlers
-                ]
+                handler_names = [getattr(h, "name", "") for h in src_logger.handlers]
                 assert f"mala_debug_{run_id_1}" in handler_names
 
                 # Configure second handler - should remove first
