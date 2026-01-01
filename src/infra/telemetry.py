@@ -8,7 +8,7 @@ Provides a pluggable telemetry system with:
 
 For production with Braintrust, use BraintrustProvider from braintrust_integration.py:
 
-    from .braintrust_integration import BraintrustProvider
+    from src.infra.clients.braintrust_integration import BraintrustProvider
 
 Usage:
     # For tests or opt-out:

@@ -589,6 +589,11 @@ forbidden_modules = [
     "src.infra.clients",
     "src.infra.hooks",
     "src.infra.io",
+    "src.infra.epic_verifier",
+    "src.infra.issue_manager",
+    "src.infra.mcp",
+    "src.infra.git_utils",
+    "src.infra.telemetry",
 ]
 
 # -----------------------------------------------------------------------------

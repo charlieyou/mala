@@ -75,8 +75,8 @@ def get_lock_dir() -> Path:
     return Path(os.environ.get("MALA_LOCK_DIR", "/tmp/mala-locks"))
 
 
-# Lock scripts directory (relative to this file: src/tools/env.py -> src/scripts/)
-SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+# Lock scripts directory (relative to this file: src/infra/tools/env.py -> src/scripts/)
+SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 
 
 def load_user_env() -> None:

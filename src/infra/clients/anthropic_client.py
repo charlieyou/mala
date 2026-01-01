@@ -6,8 +6,8 @@ This module provides a centralized way to create Anthropic clients with:
 - MorphLLM routing when base_url is configured
 
 Usage:
-    from src.anthropic_client import create_anthropic_client
-    from src.config import MalaConfig
+    from src.infra.clients.anthropic_client import create_anthropic_client
+    from src.infra.io.config import MalaConfig
 
     config = MalaConfig.from_env()
     client = create_anthropic_client(
@@ -57,7 +57,7 @@ def create_anthropic_client(
         RuntimeError: If the anthropic package is not installed.
 
     Example:
-        from src.anthropic_client import create_anthropic_client
+        from src.infra.clients.anthropic_client import create_anthropic_client
 
         # Basic usage with env var for API key
         client = create_anthropic_client()
