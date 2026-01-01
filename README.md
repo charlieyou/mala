@@ -206,22 +206,14 @@ bd epic status
 When all children of an epic are closed, the orchestrator automatically verifies that the collective work satisfies the epic's acceptance criteria before closing.
 
 **Verification process:**
-1. **Scoped diff**: Computes a diff from child issue commits only (matches `bd-<issue_id>:` prefixes)
-2. **Spec extraction**: Automatically loads spec files referenced in the epic description
-3. **AI verification**: Claude evaluates whether acceptance criteria are met
-4. **Outcome handling**:
+1. **Scoped commits**: Identifies commits from child issues (matches `bd-<issue_id>:` prefixes)
+2. **Agent exploration**: Verification agent explores the repository using the commit list
+3. **Spec extraction**: Automatically loads spec files referenced in the epic description
+4. **AI verification**: Claude evaluates whether acceptance criteria are met
+5. **Outcome handling**:
    - **Pass (confidence ≥ 0.5)**: Epic is closed automatically
-   - **Fail**: Remediation issues are created for unmet criteria
+   - **Fail**: Remediation issues are created for P0/P1 unmet criteria
    - **Uncertain (confidence < 0.5)**: Flagged for human review
-
-**Large diff handling** (tiered approach):
-| Size | Mode | Content |
-|------|------|---------|
-| < 100KB | Full | Complete diff |
-| < 500KB | File-summary | 50 lines per file |
-| ≥ 500KB | File-list | Changed files + small files under 5KB |
-
-The diff size threshold is configurable via `MALA_MAX_DIFF_SIZE_KB` (default: 100).
 
 **Remediation issues:**
 - Created automatically for unmet acceptance criteria
