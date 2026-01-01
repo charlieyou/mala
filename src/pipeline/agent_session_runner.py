@@ -55,7 +55,12 @@ if TYPE_CHECKING:
     from typing import Self
 
     from src.event_sink import MalaEventSink
-    from src.lifecycle import GateOutcome, RetryState, ReviewOutcome
+    from src.lifecycle import (
+        GateOutcome,
+        RetryState,
+        ReviewOutcome,
+        TransitionResult,
+    )
     from src.models import IssueResolution
     from src.protocols import ReviewIssueProtocol
     from src.telemetry import TelemetrySpan
@@ -458,7 +463,8 @@ class AgentSessionRunner:
             },
         )
 
-        # Session state
+        # Session state - session_id MUST be initialized to None here to avoid
+        # UnboundLocalError if IdleTimeoutError occurs before ResultMessage
         session_id: str | None = None
         log_path: Path | None = None
         final_result = ""
@@ -496,6 +502,10 @@ class AgentSessionRunner:
                 pending_session_id: str | None = None
                 idle_retry_count: int = 0
                 tool_calls_this_turn: int = 0
+                # result tracks the lifecycle effect from the last transition.
+                # Initialized to None; will be set on first iteration since
+                # pending_query is always set to input.prompt initially.
+                result: TransitionResult | None = None
 
                 # Main lifecycle loop
                 while not lifecycle.is_terminal:
@@ -756,7 +766,7 @@ class AgentSessionRunner:
                         # (e.g., RUN_REVIEW retry where lifecycle returns RUN_REVIEW
                         # again without sending a message to the agent)
                         # The 'result' variable must be set from a previous iteration
-                        assert "result" in dir(), (
+                        assert result is not None, (
                             "Bug: entered loop without pending_query but result not set"
                         )
 
