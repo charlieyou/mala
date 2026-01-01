@@ -7,7 +7,7 @@ in temporary git worktrees:
 
 For new code, use SpecValidationRunner with ValidationSpec:
 
-    from src.validation import SpecValidationRunner, build_validation_spec
+    from src.domain.validation import SpecValidationRunner, build_validation_spec
 
     runner = SpecValidationRunner(repo_path)
     spec = build_validation_spec(scope=ValidationScope.PER_ISSUE, ...)

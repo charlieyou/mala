@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from src.validation.lint_cache import LintCache, LintCacheEntry, LintCacheKey
+from src.domain.validation.lint_cache import LintCache, LintCacheEntry, LintCacheKey
 
 
 class TestLintCacheKey:

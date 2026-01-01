@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.tools.command_runner import CommandResult
-from src.validation import (
+from src.domain.validation import (
     CommandKind,
     CoverageConfig,
     CoverageResult,
@@ -29,13 +29,13 @@ from src.validation import (
     format_step_output,
     tail,
 )
-from src.validation.spec_runner import CommandFailure, SpecValidationRunner
-from src.validation.coverage import BaselineCoverageService
-from src.validation.worktree import WorktreeContext, WorktreeState
+from src.domain.validation.spec_runner import CommandFailure, SpecValidationRunner
+from src.domain.validation.coverage import BaselineCoverageService
+from src.domain.validation.worktree import WorktreeContext, WorktreeState
 
 if TYPE_CHECKING:
-    from src.validation.spec_executor import ExecutorConfig
-    from src.validation.spec_result_builder import SpecResultBuilder
+    from src.domain.validation.spec_executor import ExecutorConfig
+    from src.domain.validation.spec_result_builder import SpecResultBuilder
 
 
 def mock_popen_success(
@@ -655,7 +655,7 @@ class TestSpecValidationRunner:
         self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
     ) -> None:
         """Test that E2E only runs for per-issue scope."""
-        from src.validation.spec_result_builder import SpecResultBuilder
+        from src.domain.validation.spec_result_builder import SpecResultBuilder
 
         # Per-issue context - E2E should not run
         per_issue_context = ValidationContext(
@@ -690,8 +690,8 @@ class TestSpecValidationRunner:
         self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """Test that E2E runs for run-level scope."""
-        from src.validation.e2e import E2EResult, E2EStatus
-        from src.validation.spec_result_builder import SpecResultBuilder
+        from src.domain.validation.e2e import E2EResult, E2EStatus
+        from src.domain.validation.spec_result_builder import SpecResultBuilder
 
         run_level_context = ValidationContext(
             issue_id=None,
@@ -794,11 +794,11 @@ class TestSpecValidationRunner:
 
         with (
             patch(
-                "src.validation.spec_workspace.create_worktree",
+                "src.domain.validation.spec_workspace.create_worktree",
                 return_value=mock_worktree_ctx,
             ),
             patch(
-                "src.validation.spec_workspace.remove_worktree",
+                "src.domain.validation.spec_workspace.remove_worktree",
                 return_value=mock_worktree_ctx,
             ),
             patch(
@@ -836,7 +836,7 @@ class TestSpecValidationRunner:
         )
 
         with patch(
-            "src.validation.spec_workspace.create_worktree",
+            "src.domain.validation.spec_workspace.create_worktree",
             return_value=mock_worktree_ctx,
         ):
             result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
@@ -915,11 +915,11 @@ class TestSpecValidationRunner:
 
         with (
             patch(
-                "src.validation.spec_workspace.create_worktree",
+                "src.domain.validation.spec_workspace.create_worktree",
                 return_value=mock_worktree_created,
             ),
             patch(
-                "src.validation.spec_workspace.remove_worktree", side_effect=mock_remove
+                "src.domain.validation.spec_workspace.remove_worktree", side_effect=mock_remove
             ),
             patch(
                 "src.tools.command_runner.subprocess.Popen",
@@ -983,11 +983,11 @@ class TestSpecValidationRunner:
 
         with (
             patch(
-                "src.validation.spec_workspace.create_worktree",
+                "src.domain.validation.spec_workspace.create_worktree",
                 return_value=mock_worktree_created,
             ),
             patch(
-                "src.validation.spec_workspace.remove_worktree", side_effect=mock_remove
+                "src.domain.validation.spec_workspace.remove_worktree", side_effect=mock_remove
             ),
             patch(
                 "src.tools.command_runner.subprocess.Popen",
@@ -1967,11 +1967,11 @@ class TestBaselineCaptureOrder:
 
         with (
             patch(
-                "src.validation.spec_workspace.create_worktree",
+                "src.domain.validation.spec_workspace.create_worktree",
                 side_effect=mock_create_worktree,
             ),
             patch(
-                "src.validation.spec_workspace.remove_worktree",
+                "src.domain.validation.spec_workspace.remove_worktree",
                 return_value=mock_worktree,
             ),
             patch(
@@ -2071,11 +2071,11 @@ class TestBaselineCaptureOrder:
 
         with (
             patch(
-                "src.validation.spec_workspace.create_worktree",
+                "src.domain.validation.spec_workspace.create_worktree",
                 return_value=mock_worktree,
             ),
             patch(
-                "src.validation.spec_workspace.remove_worktree",
+                "src.domain.validation.spec_workspace.remove_worktree",
                 return_value=mock_worktree,
             ),
             patch(
@@ -2135,7 +2135,7 @@ class TestSpecCommandExecutor:
     @pytest.fixture
     def basic_config(self, tmp_path: Path) -> "ExecutorConfig":
         """Create a basic executor config with lint cache disabled."""
-        from src.validation.spec_executor import ExecutorConfig
+        from src.domain.validation.spec_executor import ExecutorConfig
 
         return ExecutorConfig(
             enable_lint_cache=False,
@@ -2147,7 +2147,7 @@ class TestSpecCommandExecutor:
         self, basic_config: "ExecutorConfig", tmp_path: Path, tmp_path_with_logs: Path
     ) -> None:
         """Test executor with a single passing command."""
-        from src.validation.spec_executor import (
+        from src.domain.validation.spec_executor import (
             ExecutorInput,
             SpecCommandExecutor,
         )
@@ -2180,7 +2180,7 @@ class TestSpecCommandExecutor:
         self, basic_config: "ExecutorConfig", tmp_path: Path, tmp_path_with_logs: Path
     ) -> None:
         """Test executor sets failure info when command fails."""
-        from src.validation.spec_executor import (
+        from src.domain.validation.spec_executor import (
             ExecutorInput,
             SpecCommandExecutor,
         )
@@ -2214,7 +2214,7 @@ class TestSpecCommandExecutor:
         self, basic_config: "ExecutorConfig", tmp_path: Path, tmp_path_with_logs: Path
     ) -> None:
         """Test executor continues execution when allow_fail=True."""
-        from src.validation.spec_executor import (
+        from src.domain.validation.spec_executor import (
             ExecutorInput,
             SpecCommandExecutor,
         )
@@ -2277,7 +2277,7 @@ class TestSpecCommandExecutor:
         self, basic_config: "ExecutorConfig", tmp_path: Path, tmp_path_with_logs: Path
     ) -> None:
         """Test executor stops on first failure when allow_fail=False."""
-        from src.validation.spec_executor import (
+        from src.domain.validation.spec_executor import (
             ExecutorInput,
             SpecCommandExecutor,
         )
@@ -2340,7 +2340,7 @@ class TestSpecCommandExecutor:
         self, basic_config: "ExecutorConfig", tmp_path: Path, tmp_path_with_logs: Path
     ) -> None:
         """Test executor writes stdout/stderr to log files."""
-        from src.validation.spec_executor import (
+        from src.domain.validation.spec_executor import (
             ExecutorInput,
             SpecCommandExecutor,
         )
@@ -2387,7 +2387,7 @@ class TestSpecCommandExecutor:
         since the actual git-based cache logic is tested separately in
         test_lint_cache.py.
         """
-        from src.validation.spec_executor import (
+        from src.domain.validation.spec_executor import (
             ExecutorConfig,
             ExecutorInput,
             SpecCommandExecutor,
@@ -2424,7 +2424,7 @@ class TestSpecCommandExecutor:
 
         with (
             patch(
-                "src.validation.spec_executor.LintCache.should_skip", return_value=True
+                "src.domain.validation.spec_executor.LintCache.should_skip", return_value=True
             ),
             patch(
                 "src.tools.command_runner.subprocess.Popen",
@@ -2444,7 +2444,7 @@ class TestSpecCommandExecutor:
         self, basic_config: "ExecutorConfig", tmp_path: Path, tmp_path_with_logs: Path
     ) -> None:
         """Test executor wraps commands with test mutex when requested."""
-        from src.validation.spec_executor import (
+        from src.domain.validation.spec_executor import (
             ExecutorInput,
             SpecCommandExecutor,
         )
@@ -2497,7 +2497,7 @@ class TestSpecResultBuilder:
     @pytest.fixture
     def builder(self) -> "SpecResultBuilder":
         """Create a SpecResultBuilder instance."""
-        from src.validation.spec_result_builder import SpecResultBuilder
+        from src.domain.validation.spec_result_builder import SpecResultBuilder
 
         return SpecResultBuilder()
 
@@ -2538,7 +2538,7 @@ class TestSpecResultBuilder:
         tmp_path: Path,
     ) -> None:
         """Test build() returns success when coverage and E2E are disabled."""
-        from src.validation.spec_result_builder import ResultBuilderInput
+        from src.domain.validation.spec_result_builder import ResultBuilderInput
 
         spec = ValidationSpec(
             commands=[],
@@ -2575,7 +2575,7 @@ class TestSpecResultBuilder:
         tmp_path: Path,
     ) -> None:
         """Test build() passes when coverage meets threshold."""
-        from src.validation.spec_result_builder import ResultBuilderInput
+        from src.domain.validation.spec_result_builder import ResultBuilderInput
 
         # Create coverage.xml that passes threshold
         coverage_xml = tmp_path / "coverage.xml"
@@ -2617,7 +2617,7 @@ class TestSpecResultBuilder:
         tmp_path: Path,
     ) -> None:
         """Test build() fails when coverage is below threshold."""
-        from src.validation.spec_result_builder import ResultBuilderInput
+        from src.domain.validation.spec_result_builder import ResultBuilderInput
 
         # Create coverage.xml that fails threshold
         coverage_xml = tmp_path / "coverage.xml"
@@ -2659,7 +2659,7 @@ class TestSpecResultBuilder:
         tmp_path: Path,
     ) -> None:
         """Test build() uses baseline_percent when min_percent is None."""
-        from src.validation.spec_result_builder import ResultBuilderInput
+        from src.domain.validation.spec_result_builder import ResultBuilderInput
 
         # Create coverage.xml at 80%
         coverage_xml = tmp_path / "coverage.xml"
@@ -2703,7 +2703,7 @@ class TestSpecResultBuilder:
         tmp_path: Path,
     ) -> None:
         """Test build() fails when coverage report is missing."""
-        from src.validation.spec_result_builder import ResultBuilderInput
+        from src.domain.validation.spec_result_builder import ResultBuilderInput
 
         spec = ValidationSpec(
             commands=[],
@@ -2738,7 +2738,7 @@ class TestSpecResultBuilder:
         tmp_path: Path,
     ) -> None:
         """Test build() skips E2E for per-issue scope."""
-        from src.validation.spec_result_builder import ResultBuilderInput
+        from src.domain.validation.spec_result_builder import ResultBuilderInput
 
         spec = ValidationSpec(
             commands=[],
@@ -2780,8 +2780,8 @@ class TestSpecResultBuilder:
         tmp_path: Path,
     ) -> None:
         """Test build() runs E2E for run-level scope."""
-        from src.validation.e2e import E2EResult, E2EStatus
-        from src.validation.spec_result_builder import ResultBuilderInput
+        from src.domain.validation.e2e import E2EResult, E2EStatus
+        from src.domain.validation.spec_result_builder import ResultBuilderInput
 
         run_level_context = ValidationContext(
             issue_id=None,
@@ -2829,8 +2829,8 @@ class TestSpecResultBuilder:
         tmp_path: Path,
     ) -> None:
         """Test build() fails when E2E fails."""
-        from src.validation.e2e import E2EResult, E2EStatus
-        from src.validation.spec_result_builder import ResultBuilderInput
+        from src.domain.validation.e2e import E2EResult, E2EStatus
+        from src.domain.validation.spec_result_builder import ResultBuilderInput
 
         run_level_context = ValidationContext(
             issue_id=None,
@@ -2879,8 +2879,8 @@ class TestSpecResultBuilder:
         tmp_path: Path,
     ) -> None:
         """Test build() passes when E2E is skipped (status=SKIPPED)."""
-        from src.validation.e2e import E2EResult, E2EStatus
-        from src.validation.spec_result_builder import ResultBuilderInput
+        from src.domain.validation.e2e import E2EResult, E2EStatus
+        from src.domain.validation.spec_result_builder import ResultBuilderInput
 
         run_level_context = ValidationContext(
             issue_id=None,
@@ -2930,7 +2930,7 @@ class TestSpecResultBuilder:
         tmp_path: Path,
     ) -> None:
         """Test build() updates artifacts with coverage report path."""
-        from src.validation.spec_result_builder import ResultBuilderInput
+        from src.domain.validation.spec_result_builder import ResultBuilderInput
 
         artifacts = ValidationArtifacts(log_dir=tmp_path)
 

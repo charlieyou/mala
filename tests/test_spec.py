@@ -8,7 +8,7 @@ TDD tests for:
 
 from pathlib import Path
 
-from src.validation.spec import (
+from src.domain.validation.spec import (
     CommandKind,
     CoverageConfig,
     E2EConfig,

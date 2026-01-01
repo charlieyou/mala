@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.tools.command_runner import CommandResult
-from src.validation.coverage import (
+from src.domain.validation.coverage import (
     CoverageResult,
     CoverageStatus,
     check_coverage_threshold,
@@ -610,7 +610,7 @@ class TestIsBaselineStale:
             stderr="",
         )
 
-        with patch("src.validation.coverage.run_command", return_value=mock_result):
+        with patch("src.domain.validation.coverage.run_command", return_value=mock_result):
             result = is_baseline_stale(report, tmp_path)
 
         assert result is True
@@ -636,7 +636,7 @@ class TestIsBaselineStale:
                 )
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.validation.coverage.run_command", side_effect=mock_run):
+        with patch("src.domain.validation.coverage.run_command", side_effect=mock_run):
             result = is_baseline_stale(report, tmp_path)
 
         assert result is True
@@ -662,7 +662,7 @@ class TestIsBaselineStale:
                 )
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.validation.coverage.run_command", side_effect=mock_run):
+        with patch("src.domain.validation.coverage.run_command", side_effect=mock_run):
             result = is_baseline_stale(report, tmp_path)
 
         assert result is False
@@ -680,7 +680,7 @@ class TestIsBaselineStale:
             stdout="",
             stderr="fatal: not a git repository",
         )
-        with patch("src.validation.coverage.run_command", return_value=mock_result):
+        with patch("src.domain.validation.coverage.run_command", return_value=mock_result):
             result = is_baseline_stale(report, tmp_path)
 
         assert result is True
@@ -700,7 +700,7 @@ class TestIsBaselineStale:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.validation.coverage.run_command", side_effect=mock_run):
+        with patch("src.domain.validation.coverage.run_command", side_effect=mock_run):
             result = is_baseline_stale(report, tmp_path)
 
         assert result is True
@@ -808,7 +808,7 @@ class TestNoDecreaseMode:
                 )
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.validation.coverage.run_command", side_effect=mock_run):
+        with patch("src.domain.validation.coverage.run_command", side_effect=mock_run):
             assert is_baseline_stale(report, tmp_path) is True
 
     def test_fresh_baseline_not_stale_after_commit(self, tmp_path: Path) -> None:
@@ -831,7 +831,7 @@ class TestNoDecreaseMode:
                 )
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.validation.coverage.run_command", side_effect=mock_run):
+        with patch("src.domain.validation.coverage.run_command", side_effect=mock_run):
             assert is_baseline_stale(report, tmp_path) is False
 
     def test_explicit_threshold_overrides_baseline(self, tmp_path: Path) -> None:

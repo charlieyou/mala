@@ -29,7 +29,7 @@ if TYPE_CHECKING:
         ReviewResultProtocol,
         ValidationSpecProtocol,
     )
-    from src.validation.spec import ValidationSpec
+    from src.domain.validation.spec import ValidationSpec
 
 
 @dataclass

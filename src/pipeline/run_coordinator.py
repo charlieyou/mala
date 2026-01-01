@@ -39,13 +39,13 @@ from src.hooks import (
 from src.mcp import get_disallowed_tools, get_mcp_servers
 from src.tools.env import SCRIPTS_DIR, get_lock_dir
 from src.tools.locking import cleanup_agent_locks
-from src.validation.e2e import E2EStatus
-from src.validation.spec import (
+from src.domain.validation.e2e import E2EStatus
+from src.domain.validation.spec import (
     ValidationContext,
     ValidationScope,
     build_validation_spec,
 )
-from src.validation.spec_runner import SpecValidationRunner
+from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
     from src.event_sink import MalaEventSink
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
         ValidationResult as MetaValidationResult,
     )
     from src.protocols import GateChecker
-    from src.validation.result import ValidationResult
+    from src.domain.validation.result import ValidationResult
 
 
 # Prompt file paths

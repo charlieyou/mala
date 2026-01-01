@@ -24,7 +24,7 @@ from src.pipeline.agent_session_runner import (
     AgentSessionRunner,
     SessionCallbacks,
 )
-from src.quality_gate import GateResult
+from src.domain.quality_gate import GateResult
 
 if TYPE_CHECKING:
     from src.pipeline.agent_session_runner import (
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from pathlib import Path
 
-    from src.lifecycle import RetryState
+    from src.domain.lifecycle import RetryState
 
 
 def make_result_message(

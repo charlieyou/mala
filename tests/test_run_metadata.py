@@ -30,7 +30,7 @@ from src.log_output.run_metadata import (
     remove_run_marker,
     write_run_marker,
 )
-from src.validation.spec import (
+from src.domain.validation.spec import (
     IssueResolution,
     ResolutionOutcome,
     ValidationArtifacts,

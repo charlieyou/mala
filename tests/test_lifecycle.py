@@ -8,14 +8,14 @@ machine that can be tested with simple data inputs.
 import pytest
 
 from src.cerberus_review import ReviewIssue, ReviewResult
-from src.lifecycle import (
+from src.domain.lifecycle import (
     Effect,
     ImplementerLifecycle,
     LifecycleConfig,
     LifecycleContext,
     LifecycleState,
 )
-from src.quality_gate import GateResult
+from src.domain.quality_gate import GateResult
 
 
 class TestLifecycleStart:
@@ -231,7 +231,7 @@ class TestGateResult:
 
     def test_gate_stores_resolution(self) -> None:
         """Gate result resolution is stored in context."""
-        from src.validation.spec import IssueResolution, ResolutionOutcome
+        from src.domain.validation.spec import IssueResolution, ResolutionOutcome
 
         lifecycle, ctx = self._setup_for_gate()
         resolution = IssueResolution(
@@ -255,7 +255,7 @@ class TestGateResult:
         self, outcome: str
     ) -> None:
         """Gate passed with no-work resolutions skips review even if enabled."""
-        from src.validation.spec import IssueResolution, ResolutionOutcome
+        from src.domain.validation.spec import IssueResolution, ResolutionOutcome
 
         lifecycle, ctx = self._setup_for_gate()
         resolution = IssueResolution(

@@ -9,7 +9,7 @@ import pytest
 
 from src.tools.command_runner import CommandResult
 from tests.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
-from src.validation.e2e import (
+from src.domain.validation.e2e import (
     E2EConfig,
     E2EPrereqResult,
     E2EResult,
@@ -17,7 +17,7 @@ from src.validation.e2e import (
     E2EStatus,
     check_e2e_prereqs,
 )
-from src.validation.helpers import (
+from src.domain.validation.helpers import (
     annotate_issue,
     decode_timeout_output,
     get_ready_issue_id,
@@ -168,7 +168,7 @@ class TestE2ERunnerRun:
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("src.validation.helpers.run_command", side_effect=mock_run_command),
+            patch("src.domain.validation.helpers.run_command", side_effect=mock_run_command),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
         ):
@@ -200,7 +200,7 @@ class TestE2ERunnerRun:
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("src.validation.helpers.run_command", return_value=mock_run_result),
+            patch("src.domain.validation.helpers.run_command", return_value=mock_run_result),
             patch("tempfile.mkdtemp", return_value="/tmp/test-fixture"),
             patch("pathlib.Path.exists", return_value=True),
             patch("pathlib.Path.mkdir"),
@@ -228,7 +228,7 @@ class TestE2ERunnerRun:
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("src.validation.helpers.run_command", side_effect=mock_run_command),
+            patch("src.domain.validation.helpers.run_command", side_effect=mock_run_command),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
         ):
@@ -256,7 +256,7 @@ class TestE2ERunnerRun:
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("src.validation.helpers.run_command", side_effect=mock_run_command),
+            patch("src.domain.validation.helpers.run_command", side_effect=mock_run_command),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree", side_effect=mock_rmtree),
         ):
@@ -277,7 +277,7 @@ class TestE2ERunnerRun:
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("src.validation.helpers.run_command", side_effect=mock_run_command),
+            patch("src.domain.validation.helpers.run_command", side_effect=mock_run_command),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree") as mock_rmtree,
         ):
@@ -323,7 +323,7 @@ class TestE2ERunnerRun:
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch("src.validation.helpers.run_command", side_effect=mock_run_command),
+            patch("src.domain.validation.helpers.run_command", side_effect=mock_run_command),
             patch("src.tools.command_runner.subprocess.Popen", side_effect=mock_popen),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
@@ -430,7 +430,7 @@ class TestInitFixtureRepo:
 
     def test_returns_none_on_success(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        with patch("src.validation.helpers.run_command", return_value=mock_result):
+        with patch("src.domain.validation.helpers.run_command", return_value=mock_result):
             result = init_fixture_repo(tmp_path)
             assert result is None
 
@@ -438,7 +438,7 @@ class TestInitFixtureRepo:
         mock_result = CommandResult(
             command=[], returncode=1, stdout="", stderr="git init failed"
         )
-        with patch("src.validation.helpers.run_command", return_value=mock_result):
+        with patch("src.domain.validation.helpers.run_command", return_value=mock_result):
             result = init_fixture_repo(tmp_path)
             assert result is not None
             assert "fixture setup failed" in result
@@ -454,13 +454,13 @@ class TestGetReadyIssueId:
             stdout='[{"id": "test-123", "title": "Fix bug"}]',
             stderr="",
         )
-        with patch("src.validation.helpers.run_command", return_value=mock_result):
+        with patch("src.domain.validation.helpers.run_command", return_value=mock_result):
             result = get_ready_issue_id(tmp_path)
             assert result == "test-123"
 
     def test_returns_none_on_failure(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=1, stdout="", stderr="")
-        with patch("src.validation.helpers.run_command", return_value=mock_result):
+        with patch("src.domain.validation.helpers.run_command", return_value=mock_result):
             result = get_ready_issue_id(tmp_path)
             assert result is None
 
@@ -468,13 +468,13 @@ class TestGetReadyIssueId:
         mock_result = CommandResult(
             command=[], returncode=0, stdout="not json", stderr=""
         )
-        with patch("src.validation.helpers.run_command", return_value=mock_result):
+        with patch("src.domain.validation.helpers.run_command", return_value=mock_result):
             result = get_ready_issue_id(tmp_path)
             assert result is None
 
     def test_returns_none_on_empty_list(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="[]", stderr="")
-        with patch("src.validation.helpers.run_command", return_value=mock_result):
+        with patch("src.domain.validation.helpers.run_command", return_value=mock_result):
             result = get_ready_issue_id(tmp_path)
             assert result is None
 
@@ -485,7 +485,7 @@ class TestAnnotateIssue:
     def test_calls_bd_update(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
         mock_run = MagicMock(return_value=mock_result)
-        with patch("src.validation.helpers.run_command", mock_run):
+        with patch("src.domain.validation.helpers.run_command", mock_run):
             annotate_issue(tmp_path, "test-123")
 
             mock_run.assert_called_once()

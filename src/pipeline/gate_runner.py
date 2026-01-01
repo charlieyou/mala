@@ -19,8 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
-from src.quality_gate import GateResult
-from src.validation.spec import (
+from src.domain.quality_gate import GateResult
+from src.domain.validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
@@ -28,9 +28,9 @@ from src.validation.spec import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.lifecycle import RetryState
+    from src.domain.lifecycle import RetryState
     from src.protocols import GateChecker, GateResultProtocol, ValidationSpecProtocol
-    from src.validation.spec import ValidationSpec
+    from src.domain.validation.spec import ValidationSpec
 
 
 @dataclass

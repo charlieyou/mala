@@ -737,19 +737,8 @@ class QualityGate:
                         resolution=resolution,
                     )
 
-                # Require clean working tree
-                is_clean, status_output = self.check_working_tree_clean()
-                if not is_clean:
-                    failure_reasons.append(
-                        f"Working tree has uncommitted changes for {resolution.outcome.value} resolution: {status_output}"
-                    )
-                    return GateResult(
-                        passed=False,
-                        failure_reasons=failure_reasons,
-                        resolution=resolution,
-                    )
-
-                # No-op/obsolete with rationale and clean tree passes
+                # No-op/obsolete with rationale passes
+                # (skip working tree check - parallel agents may have uncommitted changes)
                 return GateResult(
                     passed=True,
                     resolution=resolution,

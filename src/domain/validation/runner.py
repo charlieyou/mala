@@ -6,7 +6,7 @@ This module re-exports the validation runner:
 
 For new code, use SpecValidationRunner directly with ValidationSpec:
 
-    from src.validation import SpecValidationRunner, build_validation_spec
+    from src.domain.validation import SpecValidationRunner, build_validation_spec
 
     runner = SpecValidationRunner(repo_path)
     spec = build_validation_spec(scope=ValidationScope.PER_ISSUE, ...)

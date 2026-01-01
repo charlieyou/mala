@@ -27,7 +27,7 @@ from src.orchestrator import (
     _get_implementer_prompt,
     _get_review_followup_prompt,
 )
-from src.prompts import get_gate_followup_prompt as _get_gate_followup_prompt
+from src.domain.prompts import get_gate_followup_prompt as _get_gate_followup_prompt
 from src.tools.command_runner import CommandResult
 
 
@@ -945,7 +945,7 @@ class TestQualityGateValidationEvidence:
 
     def test_detects_pytest_command(self, tmp_path: Path) -> None:
         """Quality gate should detect pytest execution in JSONL logs."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         # Create sample JSONL with pytest command
         log_path = tmp_path / "session.jsonl"
@@ -966,7 +966,7 @@ class TestQualityGateValidationEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        from src.validation.spec import ValidationScope, build_validation_spec
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
@@ -975,7 +975,7 @@ class TestQualityGateValidationEvidence:
 
     def test_detects_ruff_check_command(self, tmp_path: Path) -> None:
         """Quality gate should detect ruff check execution."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -995,7 +995,7 @@ class TestQualityGateValidationEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        from src.validation.spec import ValidationScope, build_validation_spec
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
@@ -1004,7 +1004,7 @@ class TestQualityGateValidationEvidence:
 
     def test_detects_ruff_format_command(self, tmp_path: Path) -> None:
         """Quality gate should detect ruff format execution."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -1024,7 +1024,7 @@ class TestQualityGateValidationEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        from src.validation.spec import ValidationScope, build_validation_spec
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
@@ -1033,7 +1033,7 @@ class TestQualityGateValidationEvidence:
 
     def test_detects_ty_check_command(self, tmp_path: Path) -> None:
         """Quality gate should detect ty check execution."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -1053,7 +1053,7 @@ class TestQualityGateValidationEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        from src.validation.spec import ValidationScope, build_validation_spec
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
@@ -1062,11 +1062,11 @@ class TestQualityGateValidationEvidence:
 
     def test_returns_empty_evidence_for_missing_log(self, tmp_path: Path) -> None:
         """Quality gate should return empty evidence for missing log file."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
         nonexistent = tmp_path / "nonexistent.jsonl"
-        from src.validation.spec import ValidationScope, build_validation_spec
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(nonexistent, spec)
@@ -1082,7 +1082,7 @@ class TestQualityGateCommitCheck:
 
     def test_detects_matching_commit(self, tmp_path: Path) -> None:
         """Quality gate should detect commit with correct issue ID."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -1097,7 +1097,7 @@ class TestQualityGateCommitCheck:
 
     def test_rejects_missing_commit(self, tmp_path: Path) -> None:
         """Quality gate should reject when no matching commit found."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -1110,7 +1110,7 @@ class TestQualityGateCommitCheck:
 
     def test_handles_git_failure(self, tmp_path: Path) -> None:
         """Quality gate should handle git command failures gracefully."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -1124,7 +1124,7 @@ class TestQualityGateCommitCheck:
 
     def test_searches_30_day_window(self, tmp_path: Path) -> None:
         """Quality gate should search commits from the last 30 days."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -1147,7 +1147,7 @@ class TestQualityGateFullCheck:
 
     def test_passes_when_all_criteria_met(self, tmp_path: Path) -> None:
         """Quality gate passes when closed, commit exists, validation ran."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -1180,7 +1180,7 @@ class TestQualityGateFullCheck:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        from src.validation.spec import ValidationScope, build_validation_spec
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
@@ -1195,7 +1195,7 @@ class TestQualityGateFullCheck:
 
     def test_fails_when_commit_missing(self, tmp_path: Path) -> None:
         """Quality gate fails when commit is missing."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -1219,7 +1219,7 @@ class TestQualityGateFullCheck:
             + "\n"
         )
 
-        from src.validation.spec import ValidationScope, build_validation_spec
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
@@ -1232,7 +1232,7 @@ class TestQualityGateFullCheck:
 
     def test_failure_message_reflects_30_day_window(self, tmp_path: Path) -> None:
         """Quality gate failure message should mention the 30-day window."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -1256,7 +1256,7 @@ class TestQualityGateFullCheck:
             + "\n"
         )
 
-        from src.validation.spec import ValidationScope, build_validation_spec
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
@@ -1269,7 +1269,7 @@ class TestQualityGateFullCheck:
 
     def test_fails_when_validation_missing(self, tmp_path: Path) -> None:
         """Quality gate fails when validation commands didn't run."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -1277,7 +1277,7 @@ class TestQualityGateFullCheck:
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")
 
-        from src.validation.spec import ValidationScope, build_validation_spec
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
@@ -1966,7 +1966,7 @@ class TestGateFlowSequencing:
         self, tmp_path: Path
     ) -> None:
         """No-op resolution should skip Gate 2/3 (commit + validation evidence)."""
-        from src.validation.spec import IssueResolution, ResolutionOutcome
+        from src.domain.validation.spec import IssueResolution, ResolutionOutcome
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -2047,7 +2047,7 @@ class TestGateFlowSequencing:
         self, tmp_path: Path
     ) -> None:
         """Obsolete resolution should skip Gate 2/3 (commit + validation evidence)."""
-        from src.validation.spec import IssueResolution, ResolutionOutcome
+        from src.domain.validation.spec import IssueResolution, ResolutionOutcome
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -2528,7 +2528,7 @@ class TestValidationResultMetadata:
         avoiding duplicate validation parsing.
         """
         from src.log_output.run_metadata import IssueRun, RunMetadata
-        from src.quality_gate import (
+        from src.domain.quality_gate import (
             CommandKind,
             GateResult,
             ValidationEvidence,
@@ -2637,7 +2637,7 @@ class TestValidationResultMetadata:
         and metadata use the same ValidationEvidence object stored in gate result.
         """
         from src.log_output.run_metadata import IssueRun, RunMetadata
-        from src.quality_gate import (
+        from src.domain.quality_gate import (
             CommandKind,
             GateResult,
             ValidationEvidence,
@@ -2756,7 +2756,7 @@ class TestResolutionRecordingInMetadata:
     ) -> None:
         """ISSUE_NO_CHANGE resolution should be recorded in IssueRun metadata."""
         from src.log_output.run_metadata import IssueRun, RunMetadata
-        from src.validation.spec import IssueResolution, ResolutionOutcome
+        from src.domain.validation.spec import IssueResolution, ResolutionOutcome
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -2846,7 +2846,7 @@ class TestResolutionRecordingInMetadata:
     ) -> None:
         """ISSUE_OBSOLETE resolution should be recorded in IssueRun metadata."""
         from src.log_output.run_metadata import IssueRun, RunMetadata
-        from src.validation.spec import IssueResolution, ResolutionOutcome
+        from src.domain.validation.spec import IssueResolution, ResolutionOutcome
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -3406,14 +3406,14 @@ class TestQualityGateAsync:
         self, orchestrator: MalaOrchestrator, tmp_path: Path
     ) -> None:
         """Quality gate should use asyncio.to_thread to avoid blocking the event loop."""
-        from src.quality_gate import GateResult
+        from src.domain.quality_gate import GateResult
 
         # Create a mock session log
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("{}\n")
 
         # Create a mock RetryState (now imported from lifecycle)
-        from src.lifecycle import RetryState
+        from src.domain.lifecycle import RetryState
 
         retry_state = RetryState(baseline_timestamp=int(time.time()))
 
@@ -3853,7 +3853,7 @@ class TestReviewUsesIssueCommits:
         """Review should use the issue's commit list, not unrelated commits."""
         from src.cerberus_review import ReviewResult
         from src.orchestrator import MalaOrchestrator
-        from src.quality_gate import GateResult
+        from src.domain.quality_gate import GateResult
 
         # Create a fake log file
         log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
@@ -4389,8 +4389,8 @@ class TestBuildGateMetadata:
     def test_successful_gate_with_full_evidence(self) -> None:
         """Successful gate result with full evidence extracts all fields."""
         from src.orchestrator import _build_gate_metadata
-        from src.quality_gate import GateResult, ValidationEvidence
-        from src.validation.spec import CommandKind
+        from src.domain.quality_gate import GateResult, ValidationEvidence
+        from src.domain.validation.spec import CommandKind
 
         evidence = ValidationEvidence(
             commands_ran={CommandKind.TEST: True, CommandKind.LINT: True},
@@ -4418,8 +4418,8 @@ class TestBuildGateMetadata:
     def test_failed_gate_with_partial_evidence(self) -> None:
         """Failed gate result extracts failure reasons and evidence."""
         from src.orchestrator import _build_gate_metadata
-        from src.quality_gate import GateResult, ValidationEvidence
-        from src.validation.spec import CommandKind
+        from src.domain.quality_gate import GateResult, ValidationEvidence
+        from src.domain.validation.spec import CommandKind
 
         evidence = ValidationEvidence(
             commands_ran={CommandKind.TEST: True, CommandKind.LINT: False},
@@ -4449,7 +4449,7 @@ class TestBuildGateMetadata:
     def test_empty_failure_reasons_and_missing_commit(self) -> None:
         """Gate result with empty failure reasons and missing commit."""
         from src.orchestrator import _build_gate_metadata
-        from src.quality_gate import GateResult, ValidationEvidence
+        from src.domain.quality_gate import GateResult, ValidationEvidence
 
         evidence = ValidationEvidence(commands_ran={}, failed_commands=[])
         gate_result = GateResult(
@@ -4468,7 +4468,7 @@ class TestBuildGateMetadata:
     def test_passed_true_overrides_gate_result_passed(self) -> None:
         """When passed=True, quality_gate_result.passed should be True."""
         from src.orchestrator import _build_gate_metadata
-        from src.quality_gate import GateResult, ValidationEvidence
+        from src.domain.quality_gate import GateResult, ValidationEvidence
 
         evidence = ValidationEvidence(commands_ran={}, failed_commands=[])
         gate_result = GateResult(
@@ -4496,7 +4496,7 @@ class TestBuildGateMetadataFromLogs:
         from typing import TYPE_CHECKING, cast
 
         from src.orchestrator import _build_gate_metadata_from_logs
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         if TYPE_CHECKING:
             from src.protocols import GateChecker
@@ -4522,8 +4522,8 @@ class TestBuildGateMetadataFromLogs:
         from typing import TYPE_CHECKING, cast
 
         from src.orchestrator import _build_gate_metadata_from_logs
-        from src.quality_gate import QualityGate
-        from src.validation.spec import (
+        from src.domain.quality_gate import QualityGate
+        from src.domain.validation.spec import (
             CommandKind,
             ValidationCommand,
             ValidationScope,
@@ -4570,8 +4570,8 @@ class TestBuildGateMetadataFromLogs:
         from typing import TYPE_CHECKING, cast
 
         from src.orchestrator import _build_gate_metadata_from_logs
-        from src.quality_gate import QualityGate
-        from src.validation.spec import ValidationScope, ValidationSpec
+        from src.domain.quality_gate import QualityGate
+        from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         if TYPE_CHECKING:
             from src.protocols import GateChecker
@@ -4599,8 +4599,8 @@ class TestBuildGateMetadataFromLogs:
         from typing import TYPE_CHECKING, cast
 
         from src.orchestrator import _build_gate_metadata_from_logs
-        from src.quality_gate import QualityGate
-        from src.validation.spec import ValidationScope, ValidationSpec
+        from src.domain.quality_gate import QualityGate
+        from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         if TYPE_CHECKING:
             from src.protocols import GateChecker
@@ -4630,8 +4630,8 @@ class TestBuildGateMetadataFromLogs:
         from typing import TYPE_CHECKING, cast
 
         from src.orchestrator import _build_gate_metadata_from_logs
-        from src.quality_gate import QualityGate
-        from src.validation.spec import ValidationScope, ValidationSpec
+        from src.domain.quality_gate import QualityGate
+        from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         if TYPE_CHECKING:
             from src.protocols import GateChecker

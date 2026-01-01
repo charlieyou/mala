@@ -41,14 +41,14 @@ from src.hooks import (
     make_stop_hook,
 )
 from src.mcp import get_disallowed_tools, get_mcp_servers
-from src.lifecycle import (
+from src.domain.lifecycle import (
     Effect,
     ImplementerLifecycle,
     LifecycleConfig,
     LifecycleContext,
     LifecycleState,
 )
-from src.prompts import get_gate_followup_prompt as _get_gate_followup_prompt
+from src.domain.prompts import get_gate_followup_prompt as _get_gate_followup_prompt
 from src.tools.env import SCRIPTS_DIR, get_lock_dir
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from typing import Self
 
     from src.event_sink import MalaEventSink
-    from src.lifecycle import (
+    from src.domain.lifecycle import (
         GateOutcome,
         RetryState,
         ReviewOutcome,

@@ -10,15 +10,15 @@ from typing import cast
 
 import pytest
 
-from src.lifecycle import RetryState
+from src.domain.lifecycle import RetryState
 from src.pipeline.gate_runner import (
     GateRunner,
     GateRunnerConfig,
     PerIssueGateInput,
 )
 from src.protocols import GateChecker  # noqa: TC001 - needed at runtime for cast()
-from src.quality_gate import CommitResult, GateResult, ValidationEvidence
-from src.validation.spec import (
+from src.domain.quality_gate import CommitResult, GateResult, ValidationEvidence
+from src.domain.validation.spec import (
     CommandKind,
     ValidationCommand,
     ValidationScope,

@@ -179,7 +179,7 @@ def _build_dependencies(
     from .epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
     from .event_sink import ConsoleEventSink
     from .models import RetryConfig
-    from .quality_gate import QualityGate
+    from .domain.quality_gate import QualityGate
     from .session_log_parser import FileSystemLogProvider
     from .telemetry import NullTelemetryProvider
 

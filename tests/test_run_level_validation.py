@@ -59,7 +59,7 @@ class TestRunLevelValidation:
         self, tmp_path: Path
     ) -> None:
         """Run-level validation should pass when validation runner succeeds."""
-        from src.validation.result import ValidationResult, ValidationStepResult
+        from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
 
@@ -119,7 +119,7 @@ class TestRunLevelValidation:
         self, tmp_path: Path
     ) -> None:
         """Run-level validation should spawn fixer agent on failure."""
-        from src.validation.result import ValidationResult, ValidationStepResult
+        from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
 
@@ -192,7 +192,7 @@ class TestRunLevelValidation:
         self, tmp_path: Path
     ) -> None:
         """Run-level validation should record results to run metadata."""
-        from src.validation.result import ValidationResult, ValidationStepResult
+        from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
 
@@ -261,7 +261,7 @@ class TestRunLevelValidation:
 
     def test_build_validation_failure_output_with_result(self, tmp_path: Path) -> None:
         """_build_validation_failure_output should format failure details."""
-        from src.validation.result import ValidationResult, ValidationStepResult
+        from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
         config = RunCoordinatorConfig(repo_path=tmp_path, timeout_seconds=60)
@@ -302,7 +302,7 @@ class TestRunLevelValidation:
     @pytest.mark.asyncio
     async def test_e2e_passed_none_when_e2e_disabled(self, tmp_path: Path) -> None:
         """e2e_passed should be None when E2E is disabled via disable_validations."""
-        from src.validation.result import ValidationResult, ValidationStepResult
+        from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
 
@@ -366,8 +366,8 @@ class TestRunLevelValidation:
     @pytest.mark.asyncio
     async def test_e2e_passed_none_when_e2e_skipped(self, tmp_path: Path) -> None:
         """e2e_passed should be None when E2E was skipped (status=SKIPPED)."""
-        from src.validation.e2e import E2EResult, E2EStatus
-        from src.validation.result import ValidationResult, ValidationStepResult
+        from src.domain.validation.e2e import E2EResult, E2EStatus
+        from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
         config = RunCoordinatorConfig(repo_path=tmp_path, timeout_seconds=60)
@@ -431,8 +431,8 @@ class TestRunLevelValidation:
         self, tmp_path: Path
     ) -> None:
         """e2e_passed should be True when E2E is enabled and actually passes."""
-        from src.validation.e2e import E2EResult, E2EStatus
-        from src.validation.result import ValidationResult, ValidationStepResult
+        from src.domain.validation.e2e import E2EResult, E2EStatus
+        from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
         config = RunCoordinatorConfig(repo_path=tmp_path, timeout_seconds=60)
@@ -495,8 +495,8 @@ class TestRunLevelValidation:
         self, tmp_path: Path
     ) -> None:
         """e2e_passed should be False when E2E is enabled and actually fails."""
-        from src.validation.e2e import E2EResult, E2EStatus
-        from src.validation.result import ValidationResult, ValidationStepResult
+        from src.domain.validation.e2e import E2EResult, E2EStatus
+        from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
 
@@ -567,7 +567,7 @@ class TestRunLevelValidation:
         self, tmp_path: Path
     ) -> None:
         """e2e_passed should be None when validation fails before E2E runs."""
-        from src.validation.result import ValidationResult, ValidationStepResult
+        from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
 

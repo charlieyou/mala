@@ -9,11 +9,11 @@ import json
 from pathlib import Path
 from typing import cast
 from src.tools.command_runner import CommandResult
-from src.validation.spec import CommandKind, ValidationScope, build_validation_spec
+from src.domain.validation.spec import CommandKind, ValidationScope, build_validation_spec
 from unittest.mock import patch
 
 from src.protocols import LogProvider  # noqa: TC001
-from src.quality_gate import (
+from src.domain.quality_gate import (
     QualityGate,
     ValidationEvidence,
     check_evidence_against_spec,
@@ -448,7 +448,7 @@ class TestGateResultNoProgress:
 
     def test_gate_result_has_no_progress_field(self) -> None:
         """GateResult should have a no_progress field."""
-        from src.quality_gate import GateResult
+        from src.domain.quality_gate import GateResult
 
         result = GateResult(passed=False, failure_reasons=["test"])
         # Check the field exists and defaults appropriately
@@ -456,7 +456,7 @@ class TestGateResultNoProgress:
 
     def test_gate_result_no_progress_default_false(self) -> None:
         """GateResult.no_progress should default to False."""
-        from src.quality_gate import GateResult
+        from src.domain.quality_gate import GateResult
 
         result = GateResult(passed=True)
         assert result.no_progress is False
@@ -615,7 +615,7 @@ class TestCommitBaselineCheck:
 
     def test_rejects_commit_before_baseline(self, tmp_path: Path) -> None:
         """Should reject commits created before the baseline timestamp."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -638,7 +638,7 @@ class TestCommitBaselineCheck:
 
     def test_accepts_commit_after_baseline(self, tmp_path: Path) -> None:
         """Should accept commits created after the baseline timestamp."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -660,7 +660,7 @@ class TestCommitBaselineCheck:
 
     def test_accepts_any_commit_without_baseline(self, tmp_path: Path) -> None:
         """Should accept any matching commit when no baseline is provided (backward compat)."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -679,7 +679,7 @@ class TestCommitBaselineCheck:
 
     def test_gate_check_uses_baseline(self, tmp_path: Path) -> None:
         """Gate check method should use baseline to reject stale commits."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -734,7 +734,7 @@ class TestCommitBaselineCheck:
 
     def test_gate_check_passes_with_new_commit(self, tmp_path: Path) -> None:
         """Gate check should pass when commit is after baseline."""
-        from src.quality_gate import QualityGate
+        from src.domain.quality_gate import QualityGate
 
         gate = QualityGate(tmp_path)
 
@@ -790,7 +790,7 @@ class TestIssueResolutionMarkerParsing:
 
     def test_parses_no_change_marker_with_rationale(self, tmp_path: Path) -> None:
         """Should parse ISSUE_NO_CHANGE marker and extract rationale."""
-        from src.validation.spec import ResolutionOutcome
+        from src.domain.validation.spec import ResolutionOutcome
 
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -817,7 +817,7 @@ class TestIssueResolutionMarkerParsing:
 
     def test_parses_obsolete_marker_with_rationale(self, tmp_path: Path) -> None:
         """Should parse ISSUE_OBSOLETE marker and extract rationale."""
-        from src.validation.spec import ResolutionOutcome
+        from src.domain.validation.spec import ResolutionOutcome
 
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -878,7 +878,7 @@ class TestIssueResolutionMarkerParsing:
 
     def test_parses_marker_from_offset(self, tmp_path: Path) -> None:
         """Should parse markers starting from the given offset."""
-        from src.validation.spec import ResolutionOutcome
+        from src.domain.validation.spec import ResolutionOutcome
 
         log_path = tmp_path / "session.jsonl"
 
@@ -969,7 +969,7 @@ class TestScopeAwareEvidence:
         self, tmp_path: Path
     ) -> None:
         """EvidenceGate should accept no-change resolution with clean working tree."""
-        from src.validation.spec import ResolutionOutcome
+        from src.domain.validation.spec import ResolutionOutcome
 
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -1014,7 +1014,7 @@ class TestScopeAwareEvidence:
         self, tmp_path: Path
     ) -> None:
         """EvidenceGate should accept obsolete resolution with clean working tree."""
-        from src.validation.spec import ResolutionOutcome
+        from src.domain.validation.spec import ResolutionOutcome
 
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -1051,10 +1051,16 @@ class TestScopeAwareEvidence:
         assert result.resolution is not None
         assert result.resolution.outcome == ResolutionOutcome.OBSOLETE
 
-    def test_evidence_gate_fails_no_change_with_dirty_tree(
+    def test_evidence_gate_passes_no_change_with_dirty_tree(
         self, tmp_path: Path
     ) -> None:
-        """EvidenceGate should fail no-change resolution if working tree is dirty."""
+        """EvidenceGate should pass no-change resolution even if working tree is dirty.
+
+        This is intentional: parallel agents may have uncommitted changes in the
+        shared repo, so we don't check working tree status for no-change resolutions.
+        """
+        from src.domain.validation.spec import ResolutionOutcome
+
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
             {
@@ -1072,25 +1078,17 @@ class TestScopeAwareEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.domain.quality_gate.run_command") as mock_run:
-            mock_run.return_value = CommandResult(
-                command=[],
-                returncode=0,
-                stdout=" M src/foo.py",  # Dirty tree
-                stderr="",
-            )
-            result = gate.check_with_resolution(
-                issue_id="test-123",
-                log_path=log_path,
-                spec=spec,
-            )
+        result = gate.check_with_resolution(
+            issue_id="test-123",
+            log_path=log_path,
+            spec=spec,
+        )
 
-        assert result.passed is False
-        assert any("uncommitted" in r.lower() for r in result.failure_reasons)
+        assert result.passed is True
+        assert result.resolution is not None
+        assert result.resolution.outcome == ResolutionOutcome.NO_CHANGE
 
     def test_evidence_gate_requires_rationale_for_no_change(
         self, tmp_path: Path
@@ -1122,7 +1120,7 @@ class TestEvidenceGateSkipsValidation:
     """Test that Gate 2/3 (commit + full validation) is skipped for no-op/obsolete."""
 
     def test_no_change_skips_commit_check(self, tmp_path: Path) -> None:
-        """No-change resolution should not require a commit."""
+        """No-change resolution should not require a commit or git status check."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
             {
@@ -1140,16 +1138,9 @@ class TestEvidenceGateSkipsValidation:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
-            # First call: git status (clean tree)
-            # Second call: git log (no commit found - should be OK for no-change)
-            mock_run.side_effect = [
-                CommandResult(command=[], returncode=0, stdout="", stderr=""),
-            ]
             result = gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
@@ -1157,8 +1148,8 @@ class TestEvidenceGateSkipsValidation:
             )
 
         assert result.passed is True
-        # Commit check should have been skipped (only git status called)
-        assert mock_run.call_count == 1
+        # No git commands should be called for no-change resolution
+        assert mock_run.call_count == 0
 
     def test_no_change_skips_validation_evidence_check(self, tmp_path: Path) -> None:
         """No-change resolution should not require validation evidence."""
@@ -1201,7 +1192,7 @@ class TestEvidenceGateSkipsValidation:
             pass
 
     def test_obsolete_skips_commit_and_validation(self, tmp_path: Path) -> None:
-        """Obsolete resolution should skip both commit and validation checks."""
+        """Obsolete resolution should skip commit, validation, and git status checks."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
             {
@@ -1219,14 +1210,9 @@ class TestEvidenceGateSkipsValidation:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
-            mock_run.return_value = CommandResult(
-                command=[], returncode=0, stdout="", stderr=""
-            )
             result = gate.check_with_resolution(
                 issue_id="test-123",
                 log_path=log_path,
@@ -1234,8 +1220,8 @@ class TestEvidenceGateSkipsValidation:
             )
 
         assert result.passed is True
-        # Only git status should be called for clean tree check
-        assert mock_run.call_count == 1
+        # No git commands should be called for obsolete resolution
+        assert mock_run.call_count == 0
 
 
 class TestClearFailureMessages:
@@ -1363,13 +1349,13 @@ class TestGetRequiredEvidenceKinds:
 
     def test_returns_gate_required_kinds_from_spec(self) -> None:
         """Should return set of gate-required command kinds."""
-        from src.quality_gate import get_required_evidence_kinds
+        from src.domain.quality_gate import get_required_evidence_kinds
 
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         kinds = get_required_evidence_kinds(spec)
 
         # Per-issue spec should require TEST, LINT, FORMAT, TYPECHECK
-        from src.validation.spec import CommandKind
+        from src.domain.validation.spec import CommandKind
 
         assert CommandKind.TEST in kinds
         assert CommandKind.LINT in kinds
@@ -1592,7 +1578,7 @@ class TestUserPromptInjectionPrevention:
 
     def test_assistant_message_still_parsed(self, tmp_path: Path) -> None:
         """Assistant messages with resolution markers should still work."""
-        from src.validation.spec import ResolutionOutcome
+        from src.domain.validation.spec import ResolutionOutcome
 
         log_path = tmp_path / "session.jsonl"
         assistant_entry = json.dumps(
@@ -1642,8 +1628,14 @@ class TestGitFailureHandling:
         assert "git error" in output.lower()
         assert "not a git repository" in output
 
-    def test_git_failure_blocks_no_change_resolution(self, tmp_path: Path) -> None:
-        """No-change resolution should fail when git status fails."""
+    def test_no_change_resolution_passes_without_git_check(self, tmp_path: Path) -> None:
+        """No-change resolution should pass without checking git status.
+
+        This is intentional: parallel agents may have uncommitted changes in the
+        shared repo, so we skip git status check entirely for no-change resolutions.
+        """
+        from src.domain.validation.spec import ResolutionOutcome
+
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
             {
@@ -1661,22 +1653,14 @@ class TestGitFailureHandling:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.domain.quality_gate.run_command") as mock_run:
-            mock_run.return_value = CommandResult(
-                command=[],
-                returncode=1,
-                stdout="",
-                stderr="error",
-            )
-            result = gate.check_with_resolution("test-123", log_path, spec=spec)
+        result = gate.check_with_resolution("test-123", log_path, spec=spec)
 
-        # Should fail because git status failed
-        assert result.passed is False
-        assert any("git error" in r.lower() for r in result.failure_reasons)
+        # Should pass - no git status check for no-change resolution
+        assert result.passed is True
+        assert result.resolution is not None
+        assert result.resolution.outcome == ResolutionOutcome.NO_CHANGE
 
 
 class TestOffsetBasedEvidenceInCheckWithResolution:
@@ -2047,7 +2031,7 @@ class TestSpecDrivenEvidencePatterns:
 
     def test_command_without_pattern_skipped(self, tmp_path: Path) -> None:
         """Commands without detection_pattern should be skipped (no fallback)."""
-        from src.validation.spec import (
+        from src.domain.validation.spec import (
             CommandKind,
             ValidationCommand,
             ValidationScope,
@@ -2100,7 +2084,7 @@ class TestSpecDrivenEvidencePatterns:
         """
         import re
 
-        from src.validation.spec import (
+        from src.domain.validation.spec import (
             CommandKind,
             ValidationCommand,
             ValidationScope,
@@ -2693,7 +2677,7 @@ class TestAlreadyCompleteResolution:
 
     def test_already_complete_passes_with_valid_commit(self, tmp_path: Path) -> None:
         """ALREADY_COMPLETE should pass if commit exists (ignoring baseline)."""
-        from src.validation.spec import ResolutionOutcome
+        from src.domain.validation.spec import ResolutionOutcome
 
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -2810,7 +2794,7 @@ class TestAlreadyCompleteResolution:
 
     def test_already_complete_skips_validation_evidence(self, tmp_path: Path) -> None:
         """ALREADY_COMPLETE should not require validation evidence."""
-        from src.validation.spec import ResolutionOutcome
+        from src.domain.validation.spec import ResolutionOutcome
 
         log_path = tmp_path / "session.jsonl"
         # Only ALREADY_COMPLETE marker, no validation commands
@@ -2869,7 +2853,7 @@ class TestSpecCommandChangesPropagation:
         """
         import re
 
-        from src.validation.spec import (
+        from src.domain.validation.spec import (
             CommandKind,
             ValidationCommand,
             ValidationScope,

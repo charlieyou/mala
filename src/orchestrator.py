@@ -58,7 +58,7 @@ from .pipeline.run_coordinator import (
     RunCoordinatorConfig,
     RunLevelValidationInput,
 )
-from .quality_gate import QUALITY_GATE_IGNORED_COMMANDS, QualityGate
+from .domain.quality_gate import QUALITY_GATE_IGNORED_COMMANDS, QualityGate
 from .session_log_parser import FileSystemLogProvider
 from .tools.env import (
     USER_CONFIG_DIR,
@@ -70,7 +70,7 @@ from .tools.locking import (
     release_run_locks,
     cleanup_agent_locks,
 )
-from .validation.spec import (
+from .domain.validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
@@ -81,7 +81,7 @@ from .orchestrator_types import DEFAULT_AGENT_TIMEOUT_MINUTES
 if TYPE_CHECKING:
     from .cerberus_review import ReviewResult
     from .event_sink import EventRunConfig, MalaEventSink
-    from .lifecycle import RetryState
+    from .domain.lifecycle import RetryState
     from .models import IssueResolution
     from .orchestrator_types import OrchestratorConfig, _DerivedConfig
     from .protocols import (
@@ -95,9 +95,9 @@ if TYPE_CHECKING:
         ReviewResultProtocol,
         ValidationSpecProtocol,
     )
-    from .quality_gate import GateResult
+    from .domain.quality_gate import GateResult
     from .telemetry import TelemetryProvider
-    from .validation.spec import ValidationSpec
+    from .domain.validation.spec import ValidationSpec
 
 
 # Version (from package metadata)
