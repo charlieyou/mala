@@ -719,63 +719,52 @@ class TestExtractWaitTimeout:
         assert DefaultReviewer._extract_wait_timeout(args) == 450
 
 
-class TestResolveStaleGate:
-    """Tests for DefaultReviewer._resolve_stale_gate method."""
+class TestAlreadyActiveGateError:
+    """Tests for 'already active' gate error handling.
 
-    async def test_resolve_stale_gate_success(self) -> None:
-        """Resolves stale gate successfully."""
+    When spawn fails with 'already active', the error is now treated as fatal
+    instead of auto-resolving. This prevents concurrent runs from interfering
+    and losing review results, since the resolve command has no session scoping.
+    """
+
+    async def test_already_active_returns_fatal_error(self) -> None:
+        """Returns fatal error instead of auto-resolving on 'already active'."""
         from pathlib import Path
-        from unittest.mock import AsyncMock
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         reviewer = DefaultReviewer(repo_path=Path("/tmp"))
 
-        mock_result = AsyncMock()
-        mock_result.returncode = 0
+        # Mock successful binary validation
+        with patch.object(reviewer, "_validate_review_gate_bin", return_value=None):
+            # Mock spawn failure with "already active" error
+            # Use MagicMock for sync methods (returncode, timed_out, stderr_tail, stdout_tail)
+            mock_result = MagicMock()
+            mock_result.returncode = 1
+            mock_result.timed_out = False
+            mock_result.stderr_tail.return_value = "Error: review gate already active"
+            mock_result.stdout_tail.return_value = ""
 
-        mock_runner = AsyncMock()
-        mock_runner.run_async.return_value = mock_result
+            with patch(
+                "src.infra.clients.cerberus_review.CommandRunner"
+            ) as mock_runner_class:
+                mock_runner = AsyncMock()
+                mock_runner.run_async.return_value = mock_result
+                mock_runner_class.return_value = mock_runner
 
-        result = await reviewer._resolve_stale_gate(
-            mock_runner, {"CLAUDE_SESSION_ID": "test"}
-        )
+                # Must provide session ID or it fails validation
+                with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
+                    result = await reviewer("baseline..HEAD")
 
-        assert result is True
-        mock_runner.run_async.assert_called_once()
-        call_args = mock_runner.run_async.call_args
-        assert "resolve" in call_args[0][0]
-        assert "--reason" in call_args[0][0]
+        # Should be fatal error (not retryable)
+        assert result.passed is False
+        assert result.fatal_error is True
+        assert result.parse_error is not None
+        assert "already active" in result.parse_error
+        assert "cannot auto-resolve" in result.parse_error
 
-    async def test_resolve_stale_gate_failure(self) -> None:
-        """Returns False when resolve command fails."""
-        from pathlib import Path
-        from unittest.mock import AsyncMock
-
-        reviewer = DefaultReviewer(repo_path=Path("/tmp"))
-
-        mock_result = AsyncMock()
-        mock_result.returncode = 1
-
-        mock_runner = AsyncMock()
-        mock_runner.run_async.return_value = mock_result
-
-        result = await reviewer._resolve_stale_gate(
-            mock_runner, {"CLAUDE_SESSION_ID": "test"}
-        )
-
-        assert result is False
-
-    async def test_resolve_stale_gate_exception(self) -> None:
-        """Returns False when resolve command raises exception."""
-        from pathlib import Path
-        from unittest.mock import AsyncMock
-
-        reviewer = DefaultReviewer(repo_path=Path("/tmp"))
-
-        mock_runner = AsyncMock()
-        mock_runner.run_async.side_effect = Exception("Network error")
-
-        result = await reviewer._resolve_stale_gate(
-            mock_runner, {"CLAUDE_SESSION_ID": "test"}
-        )
-
-        assert result is False
+        # Should NOT have called resolve (only spawn)
+        # Spawn is called once, and resolve should never be called
+        assert mock_runner.run_async.call_count == 1
+        call_cmd = mock_runner.run_async.call_args[0][0]
+        assert "spawn-code-review" in call_cmd
+        assert "resolve" not in call_cmd
