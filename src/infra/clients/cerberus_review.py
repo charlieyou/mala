@@ -218,6 +218,8 @@ class DefaultReviewer:
             )
 
         spawn_cmd = [self._review_gate_bin(), "spawn-code-review"]
+        # Always exclude .beads/ directory (auto-generated issue tracker files)
+        spawn_cmd.extend(["--exclude", ".beads/*"])
         if context_file is not None:
             spawn_cmd.extend(["--context-file", str(context_file)])
         if self.spawn_args:
