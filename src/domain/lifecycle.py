@@ -23,10 +23,10 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from src.validation.spec import ResolutionOutcome
+from .validation.spec import ResolutionOutcome
 
 if TYPE_CHECKING:
-    from src.validation.spec import IssueResolution
+    from .validation.spec import IssueResolution
 
 # Resolution outcomes that skip review (no new code to review)
 _SKIP_REVIEW_OUTCOMES = frozenset(

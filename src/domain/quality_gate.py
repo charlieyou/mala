@@ -18,9 +18,10 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
+from src.infra.tools.command_runner import run_command
 from src.session_log_parser import FileSystemLogProvider, JsonlEntry, SessionLogParser
-from src.tools.command_runner import run_command
-from src.validation.spec import (
+
+from .validation.spec import (
     CommandKind,
     IssueResolution,
     ResolutionOutcome,
@@ -37,7 +38,8 @@ if TYPE_CHECKING:
         LogProvider,
         ValidationEvidenceProtocol,
     )
-    from src.validation.spec import ValidationSpec
+
+    from .validation.spec import ValidationSpec
 
 
 # Re-export JsonlEntry for backward compatibility
@@ -567,7 +569,8 @@ class QualityGate:
         """Check if the working tree has uncommitted changes.
 
         Returns:
-            True if there are staged or unstaged changes, False otherwise.
+            True if there are staged or unstaged changes, or if git status
+            fails (conservative assumption that changes may exist).
         """
         # Use git status --porcelain to detect any changes
         # This includes staged, unstaged, and untracked files
@@ -577,8 +580,9 @@ class QualityGate:
             timeout_seconds=5.0,
         )
         if not result.ok:
-            # If git status fails, assume no changes (safe default)
-            return False
+            # If git status fails, assume changes exist (conservative default)
+            # This prevents false "no progress" conclusions when git state is unknown
+            return True
 
         # Any output means there are changes
         return bool(result.stdout.strip())
@@ -796,32 +800,33 @@ class QualityGate:
                     f"(stale commits from previous runs are rejected)"
                 )
             else:
-                failure_reasons.append(
-                    f"No commit with bd-{issue_id} found in last 30 days"
-                )
+                failure_reasons.append(f"No commit with bd-{issue_id} found in the last 30 days")
+            return GateResult(
+                passed=False,
+                failure_reasons=failure_reasons,
+            )
 
-        # Check validation evidence from the given offset (scopes to current attempt)
+        # Gate 3: Check validation evidence (spec-driven)
         evidence = self.parse_validation_evidence_with_spec(log_path, spec, log_offset)
-        passed, missing = check_evidence_against_spec(evidence, spec)
-        if not passed:
-            failure_reasons.append(f"Missing validation commands: {', '.join(missing)}")
 
-        # Check for validation commands that failed (exited non-zero)
-        failed_commands = [
-            command
-            for command in evidence.failed_commands
-            if command not in QUALITY_GATE_IGNORED_COMMANDS
-        ]
-        if failed_commands:
+        passed, missing = check_evidence_against_spec(evidence, spec)
+
+        # Check for missing validation commands
+        if not passed:
             failure_reasons.append(
-                "Validation commands failed (non-zero exit): "
-                f"{', '.join(failed_commands)}"
+                f"Missing validation evidence for: {', '.join(missing)}"
+            )
+
+        # Check for failed validation commands
+        if evidence.failed_commands:
+            passed = False
+            failure_reasons.append(
+                f"Validation command(s) failed: {', '.join(evidence.failed_commands)}"
             )
 
         return GateResult(
-            passed=len(failure_reasons) == 0,
+            passed=passed,
             failure_reasons=failure_reasons,
             commit_hash=commit_result.commit_hash,
             validation_evidence=evidence,
-            resolution=resolution,
         )

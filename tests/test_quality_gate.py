@@ -273,6 +273,8 @@ class TestNoProgressDetection:
         log_path.write_text("")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Same commit as before, file has no content after offset 0
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
@@ -347,6 +349,8 @@ class TestNoProgressDetection:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Set offset to after the evidence
         offset = log_path.stat().st_size
 
@@ -383,6 +387,8 @@ class TestNoProgressDetection:
         log_path.write_text("")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
             log_offset=0,
@@ -395,6 +401,8 @@ class TestNoProgressDetection:
     def test_handles_missing_log_file(self, tmp_path: Path) -> None:
         """Should handle missing log file (no evidence = no progress)."""
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         nonexistent = tmp_path / "nonexistent.jsonl"
 
         is_no_progress = gate.check_no_progress(
@@ -860,6 +868,8 @@ class TestIssueResolutionMarkerParsing:
     def test_handles_missing_log_file(self, tmp_path: Path) -> None:
         """Should return None for missing log file."""
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         nonexistent = tmp_path / "nonexistent.jsonl"
 
         resolution = gate.parse_issue_resolution(nonexistent)
@@ -898,6 +908,8 @@ class TestIssueResolutionMarkerParsing:
         log_path.write_text(first_entry + "\n" + second_entry + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         offset = len(first_entry) + 1  # +1 for newline
         resolution, _ = gate.parse_issue_resolution_from_offset(log_path, offset=offset)
 
@@ -925,6 +937,8 @@ class TestIssueResolutionMarkerParsing:
         log_path.write_text(entry + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Offset at end of file - marker is before
         offset = log_path.stat().st_size
         resolution, _ = gate.parse_issue_resolution_from_offset(log_path, offset=offset)
@@ -974,6 +988,8 @@ class TestScopeAwareEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         # Mock git status to return clean working tree
@@ -1017,6 +1033,8 @@ class TestScopeAwareEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -1054,6 +1072,8 @@ class TestScopeAwareEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -1089,6 +1109,8 @@ class TestScopeAwareEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         resolution = gate.parse_issue_resolution(log_path)
 
         # Should either return None or have empty rationale (which gate should reject)
@@ -1118,6 +1140,8 @@ class TestEvidenceGateSkipsValidation:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -1155,6 +1179,8 @@ class TestEvidenceGateSkipsValidation:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -1193,6 +1219,8 @@ class TestEvidenceGateSkipsValidation:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -1216,6 +1244,8 @@ class TestClearFailureMessages:
     def test_missing_commit_message_is_clear(self, tmp_path: Path) -> None:
         """Failure for missing commit should be descriptive."""
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         log_path = tmp_path / "session.jsonl"
         # Log with all validation commands but no actual commit made
         commands = [
@@ -1263,6 +1293,8 @@ class TestClearFailureMessages:
     def test_missing_validation_message_lists_commands(self, tmp_path: Path) -> None:
         """Failure for missing validation should list which commands didn't run."""
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         log_path = tmp_path / "session.jsonl"
         # Log with only partial validation
         log_content = json.dumps(
@@ -1311,6 +1343,8 @@ class TestClearFailureMessages:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -1455,6 +1489,8 @@ class TestCheckWithResolutionSpec:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
         # With post-validate disabled, pytest is not required
         spec = build_validation_spec(
@@ -1487,6 +1523,8 @@ class TestCheckWithResolutionSpec:
         log_path.write_text("{}\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
         with pytest_module.raises(ValueError, match="spec is required"):
             gate.check_with_resolution(
@@ -1519,6 +1557,8 @@ class TestUserPromptInjectionPrevention:
         log_path.write_text(user_entry + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         resolution = gate.parse_issue_resolution(log_path)
 
         # Should NOT find resolution from user message
@@ -1544,6 +1584,8 @@ class TestUserPromptInjectionPrevention:
         log_path.write_text(user_entry + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is None
@@ -1570,6 +1612,8 @@ class TestUserPromptInjectionPrevention:
         log_path.write_text(assistant_entry + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is not None
@@ -1582,6 +1626,8 @@ class TestGitFailureHandling:
     def test_git_failure_returns_dirty(self, tmp_path: Path) -> None:
         """Git failure should return is_clean=False with error message."""
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -1615,6 +1661,8 @@ class TestGitFailureHandling:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -1689,6 +1737,8 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
         log_path.write_text(first_content + "\n".join(second_lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         offset = len(first_content.encode("utf-8"))
 
@@ -1761,6 +1811,8 @@ class TestByteOffsetConsistency:
         log_path.write_text(content)
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         # Calculate byte offset after first entry (including newline)
@@ -1813,6 +1865,8 @@ class TestByteOffsetConsistency:
         log_path.write_text(content)
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         resolution, new_offset = gate.parse_issue_resolution_from_offset(log_path, 0)
 
         assert resolution is not None
@@ -1846,6 +1900,8 @@ class TestByteOffsetConsistency:
             f.write((valid_entry + "\n").encode("utf-8"))
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
@@ -1875,6 +1931,8 @@ class TestByteOffsetConsistency:
         log_path.write_text(content)
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         resolution, new_offset = gate.parse_issue_resolution_from_offset(log_path, 0)
 
         assert resolution is not None
@@ -1894,6 +1952,8 @@ class TestByteOffsetConsistency:
         log_path.write_text(entry + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
         # Offset way beyond file size
         evidence = gate.parse_validation_evidence_with_spec(
@@ -1977,6 +2037,8 @@ class TestSpecDrivenEvidencePatterns:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         # All commands in the spec should be detected
@@ -2023,6 +2085,8 @@ class TestSpecDrivenEvidencePatterns:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         # Without detection_pattern and without fallback, pytest should NOT be detected
@@ -2107,6 +2171,8 @@ class TestSpecDrivenEvidencePatterns:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2218,6 +2284,8 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -2296,6 +2364,8 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -2369,6 +2439,8 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -2442,6 +2514,8 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -2590,6 +2664,8 @@ class TestValidationExitCodeParsing:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -2636,6 +2712,8 @@ class TestAlreadyCompleteResolution:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -2677,6 +2755,8 @@ class TestAlreadyCompleteResolution:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -2715,6 +2795,8 @@ class TestAlreadyCompleteResolution:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         result = gate.check_with_resolution(
@@ -2748,6 +2830,8 @@ class TestAlreadyCompleteResolution:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -2856,6 +2940,8 @@ class TestSpecCommandChangesPropagation:
         log_path.write_text("\n".join(lines) + "\n")
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         # pytest_ran should be False because bare "pytest" doesn't match strict pattern
@@ -2963,6 +3049,8 @@ class TestLogProviderInjection:
 
         mock_provider = MockLogProvider(mock_entries)
         gate = QualityGate(tmp_path, log_provider=cast("LogProvider", mock_provider))
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
         # Verify LogProvider is used
         spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
@@ -2993,6 +3081,8 @@ class TestLogProviderInjection:
 
         mock_provider = MockLogProvider()
         gate = QualityGate(tmp_path, log_provider=cast("LogProvider", mock_provider))
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
         offset = gate.get_log_end_offset(tmp_path / "fake.jsonl")
         assert offset == 42
@@ -3002,6 +3092,8 @@ class TestLogProviderInjection:
         from src.session_log_parser import FileSystemLogProvider
 
         gate = QualityGate(tmp_path)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
         # Verify internal provider is FileSystemLogProvider
         assert isinstance(gate._log_provider, FileSystemLogProvider)

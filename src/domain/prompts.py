@@ -9,8 +9,8 @@ import functools
 from pathlib import Path
 
 
-# Prompt directory relative to this module
-_PROMPT_DIR = Path(__file__).parent / "prompts"
+# Prompt directory - points to src/prompts/ where prompt files live
+_PROMPT_DIR = Path(__file__).parent.parent / "prompts"
 
 # File path constants
 GATE_FOLLOWUP_FILE = _PROMPT_DIR / "gate_followup.md"
