@@ -97,12 +97,17 @@ class TestBaseEventSink:
 
         This test ensures protocol and implementation stay in sync.
         """
-        # Get all public methods from the protocol (excluding dunder methods)
-        protocol_methods = {
-            name
-            for name in dir(MalaEventSink)
-            if not name.startswith("_") and callable(getattr(MalaEventSink, name, None))
-        }
+        # Get protocol-declared methods from __protocol_attrs__ or fallback to __dict__
+        # This excludes ABCMeta helpers like 'register' that appear in dir()
+        if hasattr(MalaEventSink, "__protocol_attrs__"):
+            protocol_methods = MalaEventSink.__protocol_attrs__
+        else:
+            protocol_methods = {
+                name
+                for name in MalaEventSink.__dict__
+                if not name.startswith("_")
+                and callable(getattr(MalaEventSink, name, None))
+            }
 
         # Get all public methods from BaseEventSink
         sink_methods = {
@@ -388,12 +393,17 @@ class TestNullEventSink:
 
         This test ensures protocol and implementation stay in sync.
         """
-        # Get all public methods from the protocol (excluding dunder methods)
-        protocol_methods = {
-            name
-            for name in dir(MalaEventSink)
-            if not name.startswith("_") and callable(getattr(MalaEventSink, name, None))
-        }
+        # Get protocol-declared methods from __protocol_attrs__ or fallback to __dict__
+        # This excludes ABCMeta helpers like 'register' that appear in dir()
+        if hasattr(MalaEventSink, "__protocol_attrs__"):
+            protocol_methods = MalaEventSink.__protocol_attrs__
+        else:
+            protocol_methods = {
+                name
+                for name in MalaEventSink.__dict__
+                if not name.startswith("_")
+                and callable(getattr(MalaEventSink, name, None))
+            }
 
         # Get all public methods from NullEventSink
         sink_methods = {
@@ -456,12 +466,17 @@ class TestConsoleEventSink:
 
     def test_protocol_coverage(self) -> None:
         """Verify all protocol methods are implemented in ConsoleEventSink."""
-        # Get all public methods from the protocol (excluding dunder methods)
-        protocol_methods = {
-            name
-            for name in dir(MalaEventSink)
-            if not name.startswith("_") and callable(getattr(MalaEventSink, name, None))
-        }
+        # Get protocol-declared methods from __protocol_attrs__ or fallback to __dict__
+        # This excludes ABCMeta helpers like 'register' that appear in dir()
+        if hasattr(MalaEventSink, "__protocol_attrs__"):
+            protocol_methods = MalaEventSink.__protocol_attrs__
+        else:
+            protocol_methods = {
+                name
+                for name in MalaEventSink.__dict__
+                if not name.startswith("_")
+                and callable(getattr(MalaEventSink, name, None))
+            }
 
         # Get all public methods from ConsoleEventSink
         sink_methods = {
