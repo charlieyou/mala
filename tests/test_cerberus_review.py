@@ -762,9 +762,14 @@ class TestAlreadyActiveGateError:
         assert "already active" in result.parse_error
         assert "cannot auto-resolve" in result.parse_error
 
-        # Should NOT have called resolve (only spawn)
-        # Spawn is called once, and resolve should never be called
-        assert mock_runner.run_async.call_count == 1
-        call_cmd = mock_runner.run_async.call_args[0][0]
-        assert "spawn-code-review" in call_cmd
-        assert "resolve" not in call_cmd
+        # Should have called: 1) git diff (empty check), 2) spawn
+        # Critically, should NOT have called resolve
+        assert mock_runner.run_async.call_count == 2
+        # Last call should be spawn-code-review, not resolve
+        last_call_cmd = mock_runner.run_async.call_args[0][0]
+        assert "spawn-code-review" in last_call_cmd
+        # Verify no resolve command was called
+        all_calls = mock_runner.run_async.call_args_list
+        for call in all_calls:
+            cmd = call[0][0]
+            assert "resolve" not in cmd, f"Unexpected resolve call: {cmd}"
