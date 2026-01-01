@@ -18,7 +18,7 @@ def _get_lock_dir() -> Path:
 
     This allows tests to either:
     1. Patch os.environ["MALA_LOCK_DIR"] before calling
-    2. Patch src.tools.env.get_lock_dir if more control needed
+    2. Patch src.infra.tools.env.get_lock_dir if more control needed
     """
     return get_lock_dir()
 
@@ -355,12 +355,12 @@ def _cli_main() -> int:
     """CLI entry point for shell script delegation.
 
     Usage:
-        python -m src.tools.locking try <filepath>
-        python -m src.tools.locking wait <filepath> [timeout_seconds] [poll_interval_ms]
-        python -m src.tools.locking check <filepath>
-        python -m src.tools.locking holder <filepath>
-        python -m src.tools.locking release <filepath>
-        python -m src.tools.locking release-all
+        python -m src.infra.tools.locking try <filepath>
+        python -m src.infra.tools.locking wait <filepath> [timeout_seconds] [poll_interval_ms]
+        python -m src.infra.tools.locking check <filepath>
+        python -m src.infra.tools.locking holder <filepath>
+        python -m src.infra.tools.locking release <filepath>
+        python -m src.infra.tools.locking release-all
 
     Environment variables:
         LOCK_DIR: Directory for lock files (required for most commands)
@@ -373,7 +373,7 @@ def _cli_main() -> int:
         2: Usage error (missing env vars, invalid arguments)
     """
     if len(sys.argv) < 2:
-        print("Usage: python -m src.tools.locking <command> [args...]", file=sys.stderr)
+        print("Usage: python -m src.infra.tools.locking <command> [args...]", file=sys.stderr)
         print(
             "Commands: try, wait, check, holder, release, release-all", file=sys.stderr
         )
@@ -401,7 +401,7 @@ def _cli_main() -> int:
 
     if command == "try":
         if len(sys.argv) != 3:
-            print("Usage: python -m src.tools.locking try <filepath>", file=sys.stderr)
+            print("Usage: python -m src.infra.tools.locking try <filepath>", file=sys.stderr)
             return 2
         filepath = sys.argv[2]
         if try_lock(filepath, agent_id, repo_namespace):  # type: ignore[arg-type]
@@ -411,7 +411,7 @@ def _cli_main() -> int:
     elif command == "wait":
         if len(sys.argv) < 3:
             print(
-                "Usage: python -m src.tools.locking wait <filepath> [timeout_seconds] [poll_interval_ms]",
+                "Usage: python -m src.infra.tools.locking wait <filepath> [timeout_seconds] [poll_interval_ms]",
                 file=sys.stderr,
             )
             return 2
@@ -425,7 +425,7 @@ def _cli_main() -> int:
     elif command == "check":
         if len(sys.argv) != 3:
             print(
-                "Usage: python -m src.tools.locking check <filepath>", file=sys.stderr
+                "Usage: python -m src.infra.tools.locking check <filepath>", file=sys.stderr
             )
             return 2
         filepath = sys.argv[2]
@@ -437,7 +437,7 @@ def _cli_main() -> int:
     elif command == "holder":
         if len(sys.argv) != 3:
             print(
-                "Usage: python -m src.tools.locking holder <filepath>", file=sys.stderr
+                "Usage: python -m src.infra.tools.locking holder <filepath>", file=sys.stderr
             )
             return 2
         filepath = sys.argv[2]
@@ -449,7 +449,7 @@ def _cli_main() -> int:
     elif command == "release":
         if len(sys.argv) != 3:
             print(
-                "Usage: python -m src.tools.locking release <filepath>", file=sys.stderr
+                "Usage: python -m src.infra.tools.locking release <filepath>", file=sys.stderr
             )
             return 2
         filepath = sys.argv[2]
@@ -462,7 +462,7 @@ def _cli_main() -> int:
 
     elif command == "release-all":
         if len(sys.argv) != 2:
-            print("Usage: python -m src.tools.locking release-all", file=sys.stderr)
+            print("Usage: python -m src.infra.tools.locking release-all", file=sys.stderr)
             return 2
         cleanup_agent_locks(agent_id)  # type: ignore[arg-type]
         return 0
