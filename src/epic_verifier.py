@@ -130,7 +130,11 @@ def extract_spec_paths(text: str) -> list[str]:
 def _load_prompt_template() -> str:
     """Load the epic verification prompt template."""
     prompt_path = Path(__file__).parent / "prompts" / "epic_verification.md"
-    return prompt_path.read_text()
+    template = prompt_path.read_text()
+    escaped = template.replace("{", "{{").replace("}", "}}")
+    for key in ("epic_criteria", "spec_content", "diff_content"):
+        escaped = escaped.replace(f"{{{{{key}}}}}", f"{{{key}}}")
+    return escaped
 
 
 def _extract_json_from_code_blocks(text: str) -> str | None:
@@ -167,15 +171,8 @@ def _extract_json_from_code_blocks(text: str) -> str | None:
 class ClaudeEpicVerificationModel:
     """Claude-based implementation of EpicVerificationModel protocol.
 
-    Uses the shared Anthropic client factory to verify epic acceptance criteria
-    against code diffs. This ensures consistent configuration, observability,
-    and routing behavior across all LLM calls in the orchestrator.
-
-    LLM Infrastructure:
-        Uses create_anthropic_client() from src.anthropic_client, which provides:
-        - Consistent configuration from MalaConfig (api_key, base_url)
-        - Automatic Braintrust tracing when BRAINTRUST_API_KEY is set
-        - MorphLLM routing when base_url is configured
+    Uses the Claude Agent SDK to verify epic acceptance criteria
+    against code diffs, matching the main agent execution path.
     """
 
     # Default model for epic verification
@@ -185,8 +182,7 @@ class ClaudeEpicVerificationModel:
         self,
         model: str | None = None,
         timeout_ms: int = 120000,
-        api_key: str | None = None,
-        base_url: str | None = None,
+        repo_path: Path | None = None,
         retry_config: RetryConfig | None = None,
     ):
         """Initialize ClaudeEpicVerificationModel.
@@ -195,17 +191,13 @@ class ClaudeEpicVerificationModel:
             model: The Claude model to use for verification. Defaults to
                 DEFAULT_MODEL if not specified.
             timeout_ms: Timeout for model calls in milliseconds.
-            api_key: Anthropic API key. If not provided, the Anthropic client
-                will use the ANTHROPIC_API_KEY environment variable.
-            base_url: Optional base URL for API requests. Useful for routing
-                through MorphLLM or other proxies.
-            retry_config: Configuration for retry behavior with exponential
-                backoff. If not provided, uses default RetryConfig.
+            repo_path: Repository path for agent execution context.
+            retry_config: Configuration retained for compatibility with prior
+                retry behavior. Currently unused but stored for future use.
         """
         self.model = model or self.DEFAULT_MODEL
         self.timeout_ms = timeout_ms
-        self.api_key = api_key
-        self.base_url = base_url
+        self.repo_path = repo_path or Path.cwd()
         self.retry_config = retry_config or RetryConfig()
         self._prompt_template = _load_prompt_template()
 
@@ -217,9 +209,6 @@ class ClaudeEpicVerificationModel:
     ) -> EpicVerdict:
         """Verify if the diff satisfies the epic's acceptance criteria.
 
-        Uses retry logic with exponential backoff for transient API failures
-        (rate limits, network issues, server errors).
-
         Args:
             epic_criteria: The epic's acceptance criteria text.
             diff: Scoped git diff of child issue commits only.
@@ -228,124 +217,74 @@ class ClaudeEpicVerificationModel:
         Returns:
             Structured verdict with pass/fail and unmet criteria details.
 
-        Raises:
-            Exception: If all retry attempts fail for non-transient errors.
         """
-        from src.anthropic_client import create_anthropic_client
-
         prompt = self._prompt_template.format(
             epic_criteria=epic_criteria,
             spec_content=spec_content or "No spec file available.",
             diff_content=diff,
         )
 
-        # Use the shared client factory for consistent configuration and tracing
-        client = create_anthropic_client(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            timeout=self.timeout_ms / 1000,
+        response_text = await self._verify_with_agent_sdk(prompt)
+        return self._parse_verdict(response_text)
+
+    async def _verify_with_agent_sdk(self, prompt: str) -> str:
+        """Verify using Claude Agent SDK."""
+        try:
+            from claude_agent_sdk import (
+                AssistantMessage,
+                ClaudeAgentOptions,
+                ClaudeSDKClient,
+                TextBlock,
+            )
+        except ImportError as exc:
+            return json.dumps(
+                {
+                    "passed": False,
+                    "confidence": 0.0,
+                    "reasoning": (
+                        "claude_agent_sdk is not installed; epic verification "
+                        f"requires the agent SDK ({exc})"
+                    ),
+                    "unmet_criteria": [],
+                }
+            )
+
+        options = ClaudeAgentOptions(
+            cwd=str(self.repo_path),
+            permission_mode="bypassPermissions",
+            model=self.model,
+            system_prompt={"type": "preset", "preset": "claude_code"},
+            setting_sources=["project", "user"],
+            mcp_servers={},
+            disallowed_tools=[
+                # Block all write-capable tools to prevent unintended side effects
+                # during verification. The verifier should only read and analyze.
+                "Edit",
+                "Write",
+                "NotebookEdit",
+                "Bash",
+                "Task",
+                "KillShell",
+                "mcp__morphllm__edit_file",
+            ],
+            env=dict(os.environ),
         )
 
-        # Retry loop with exponential backoff
-        last_exception: Exception | None = None
-        delay_ms = self.retry_config.initial_delay_ms
+        response_chunks: list[str] = []
+        async with ClaudeSDKClient(options=options) as client:
+            async with asyncio.timeout(self.timeout_ms / 1000):
+                await client.query(prompt)
+                async for message in client.receive_response():
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                response_chunks.append(block.text)
+                    # Note: ResultMessage.result (tool outputs) are intentionally
+                    # excluded to avoid polluting the response with JSON that may
+                    # appear in tool outputs (e.g., file contents). The final
+                    # verdict JSON should come from the assistant's text response.
 
-        for attempt in range(self.retry_config.max_retries + 1):
-            try:
-                # Use asyncio.to_thread to avoid blocking the event loop
-                response = await asyncio.to_thread(
-                    client.messages.create,
-                    model=self.model,
-                    max_tokens=4096,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-
-                # Parse the response
-                response_text = response.content[0].text
-                return self._parse_verdict(response_text)
-
-            except Exception as e:
-                last_exception = e
-
-                # Check if this is a transient/retryable error
-                if not self._is_retryable_error(e):
-                    raise
-
-                # Check if we've exhausted retries
-                if attempt >= self.retry_config.max_retries:
-                    raise
-
-                # Wait before retrying with exponential backoff
-                await asyncio.sleep(delay_ms / 1000)
-
-                # Calculate next delay with exponential backoff, capped at max
-                delay_ms = min(
-                    int(delay_ms * self.retry_config.backoff_multiplier),
-                    self.retry_config.max_delay_ms,
-                )
-
-        # Should not reach here, but satisfy type checker
-        if last_exception is not None:
-            raise last_exception
-        raise RuntimeError("Unexpected retry loop exit")
-
-    def _is_retryable_error(self, error: Exception) -> bool:
-        """Check if an error is transient and should trigger a retry.
-
-        Retryable errors include:
-        - Rate limit errors (429)
-        - Server errors (500, 502, 503, 529)
-        - Network/connection errors
-        - Timeout errors
-
-        Args:
-            error: The exception to check.
-
-        Returns:
-            True if the error is retryable, False otherwise.
-        """
-        error_str = str(error).lower()
-        error_type = type(error).__name__.lower()
-
-        # Check error message for common transient patterns
-        transient_patterns = [
-            "rate limit",
-            "rate_limit",
-            "too many requests",
-            "429",
-            "500",
-            "502",
-            "503",
-            "529",
-            "overloaded",
-            "server error",
-            "internal error",
-            "connection",
-            "timeout",
-            "timed out",
-            "network",
-            "temporarily unavailable",
-        ]
-
-        for pattern in transient_patterns:
-            if pattern in error_str or pattern in error_type:
-                return True
-
-        # Check for specific exception types by name
-        retryable_types = [
-            "ratelimiterror",
-            "apierror",
-            "internalservererror",
-            "overloadederror",
-            "connectionerror",
-            "timeouterror",
-            "timeout",
-        ]
-
-        if error_type in retryable_types:
-            return True
-
-        return False
+        return "".join(response_chunks).strip()
 
     def _parse_verdict(self, response_text: str) -> EpicVerdict:
         """Parse model response into EpicVerdict.
@@ -597,7 +536,10 @@ class EpicVerifier:
 
                         repo_ns = str(self.repo_path)
                         lp = lock_path(lock_key, repo_ns)
-                        if lp.exists() and get_lock_holder(lock_key, repo_ns) == lock_agent_id:
+                        if (
+                            lp.exists()
+                            and get_lock_holder(lock_key, repo_ns) == lock_agent_id
+                        ):
                             lp.unlink(missing_ok=True)
                     except ImportError:
                         pass
@@ -927,7 +869,10 @@ class EpicVerifier:
 
                     repo_ns = str(self.repo_path)
                     lp = lock_path(lock_key, repo_ns)
-                    if lp.exists() and get_lock_holder(lock_key, repo_ns) == lock_agent_id:
+                    if (
+                        lp.exists()
+                        and get_lock_holder(lock_key, repo_ns) == lock_agent_id
+                    ):
                         lp.unlink(missing_ok=True)
                 except ImportError:
                     pass
@@ -1254,7 +1199,7 @@ to unblock the epic, or use `--epic-override {epic_id}` to force closure.
         Returns:
             Issue ID if found, None otherwise.
         """
-        result = await self._runner.run_async(["bd", "list", "--tag", tag, "--json"])
+        result = await self._runner.run_async(["bd", "list", "--label", tag, "--json"])
         if not result.ok:
             return None
         try:
@@ -1322,7 +1267,6 @@ to unblock the epic, or use `--epic-override {epic_id}` to force closure.
         """
         cmd = [
             "bd",
-            "issue",
             "create",
             "--title",
             title,
@@ -1330,15 +1274,16 @@ to unblock the epic, or use `--epic-override {epic_id}` to force closure.
             description,
             "--priority",
             priority,
+            "--silent",
         ]
-        for tag in tags:
-            cmd.extend(["--tag", tag])
+        if tags:
+            cmd.extend(["--labels", ",".join(tags)])
 
         result = await self._runner.run_async(cmd)
         if not result.ok:
             return None
 
-        # Parse issue ID from output (typically "Created issue: <id>")
+        # Parse issue ID from output (typically "Created issue: <id>" or silent id)
         match = re.search(r"Created issue:\s*(\S+)", result.stdout)
         if match:
             return match.group(1)
@@ -1347,8 +1292,11 @@ to unblock the epic, or use `--epic-override {epic_id}` to force closure.
         try:
             data = json.loads(result.stdout)
             if isinstance(data, dict):
-                return str(data.get("id", ""))
+                issue_id = data.get("id")
+                if issue_id:
+                    return str(issue_id)
         except json.JSONDecodeError:
             pass
 
-        return None
+        issue_id = result.stdout.strip()
+        return issue_id if issue_id else None

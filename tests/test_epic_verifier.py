@@ -344,14 +344,14 @@ class TestRemediationIssueCreation:
         created_issues: list[dict[str, object]] = []
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "issue" in cmd and "create" in cmd:
+            if cmd[:2] == ["bd", "create"]:
                 created_issues.append({"cmd": cmd})
                 return CommandResult(
                     command=cmd,
                     returncode=0,
                     stdout="Created issue: remediation-1",
                 )
-            if "list" in cmd and "--tag" in cmd:
+            if "list" in cmd and "--label" in cmd:
                 # No existing issue
                 return CommandResult(
                     command=cmd,
@@ -386,7 +386,7 @@ class TestRemediationIssueCreation:
         """Should reuse existing issue with matching dedup tag."""
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "list" in cmd and "--tag" in cmd:
+            if "list" in cmd and "--label" in cmd:
                 # Return existing issue
                 return CommandResult(
                     command=cmd,
@@ -420,7 +420,7 @@ class TestRemediationIssueCreation:
         created_cmd: list[str] = []
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "issue" in cmd and "create" in cmd:
+            if cmd[:2] == ["bd", "create"]:
                 created_cmd.extend(cmd)
                 return CommandResult(
                     command=cmd,
@@ -462,10 +462,10 @@ class TestRemediationIssueCreation:
         assert created_cmd[title_idx].startswith("[Remediation]")
 
         # Check tags include dedup tag and auto_generated
-        tag_indices = [i for i, x in enumerate(created_cmd) if x == "--tag"]
-        tags = [created_cmd[i + 1] for i in tag_indices]
-        assert any("epic_remediation:" in t for t in tags)
-        assert "auto_generated" in tags
+        labels_idx = created_cmd.index("--labels") + 1
+        labels = created_cmd[labels_idx].split(",")
+        assert any("epic_remediation:" in label for label in labels)
+        assert "auto_generated" in labels
 
 
 # ============================================================================
@@ -482,7 +482,7 @@ class TestHumanReviewCreation:
         created_cmd: list[str] = []
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "issue" in cmd and "create" in cmd:
+            if cmd[:2] == ["bd", "create"]:
                 created_cmd.extend(cmd)
                 return CommandResult(
                     command=cmd,
@@ -512,7 +512,7 @@ class TestHumanReviewCreation:
         dep_cmds: list[list[str]] = []
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "issue" in cmd and "create" in cmd:
+            if cmd[:2] == ["bd", "create"]:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
@@ -722,9 +722,9 @@ class TestVerifyAndCloseEligible:
                 )
             if "show" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="diff")
-            if "list" in cmd and "--tag" in cmd:
+            if "list" in cmd and "--label" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="[]")
-            if "issue" in cmd and "create" in cmd:
+            if cmd[:2] == ["bd", "create"]:
                 created_issues.append("rem-1")
                 return CommandResult(
                     command=cmd,
@@ -770,7 +770,7 @@ class TestVerifyAndCloseEligible:
                 return CommandResult(command=cmd, returncode=0, stdout="abc123")
             if "show" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="diff")
-            if "issue" in cmd and "create" in cmd:
+            if cmd[:2] == ["bd", "create"]:
                 review_created = True
                 return CommandResult(
                     command=cmd,
@@ -911,9 +911,9 @@ class TestVerifyAndCloseEpic:
                 )
             if "show" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="diff")
-            if "list" in cmd and "--tag" in cmd:
+            if "list" in cmd and "--label" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="[]")
-            if "issue" in cmd and "create" in cmd:
+            if cmd[:2] == ["bd", "create"]:
                 created_issues.append("rem-1")
                 return CommandResult(
                     command=cmd,
@@ -1380,7 +1380,7 @@ class TestModelErrorHandling:
                 return CommandResult(command=cmd, returncode=0, stdout="abc123")
             if "show" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="diff")
-            if "issue" in cmd and "create" in cmd:
+            if cmd[:2] == ["bd", "create"]:
                 review_created = True
                 return CommandResult(
                     command=cmd,
@@ -1659,9 +1659,9 @@ class TestEpicVerifierOrchestratorIntegration:
                 )
             if "show" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="diff")
-            if "list" in cmd and "--tag" in cmd:
+            if "list" in cmd and "--label" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="[]")
-            if "issue" in cmd and "create" in cmd:
+            if cmd[:2] == ["bd", "create"]:
                 created_issues.append("rem-1")
                 return CommandResult(
                     command=cmd,
@@ -1759,48 +1759,54 @@ class TestEpicVerifierOrchestratorIntegration:
 
 
 # ============================================================================
-# Test retry behavior
+# Test SDK-backed verify behavior (without real SDK calls)
 # ============================================================================
 
 
-class TestRetryBehavior:
-    """Tests for retry behavior with exponential backoff."""
+class TestVerifyWithSDK:
+    """Tests for verify() using patched SDK responses."""
 
-    def test_is_retryable_error_for_rate_limit(self) -> None:
-        """Should identify rate limit errors as retryable."""
+    @pytest.mark.asyncio
+    async def test_verify_parses_sdk_response(self) -> None:
         model = ClaudeEpicVerificationModel()
+        model._prompt_template = (
+            "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+        )
 
-        # Test rate limit errors
-        assert model._is_retryable_error(Exception("rate limit exceeded"))
-        assert model._is_retryable_error(Exception("429 Too Many Requests"))
+        async def fake_verify(_prompt: str) -> str:
+            return (
+                '{"passed": true, "confidence": 0.9, "reasoning": "ok", '
+                '"unmet_criteria": []}'
+            )
 
-    def test_is_retryable_error_for_server_errors(self) -> None:
-        """Should identify server errors as retryable."""
+        model._verify_with_agent_sdk = fake_verify  # type: ignore[method-assign]
+
+        verdict = await model.verify("criteria", "diff", None)
+
+        assert verdict.passed is True
+        assert verdict.confidence == 0.9
+
+    @pytest.mark.asyncio
+    async def test_verify_handles_non_json_response(self) -> None:
         model = ClaudeEpicVerificationModel()
+        model._prompt_template = (
+            "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+        )
 
-        # Test server errors
-        assert model._is_retryable_error(Exception("500 Internal Server Error"))
-        assert model._is_retryable_error(Exception("502 Bad Gateway"))
-        assert model._is_retryable_error(Exception("503 Service Unavailable"))
-        assert model._is_retryable_error(Exception("529 Overloaded"))
+        async def fake_verify(_prompt: str) -> str:
+            return "not json"
 
-    def test_is_retryable_error_for_network_errors(self) -> None:
-        """Should identify network/connection errors as retryable."""
-        model = ClaudeEpicVerificationModel()
+        model._verify_with_agent_sdk = fake_verify  # type: ignore[method-assign]
 
-        # Test network errors
-        assert model._is_retryable_error(Exception("connection refused"))
-        assert model._is_retryable_error(Exception("network unreachable"))
-        assert model._is_retryable_error(TimeoutError("request timed out"))
+        verdict = await model.verify("criteria", "diff", None)
 
-    def test_is_retryable_error_for_non_retryable(self) -> None:
-        """Should identify non-transient errors as not retryable."""
-        model = ClaudeEpicVerificationModel()
+        assert verdict.passed is False
+        assert verdict.confidence == 0.0
+        assert "Failed to parse" in verdict.reasoning
 
-        # Test non-retryable errors
-        assert not model._is_retryable_error(ValueError("invalid input"))
-        assert not model._is_retryable_error(KeyError("missing key"))
-        assert not model._is_retryable_error(Exception("authentication failed"))
+
+class TestRetryConfig:
+    """Tests for retry_config storage (used by callers for consistency)."""
 
     def test_retry_config_is_stored(self) -> None:
         """Should store retry_config when provided."""
@@ -1826,136 +1832,3 @@ class TestRetryBehavior:
         assert model.retry_config.initial_delay_ms == 1000
         assert model.retry_config.backoff_multiplier == 2.0
         assert model.retry_config.max_delay_ms == 30000
-
-    @pytest.mark.asyncio
-    async def test_verify_retries_on_transient_error(self) -> None:
-        """Should retry on transient errors and succeed on eventual success."""
-        # Configure with short delays for testing
-        retry_config = RetryConfig(
-            max_retries=2,
-            initial_delay_ms=10,  # Short delay for testing
-            backoff_multiplier=2.0,
-            max_delay_ms=100,
-        )
-        model = ClaudeEpicVerificationModel(retry_config=retry_config)
-        # Use a simple template that doesn't conflict with .format()
-        model._prompt_template = (
-            "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
-        )
-
-        call_count = 0
-
-        def mock_messages_create(**kwargs: object) -> MagicMock:
-            nonlocal call_count
-            call_count += 1
-            if call_count < 2:
-                raise Exception("429 rate limit exceeded")
-            # Succeed on second call
-            response = MagicMock()
-            response.content = [
-                MagicMock(
-                    text='{"passed": true, "confidence": 0.9, "reasoning": "ok", "unmet_criteria": []}'
-                )
-            ]
-            return response
-
-        with patch("src.anthropic_client.create_anthropic_client") as mock_client:
-            mock_client.return_value.messages.create = mock_messages_create
-
-            verdict = await model.verify("criteria", "diff", None)
-
-        assert verdict.passed is True
-        assert call_count == 2  # First failed, second succeeded
-
-    @pytest.mark.asyncio
-    async def test_verify_exhausts_retries_on_persistent_error(self) -> None:
-        """Should raise after exhausting retries on persistent transient errors."""
-        retry_config = RetryConfig(
-            max_retries=2,
-            initial_delay_ms=10,
-            backoff_multiplier=2.0,
-            max_delay_ms=100,
-        )
-        model = ClaudeEpicVerificationModel(retry_config=retry_config)
-        # Use a simple template that doesn't conflict with .format()
-        model._prompt_template = (
-            "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
-        )
-
-        call_count = 0
-
-        def mock_messages_create(**kwargs: object) -> MagicMock:
-            nonlocal call_count
-            call_count += 1
-            raise Exception("503 Service Unavailable")
-
-        with patch("src.anthropic_client.create_anthropic_client") as mock_client:
-            mock_client.return_value.messages.create = mock_messages_create
-
-            with pytest.raises(Exception, match="503 Service Unavailable"):
-                await model.verify("criteria", "diff", None)
-
-        # Should have tried max_retries + 1 times (initial + retries)
-        assert call_count == 3
-
-    @pytest.mark.asyncio
-    async def test_verify_does_not_retry_on_non_transient_error(self) -> None:
-        """Should not retry on non-transient errors."""
-        retry_config = RetryConfig(
-            max_retries=3,
-            initial_delay_ms=10,
-            backoff_multiplier=2.0,
-            max_delay_ms=100,
-        )
-        model = ClaudeEpicVerificationModel(retry_config=retry_config)
-        # Use a simple template that doesn't conflict with .format()
-        model._prompt_template = (
-            "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
-        )
-
-        call_count = 0
-
-        def mock_messages_create(**kwargs: object) -> MagicMock:
-            nonlocal call_count
-            call_count += 1
-            raise ValueError("invalid request format")
-
-        with patch("src.anthropic_client.create_anthropic_client") as mock_client:
-            mock_client.return_value.messages.create = mock_messages_create
-
-            with pytest.raises(ValueError, match="invalid request format"):
-                await model.verify("criteria", "diff", None)
-
-        # Should only try once (no retries for non-transient)
-        assert call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_verify_succeeds_without_retry_on_first_attempt(self) -> None:
-        """Should return immediately on successful first attempt."""
-        model = ClaudeEpicVerificationModel()
-        # Use a simple template that doesn't conflict with .format()
-        model._prompt_template = (
-            "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
-        )
-
-        call_count = 0
-
-        def mock_messages_create(**kwargs: object) -> MagicMock:
-            nonlocal call_count
-            call_count += 1
-            response = MagicMock()
-            response.content = [
-                MagicMock(
-                    text='{"passed": true, "confidence": 0.95, "reasoning": "all good", "unmet_criteria": []}'
-                )
-            ]
-            return response
-
-        with patch("src.anthropic_client.create_anthropic_client") as mock_client:
-            mock_client.return_value.messages.create = mock_messages_create
-
-            verdict = await model.verify("criteria", "diff", None)
-
-        assert verdict.passed is True
-        assert verdict.confidence == 0.95
-        assert call_count == 1

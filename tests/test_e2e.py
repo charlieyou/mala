@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.tools.command_runner import CommandResult
+from tests.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
 from src.validation.e2e import (
     E2EConfig,
     E2EPrereqResult,
@@ -344,6 +345,12 @@ class TestE2ERunnerIntegration:
     def test_run_real_fixture(self, tmp_path: Path) -> None:
         if shutil.which("mala") is None or shutil.which("bd") is None:
             pytest.skip("E2E requires mala and bd CLIs")
+        if not is_claude_cli_available():
+            pytest.skip("Claude Code CLI not installed")
+        if not has_valid_oauth_credentials():
+            pytest.skip(
+                "Claude Code CLI not logged in or token expired - run `claude` and login"
+            )
 
         config = E2EConfig(keep_fixture=True, timeout_seconds=300.0)
         runner = E2ERunner(config)

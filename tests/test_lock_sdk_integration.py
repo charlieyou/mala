@@ -30,56 +30,21 @@ from claude_agent_sdk.types import HookMatcher
 
 from src.hooks import make_stop_hook
 from src.tools.env import SCRIPTS_DIR
+from tests.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
 
 # All SDK tests are end-to-end (require CLI auth and API calls)
 pytestmark = [pytest.mark.e2e]
 
 
-def _is_claude_cli_available() -> bool:
-    """Check if Claude Code CLI is installed."""
-    try:
-        result = subprocess.run(
-            ["claude", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-
-
-def _has_oauth_credentials() -> bool:
-    """Check if we have OAuth credentials (Claude Code stored tokens).
-
-    These tests specifically use OAuth via Claude Code CLI, not API key.
-    Checks both the real home dir and the test config dir (set by conftest.py).
-    """
-    import os
-
-    # Check test config dir first (set by conftest.py)
-    test_config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
-    if test_config_dir:
-        test_creds = Path(test_config_dir) / ".credentials.json"
-        if test_creds.exists():
-            return True
-
-    # Check real OAuth credentials file (Claude Code stores tokens here)
-    # Note: the file is .credentials.json (hidden file with leading dot)
-    auth_file = Path.home() / ".claude" / ".credentials.json"
-    if auth_file.exists():
-        return True
-
-    return False
-
-
 @pytest.fixture(autouse=True)
 def require_claude_cli_auth() -> None:
     """Skip tests if Claude Code CLI is not available or OAuth credentials missing."""
-    if not _is_claude_cli_available():
+    if not is_claude_cli_available():
         pytest.skip("Claude Code CLI not installed")
-    if not _has_oauth_credentials():
-        pytest.skip("Claude Code CLI not logged in - run `claude` and login with OAuth")
+    if not has_valid_oauth_credentials():
+        pytest.skip(
+            "Claude Code CLI not logged in or token expired - run `claude` and login"
+        )
 
 
 @pytest.fixture(autouse=True)

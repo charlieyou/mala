@@ -4,6 +4,7 @@ Uses the real Cerberus review-gate CLI with --mode=fast to test the full
 integration path. This catches protocol mismatches between mala and Cerberus.
 """
 
+import os
 import subprocess
 import uuid
 from pathlib import Path
@@ -143,15 +144,21 @@ def _setup_git_repo_with_commits(repo_path: Path) -> list[str]:
 
 def _review_artifact_path(repo_path: Path, session_id: str) -> Path:
     project_hash = "-" + str(repo_path).lstrip("/").replace("/", "-")
-    return (
-        Path.home()
-        / ".claude"
-        / "projects"
-        / project_hash
-        / "cerberus"
-        / session_id
-        / "latest.md"
-    )
+    candidates: list[Path] = []
+    env_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if env_dir:
+        candidates.append(Path(env_dir))
+    candidates.append(Path.home() / ".claude")
+
+    for base_dir in candidates:
+        candidate = (
+            base_dir / "projects" / project_hash / "cerberus" / session_id / "latest.md"
+        )
+        if candidate.exists():
+            return candidate
+
+    base_dir = candidates[0]
+    return base_dir / "projects" / project_hash / "cerberus" / session_id / "latest.md"
 
 
 @pytest.fixture
@@ -228,7 +235,10 @@ async def test_review_gate_commits_scope(tmp_path: Path, review_gate_bin: Path) 
     artifact = artifact_path.read_text()
     assert "<!-- diff-args: --commit" in artifact
     assert commits[1] in artifact
-    assert "other agent" not in artifact
+    # Review-gate may append "Fix Changes" that include later commits; only
+    # validate the primary diff section for scope correctness.
+    primary_diff = artifact.split("Fix Changes (since review started)", 1)[0]
+    assert "other agent" not in primary_diff
 
 
 @pytest.mark.asyncio

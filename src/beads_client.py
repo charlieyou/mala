@@ -591,7 +591,6 @@ class BeadsClient:
         """
         cmd = [
             "bd",
-            "issue",
             "create",
             "--title",
             title,
@@ -599,16 +598,17 @@ class BeadsClient:
             description,
             "--priority",
             priority,
+            "--silent",
         ]
-        for tag in tags or []:
-            cmd.extend(["--tag", tag])
+        if tags:
+            cmd.extend(["--labels", ",".join(tags)])
 
         result = await self._run_subprocess_async(cmd)
         if result.returncode != 0:
-            self._log_warning(f"bd issue create failed: {result.stderr}")
+            self._log_warning(f"bd create failed: {result.stderr}")
             return None
 
-        # Parse issue ID from output (typically "Created issue: <id>")
+        # Parse issue ID from output (typically "Created issue: <id>" or silent id)
         match = re.search(r"Created issue:\s*(\S+)", result.stdout)
         if match:
             return match.group(1)
@@ -637,7 +637,7 @@ class BeadsClient:
             Issue ID if found, None otherwise.
         """
         result = await self._run_subprocess_async(
-            ["bd", "list", "--tag", tag, "--json"]
+            ["bd", "list", "--label", tag, "--json"]
         )
         if result.returncode != 0:
             return None

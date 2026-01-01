@@ -595,10 +595,9 @@ class MalaOrchestrator:
         # EpicVerifier setup
         if isinstance(self.beads, BeadsClient):
             verification_model = ClaudeEpicVerificationModel(
-                api_key=self._mala_config.llm_api_key,
-                base_url=self._mala_config.llm_base_url,
                 timeout_ms=self.timeout_seconds * 1000,
                 retry_config=RetryConfig(),
+                repo_path=self.repo_path,
             )
             self.epic_verifier: EpicVerifier | None = EpicVerifier(
                 beads=self.beads,

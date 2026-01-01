@@ -225,10 +225,9 @@ def _build_dependencies(
     epic_verifier: EpicVerifier | None = None
     if isinstance(issue_provider, BeadsClient):
         verification_model = ClaudeEpicVerificationModel(
-            api_key=mala_config.llm_api_key,
-            base_url=mala_config.llm_base_url,
             timeout_ms=derived.timeout_seconds * 1000,
             retry_config=RetryConfig(),
+            repo_path=repo_path,
         )
         epic_verifier = EpicVerifier(
             beads=issue_provider,
