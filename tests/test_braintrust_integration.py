@@ -12,6 +12,7 @@ from claude_agent_sdk import (
 )
 
 import src.braintrust_integration as braintrust_integration
+import src.infra.clients.braintrust_integration as infra_braintrust
 
 
 class DummySpan:
@@ -40,7 +41,7 @@ class DummySpan:
 def test_is_braintrust_enabled_false_without_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", True)
+    monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", True)
     monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
 
     assert braintrust_integration.is_braintrust_enabled() is False
@@ -53,8 +54,8 @@ def test_flush_braintrust_ignores_errors(monkeypatch: pytest.MonkeyPatch) -> Non
         calls["count"] += 1
         raise RuntimeError("fail")
 
-    monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", True)
-    monkeypatch.setattr(braintrust_integration, "flush", _boom)
+    monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", True)
+    monkeypatch.setattr(infra_braintrust, "flush", _boom)
 
     braintrust_integration.flush_braintrust()
 
@@ -64,7 +65,7 @@ def test_flush_braintrust_ignores_errors(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_traced_agent_execution_disabled_returns_self(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", False)
+    monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", False)
     tracer = braintrust_integration.TracedAgentExecution("issue", "agent")
 
     with tracer as entered:
@@ -84,9 +85,9 @@ def test_traced_agent_execution_logs_and_flushes(
     def _flush() -> None:
         flush_calls["count"] += 1
 
-    monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", True)
-    monkeypatch.setattr(braintrust_integration, "start_span", _start_span)
-    monkeypatch.setattr(braintrust_integration, "flush", _flush)
+    monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", True)
+    monkeypatch.setattr(infra_braintrust, "start_span", _start_span)
+    monkeypatch.setattr(infra_braintrust, "flush", _flush)
     monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
 
     tracer = braintrust_integration.TracedAgentExecution("issue-1", "agent-1")
@@ -134,9 +135,9 @@ def test_traced_agent_execution_records_error(monkeypatch: pytest.MonkeyPatch) -
     def _flush() -> None:
         flush_calls["count"] += 1
 
-    monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", True)
-    monkeypatch.setattr(braintrust_integration, "start_span", _start_span)
-    monkeypatch.setattr(braintrust_integration, "flush", _flush)
+    monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", True)
+    monkeypatch.setattr(infra_braintrust, "start_span", _start_span)
+    monkeypatch.setattr(infra_braintrust, "flush", _flush)
     monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
 
     tracer = braintrust_integration.TracedAgentExecution("issue-2", "agent-2")

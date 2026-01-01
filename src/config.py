@@ -8,6 +8,16 @@ from src.infra.io.config import (
     ConfigurationError,
     MalaConfig,
     _find_cerberus_bin_path,
+    _normalize_cerberus_env,
+    _parse_cerberus_args,
+    _parse_cerberus_env,
 )
 
-__all__ = ["ConfigurationError", "MalaConfig", "_find_cerberus_bin_path"]
+__all__ = [
+    "ConfigurationError",
+    "MalaConfig",
+    "_find_cerberus_bin_path",
+    "_normalize_cerberus_env",
+    "_parse_cerberus_args",
+    "_parse_cerberus_env",
+]

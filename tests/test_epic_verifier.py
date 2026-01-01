@@ -1028,13 +1028,13 @@ class TestLockUsage:
 
         expected_agent_id = f"epic_verifier_{os.getpid()}"
 
-        with patch("src.tools.locking.wait_for_lock") as mock_wait:
+        with patch("src.infra.tools.locking.wait_for_lock") as mock_wait:
             mock_wait.return_value = True
 
-            with patch("src.tools.locking.get_lock_holder") as mock_holder:
+            with patch("src.infra.tools.locking.get_lock_holder") as mock_holder:
                 mock_holder.return_value = expected_agent_id
 
-                with patch("src.tools.locking.lock_path") as mock_path:
+                with patch("src.infra.tools.locking.lock_path") as mock_path:
                     mock_lock_path = MagicMock()
                     mock_lock_path.exists.return_value = True
                     mock_path.return_value = mock_lock_path

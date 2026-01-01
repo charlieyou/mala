@@ -5,7 +5,7 @@ from typing import Any, Self
 
 import pytest
 
-import src.braintrust_integration as braintrust_integration
+import src.infra.clients.braintrust_integration as infra_braintrust
 from src.braintrust_integration import (
     BraintrustProvider,
     BraintrustSpan,
@@ -115,7 +115,7 @@ class TestBraintrustProvider:
     def test_is_enabled_delegates_to_braintrust_integration(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", True)
+        monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", True)
         monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
 
         provider = BraintrustProvider()
@@ -124,7 +124,7 @@ class TestBraintrustProvider:
     def test_is_enabled_false_without_key(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", True)
+        monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", True)
         monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
 
         provider = BraintrustProvider()
@@ -133,7 +133,7 @@ class TestBraintrustProvider:
     def test_is_enabled_false_without_braintrust(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", False)
+        monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", False)
 
         provider = BraintrustProvider()
         assert provider.is_enabled() is False
@@ -167,8 +167,8 @@ class TestBraintrustProvider:
         def _flush() -> None:
             flush_calls["count"] += 1
 
-        monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", True)
-        monkeypatch.setattr(braintrust_integration, "flush", _flush)
+        monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", True)
+        monkeypatch.setattr(infra_braintrust, "flush", _flush)
 
         provider = BraintrustProvider()
         provider.flush()
@@ -190,9 +190,9 @@ class TestBraintrustSpan:
         def _flush() -> None:
             pass
 
-        monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", True)
-        monkeypatch.setattr(braintrust_integration, "start_span", _start_span)
-        monkeypatch.setattr(braintrust_integration, "flush", _flush)
+        monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", True)
+        monkeypatch.setattr(infra_braintrust, "start_span", _start_span)
+        monkeypatch.setattr(infra_braintrust, "flush", _flush)
         monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
 
         span = BraintrustSpan("issue-1", "agent-1")
@@ -202,21 +202,21 @@ class TestBraintrustSpan:
         assert dummy_span.exited is True
 
     def test_log_input_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", False)
+        monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", False)
 
         span = BraintrustSpan("issue-1", "agent-1")
         span.log_input("test prompt")
         assert span._tracer.input_prompt == "test prompt"
 
     def test_set_success_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", False)
+        monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", False)
 
         span = BraintrustSpan("issue-1", "agent-1")
         span.set_success(True)
         assert span._tracer.success is True
 
     def test_set_error_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", False)
+        monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", False)
 
         span = BraintrustSpan("issue-1", "agent-1")
         span.set_error("boom")
@@ -271,7 +271,7 @@ class TestProtocolCompliance:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """BraintrustSpan should match TelemetrySpan protocol."""
-        monkeypatch.setattr(braintrust_integration, "BRAINTRUST_AVAILABLE", False)
+        monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", False)
 
         span = BraintrustSpan("issue-1", "agent-1")
 

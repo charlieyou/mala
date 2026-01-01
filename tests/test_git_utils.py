@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from src import git_utils
+from src.infra import git_utils as infra_git_utils
 from src.tools.command_runner import CommandResult
 
 
@@ -13,7 +14,8 @@ async def test_get_git_commit_async_success(monkeypatch: pytest.MonkeyPatch) -> 
     ) -> CommandResult:
         return CommandResult(command=cmd, returncode=0, stdout="deadbeef\n")
 
-    monkeypatch.setattr(git_utils, "run_command_async", mock_run_command_async)
+    # Patch in the infra module where the function is actually used
+    monkeypatch.setattr(infra_git_utils, "run_command_async", mock_run_command_async)
 
     result = await git_utils.get_git_commit_async(Path("."))
 
@@ -27,7 +29,8 @@ async def test_get_git_branch_async_success(monkeypatch: pytest.MonkeyPatch) -> 
     ) -> CommandResult:
         return CommandResult(command=cmd, returncode=0, stdout="main\n")
 
-    monkeypatch.setattr(git_utils, "run_command_async", mock_run_command_async)
+    # Patch in the infra module where the function is actually used
+    monkeypatch.setattr(infra_git_utils, "run_command_async", mock_run_command_async)
 
     result = await git_utils.get_git_branch_async(Path("."))
 
@@ -44,7 +47,8 @@ async def test_get_git_commit_async_timeout(monkeypatch: pytest.MonkeyPatch) -> 
             command=cmd, returncode=124, stdout="", stderr="", timed_out=True
         )
 
-    monkeypatch.setattr(git_utils, "run_command_async", mock_run_command_async)
+    # Patch in the infra module where the function is actually used
+    monkeypatch.setattr(infra_git_utils, "run_command_async", mock_run_command_async)
 
     result = await git_utils.get_git_commit_async(Path("."), timeout=0.01)
 
@@ -90,8 +94,9 @@ class TestGetBaselineForIssue:
             ]
         )
 
+        # Patch in the infra module where CommandRunner is actually used
         monkeypatch.setattr(
-            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-123")
@@ -122,8 +127,9 @@ class TestGetBaselineForIssue:
             ]
         )
 
+        # Patch in the infra module where CommandRunner is actually used
         monkeypatch.setattr(
-            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-123")
@@ -151,8 +157,9 @@ class TestGetBaselineForIssue:
             ]
         )
 
+        # Patch in the infra module where CommandRunner is actually used
         monkeypatch.setattr(
-            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-123")
@@ -172,8 +179,9 @@ class TestGetIssueCommitsAsync:
                 CommandResult(command=["git", "log"], returncode=0, stdout=""),
             ]
         )
+        # Patch in the infra module where CommandRunner is actually used
         monkeypatch.setattr(
-            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
         result = await git_utils.get_issue_commits_async(Path("/repo"), "mala-123")
@@ -194,8 +202,9 @@ class TestGetIssueCommitsAsync:
                 ),
             ]
         )
+        # Patch in the infra module where CommandRunner is actually used
         monkeypatch.setattr(
-            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
         result = await git_utils.get_issue_commits_async(Path("/repo"), "mala-123")
@@ -215,8 +224,9 @@ class TestGetIssueCommitsAsync:
                 ),
             ]
         )
+        # Patch in the infra module where CommandRunner is actually used
         monkeypatch.setattr(
-            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
         await git_utils.get_issue_commits_async(
@@ -241,8 +251,9 @@ class TestGetIssueCommitsAsync:
             ]
         )
 
+        # Patch in the infra module where CommandRunner is actually used
         monkeypatch.setattr(
-            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
         result = await git_utils.get_baseline_for_issue(
@@ -271,8 +282,9 @@ class TestGetIssueCommitsAsync:
             ]
         )
 
+        # Patch in the infra module where CommandRunner is actually used
         monkeypatch.setattr(
-            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-abc")
@@ -301,8 +313,9 @@ class TestGetIssueCommitsAsync:
             ]
         )
 
+        # Patch in the infra module where CommandRunner is actually used
         monkeypatch.setattr(
-            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-g3h.1")
@@ -337,8 +350,9 @@ class TestGetIssueCommitsAsync:
             ]
         )
 
+        # Patch in the infra module where CommandRunner is actually used
         monkeypatch.setattr(
-            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-merge")
@@ -369,8 +383,9 @@ class TestGetIssueCommitsAsync:
             ]
         )
 
+        # Patch in the infra module where CommandRunner is actually used
         monkeypatch.setattr(
-            git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
+            infra_git_utils, "CommandRunner", lambda cwd, timeout_seconds: mock_runner
         )
 
         result = await git_utils.get_baseline_for_issue(Path("/repo"), "mala-rebase")

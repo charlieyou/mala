@@ -12,11 +12,13 @@ from src.infra.git_utils import (
     get_issue_commits_async,
 )
 
-# Also expose run_command_async for tests that monkeypatch it
-from src.tools.command_runner import run_command_async
+# Also expose CommandRunner and run_command_async for tests that monkeypatch them
+# Must use same source as infra module for patches to work
+from src.infra.tools.command_runner import CommandRunner, run_command_async
 
 __all__ = [
     "DEFAULT_GIT_TIMEOUT",
+    "CommandRunner",
     "get_baseline_for_issue",
     "get_git_branch_async",
     "get_git_commit_async",
