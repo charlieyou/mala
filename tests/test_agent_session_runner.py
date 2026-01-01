@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any, Self, cast
+from unittest.mock import patch
 
 import pytest
 
@@ -67,6 +68,8 @@ class FakeSDKClient:
         self.result_message = result_message or make_result_message()
         self.queries: list[tuple[str, str | None]] = []
         self._response_index = 0
+        self.disconnect_called = False
+        self.disconnect_delay: float = 0
 
     async def __aenter__(self) -> Self:
         return self
@@ -89,14 +92,32 @@ class FakeSDKClient:
         yield self.result_message
 
     async def disconnect(self) -> None:
-        """Disconnect the client (no-op for fake)."""
-        pass
+        """Disconnect the client."""
+        if self.disconnect_delay > 0:
+            await asyncio.sleep(self.disconnect_delay)
+        self.disconnect_called = True
 
 
 class HangingSDKClient(FakeSDKClient):
     """Fake SDK client that never yields a response (simulates hung stream)."""
 
     async def receive_response(self) -> AsyncIterator[Any]:
+        while True:
+            await asyncio.sleep(3600)
+            if False:  # pragma: no cover
+                yield None
+
+
+class HangingAfterMessagesSDKClient(FakeSDKClient):
+    """Fake SDK client that yields configured messages then hangs before ResultMessage.
+
+    Use this to test retry behavior where a session_id is obtained before hang.
+    """
+
+    async def receive_response(self) -> AsyncIterator[Any]:
+        for msg in self.messages:
+            yield msg
+        # Hang forever instead of yielding result_message
         while True:
             await asyncio.sleep(3600)
             if False:  # pragma: no cover
@@ -133,6 +154,26 @@ class FakeSDKClientFactory:
     def create(self, options: object) -> SDKClientProtocol:
         self.create_calls.append(options)
         return cast("SDKClientProtocol", self.client)
+
+
+class SequencedSDKClientFactory:
+    """Factory that returns different clients per create() call.
+
+    This factory is designed for testing retry behavior by returning different
+    clients on each call to create(). For example, you can return a hanging
+    client on the first call and a successful client on the second call.
+    """
+
+    def __init__(self, clients: list[FakeSDKClient]):
+        self.clients = clients
+        self.create_calls: list[Any] = []
+        self._index = 0
+
+    def create(self, options: object) -> SDKClientProtocol:
+        self.create_calls.append(options)
+        client = self.clients[min(self._index, len(self.clients) - 1)]
+        self._index += 1
+        return cast("SDKClientProtocol", client)
 
 
 class TestAgentSessionRunnerBasics:
@@ -1395,3 +1436,415 @@ class TestAgentSessionRunnerEventSink:
         review_retry = next(e for e in fake_sink.events if e[0] == "on_review_retry")
         assert review_retry[1][0] == "test-123"  # agent_id
         assert review_retry[2]["error_count"] == 1  # one P1 error
+
+
+class TestIdleTimeoutRetry:
+    """Test idle timeout retry behavior."""
+
+    @pytest.fixture
+    def tmp_log_path(self, tmp_path: Path) -> Path:
+        """Create a temporary log file path."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+        return log_path
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_idle_timeout_retries_and_recovers(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Hang once then succeed on retry; verify disconnect() and resume."""
+        # First client: yields session_id via ResultMessage partial then hangs
+        # We need a ResultMessage to provide session_id for resume
+        hanging_result = make_result_message(session_id="hang-session-123")
+        hanging_client = HangingAfterMessagesSDKClient(
+            messages=[hanging_result],  # Yield result before hanging
+        )
+
+        # Second client: succeeds immediately
+        success_client = FakeSDKClient()
+
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            idle_timeout_seconds=0.01,
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0, 0.0),
+            review_enabled=False,
+        )
+
+        factory = SequencedSDKClientFactory([hanging_client, success_client])
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input_data)
+
+        # Verify success after retry
+        assert output.success is True
+        assert len(factory.create_calls) == 2
+
+        # Verify disconnect was called on the hanging client
+        assert hanging_client.disconnect_called is True
+
+        # Verify second client used resume prompt with session_id
+        assert len(success_client.queries) == 1
+        assert "Continue on issue test-123" in success_client.queries[0][0]
+        assert success_client.queries[0][1] == "hang-session-123"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_idle_timeout_gives_up_after_max_retries(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Disconnect on all clients; fail after max retries."""
+        # Create 3 hanging clients (initial + 2 retries)
+        clients = [HangingSDKClient() for _ in range(3)]
+
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            idle_timeout_seconds=0.01,
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0, 0.0),
+            review_enabled=False,
+        )
+
+        factory = SequencedSDKClientFactory(clients)
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input_data)
+
+        # Verify failure after max retries
+        assert output.success is False
+        assert "idle" in output.summary.lower()
+
+        # Verify disconnect was called on all clients
+        for client in clients:
+            assert client.disconnect_called is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_idle_timeout_always_disconnects_even_on_final_failure(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Verify disconnect() called even when max retries exceeded."""
+        # Only 1 client since max_idle_retries=0 means no retries
+        client = HangingSDKClient()
+
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            idle_timeout_seconds=0.01,
+            max_idle_retries=0,  # No retries allowed
+            review_enabled=False,
+        )
+
+        factory = FakeSDKClientFactory(client)
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input_data)
+
+        # Verify failure
+        assert output.success is False
+
+        # Verify disconnect was still called
+        assert client.disconnect_called is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_idle_timeout_first_turn_no_side_effects_starts_fresh(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Hang before any messages (no tool calls, no session_id); retry with original prompt."""
+        # First client: hangs immediately (no messages, no session_id)
+        hanging_client = HangingSDKClient()
+
+        # Second client: succeeds
+        success_client = FakeSDKClient()
+
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            idle_timeout_seconds=0.01,
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 0.0, 0.0),
+            review_enabled=False,
+        )
+
+        factory = SequencedSDKClientFactory([hanging_client, success_client])
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Original test prompt",
+        )
+
+        output = await runner.run_session(input_data)
+
+        # Verify success
+        assert output.success is True
+
+        # Verify retry used the ORIGINAL prompt (fresh session), not resume prompt
+        assert len(success_client.queries) == 1
+        assert success_client.queries[0][0] == "Original test prompt"
+        # No session_id for fresh session
+        assert success_client.queries[0][1] is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_idle_timeout_first_turn_with_tool_calls_fails_fast(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Hang after tool calls but before ResultMessage; fail fast (no retry)."""
+        # Create a client that yields tool calls then hangs
+        tool_block = ToolUseBlock(id="tool-1", name="Bash", input={"command": "ls"})
+        assistant_msg = AssistantMessage(content=[tool_block], model="test-model")
+
+        hanging_client = HangingAfterMessagesSDKClient(messages=[assistant_msg])
+
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            idle_timeout_seconds=0.01,
+            max_idle_retries=2,  # Would allow retry, but not safe here
+            idle_retry_backoff=(0.0, 0.0, 0.0),
+            review_enabled=False,
+        )
+
+        factory = FakeSDKClientFactory(hanging_client)
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input_data)
+
+        # Verify failure with tool calls message
+        assert output.success is False
+        assert "tool calls occurred" in output.summary.lower()
+
+        # Verify only 1 client was created (no retry)
+        assert len(factory.create_calls) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_idle_timeout_non_query_phases_skip_query_block(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Verify non-query phases (like WAIT_FOR_LOG) don't create clients.
+
+        This test verifies the loop structure: when pending_query is None,
+        no client is created and no query is sent.
+        """
+        # Setup a successful client
+        fake_client = FakeSDKClient()
+        factory = FakeSDKClientFactory(fake_client)
+
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            idle_timeout_seconds=0.01,
+            review_enabled=False,
+        )
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input_data)
+
+        # Verify success
+        assert output.success is True
+
+        # Verify only 1 client was created for the initial query
+        # (no extra clients for WAIT_FOR_LOG or RUN_GATE phases)
+        assert len(factory.create_calls) == 1
+
+        # Verify only 1 query was sent (the initial one)
+        assert len(fake_client.queries) == 1
+        assert fake_client.queries[0][0] == "Test prompt"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_idle_timeout_backoff_delays(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Verify backoff delays are applied: 0s (retry 1), 5s (retry 2)."""
+        # First two clients hang, third succeeds
+        result_msg = make_result_message(session_id="session-123")
+        hanging1 = HangingAfterMessagesSDKClient(messages=[result_msg])
+        hanging2 = HangingAfterMessagesSDKClient(messages=[result_msg])
+        success_client = FakeSDKClient()
+
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            idle_timeout_seconds=0.01,
+            max_idle_retries=2,
+            idle_retry_backoff=(0.0, 5.0, 15.0),
+            review_enabled=False,
+        )
+
+        factory = SequencedSDKClientFactory([hanging1, hanging2, success_client])
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        sleep_calls: list[float] = []
+        original_sleep = asyncio.sleep
+
+        async def mock_sleep(delay: float) -> None:
+            sleep_calls.append(delay)
+            # Use a very short real sleep to avoid infinite loops
+            # but allow the hanging clients to timeout quickly
+            if delay > 1:
+                # This is a backoff delay - just record it
+                await original_sleep(0.001)
+            else:
+                # This is likely part of the test infrastructure
+                await original_sleep(delay)
+
+        # Patch asyncio.sleep in the runner module specifically
+        with patch(
+            "src.pipeline.agent_session_runner.asyncio.sleep", side_effect=mock_sleep
+        ):
+            output = await runner.run_session(input_data)
+
+        # Verify success after 2 retries
+        assert output.success is True
+
+        # Check backoff delays were used:
+        # - Retry 1: backoff_idx = 0 -> 0.0s (but we don't sleep for 0)
+        # - Retry 2: backoff_idx = 1 -> 5.0s
+        assert 5.0 in sleep_calls, f"Expected 5.0s backoff, got: {sleep_calls}"
