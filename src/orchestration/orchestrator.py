@@ -61,6 +61,7 @@ from src.pipeline.run_coordinator import (
     RunCoordinatorConfig,
     RunLevelValidationInput,
 )
+from src.infra.io.config import MalaConfig
 from src.orchestration.gate_metadata import (
     GateMetadata,
     build_gate_metadata,
@@ -87,7 +88,6 @@ if TYPE_CHECKING:
     from src.domain.validation.spec import ValidationSpec
     from src.infra.clients.cerberus_review import ReviewResult
     from src.infra.epic_verifier import EpicVerifier
-    from src.infra.io.config import MalaConfig
     from src.infra.io.event_sink import MalaEventSink
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.infra.telemetry import TelemetryProvider
@@ -186,7 +186,9 @@ class MalaOrchestrator:
         from src.orchestration.factory import (
             OrchestratorConfig,
             OrchestratorDependencies,
-            create_orchestrator,
+            _build_dependencies,
+            _check_review_availability,
+            _derive_config,
         )
 
         orch_config = OrchestratorConfig(
@@ -218,9 +220,46 @@ class MalaOrchestrator:
             event_sink=event_sink,
         )
 
-        # Create orchestrator via factory and copy attributes
-        temp = create_orchestrator(orch_config, mala_config=config, deps=deps)
-        self.__dict__.update(temp.__dict__)
+        # Load MalaConfig if not provided
+        mala_config = (
+            config if config is not None else MalaConfig.from_env(validate=False)
+        )
+
+        # Derive computed configuration
+        derived = _derive_config(orch_config, mala_config)
+
+        # Check review availability and update disabled_validations
+        review_disabled_reason = _check_review_availability(
+            mala_config, derived.disabled_validations
+        )
+        if review_disabled_reason:
+            derived.disabled_validations.add("review")
+            derived.review_disabled_reason = review_disabled_reason
+
+        # Build dependencies
+        (
+            issue_prov,
+            code_rev,
+            gate_check,
+            log_prov,
+            telemetry_prov,
+            evt_sink,
+            epic_ver,
+        ) = _build_dependencies(orch_config, mala_config, derived, deps)
+
+        # Initialize via the proper method instead of __dict__.update
+        self._init_from_factory(
+            orch_config,
+            mala_config,
+            derived,
+            issue_prov,
+            code_rev,
+            gate_check,
+            log_prov,
+            telemetry_prov,
+            evt_sink,
+            epic_ver,
+        )
 
     def _init_from_factory(
         self,
