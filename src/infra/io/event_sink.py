@@ -1138,12 +1138,13 @@ class ConsoleEventSink:
         issue_id: str | None = None,
     ) -> None:
         """Log quality gate check start."""
-        scope = "run-level" if agent_id is None else ""
-        log_verbose(
+        scope = "run-level " if agent_id is None else ""
+        log(
             "→",
             f"Quality gate {scope}check (attempt {attempt}/{max_attempts})",
             Colors.MUTED,
             agent_id=agent_id,
+            issue_id=issue_id,
         )
 
     def on_gate_passed(
@@ -1153,7 +1154,7 @@ class ConsoleEventSink:
     ) -> None:
         """Log quality gate passed."""
         scope = "Run-level gate" if agent_id is None else "Gate"
-        log("✓", f"{scope} passed", Colors.GREEN, agent_id=agent_id)
+        log("✓", f"{scope} passed", Colors.GREEN, agent_id=agent_id, issue_id=issue_id)
 
     def on_gate_failed(
         self,
@@ -1169,6 +1170,7 @@ class ConsoleEventSink:
             f"{scope} failed after {attempt}/{max_attempts} attempts",
             Colors.RED,
             agent_id=agent_id,
+            issue_id=issue_id,
         )
 
     def on_gate_retry(
@@ -1184,6 +1186,7 @@ class ConsoleEventSink:
             f"Retrying gate (attempt {attempt}/{max_attempts})",
             Colors.YELLOW,
             agent_id=agent_id,
+            issue_id=issue_id,
         )
 
     def on_gate_result(
@@ -1204,7 +1207,13 @@ class ConsoleEventSink:
             # Log failure reasons at normal level (not verbose) so users can
             # see what went wrong - this matches the previous inline logging
             reasons_str = "; ".join(failure_reasons)
-            log("  ", f"Failures: {reasons_str}", Colors.RED, agent_id=agent_id)
+            log(
+                "  ",
+                f"Failures: {reasons_str}",
+                Colors.RED,
+                agent_id=agent_id,
+                issue_id=issue_id,
+            )
 
     # -------------------------------------------------------------------------
     # Review events
@@ -1218,11 +1227,12 @@ class ConsoleEventSink:
         issue_id: str | None = None,
     ) -> None:
         """Log review start."""
-        log_verbose(
+        log(
             "→",
             f"Review (attempt {attempt}/{max_attempts})",
             Colors.MUTED,
             agent_id=agent_id,
+            issue_id=issue_id,
         )
 
     def on_review_passed(
@@ -1231,7 +1241,7 @@ class ConsoleEventSink:
         issue_id: str | None = None,
     ) -> None:
         """Log review passed."""
-        log("✓", "Review passed", Colors.GREEN, agent_id=agent_id)
+        log("✓", "Review passed", Colors.GREEN, agent_id=agent_id, issue_id=issue_id)
 
     def on_review_retry(
         self,
@@ -1254,6 +1264,7 @@ class ConsoleEventSink:
             f"Retrying review ({detail}, attempt {attempt}/{max_attempts})",
             Colors.YELLOW,
             agent_id=agent_id,
+            issue_id=issue_id,
         )
 
     # -------------------------------------------------------------------------
@@ -1314,8 +1325,14 @@ class ConsoleEventSink:
         agent_id: str,
         issue_id: str | None = None,
     ) -> None:
-        """Log per-issue validation start."""
-        log_verbose("→", "Validation started", Colors.MUTED, agent_id=agent_id)
+        """Log validation start."""
+        log(
+            "◐",
+            "Starting validation...",
+            Colors.MUTED,
+            agent_id=agent_id,
+            issue_id=issue_id,
+        )
 
     def on_validation_result(
         self,
@@ -1327,7 +1344,13 @@ class ConsoleEventSink:
         if passed:
             log_verbose("✓", "Validation passed", Colors.GREEN, agent_id=agent_id)
         else:
-            log("✗", "Validation failed", Colors.RED, agent_id=agent_id)
+            log(
+                "✗",
+                "Validation failed",
+                Colors.RED,
+                agent_id=agent_id,
+                issue_id=issue_id,
+            )
 
     # -------------------------------------------------------------------------
     # Warnings and diagnostics
