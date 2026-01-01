@@ -1200,6 +1200,12 @@ class ConsoleEventSink:
 
         For failures, logs the failure reasons at normal log level so users
         can see what went wrong without needing verbose mode.
+
+        Args:
+            agent_id: Agent ID (None for run-level gate).
+            passed: Whether the gate passed.
+            failure_reasons: List of failure reasons (if failed).
+            issue_id: Issue being validated (for display).
         """
         if passed:
             return  # on_gate_passed already handles success
