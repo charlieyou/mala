@@ -380,6 +380,9 @@ class TestRemediationIssueCreation:
         assert len(issue_ids) == 1
         assert issue_ids[0] == "remediation-1"
         assert len(created_issues) == 1
+        assert "--parent" in created_issues[0]["cmd"]
+        parent_idx = created_issues[0]["cmd"].index("--parent") + 1
+        assert created_issues[0]["cmd"][parent_idx] == "epic-1"
 
     @pytest.mark.asyncio
     async def test_deduplicates_by_tag(self, verifier: EpicVerifier) -> None:
@@ -466,6 +469,8 @@ class TestRemediationIssueCreation:
         labels = created_cmd[labels_idx].split(",")
         assert any("epic_remediation:" in label for label in labels)
         assert "auto_generated" in labels
+        parent_idx = created_cmd.index("--parent") + 1
+        assert created_cmd[parent_idx] == "epic-1"
 
 
 # ============================================================================

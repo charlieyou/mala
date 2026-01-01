@@ -1128,6 +1128,7 @@ Address this criterion to unblock epic closure. When complete, close this issue.
                 description=description,
                 priority=priority,
                 tags=[dedup_tag, "auto_generated"],
+                parent_id=epic_id,
             )
             if issue_id:
                 issue_ids.append(issue_id)
@@ -1265,6 +1266,7 @@ to unblock the epic, or use `--epic-override {epic_id}` to force closure.
         description: str,
         priority: str,
         tags: list[str],
+        parent_id: str | None = None,
     ) -> str | None:
         """Create a new issue via bd CLI.
 
@@ -1273,6 +1275,7 @@ to unblock the epic, or use `--epic-override {epic_id}` to force closure.
             description: Issue description.
             priority: Priority string (P1, P2, etc.)
             tags: List of tags to apply.
+            parent_id: Optional parent epic ID to attach to.
 
         Returns:
             Created issue ID, or None on failure.
@@ -1288,6 +1291,8 @@ to unblock the epic, or use `--epic-override {epic_id}` to force closure.
             priority,
             "--silent",
         ]
+        if parent_id:
+            cmd.extend(["--parent", parent_id])
         if tags:
             cmd.extend(["--labels", ",".join(tags)])
 
