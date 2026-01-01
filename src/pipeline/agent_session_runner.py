@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 import os
 import time
 import uuid
@@ -65,6 +66,9 @@ if TYPE_CHECKING:
     from src.protocols import ReviewIssueProtocol
     from src.telemetry import TelemetrySpan
 
+
+# Module-level logger for idle retry messages
+logger = logging.getLogger(__name__)
 
 # Prompt file paths
 _PROMPT_DIR = Path(__file__).parent.parent / "prompts"
@@ -482,11 +486,6 @@ class AgentSessionRunner:
             idle_timeout_seconds = min(900.0, max(300.0, derived))
         if idle_timeout_seconds <= 0:
             idle_timeout_seconds = None
-
-        # Import logging for idle retry messages
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         try:
             async with asyncio.timeout(self.config.timeout_seconds):

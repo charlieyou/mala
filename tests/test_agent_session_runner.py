@@ -88,6 +88,10 @@ class FakeSDKClient:
             yield msg
         yield self.result_message
 
+    async def disconnect(self) -> None:
+        """Disconnect the client (no-op for fake)."""
+        pass
+
 
 class HangingSDKClient(FakeSDKClient):
     """Fake SDK client that never yields a response (simulates hung stream)."""
