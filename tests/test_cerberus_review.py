@@ -717,3 +717,65 @@ class TestExtractWaitTimeout:
         """Extracts timeout when it's the last argument pair."""
         args = ("--json", "--timeout", "450")
         assert DefaultReviewer._extract_wait_timeout(args) == 450
+
+
+class TestResolveStaleGate:
+    """Tests for DefaultReviewer._resolve_stale_gate method."""
+
+    async def test_resolve_stale_gate_success(self) -> None:
+        """Resolves stale gate successfully."""
+        from pathlib import Path
+        from unittest.mock import AsyncMock
+
+        reviewer = DefaultReviewer(repo_path=Path("/tmp"))
+
+        mock_result = AsyncMock()
+        mock_result.returncode = 0
+
+        mock_runner = AsyncMock()
+        mock_runner.run_async.return_value = mock_result
+
+        result = await reviewer._resolve_stale_gate(
+            mock_runner, {"CLAUDE_SESSION_ID": "test"}
+        )
+
+        assert result is True
+        mock_runner.run_async.assert_called_once()
+        call_args = mock_runner.run_async.call_args
+        assert "resolve" in call_args[0][0]
+        assert "--reason" in call_args[0][0]
+
+    async def test_resolve_stale_gate_failure(self) -> None:
+        """Returns False when resolve command fails."""
+        from pathlib import Path
+        from unittest.mock import AsyncMock
+
+        reviewer = DefaultReviewer(repo_path=Path("/tmp"))
+
+        mock_result = AsyncMock()
+        mock_result.returncode = 1
+
+        mock_runner = AsyncMock()
+        mock_runner.run_async.return_value = mock_result
+
+        result = await reviewer._resolve_stale_gate(
+            mock_runner, {"CLAUDE_SESSION_ID": "test"}
+        )
+
+        assert result is False
+
+    async def test_resolve_stale_gate_exception(self) -> None:
+        """Returns False when resolve command raises exception."""
+        from pathlib import Path
+        from unittest.mock import AsyncMock
+
+        reviewer = DefaultReviewer(repo_path=Path("/tmp"))
+
+        mock_runner = AsyncMock()
+        mock_runner.run_async.side_effect = Exception("Network error")
+
+        result = await reviewer._resolve_stale_gate(
+            mock_runner, {"CLAUDE_SESSION_ID": "test"}
+        )
+
+        assert result is False
