@@ -507,11 +507,17 @@ class AgentSessionRunner:
                         while not message_iteration_complete:
                             # Backoff before retry (not on first attempt)
                             if idle_retry_count > 0:
-                                backoff_idx = min(
-                                    idle_retry_count - 1,
-                                    len(self.config.idle_retry_backoff) - 1,
-                                )
-                                backoff = self.config.idle_retry_backoff[backoff_idx]
+                                # Guard against empty backoff tuple
+                                if self.config.idle_retry_backoff:
+                                    backoff_idx = min(
+                                        idle_retry_count - 1,
+                                        len(self.config.idle_retry_backoff) - 1,
+                                    )
+                                    backoff = self.config.idle_retry_backoff[
+                                        backoff_idx
+                                    ]
+                                else:
+                                    backoff = 0.0
                                 if backoff > 0:
                                     logger.info(
                                         f"Idle retry {idle_retry_count}: "
@@ -730,20 +736,29 @@ class AgentSessionRunner:
                                 # Re-raise if we got here (means we gave up)
                                 raise
 
-                    # === END QUERY + MESSAGE ITERATION ===
+                        # === END QUERY + MESSAGE ITERATION ===
 
-                    # Messages complete - transition lifecycle
-                    result = lifecycle.on_messages_complete(
-                        lifecycle_ctx, has_session_id=bool(session_id)
-                    )
-                    if self.event_sink is not None:
-                        self.event_sink.on_lifecycle_state(
-                            input.issue_id, lifecycle.state.name
+                        # Messages complete - transition lifecycle
+                        result = lifecycle.on_messages_complete(
+                            lifecycle_ctx, has_session_id=bool(session_id)
                         )
+                        if self.event_sink is not None:
+                            self.event_sink.on_lifecycle_state(
+                                input.issue_id, lifecycle.state.name
+                            )
 
-                    if result.effect == Effect.COMPLETE_FAILURE:
-                        final_result = lifecycle_ctx.final_result
-                        break
+                        if result.effect == Effect.COMPLETE_FAILURE:
+                            final_result = lifecycle_ctx.final_result
+                            break
+
+                    else:
+                        # No query to send - result is from previous iteration
+                        # (e.g., RUN_REVIEW retry where lifecycle returns RUN_REVIEW
+                        # again without sending a message to the agent)
+                        # The 'result' variable must be set from a previous iteration
+                        assert "result" in dir(), (
+                            "Bug: entered loop without pending_query but result not set"
+                        )
 
                     # Handle WAIT_FOR_LOG
                     if result.effect == Effect.WAIT_FOR_LOG:
@@ -844,6 +859,12 @@ class AgentSessionRunner:
                                 failure_reasons=failure_text,
                                 issue_id=input.issue_id,
                             )
+                            # session_id must be set for gate retries - fail fast if
+                            # SDK didn't provide one
+                            if session_id is None:
+                                raise IdleTimeoutError(
+                                    "Cannot retry gate: session_id not received from SDK"
+                                )
                             pending_session_id = session_id
                             idle_retry_count = 0
                             continue
@@ -992,6 +1013,12 @@ class AgentSessionRunner:
                                 review_issues=review_issues_text,
                                 issue_id=input.issue_id,
                             )
+                            # session_id must be set for review retries - fail fast if
+                            # SDK didn't provide one
+                            if session_id is None:
+                                raise IdleTimeoutError(
+                                    "Cannot retry review: session_id not received from SDK"
+                                )
                             pending_session_id = session_id
                             idle_retry_count = 0
                             continue
