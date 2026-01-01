@@ -870,11 +870,19 @@ class AgentSessionRunner:
 
                     # Handle RUN_GATE
                     if result.effect == Effect.RUN_GATE:
+                        # Emit validation started BEFORE the gate check
+                        if self.event_sink is not None:
+                            self.event_sink.on_validation_started(
+                                input.issue_id,  # agent_id for color mapping
+                                issue_id=input.issue_id,  # for display
+                            )
+
                         if self.event_sink is not None:
                             self.event_sink.on_gate_started(
                                 input.issue_id,
                                 lifecycle_ctx.retry_state.gate_attempt,
                                 self.config.max_gate_retries,
+                                issue_id=input.issue_id,
                             )
 
                         if self.callbacks.on_gate_check is None:
@@ -894,7 +902,10 @@ class AgentSessionRunner:
 
                         if result.effect == Effect.COMPLETE_SUCCESS:
                             if self.event_sink is not None:
-                                self.event_sink.on_gate_passed(input.issue_id)
+                                self.event_sink.on_gate_passed(
+                                    input.issue_id,
+                                    issue_id=input.issue_id,
+                                )
                             final_result = lifecycle_ctx.final_result
                             break
 
@@ -904,11 +915,13 @@ class AgentSessionRunner:
                                     input.issue_id,
                                     lifecycle_ctx.retry_state.gate_attempt,
                                     self.config.max_gate_retries,
+                                    issue_id=input.issue_id,
                                 )
                                 self.event_sink.on_gate_result(
                                     input.issue_id,
                                     passed=False,
                                     failure_reasons=list(gate_result.failure_reasons),
+                                    issue_id=input.issue_id,
                                 )
                             final_result = lifecycle_ctx.final_result
                             break
@@ -919,11 +932,13 @@ class AgentSessionRunner:
                                     input.issue_id,
                                     lifecycle_ctx.retry_state.gate_attempt,
                                     self.config.max_gate_retries,
+                                    issue_id=input.issue_id,
                                 )
                                 self.event_sink.on_gate_result(
                                     input.issue_id,
                                     passed=False,
                                     failure_reasons=list(gate_result.failure_reasons),
+                                    issue_id=input.issue_id,
                                 )
                             # Build follow-up prompt
                             failure_text = "\n".join(
@@ -1003,6 +1018,7 @@ class AgentSessionRunner:
                                 input.issue_id,
                                 lifecycle_ctx.retry_state.review_attempt,
                                 self.config.max_review_retries,
+                                issue_id=input.issue_id,
                             )
 
                         if self.callbacks.on_review_check is None:
@@ -1078,7 +1094,10 @@ class AgentSessionRunner:
 
                         if result.effect == Effect.COMPLETE_SUCCESS:
                             if self.event_sink is not None:
-                                self.event_sink.on_review_passed(input.issue_id)
+                                self.event_sink.on_review_passed(
+                                    input.issue_id,
+                                    issue_id=input.issue_id,
+                                )
                             final_result = lifecycle_ctx.final_result
                             break
 
@@ -1124,6 +1143,7 @@ class AgentSessionRunner:
                                     self.config.max_review_retries,
                                     error_count=blocking_count or None,
                                     parse_error=review_result.parse_error,
+                                    issue_id=input.issue_id,
                                 )
 
                             # Build follow-up prompt for legitimate review issues

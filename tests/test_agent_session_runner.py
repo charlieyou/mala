@@ -903,37 +903,73 @@ class FakeEventSink:
     def _record(self, name: str, *args: object, **kwargs: object) -> None:
         self.events.append((name, args, dict(kwargs)))
 
-    def on_gate_started(
-        self, agent_id: str | None, attempt: int, max_attempts: int
-    ) -> None:
-        self._record("on_gate_started", agent_id, attempt, max_attempts)
+    def on_validation_started(self, agent_id: str, issue_id: str | None = None) -> None:
+        self._record("on_validation_started", agent_id, issue_id=issue_id)
 
-    def on_gate_passed(self, agent_id: str | None) -> None:
-        self._record("on_gate_passed", agent_id)
+    def on_gate_started(
+        self,
+        agent_id: str | None,
+        attempt: int,
+        max_attempts: int,
+        issue_id: str | None = None,
+    ) -> None:
+        self._record(
+            "on_gate_started", agent_id, attempt, max_attempts, issue_id=issue_id
+        )
+
+    def on_gate_passed(self, agent_id: str | None, issue_id: str | None = None) -> None:
+        self._record("on_gate_passed", agent_id, issue_id=issue_id)
 
     def on_gate_failed(
-        self, agent_id: str | None, attempt: int, max_attempts: int
+        self,
+        agent_id: str | None,
+        attempt: int,
+        max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
-        self._record("on_gate_failed", agent_id, attempt, max_attempts)
+        self._record(
+            "on_gate_failed", agent_id, attempt, max_attempts, issue_id=issue_id
+        )
 
-    def on_gate_retry(self, agent_id: str, attempt: int, max_attempts: int) -> None:
-        self._record("on_gate_retry", agent_id, attempt, max_attempts)
+    def on_gate_retry(
+        self,
+        agent_id: str,
+        attempt: int,
+        max_attempts: int,
+        issue_id: str | None = None,
+    ) -> None:
+        self._record(
+            "on_gate_retry", agent_id, attempt, max_attempts, issue_id=issue_id
+        )
 
     def on_gate_result(
         self,
         agent_id: str | None,
         passed: bool,
         failure_reasons: list[str] | None = None,
+        issue_id: str | None = None,
     ) -> None:
         self._record(
-            "on_gate_result", agent_id, passed=passed, failure_reasons=failure_reasons
+            "on_gate_result",
+            agent_id,
+            passed=passed,
+            failure_reasons=failure_reasons,
+            issue_id=issue_id,
         )
 
-    def on_review_started(self, agent_id: str, attempt: int, max_attempts: int) -> None:
-        self._record("on_review_started", agent_id, attempt, max_attempts)
+    def on_review_started(
+        self,
+        agent_id: str,
+        attempt: int,
+        max_attempts: int,
+        issue_id: str | None = None,
+    ) -> None:
+        self._record(
+            "on_review_started", agent_id, attempt, max_attempts, issue_id=issue_id
+        )
 
-    def on_review_passed(self, agent_id: str) -> None:
-        self._record("on_review_passed", agent_id)
+    def on_review_passed(self, agent_id: str, issue_id: str | None = None) -> None:
+        self._record("on_review_passed", agent_id, issue_id=issue_id)
 
     def on_review_retry(
         self,
@@ -942,6 +978,7 @@ class FakeEventSink:
         max_attempts: int,
         error_count: int | None = None,
         parse_error: str | None = None,
+        issue_id: str | None = None,
     ) -> None:
         self._record(
             "on_review_retry",
@@ -950,6 +987,7 @@ class FakeEventSink:
             max_attempts,
             error_count=error_count,
             parse_error=parse_error,
+            issue_id=issue_id,
         )
 
     # Pipeline module events
