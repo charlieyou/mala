@@ -1426,6 +1426,10 @@ class AgentSessionRunner:
 
                         # Prepare for retry
                         state.idle_retry_count += 1
+                        # Clear pending state from previous attempt to avoid
+                        # hanging on stale tool IDs (they won't resolve on new stream)
+                        state.pending_tool_ids.clear()
+                        state.tool_calls_this_turn = 0
                         resume_id = state.session_id or lifecycle_ctx.session_id
 
                         if resume_id is not None:
