@@ -906,6 +906,11 @@ class AgentSessionRunner:
                                     input.issue_id,
                                     issue_id=input.issue_id,
                                 )
+                                self.event_sink.on_validation_result(
+                                    input.issue_id,
+                                    passed=True,
+                                    issue_id=input.issue_id,
+                                )
                             final_result = lifecycle_ctx.final_result
                             break
 
@@ -921,6 +926,11 @@ class AgentSessionRunner:
                                     input.issue_id,
                                     passed=False,
                                     failure_reasons=list(gate_result.failure_reasons),
+                                    issue_id=input.issue_id,
+                                )
+                                self.event_sink.on_validation_result(
+                                    input.issue_id,
+                                    passed=False,
                                     issue_id=input.issue_id,
                                 )
                             final_result = lifecycle_ctx.final_result

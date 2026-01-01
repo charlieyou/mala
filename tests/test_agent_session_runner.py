@@ -906,6 +906,14 @@ class FakeEventSink:
     def on_validation_started(self, agent_id: str, issue_id: str | None = None) -> None:
         self._record("on_validation_started", agent_id, issue_id=issue_id)
 
+    def on_validation_result(
+        self,
+        agent_id: str,
+        passed: bool,
+        issue_id: str | None = None,
+    ) -> None:
+        self._record("on_validation_result", agent_id, passed=passed, issue_id=issue_id)
+
     def on_gate_started(
         self,
         agent_id: str | None,
@@ -1088,8 +1096,17 @@ class TestAgentSessionRunnerEventSink:
 
         # Check that gate events were emitted
         event_names = [e[0] for e in fake_sink.events]
+        assert "on_validation_started" in event_names
         assert "on_gate_started" in event_names
         assert "on_gate_passed" in event_names
+        assert "on_validation_result" in event_names
+
+        # Verify on_validation_started is called before on_gate_started
+        validation_started_idx = event_names.index("on_validation_started")
+        gate_started_idx = event_names.index("on_gate_started")
+        assert validation_started_idx < gate_started_idx, (
+            "on_validation_started should be emitted before on_gate_started"
+        )
 
         # Verify on_gate_started was called with correct args
         gate_started = next(e for e in fake_sink.events if e[0] == "on_gate_started")
@@ -1100,6 +1117,13 @@ class TestAgentSessionRunnerEventSink:
         # Verify on_gate_passed was called with correct agent_id
         gate_passed = next(e for e in fake_sink.events if e[0] == "on_gate_passed")
         assert gate_passed[1][0] == "test-123"
+
+        # Verify on_validation_result was called with passed=True
+        validation_result = next(
+            e for e in fake_sink.events if e[0] == "on_validation_result"
+        )
+        assert validation_result[1][0] == "test-123"  # agent_id
+        assert validation_result[2]["passed"] is True
 
     @pytest.mark.asyncio
     async def test_gate_failed_emits_sink_events(
@@ -1158,9 +1182,11 @@ class TestAgentSessionRunnerEventSink:
 
         # Check that gate events were emitted
         event_names = [e[0] for e in fake_sink.events]
+        assert "on_validation_started" in event_names
         assert "on_gate_started" in event_names
         assert "on_gate_failed" in event_names
         assert "on_gate_result" in event_names
+        assert "on_validation_result" in event_names
 
         # Verify on_gate_failed was called with correct args
         gate_failed = next(e for e in fake_sink.events if e[0] == "on_gate_failed")
@@ -1174,6 +1200,13 @@ class TestAgentSessionRunnerEventSink:
         assert gate_result[2]["passed"] is False
         assert "Missing commit" in gate_result[2]["failure_reasons"]
         assert "Tests failed" in gate_result[2]["failure_reasons"]
+
+        # Verify on_validation_result was called with passed=False
+        validation_result = next(
+            e for e in fake_sink.events if e[0] == "on_validation_result"
+        )
+        assert validation_result[1][0] == "test-123"  # agent_id
+        assert validation_result[2]["passed"] is False
 
     @pytest.mark.asyncio
     async def test_gate_retry_emits_sink_events(
