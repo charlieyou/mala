@@ -32,10 +32,15 @@ LLM agents become unreliable as their context window fills up. Early in a sessio
 
 ### Beads (`bd`)
 
-[Beads](https://github.com/cyouAI/beads) is the issue tracking system that agents pull work from.
+[Beads](https://github.com/steveyegge/beads) is the issue tracking system that agents pull work from.
 
 ```bash
-uv tool install beads
+# Install (pick one)
+npm install -g @beads/bd
+# or: brew install steveyegge/beads/bd
+# or: go install github.com/steveyegge/beads/cmd/bd@latest
+
+# Initialize in your repo
 cd /path/to/repo && bd init
 ```
 
