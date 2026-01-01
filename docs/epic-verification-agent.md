@@ -85,22 +85,19 @@ Issue Completion → close_async() → [Epic Verification Agent] → close_eligi
 
 The original "baseline" approach is replaced by the scoped diff strategy above. No single baseline commit is needed—instead, we aggregate the specific commits linked to child issues.
 
-### Large Diff Handling
+### Agent-Driven Exploration
 
-**Problem**: Large epics may produce diffs exceeding model context limits.
+**Approach**: The verification agent receives a commit list and range hint, then
+autonomously explores the repository using tools (Bash for git commands, Glob,
+Grep, Read) to inspect the relevant changes.
 
-**Strategy** (tiered approach):
+**Benefits**:
+1. No context limit issues from large diffs
+2. Agent can focus on specific areas relevant to acceptance criteria
+3. More thorough verification through iterative exploration
 
-1. **Default limit**: 100KB of diff content
-2. **If exceeded**, use file-summary mode:
-   - List files changed with line counts: `git diff --stat`
-   - For each file, include only the first 50 lines of diff
-   - Add note to model: "Diff truncated; focus on structural changes"
-3. **If still exceeded** (>500KB stat output), switch to file-list mode:
-   - Provide list of changed files only
-   - Include file contents for files under 5KB
-   - Model verifies based on final file state, not diff
-4. **Configuration**: `max_diff_size_kb` in orchestrator config (default: 100)
+**Configuration**:
+- `timeout_ms`: Model timeout (default: 300000ms / 5 minutes)
 
 ### Data Model
 
@@ -173,9 +170,10 @@ class EpicVerifier:
         self,
         beads: BeadsClient,
         model: EpicVerificationModel,
-        event_sink: EventSink | None = None,
-        max_diff_size_kb: int = 100,
+        repo_path: Path,
         retry_config: RetryConfig | None = None,
+        lock_manager: object | None = None,
+        event_sink: EventSink | None = None,
     ): ...
 
     async def verify_and_close_eligible(

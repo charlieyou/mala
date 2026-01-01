@@ -72,4 +72,12 @@ def has_valid_oauth_credentials() -> bool:
         return True
 
     # Require at least 60s of validity to avoid mid-test expiry.
-    return expiry_ms > (time.time() * 1000.0 + 60_000.0)
+    if expiry_ms > (time.time() * 1000.0 + 60_000.0):
+        return True
+
+    # Expired access tokens can often be refreshed by the CLI.
+    oauth = payload.get("claudeAiOauth")
+    if isinstance(oauth, dict) and oauth.get("refreshToken"):
+        return True
+
+    return False

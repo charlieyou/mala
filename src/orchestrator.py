@@ -603,7 +603,6 @@ class MalaOrchestrator:
                 beads=self.beads,
                 model=cast("EpicVerificationModel", verification_model),
                 repo_path=self.repo_path,
-                max_diff_size_kb=self._mala_config.max_diff_size_kb,
                 event_sink=self.event_sink,
                 lock_manager=True,
             )

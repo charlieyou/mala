@@ -1,9 +1,9 @@
 """Unit tests for epic verification functionality.
 
 Tests the EpicVerifier class and ClaudeEpicVerificationModel including:
-- Scoped diff computation (child commits only, skip merges)
+- Scoped commit computation (child commits only, skip merges)
+- Commit range summarization with timestamps
 - Spec path extraction from descriptions
-- Large diff handling (tiered truncation)
 - Remediation issue creation with deduplication
 - Human review issue creation
 - Lock usage for sequential epic processing
@@ -41,6 +41,8 @@ def mock_beads() -> MagicMock:
     beads.get_epic_children_async = AsyncMock(return_value={"child-1", "child-2"})
     beads.get_epic_blockers_async = AsyncMock(return_value=set())
     beads.close_async = AsyncMock(return_value=True)
+    beads.find_issue_by_tag_async = AsyncMock(return_value=None)
+    beads.create_issue_async = AsyncMock(return_value="issue-123")
     return beads
 
 
@@ -68,6 +70,15 @@ def verifier(
         beads=mock_beads,
         model=mock_model,
         repo_path=tmp_path,
+    )
+
+
+def _stub_commit_helpers(verifier: EpicVerifier, sha: str = "abc123") -> None:
+    """Stub commit-scoped helpers to avoid hitting git in tests."""
+    setattr(verifier, "_compute_scoped_commits", AsyncMock(return_value=[sha]))
+    setattr(verifier, "_summarize_commit_range", AsyncMock(return_value=sha))
+    setattr(
+        verifier, "_format_commit_summary", AsyncMock(return_value=f"- {sha} summary")
     )
 
 
@@ -136,12 +147,12 @@ class TestExtractSpecPaths:
 
 
 # ============================================================================
-# Test scoped diff computation
+# Test scoped commit computation
 # ============================================================================
 
 
-class TestScopedDiffComputation:
-    """Tests for scoped diff computation from child commits."""
+class TestScopedCommitComputation:
+    """Tests for scoped commit computation from child commits."""
 
     @pytest.mark.asyncio
     async def test_collects_commits_by_prefix(self, verifier: EpicVerifier) -> None:
@@ -150,13 +161,13 @@ class TestScopedDiffComputation:
         # Mock git log to return commits
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             if "git" in cmd and "log" in cmd:
-                if "--grep=^bd-child-1:" in cmd:
+                if "--grep=bd-child-1:" in cmd:
                     return CommandResult(
                         command=cmd,
                         returncode=0,
                         stdout="abc123\ndef456",
                     )
-                elif "--grep=^bd-child-2:" in cmd:
+                elif "--grep=bd-child-2:" in cmd:
                     return CommandResult(
                         command=cmd,
                         returncode=0,
@@ -172,8 +183,9 @@ class TestScopedDiffComputation:
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
 
-        diff = await verifier._compute_scoped_diff({"child-1", "child-2"})
-        assert "diff content for commit" in diff
+        commits = await verifier._compute_scoped_commits({"child-1", "child-2"})
+        # Order depends on set iteration, so check all commits are present
+        assert set(commits) == {"abc123", "def456", "ghi789"}
 
     @pytest.mark.asyncio
     async def test_skips_merge_commits(self, verifier: EpicVerifier) -> None:
@@ -186,7 +198,7 @@ class TestScopedDiffComputation:
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
 
-        await verifier._compute_scoped_diff({"child-1"})
+        await verifier._compute_scoped_commits({"child-1"})
 
         # Verify --no-merges was used
         log_cmds = [c for c in commands_run if "log" in c]
@@ -202,15 +214,14 @@ class TestScopedDiffComputation:
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
 
-        diff = await verifier._compute_scoped_diff({"child-1"})
-        assert diff == ""
+        commits = await verifier._compute_scoped_commits({"child-1"})
+        assert commits == []
 
     @pytest.mark.asyncio
     async def test_handles_multiple_commits_per_issue(
         self, verifier: EpicVerifier
     ) -> None:
         """Should include all commits matching an issue prefix."""
-        commits_shown: list[str] = []
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             if "log" in cmd:
@@ -219,113 +230,12 @@ class TestScopedDiffComputation:
                     returncode=0,
                     stdout="commit1\ncommit2\ncommit3",
                 )
-            if "show" in cmd and len(cmd) > 2:
-                commits_shown.append(cmd[-1])
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout=f"diff for {cmd[-1]}",
-                )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
 
-        diff = await verifier._compute_scoped_diff({"child-1"})
-        assert len(commits_shown) == 3
-        assert "diff for commit1" in diff
-        assert "diff for commit2" in diff
-        assert "diff for commit3" in diff
-
-
-# ============================================================================
-# Test large diff handling
-# ============================================================================
-
-
-class TestLargeDiffHandling:
-    """Tests for tiered large diff handling."""
-
-    @pytest.mark.asyncio
-    async def test_returns_unchanged_under_limit(self, verifier: EpicVerifier) -> None:
-        """Should return diff unchanged if under size limit."""
-        small_diff = "diff --git a/file.py b/file.py\n+some change"
-        result = await verifier._handle_large_diff(small_diff)
-        assert result == small_diff
-
-    @pytest.mark.asyncio
-    async def test_file_summary_mode_for_medium_diff(
-        self, verifier: EpicVerifier
-    ) -> None:
-        """Should use file-summary mode for diffs between limits."""
-        # Create a diff larger than 100KB but under 500KB
-        verifier.max_diff_size_kb = 1  # Lower limit for testing
-        medium_diff = "diff --git a/file.py b/file.py\n" + ("+" * 2000)
-        result = await verifier._handle_large_diff(medium_diff)
-        assert "file-summary mode" in result
-
-    @pytest.mark.asyncio
-    async def test_file_list_mode_for_large_diff(self, verifier: EpicVerifier) -> None:
-        """Should use file-list mode for very large diffs."""
-        verifier.max_diff_size_kb = 1  # Lower limit
-        # Create very large diff (over 500KB equivalent at scale)
-        large_diff = "diff --git a/file.py b/file.py\n" + ("x" * 600000)
-        result = await verifier._handle_large_diff(large_diff)
-        assert "file-list mode" in result
-
-    def test_file_summary_truncates_per_file(self, verifier: EpicVerifier) -> None:
-        """Should truncate each file to 50 lines in file-summary mode."""
-        diff = "diff --git a/file.py b/file.py\n"
-        diff += "\n".join([f"+line{i}" for i in range(100)])  # 100 lines
-        result = verifier._to_file_summary_mode(diff)
-        assert "more lines" in result  # Count includes the diff header line
-
-    @pytest.mark.asyncio
-    async def test_file_list_includes_small_files(
-        self, tmp_path: Path, mock_beads: MagicMock, mock_model: MagicMock
-    ) -> None:
-        """Should include contents of small files in file-list mode.
-
-        Files are read from HEAD commit to ensure consistency with the scoped diff.
-        """
-        import subprocess
-
-        # Initialize a git repo in tmp_path
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-
-        # Create and commit a small file
-        (tmp_path / "small.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "small.py"], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-
-        verifier = EpicVerifier(
-            beads=mock_beads,
-            model=mock_model,
-            repo_path=tmp_path,
-        )
-
-        diff = "diff --git a/small.py b/small.py\n+content"
-        result = await verifier._to_file_list_mode(diff)
-        assert "small.py" in result
-        assert "print('hello')" in result
+        commits = await verifier._compute_scoped_commits({"child-1"})
+        assert commits == ["commit1", "commit2", "commit3"]
 
 
 # ============================================================================
@@ -338,29 +248,12 @@ class TestRemediationIssueCreation:
 
     @pytest.mark.asyncio
     async def test_creates_issue_for_unmet_criterion(
-        self, verifier: EpicVerifier
+        self, verifier: EpicVerifier, mock_beads: MagicMock
     ) -> None:
         """Should create an issue for each unmet criterion."""
-        created_issues: list[dict[str, object]] = []
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if cmd[:2] == ["bd", "create"]:
-                created_issues.append({"cmd": cmd})
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout="Created issue: remediation-1",
-                )
-            if "list" in cmd and "--label" in cmd:
-                # No existing issue
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout="[]",
-                )
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        # Mock beads to return None (no existing issue) and then create new one
+        mock_beads.find_issue_by_tag_async = AsyncMock(return_value=None)
+        mock_beads.create_issue_async = AsyncMock(return_value="remediation-1")
 
         verdict = EpicVerdict(
             passed=False,
@@ -379,26 +272,18 @@ class TestRemediationIssueCreation:
         issue_ids = await verifier.create_remediation_issues("epic-1", verdict)
         assert len(issue_ids) == 1
         assert issue_ids[0] == "remediation-1"
-        assert len(created_issues) == 1
-        assert "--parent" in created_issues[0]["cmd"]
-        parent_idx = created_issues[0]["cmd"].index("--parent") + 1
-        assert created_issues[0]["cmd"][parent_idx] == "epic-1"
+        # Verify create was called with parent_id
+        mock_beads.create_issue_async.assert_called_once()
+        call_kwargs = mock_beads.create_issue_async.call_args[1]
+        assert call_kwargs["parent_id"] == "epic-1"
 
     @pytest.mark.asyncio
-    async def test_deduplicates_by_tag(self, verifier: EpicVerifier) -> None:
+    async def test_deduplicates_by_tag(
+        self, verifier: EpicVerifier, mock_beads: MagicMock
+    ) -> None:
         """Should reuse existing issue with matching dedup tag."""
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "list" in cmd and "--label" in cmd:
-                # Return existing issue
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout='[{"id": "existing-issue"}]',
-                )
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        # Mock beads to return existing issue
+        mock_beads.find_issue_by_tag_async = AsyncMock(return_value="existing-issue")
 
         verdict = EpicVerdict(
             passed=False,
@@ -418,29 +303,13 @@ class TestRemediationIssueCreation:
         assert issue_ids == ["existing-issue"]
 
     @pytest.mark.asyncio
-    async def test_remediation_issue_format(self, verifier: EpicVerifier) -> None:
+    async def test_remediation_issue_format(
+        self, verifier: EpicVerifier, mock_beads: MagicMock
+    ) -> None:
         """Should create issue with correct title/body/tags format."""
-        created_cmd: list[str] = []
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if cmd[:2] == ["bd", "create"]:
-                created_cmd.extend(cmd)
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout="Created issue: new-1",
-                )
-            if "list" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="[]")
-            if "show" in cmd:
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout='{"priority": "P2"}',
-                )
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        # Mock beads methods
+        mock_beads.find_issue_by_tag_async = AsyncMock(return_value=None)
+        mock_beads.create_issue_async = AsyncMock(return_value="new-1")
 
         verdict = EpicVerdict(
             passed=False,
@@ -460,17 +329,13 @@ class TestRemediationIssueCreation:
 
         await verifier.create_remediation_issues("epic-1", verdict)
 
-        # Check title format
-        title_idx = created_cmd.index("--title") + 1
-        assert created_cmd[title_idx].startswith("[Remediation]")
-
-        # Check tags include dedup tag and auto_generated
-        labels_idx = created_cmd.index("--labels") + 1
-        labels = created_cmd[labels_idx].split(",")
-        assert any("epic_remediation:" in label for label in labels)
-        assert "auto_generated" in labels
-        parent_idx = created_cmd.index("--parent") + 1
-        assert created_cmd[parent_idx] == "epic-1"
+        # Verify create was called with expected arguments
+        mock_beads.create_issue_async.assert_called_once()
+        call_kwargs = mock_beads.create_issue_async.call_args[1]
+        assert call_kwargs["title"].startswith("[Remediation]")
+        assert "epic_remediation:" in call_kwargs["tags"][0]
+        assert "auto_generated" in call_kwargs["tags"]
+        assert call_kwargs["parent_id"] == "epic-1"
 
 
 # ============================================================================
@@ -482,23 +347,11 @@ class TestHumanReviewCreation:
     """Tests for human review issue creation."""
 
     @pytest.mark.asyncio
-    async def test_creates_human_review_issue(self, verifier: EpicVerifier) -> None:
+    async def test_creates_human_review_issue(
+        self, verifier: EpicVerifier, mock_beads: MagicMock
+    ) -> None:
         """Should create human review issue with correct format."""
-        created_cmd: list[str] = []
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if cmd[:2] == ["bd", "create"]:
-                created_cmd.extend(cmd)
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout="Created issue: review-1",
-                )
-            if "dep" in cmd and "add" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="")
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        mock_beads.create_issue_async = AsyncMock(return_value="review-1")
 
         issue_id = await verifier.request_human_review(
             "epic-1",
@@ -507,22 +360,20 @@ class TestHumanReviewCreation:
         )
 
         assert issue_id == "review-1"
-        title_idx = created_cmd.index("--title") + 1
-        assert "[Human Review]" in created_cmd[title_idx]
-        assert "epic-1" in created_cmd[title_idx]
+        mock_beads.create_issue_async.assert_called_once()
+        call_kwargs = mock_beads.create_issue_async.call_args[1]
+        assert "[Human Review]" in call_kwargs["title"]
+        assert "epic-1" in call_kwargs["title"]
 
     @pytest.mark.asyncio
-    async def test_human_review_adds_blocker(self, verifier: EpicVerifier) -> None:
+    async def test_human_review_adds_blocker(
+        self, verifier: EpicVerifier, mock_beads: MagicMock
+    ) -> None:
         """Should add review issue as epic blocker."""
+        mock_beads.create_issue_async = AsyncMock(return_value="review-1")
         dep_cmds: list[list[str]] = []
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if cmd[:2] == ["bd", "create"]:
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout="Created issue: review-1",
-                )
             if "dep" in cmd and "add" in cmd:
                 dep_cmds.append(list(cmd))
                 return CommandResult(command=cmd, returncode=0, stdout="")
@@ -610,22 +461,14 @@ class TestVerifyEpic:
             repo_path=tmp_path,
         )
 
-        # Mock diff computation
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "log" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="abc123")
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="diff content")
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        _stub_commit_helpers(verifier)
 
         await verifier.verify_epic("epic-1")
 
         # Verify model was called with spec content
         mock_model.verify.assert_called_once()
         call_args = mock_model.verify.call_args
-        assert call_args[0][2] == "# Auth Spec\nDetails here."
+        assert call_args[0][3] == "# Auth Spec\nDetails here."
 
 
 # ============================================================================
@@ -644,19 +487,16 @@ class TestVerifyAndCloseEligible:
 
         # Mock eligible epics
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout='[{"id": "epic-1"}]',
+                    stdout='[{"eligible_for_close": true, "epic": {"id": "epic-1"}}]',
                 )
-            if "log" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="abc123")
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="diff")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_eligible()
 
@@ -670,11 +510,11 @@ class TestVerifyAndCloseEligible:
         """Should close overridden epics without verification."""
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "epic" in cmd and "list" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout='[{"id": "epic-1"}]',
+                    stdout='[{"eligible_for_close": true, "epic": {"id": "epic-1"}}]',
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
@@ -698,35 +538,33 @@ class TestVerifyAndCloseEligible:
             passed=False,
             unmet_criteria=[
                 UnmetCriterion(
-                    criterion="Must have tests",
-                    evidence="No tests found",
+                    criterion="API must return 400 for bad input",
+                    evidence="Returns 500 instead",
                     severity="major",
-                    criterion_hash=_compute_criterion_hash("Must have tests"),
+                    criterion_hash=_compute_criterion_hash(
+                        "API must return 400 for bad input"
+                    ),
                 )
             ],
             confidence=0.85,
-            reasoning="Missing tests",
+            reasoning="Incorrect error handling",
         )
 
         created_issues: list[str] = []
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "epic" in cmd and "list" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout='[{"id": "epic-1"}]',
+                    stdout='[{"eligible_for_close": true, "epic": {"id": "epic-1"}}]',
                 )
-            if "log" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="abc123")
             if "show" in cmd and "epic-1" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
                     stdout='{"priority": "P2"}',
                 )
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="diff")
             if "list" in cmd and "--label" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="[]")
             if cmd[:2] == ["bd", "create"]:
@@ -741,6 +579,7 @@ class TestVerifyAndCloseEligible:
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_eligible()
 
@@ -761,37 +600,27 @@ class TestVerifyAndCloseEligible:
             reasoning="Uncertain",
         )
 
-        review_created = False
+        # Mock beads.create_issue_async for human review creation
+        mock_beads.create_issue_async = AsyncMock(return_value="review-1")
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            nonlocal review_created
-            if "epic" in cmd and "list" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout='[{"id": "epic-1"}]',
-                )
-            if "log" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="abc123")
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="diff")
-            if cmd[:2] == ["bd", "create"]:
-                review_created = True
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout="Created issue: review-1",
+                    stdout='[{"eligible_for_close": true, "epic": {"id": "epic-1"}}]',
                 )
             if "dep" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_eligible()
 
         assert result.human_review_count == 1
-        assert review_created
+        mock_beads.create_issue_async.assert_called()  # Human review was created
 
 
 # ============================================================================
@@ -809,19 +638,16 @@ class TestVerifyAndCloseEpic:
         """Should verify and close an eligible epic."""
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout='[{"id": "epic-1"}]',
+                    stdout='[{"eligible_for_close": true, "epic": {"id": "epic-1"}}]',
                 )
-            if "log" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="abc123")
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="diff")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_epic("epic-1")
 
@@ -836,7 +662,7 @@ class TestVerifyAndCloseEpic:
         """Should not verify an epic that is not eligible."""
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 # Return empty list - no eligible epics
                 return CommandResult(
                     command=cmd,
@@ -862,11 +688,11 @@ class TestVerifyAndCloseEpic:
         """Should close with human override without verification."""
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout='[{"id": "epic-1"}]',
+                    stdout='[{"eligible_for_close": true, "epic": {"id": "epic-1"}}]',
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
@@ -887,35 +713,33 @@ class TestVerifyAndCloseEpic:
             passed=False,
             unmet_criteria=[
                 UnmetCriterion(
-                    criterion="Must have tests",
-                    evidence="No tests found",
+                    criterion="API must return 400 for bad input",
+                    evidence="Returns 500 instead",
                     severity="major",
-                    criterion_hash=_compute_criterion_hash("Must have tests"),
+                    criterion_hash=_compute_criterion_hash(
+                        "API must return 400 for bad input"
+                    ),
                 )
             ],
             confidence=0.85,
-            reasoning="Missing tests",
+            reasoning="Incorrect error handling",
         )
 
         created_issues: list[str] = []
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout='[{"id": "epic-1"}]',
+                    stdout='[{"eligible_for_close": true, "epic": {"id": "epic-1"}}]',
                 )
-            if "log" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="abc123")
             if "show" in cmd and "epic-1" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
                     stdout='{"priority": "P2"}',
                 )
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="diff")
             if "list" in cmd and "--label" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="[]")
             if cmd[:2] == ["bd", "create"]:
@@ -930,6 +754,7 @@ class TestVerifyAndCloseEpic:
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_epic("epic-1")
 
@@ -1187,19 +1012,16 @@ class TestLockUsage:
         verifier.lock_manager = MagicMock()
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "epic" in cmd and "list" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout='[{"id": "epic-1"}]',
+                    stdout='[{"eligible_for_close": true, "epic": {"id": "epic-1"}}]',
                 )
-            if "log" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="abc123")
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="diff")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        _stub_commit_helpers(verifier)
 
         # Mock the locking module
         import os
@@ -1371,153 +1193,28 @@ class TestModelErrorHandling:
         """Model errors should trigger human review in verify_and_close_eligible."""
         mock_model.verify.side_effect = TimeoutError("timeout")
 
-        review_created = False
+        # Mock beads.create_issue_async for human review creation
+        mock_beads.create_issue_async = AsyncMock(return_value="review-1")
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            nonlocal review_created
-            if "epic" in cmd and "list" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout='[{"id": "epic-1"}]',
-                )
-            if "log" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="abc123")
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="diff")
-            if cmd[:2] == ["bd", "create"]:
-                review_created = True
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout="Created issue: review-1",
+                    stdout='[{"eligible_for_close": true, "epic": {"id": "epic-1"}}]',
                 )
             if "dep" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_eligible()
 
         # Low confidence (0.0) should trigger human review
         assert result.human_review_count == 1
-        assert review_created
-
-
-# ============================================================================
-# Test binary file handling
-# ============================================================================
-
-
-class TestBinaryFileHandling:
-    """Tests for handling binary/non-UTF8 files in file-list mode."""
-
-    @pytest.mark.asyncio
-    async def test_file_list_skips_binary_files(
-        self, tmp_path: Path, mock_beads: MagicMock, mock_model: MagicMock
-    ) -> None:
-        """Should skip binary files without crashing.
-
-        Files are read from HEAD commit to ensure consistency with the scoped diff.
-        """
-        import subprocess
-
-        # Initialize a git repo in tmp_path
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-
-        # Create and commit files
-        # Create a binary file
-        (tmp_path / "binary.bin").write_bytes(b"\x00\x01\x02\xff\xfe")
-        # Create a text file
-        (tmp_path / "text.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-
-        verifier = EpicVerifier(
-            beads=mock_beads,
-            model=mock_model,
-            repo_path=tmp_path,
-        )
-
-        diff = "diff --git a/binary.bin b/binary.bin\n+content\ndiff --git a/text.py b/text.py\n+code"
-        result = await verifier._to_file_list_mode(diff)
-
-        # Should include text file but not crash on binary
-        assert "text.py" in result
-        assert "print('hello')" in result
-        # Binary file should be listed but content not included
-        assert "binary.bin" in result
-
-    @pytest.mark.asyncio
-    async def test_file_list_skips_non_utf8_files(
-        self, tmp_path: Path, mock_beads: MagicMock, mock_model: MagicMock
-    ) -> None:
-        """Should skip files with invalid UTF-8 without crashing.
-
-        Files are read from HEAD commit to ensure consistency with the scoped diff.
-        """
-        import subprocess
-
-        # Initialize a git repo in tmp_path
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-
-        # Create a file with invalid UTF-8 and commit it
-        (tmp_path / "invalid.txt").write_bytes(b"Hello \xff\xfe World")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-
-        verifier = EpicVerifier(
-            beads=mock_beads,
-            model=mock_model,
-            repo_path=tmp_path,
-        )
-
-        diff = "diff --git a/invalid.txt b/invalid.txt\n+content"
-        # Should not raise UnicodeDecodeError
-        result = await verifier._to_file_list_mode(diff)
-
-        # File should be listed but content not included
-        assert "invalid.txt" in result
-        assert "Hello" not in result  # Content should not be present
+        mock_beads.create_issue_async.assert_called()  # Human review was created
 
 
 # ============================================================================
@@ -1538,7 +1235,7 @@ class TestEpicVerifierOrchestratorIntegration:
         from src.config import MalaConfig
 
         # Create orchestrator with mock beads
-        config = MalaConfig(max_diff_size_kb=100)
+        config = MalaConfig()
         orchestrator = MalaOrchestrator(
             repo_path=tmp_path,
             max_agents=1,
@@ -1547,7 +1244,6 @@ class TestEpicVerifierOrchestratorIntegration:
 
         # Verify EpicVerifier was instantiated
         assert orchestrator.epic_verifier is not None
-        assert orchestrator.epic_verifier.max_diff_size_kb == 100
 
     @pytest.mark.asyncio
     async def test_orchestrator_respects_epic_override_ids(
@@ -1558,7 +1254,7 @@ class TestEpicVerifierOrchestratorIntegration:
         from src.config import MalaConfig
 
         override_ids = {"epic-1", "epic-2"}
-        config = MalaConfig(max_diff_size_kb=100)
+        config = MalaConfig()
         orchestrator = MalaOrchestrator(
             repo_path=tmp_path,
             max_agents=1,
@@ -1590,11 +1286,11 @@ class TestEpicVerifierOrchestratorIntegration:
 
         # Mock _get_eligible_epics to return epic-1
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "epic" in cmd and "list" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout='[{"id": "epic-1"}]',
+                    stdout='[{"eligible_for_close": true, "epic": {"id": "epic-1"}}]',
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
@@ -1621,6 +1317,8 @@ class TestEpicVerifierOrchestratorIntegration:
         mock_beads.get_epic_children_async = AsyncMock(return_value={"child-1"})
         mock_beads.get_epic_blockers_async = AsyncMock(return_value=set())
         mock_beads.close_async = AsyncMock(return_value=True)
+        mock_beads.find_issue_by_tag_async = AsyncMock(return_value=None)
+        mock_beads.create_issue_async = AsyncMock(return_value="rem-1")
 
         mock_model = MagicMock()
         mock_model.verify = AsyncMock(
@@ -1628,14 +1326,16 @@ class TestEpicVerifierOrchestratorIntegration:
                 passed=False,
                 unmet_criteria=[
                     UnmetCriterion(
-                        criterion="Must have tests",
-                        evidence="No tests",
+                        criterion="API must return 400 for bad input",
+                        evidence="Returns 500 instead",
                         severity="major",
-                        criterion_hash=_compute_criterion_hash("Must have tests"),
+                        criterion_hash=_compute_criterion_hash(
+                            "API must return 400 for bad input"
+                        ),
                     )
                 ],
                 confidence=0.9,
-                reasoning="Tests missing",
+                reasoning="Incorrect error handling",
             )
         )
 
@@ -1645,39 +1345,25 @@ class TestEpicVerifierOrchestratorIntegration:
             repo_path=Path("/tmp"),
         )
 
-        created_issues: list[str] = []
-
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout='[{"id": "epic-1"}]',
+                    stdout='[{"eligible_for_close": true, "epic": {"id": "epic-1"}}]',
                 )
-            if "log" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="abc123")
             if "show" in cmd and "epic-1" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
                     stdout='{"priority": "P2"}',
                 )
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="diff")
-            if "list" in cmd and "--label" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="[]")
-            if cmd[:2] == ["bd", "create"]:
-                created_issues.append("rem-1")
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout="Created issue: rem-1",
-                )
             if "dep" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_eligible()
 
@@ -1686,34 +1372,6 @@ class TestEpicVerifierOrchestratorIntegration:
         assert result.failed_count == 1
         assert result.passed_count == 0
         assert len(result.remediation_issues_created) == 1
-
-    @pytest.mark.asyncio
-    async def test_config_max_diff_size_kb_is_respected(self) -> None:
-        """EpicVerifier should use max_diff_size_kb from config."""
-        from src.config import MalaConfig
-
-        config = MalaConfig(max_diff_size_kb=50)
-        assert config.max_diff_size_kb == 50
-
-        mock_beads = MagicMock()
-        mock_model = MagicMock()
-
-        verifier = EpicVerifier(
-            beads=mock_beads,
-            model=mock_model,
-            repo_path=Path("/tmp"),
-            max_diff_size_kb=config.max_diff_size_kb,
-        )
-
-        assert verifier.max_diff_size_kb == 50
-
-    @pytest.mark.asyncio
-    async def test_config_default_max_diff_size_kb_is_100(self) -> None:
-        """Default max_diff_size_kb should be 100."""
-        from src.config import MalaConfig
-
-        config = MalaConfig()
-        assert config.max_diff_size_kb == 100
 
     @pytest.mark.asyncio
     async def test_verify_passes_for_met_criteria(self) -> None:
@@ -1741,19 +1399,16 @@ class TestEpicVerifierOrchestratorIntegration:
         )
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "epic" in cmd and "list" in cmd and "--eligible" in cmd:
+            if "epic" in cmd and "status" in cmd:
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout='[{"id": "epic-1"}]',
+                    stdout='[{"eligible_for_close": true, "epic": {"id": "epic-1"}}]',
                 )
-            if "log" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="abc123")
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="diff")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_eligible()
 
@@ -1775,7 +1430,8 @@ class TestVerifyWithSDK:
     async def test_verify_parses_sdk_response(self) -> None:
         model = ClaudeEpicVerificationModel()
         model._prompt_template = (
-            "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+            "criteria: {epic_criteria}, spec: {spec_content}, "
+            "range: {commit_range}, list: {commit_list}"
         )
 
         async def fake_verify(_prompt: str) -> str:
@@ -1786,7 +1442,7 @@ class TestVerifyWithSDK:
 
         model._verify_with_agent_sdk = fake_verify  # type: ignore[method-assign]
 
-        verdict = await model.verify("criteria", "diff", None)
+        verdict = await model.verify("criteria", "range", "- abc123", None)
 
         assert verdict.passed is True
         assert verdict.confidence == 0.9
@@ -1795,7 +1451,8 @@ class TestVerifyWithSDK:
     async def test_verify_handles_non_json_response(self) -> None:
         model = ClaudeEpicVerificationModel()
         model._prompt_template = (
-            "criteria: {epic_criteria}, spec: {spec_content}, diff: {diff_content}"
+            "criteria: {epic_criteria}, spec: {spec_content}, "
+            "range: {commit_range}, list: {commit_list}"
         )
 
         async def fake_verify(_prompt: str) -> str:
@@ -1803,7 +1460,7 @@ class TestVerifyWithSDK:
 
         model._verify_with_agent_sdk = fake_verify  # type: ignore[method-assign]
 
-        verdict = await model.verify("criteria", "diff", None)
+        verdict = await model.verify("criteria", "range", "- abc123", None)
 
         assert verdict.passed is False
         assert verdict.confidence == 0.0

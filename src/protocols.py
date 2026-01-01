@@ -478,6 +478,7 @@ class IssueProvider(Protocol):
         description: str,
         priority: str,
         tags: list[str] | None = None,
+        parent_id: str | None = None,
     ) -> str | None:
         """Create a new issue for tracking.
 
@@ -489,6 +490,7 @@ class IssueProvider(Protocol):
             description: Issue description (supports markdown).
             priority: Priority string (P1, P2, P3, etc.).
             tags: Optional list of tags to apply.
+            parent_id: Optional parent epic ID to attach this issue to.
 
         Returns:
             Created issue ID, or None on failure.
@@ -691,14 +693,16 @@ class EpicVerificationModel(Protocol):
     async def verify(
         self,
         epic_criteria: str,
-        diff: str,
+        commit_range: str,
+        commit_list: str,
         spec_content: str | None,
     ) -> EpicVerdictProtocol:
-        """Verify if the diff satisfies the epic's acceptance criteria.
+        """Verify if the commit scope satisfies the epic's acceptance criteria.
 
         Args:
             epic_criteria: The epic's acceptance criteria text.
-            diff: Scoped git diff of child issue commits only.
+            commit_range: Commit range hint covering child issue commits.
+            commit_list: Authoritative list of commit SHAs to inspect.
             spec_content: Optional content of linked spec file.
 
         Returns:

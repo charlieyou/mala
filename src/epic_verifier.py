@@ -9,8 +9,8 @@ Key components:
 - ClaudeEpicVerificationModel: Claude-based implementation of EpicVerificationModel protocol
 
 Design principles:
-- Scoped diffs: Only include commits linked to child issues (by bd-<id>: prefix)
-- Large diff handling: Tiered approach (100KB default, file-summary, file-list)
+- Scoped commits: Only include commits linked to child issues (by bd-<id>: prefix)
+- Agent-driven exploration: Verification agent explores repo using commit list
 - Remediation issues: Auto-create with deduplication for unmet criteria
 - Human review: Flag low confidence, missing criteria, or timeout cases
 """
@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -46,51 +47,6 @@ SPEC_PATH_PATTERNS = [
     r"(?:^|[\s(])(specs/[\w/-]+\.(?:md|MD))(?:\s|[.,;:!?)]|$)",  # Bare "specs/foo.md" or "(specs/foo.md)"
 ]
 
-
-async def _get_file_at_commit(
-    file_path: str, repo_path: Path, commit: str = "HEAD"
-) -> str | None:
-    """Get file content at a specific commit using git show.
-
-    This reads the file content from the git repository at the specified
-    commit, avoiding potential discrepancies with uncommitted working tree
-    changes.
-
-    Args:
-        file_path: The path to the file (relative to repo root).
-        repo_path: Path to the repository.
-        commit: The commit to read from (default: HEAD).
-
-    Returns:
-        The file content as a string, or None if the file doesn't exist
-        at that commit or cannot be read.
-    """
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "show",
-            f"{commit}:{file_path}",
-            cwd=repo_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        if proc.returncode != 0:
-            return None
-        return stdout.decode()
-    except UnicodeDecodeError:
-        # Binary file
-        return None
-
-
-# Default diff size limit (100KB)
-DEFAULT_MAX_DIFF_SIZE_KB = 100
-
-# File-summary mode diff limit (500KB)
-FILE_SUMMARY_MAX_SIZE_KB = 500
-
-# Maximum file size for inclusion in file-list mode (5KB)
-FILE_LIST_MAX_FILE_SIZE_KB = 5
 
 # Low confidence threshold for human review
 LOW_CONFIDENCE_THRESHOLD = 0.5
@@ -132,9 +88,22 @@ def _load_prompt_template() -> str:
     prompt_path = Path(__file__).parent / "prompts" / "epic_verification.md"
     template = prompt_path.read_text()
     escaped = template.replace("{", "{{").replace("}", "}}")
-    for key in ("epic_criteria", "spec_content", "diff_content"):
+    for key in ("epic_criteria", "spec_content", "commit_range", "commit_list"):
         escaped = escaped.replace(f"{{{{{key}}}}}", f"{{{key}}}")
     return escaped
+
+
+@dataclass
+class EpicVerificationContext:
+    """Context captured during verification for richer remediation issues."""
+
+    epic_description: str
+    spec_content: str | None
+    child_ids: set[str]
+    blocker_ids: set[str]
+    commit_shas: list[str]
+    commit_range: str | None
+    commit_summary: str
 
 
 def _extract_json_from_code_blocks(text: str) -> str | None:
@@ -172,7 +141,7 @@ class ClaudeEpicVerificationModel:
     """Claude-based implementation of EpicVerificationModel protocol.
 
     Uses the Claude Agent SDK to verify epic acceptance criteria
-    against code diffs, matching the main agent execution path.
+    against scoped commits, matching the main agent execution path.
     """
 
     # Default model for epic verification
@@ -181,7 +150,7 @@ class ClaudeEpicVerificationModel:
     def __init__(
         self,
         model: str | None = None,
-        timeout_ms: int = 120000,
+        timeout_ms: int = 300000,
         repo_path: Path | None = None,
         retry_config: RetryConfig | None = None,
     ):
@@ -190,7 +159,9 @@ class ClaudeEpicVerificationModel:
         Args:
             model: The Claude model to use for verification. Defaults to
                 DEFAULT_MODEL if not specified.
-            timeout_ms: Timeout for model calls in milliseconds.
+            timeout_ms: Timeout for model calls in milliseconds. Default is
+                5 minutes (300000ms) to allow sufficient time for agent-driven
+                repository exploration on non-trivial epics.
             repo_path: Repository path for agent execution context.
             retry_config: Configuration retained for compatibility with prior
                 retry behavior. Currently unused but stored for future use.
@@ -204,14 +175,16 @@ class ClaudeEpicVerificationModel:
     async def verify(
         self,
         epic_criteria: str,
-        diff: str,
+        commit_range: str,
+        commit_list: str,
         spec_content: str | None,
     ) -> EpicVerdict:
-        """Verify if the diff satisfies the epic's acceptance criteria.
+        """Verify if the commit scope satisfies the epic's acceptance criteria.
 
         Args:
             epic_criteria: The epic's acceptance criteria text.
-            diff: Scoped git diff of child issue commits only.
+            commit_range: Commit range hint covering child issue commits.
+            commit_list: Authoritative list of commit SHAs to inspect.
             spec_content: Optional content of linked spec file.
 
         Returns:
@@ -221,7 +194,8 @@ class ClaudeEpicVerificationModel:
         prompt = self._prompt_template.format(
             epic_criteria=epic_criteria,
             spec_content=spec_content or "No spec file available.",
-            diff_content=diff,
+            commit_range=commit_range or "Unavailable.",
+            commit_list=commit_list or "No commits found.",
         )
 
         response_text = await self._verify_with_agent_sdk(prompt)
@@ -256,16 +230,14 @@ class ClaudeEpicVerificationModel:
             system_prompt={"type": "preset", "preset": "claude_code"},
             setting_sources=["project", "user"],
             mcp_servers={},
-            disallowed_tools=[
-                # Block all write-capable tools to prevent unintended side effects
-                # during verification. The verifier should only read and analyze.
-                "Edit",
-                "Write",
-                "NotebookEdit",
+            allowed_tools=[
+                # Only these tools are permitted; all others (Edit, Write, etc.)
+                # are blocked by omission. Bash is needed for git commands.
                 "Bash",
+                "Glob",
+                "Grep",
+                "Read",
                 "Task",
-                "KillShell",
-                "mcp__morphllm__edit_file",
             ],
             env=dict(os.environ),
         )
@@ -347,7 +319,7 @@ class ClaudeEpicVerificationModel:
 class EpicVerifier:
     """Main verification orchestrator for epic acceptance criteria.
 
-    Gathers epic data, computes scoped diff from child issue commits,
+    Gathers epic data, computes scoped commits from child issue commits,
     invokes verification model, and creates remediation issues for unmet criteria.
     """
 
@@ -356,7 +328,6 @@ class EpicVerifier:
         beads: BeadsClient,
         model: EpicVerificationModel,
         repo_path: Path,
-        max_diff_size_kb: int = DEFAULT_MAX_DIFF_SIZE_KB,
         retry_config: RetryConfig | None = None,
         lock_manager: object | None = None,
         event_sink: MalaEventSink | None = None,
@@ -367,7 +338,6 @@ class EpicVerifier:
             beads: BeadsClient for issue operations.
             model: EpicVerificationModel for verification.
             repo_path: Path to the repository.
-            max_diff_size_kb: Maximum diff size in KB before truncation.
             retry_config: Configuration for retry behavior.
             lock_manager: Optional lock manager for sequential processing.
             event_sink: Optional event sink for emitting verification lifecycle events.
@@ -375,7 +345,6 @@ class EpicVerifier:
         self.beads = beads
         self.model = model
         self.repo_path = repo_path
-        self.max_diff_size_kb = max_diff_size_kb
         self.retry_config = retry_config or RetryConfig()
         self.lock_manager = lock_manager
         self.event_sink = event_sink
@@ -474,7 +443,7 @@ class EpicVerifier:
                 if self.event_sink is not None:
                     self.event_sink.on_epic_verification_started(epic_id)
 
-                verdict = await self.verify_epic(epic_id)
+                verdict, context = await self._verify_epic_with_context(epic_id)
                 verdicts[epic_id] = verdict
                 verified_count += 1  # Epic was actually verified (not skipped)
 
@@ -519,7 +488,9 @@ class EpicVerifier:
                         )
                 else:
                     # Verification failed, create remediation issues
-                    issue_ids = await self.create_remediation_issues(epic_id, verdict)
+                    issue_ids = await self.create_remediation_issues(
+                        epic_id, verdict, context
+                    )
                     remediation_issues.extend(issue_ids)
                     await self.add_epic_blockers(epic_id, issue_ids)
                     failed_count += 1
@@ -562,44 +533,57 @@ class EpicVerifier:
         Returns:
             EpicVerdict with verification result.
         """
+        verdict, _ = await self._verify_epic_with_context(epic_id)
+        return verdict
+
+    async def _verify_epic_with_context(
+        self, epic_id: str
+    ) -> tuple[EpicVerdict, EpicVerificationContext | None]:
+        """Verify a single epic and return verdict plus context."""
         # Get epic description (contains acceptance criteria)
         epic_description = await self.beads.get_issue_description_async(epic_id)
         if not epic_description:
-            # No acceptance criteria - flag for human review
-            return EpicVerdict(
-                passed=False,
-                unmet_criteria=[],
-                confidence=0.0,
-                reasoning="No acceptance criteria found for epic",
+            return (
+                EpicVerdict(
+                    passed=False,
+                    unmet_criteria=[],
+                    confidence=0.0,
+                    reasoning="No acceptance criteria found for epic",
+                ),
+                None,
             )
 
         # Get child issue IDs
         child_ids = await self.beads.get_epic_children_async(epic_id)
         if not child_ids:
-            # No children - flag for human review
-            return EpicVerdict(
-                passed=False,
-                unmet_criteria=[],
-                confidence=0.0,
-                reasoning="No child issues found for epic",
+            return (
+                EpicVerdict(
+                    passed=False,
+                    unmet_criteria=[],
+                    confidence=0.0,
+                    reasoning="No child issues found for epic",
+                ),
+                None,
             )
 
         # Get blocker issue IDs (remediation issues from previous verification runs)
-        blocker_ids = await self.beads.get_epic_blockers_async(epic_id)
+        blocker_ids = await self.beads.get_epic_blockers_async(epic_id) or set()
 
-        # Compute scoped diff from child and blocker commits
-        diff = await self._compute_scoped_diff(child_ids, blocker_ids)
-        if not diff:
-            # No commits found - flag for human review
-            return EpicVerdict(
-                passed=False,
-                unmet_criteria=[],
-                confidence=0.0,
-                reasoning="No commits found for child issues",
+        # Compute scoped commit list from child and blocker commits
+        commit_shas = await self._compute_scoped_commits(child_ids, blocker_ids)
+        if not commit_shas:
+            return (
+                EpicVerdict(
+                    passed=False,
+                    unmet_criteria=[],
+                    confidence=0.0,
+                    reasoning="No commits found for child issues",
+                ),
+                None,
             )
 
-        # Handle large diffs
-        diff = await self._handle_large_diff(diff)
+        commit_range = await self._summarize_commit_range(commit_shas)
+        commit_summary = await self._format_commit_summary(commit_shas)
 
         # Extract and load spec content if referenced
         spec_paths = extract_spec_paths(epic_description)
@@ -613,12 +597,23 @@ class EpicVerifier:
                 except OSError:
                     pass
 
+        context = EpicVerificationContext(
+            epic_description=epic_description,
+            spec_content=spec_content,
+            child_ids=child_ids,
+            blocker_ids=blocker_ids,
+            commit_shas=commit_shas,
+            commit_range=commit_range,
+            commit_summary=commit_summary,
+        )
+
         # Invoke verification model with error handling
         # Per spec: timeouts/errors should trigger human review, not abort
         try:
-            # Cast from EpicVerdictProtocol to EpicVerdict (structural compatibility)
-            result = await self.model.verify(epic_description, diff, spec_content)
-            return EpicVerdict(
+            result = await self.model.verify(
+                epic_description, commit_range or "", commit_summary, spec_content
+            )
+            verdict = EpicVerdict(
                 passed=result.passed,
                 unmet_criteria=[
                     UnmetCriterion(
@@ -635,13 +630,14 @@ class EpicVerifier:
                 reasoning=result.reasoning,
             )
         except Exception as e:
-            # Model timeout or error - return low-confidence verdict for human review
-            return EpicVerdict(
+            verdict = EpicVerdict(
                 passed=False,
                 unmet_criteria=[],
                 confidence=0.0,
                 reasoning=f"Model verification failed: {e}",
             )
+
+        return verdict, context
 
     async def _get_eligible_epics(self) -> list[str]:
         """Get list of epics eligible for closure.
@@ -826,7 +822,7 @@ class EpicVerifier:
             if self.event_sink is not None:
                 self.event_sink.on_epic_verification_started(epic_id)
 
-            verdict = await self.verify_epic(epic_id)
+            verdict, context = await self._verify_epic_with_context(epic_id)
             verdicts[epic_id] = verdict
             verified_count = 1
 
@@ -866,7 +862,9 @@ class EpicVerifier:
                         epic_id, reason, review_id
                     )
             else:
-                issue_ids = await self.create_remediation_issues(epic_id, verdict)
+                issue_ids = await self.create_remediation_issues(
+                    epic_id, verdict, context
+                )
                 remediation_issues.extend(issue_ids)
                 await self.add_epic_blockers(epic_id, issue_ids)
                 failed_count = 1
@@ -898,23 +896,23 @@ class EpicVerifier:
             remediation_issues_created=remediation_issues,
         )
 
-    async def _compute_scoped_diff(
+    async def _compute_scoped_commits(
         self, child_ids: set[str], blocker_ids: set[str] | None = None
-    ) -> str:
-        """Compute scoped diff from child issue and blocker issue commits.
+    ) -> list[str]:
+        """Compute scoped commit list from child and blocker issue commits.
 
         Collects all commits matching bd-<issue_id>: prefix for each child
         issue and blocker issue (remediation issues), skips merge commits,
-        and generates a combined diff.
+        and returns a deduplicated list of commit SHAs.
 
         Args:
             child_ids: Set of child issue IDs.
             blocker_ids: Optional set of blocker issue IDs (e.g., remediation
                 issues). Commits from these issues are also included in the
-                diff to capture work done to address epic verification failures.
+                scope to capture work done to address epic verification failures.
 
         Returns:
-            Combined diff string, or empty string if no commits found.
+            List of commit SHAs, or empty list if no commits found.
         """
         # Combine child IDs and blocker IDs
         all_issue_ids = child_ids.copy()
@@ -925,13 +923,15 @@ class EpicVerifier:
 
         for issue_id in all_issue_ids:
             # Find commits matching bd-<issue_id>: prefix
+            # Note: Intentionally searches only HEAD branch - child issue commits
+            # should be merged before epic verification runs
             result = await self._runner.run_async(
                 [
                     "git",
                     "log",
                     "--oneline",
                     "--no-merges",  # Skip merge commits
-                    f"--grep=^bd-{issue_id}:",
+                    f"--grep=bd-{issue_id}:",  # Substring match, not start-of-line
                     "--format=%H",
                 ]
             )
@@ -940,138 +940,138 @@ class EpicVerifier:
                 all_commits.extend(commits)
 
         if not all_commits:
-            return ""
+            return []
 
         # Deduplicate commits while preserving order
         # A single commit may fix multiple child issues under the same epic
         unique_commits = list(dict.fromkeys(all_commits))
 
-        # Generate combined diff for all commits
-        # Use git show to get diff for each commit and concatenate
-        diffs: list[str] = []
-        for commit in unique_commits:
-            result = await self._runner.run_async(["git", "show", "--format=", commit])
-            if result.ok and result.stdout:
-                diffs.append(result.stdout)
+        return unique_commits
 
-        return "\n".join(diffs)
+    async def _summarize_commit_range(self, commits: list[str]) -> str | None:
+        """Summarize commit range from a list of commit SHAs.
 
-    async def _handle_large_diff(self, diff: str) -> str:
-        """Handle large diffs using tiered truncation.
+        Returns a git range hint covering all commits, or None if timestamps
+        cannot be retrieved. The agent still receives the authoritative commit
+        list even when this returns None.
 
-        Tier 1: If under max_diff_size_kb, return as-is
-        Tier 2: If under FILE_SUMMARY_MAX_SIZE_KB, use file-summary mode
-        Tier 3: Otherwise, use file-list mode
+        Note: For non-linear histories, the range may include unrelated commits.
+        The authoritative commit list should be used for precise scoping.
+        """
+        if not commits:
+            return None
+        timestamps: list[tuple[int, str]] = []
+        for commit in commits:
+            result = await self._runner.run_async(
+                ["git", "show", "-s", "--format=%ct", commit]
+            )
+            if result.ok and result.stdout.strip().isdigit():
+                timestamps.append((int(result.stdout.strip()), commit))
+        # Only provide a range hint if we have timestamps for all commits.
+        # The commits list is aggregated from multiple git log calls over an
+        # unordered set of issue IDs, so we cannot assume any ordering without
+        # timestamps. When timestamps are unavailable, return None and rely on
+        # the authoritative commit list instead.
+        if len(timestamps) < len(commits):
+            return None
+        timestamps.sort(key=lambda item: item[0])
+        base = timestamps[0][1]
+        tip = timestamps[-1][1]
+        if base == tip:
+            return base
+        # Check if base has a parent (not a root commit) before using base^
+        parent_check = await self._runner.run_async(
+            ["git", "rev-parse", "--verify", f"{base}^", "--"]
+        )
+        if parent_check.ok:
+            # base has a parent, use base^..tip for inclusive range
+            return f"{base}^..{tip}"
+        else:
+            # base is a root commit; return valid range syntax only.
+            # The agent uses the authoritative commit list for precise scoping.
+            # Note: base..tip excludes base, so agent should inspect base separately.
+            return f"{base}..{tip}"
+
+    async def _format_commit_summary(
+        self, commits: list[str], max_commits: int = 50
+    ) -> str:
+        """Format commit list with SHA and subject for prompts/issues.
 
         Args:
-            diff: The original diff content.
+            commits: List of commit SHAs to format.
+            max_commits: Maximum number of commits to include (default 50).
+                Prevents excessively large prompts/issue bodies.
 
         Returns:
-            Possibly truncated diff content.
+            Formatted commit summary string.
         """
-        diff_size_kb = len(diff.encode()) / 1024
+        if not commits:
+            return "No commits found."
 
-        if diff_size_kb <= self.max_diff_size_kb:
-            return diff
+        truncated = len(commits) > max_commits
+        display_commits = commits[:max_commits] if truncated else commits
 
-        if diff_size_kb <= FILE_SUMMARY_MAX_SIZE_KB:
-            return self._to_file_summary_mode(diff)
-
-        return await self._to_file_list_mode(diff)
-
-    def _to_file_summary_mode(self, diff: str) -> str:
-        """Convert diff to file-summary mode.
-
-        Lists files changed with truncated diffs (first 50 lines per file).
-
-        Args:
-            diff: The original diff content.
-
-        Returns:
-            File-summary mode diff.
-        """
-        lines = diff.split("\n")
-        result_lines: list[str] = ["# Diff truncated - file-summary mode", ""]
-
-        current_file: str | None = None
-        file_lines: list[str] = []
-
-        for line in lines:
-            if line.startswith("diff --git"):
-                # Save previous file
-                if current_file and file_lines:
-                    result_lines.append(f"## {current_file}")
-                    result_lines.extend(file_lines[:50])
-                    if len(file_lines) > 50:
-                        result_lines.append(f"... ({len(file_lines) - 50} more lines)")
-                    result_lines.append("")
-
-                # Start new file
-                match = re.search(r"diff --git a/(.+?) b/", line)
-                current_file = match.group(1) if match else "unknown"
-                file_lines = [line]
+        lines: list[str] = []
+        for commit in display_commits:
+            result = await self._runner.run_async(
+                ["git", "show", "-s", "--format=%H %s", commit]
+            )
+            summary = result.stdout.strip() if result.ok else ""
+            if summary:
+                lines.append(f"- {summary}")
             else:
-                file_lines.append(line)
+                lines.append(f"- {commit}")
 
-        # Save last file
-        if current_file and file_lines:
-            result_lines.append(f"## {current_file}")
-            result_lines.extend(file_lines[:50])
-            if len(file_lines) > 50:
-                result_lines.append(f"... ({len(file_lines) - 50} more lines)")
+        if truncated:
+            lines.append(f"\n[... {len(commits) - max_commits} more commits omitted]")
 
-        return "\n".join(result_lines)
+        return "\n".join(lines)
 
-    async def _to_file_list_mode(self, diff: str) -> str:
-        """Convert diff to file-list mode.
+    def _truncate_text(self, text: str, max_chars: int = 4000) -> str:
+        """Truncate text for issue descriptions to keep context manageable."""
+        if len(text) <= max_chars:
+            return text
+        return f"{text[:max_chars]}\n\n[truncated]"
 
-        Lists changed files only, with contents for files under 5KB.
-        File contents are read from HEAD commit to ensure consistency
-        with the scoped diff.
+    def _format_remediation_context(
+        self, context: EpicVerificationContext | None
+    ) -> str:
+        """Build a rich context block for remediation issue descriptions."""
+        if context is None:
+            return ""
 
-        Args:
-            diff: The original diff content.
+        sections: list[str] = []
+        sections.append(
+            "## Epic Description / Acceptance Criteria\n"
+            + self._truncate_text(context.epic_description)
+        )
 
-        Returns:
-            File-list mode summary.
-        """
-        lines = diff.split("\n")
-        files_changed: list[str] = []
+        if context.spec_content:
+            sections.append(
+                "## Spec Content\n" + self._truncate_text(context.spec_content)
+            )
 
-        for line in lines:
-            if line.startswith("diff --git"):
-                match = re.search(r"diff --git a/(.+?) b/", line)
-                if match:
-                    files_changed.append(match.group(1))
+        commit_range = context.commit_range or "Unavailable"
+        commit_list = context.commit_summary or "No commits found."
+        sections.append(
+            f"## Commit Scope\n- Range hint: {commit_range}\n- Commits:\n{commit_list}"
+        )
 
-        result_lines = [
-            "# Diff too large - file-list mode",
-            "",
-            f"Changed files ({len(files_changed)}):",
-        ]
-        for f in files_changed:
-            result_lines.append(f"  - {f}")
+        if context.child_ids:
+            child_list = "\n".join(f"- {cid}" for cid in sorted(context.child_ids))
+            sections.append(f"## Child Issues\n{child_list}")
 
-        result_lines.append("")
-        result_lines.append("Small file contents (under 5KB):")
-        result_lines.append("")
+        if context.blocker_ids:
+            blocker_list = "\n".join(f"- {bid}" for bid in sorted(context.blocker_ids))
+            sections.append(f"## Existing Blockers\n{blocker_list}")
 
-        for f in files_changed:
-            # Read file content from HEAD commit to ensure consistency with
-            # the scoped diff (avoids issues with uncommitted working tree changes)
-            file_content = await _get_file_at_commit(f, self.repo_path)
-            if file_content is not None:
-                if len(file_content.encode()) <= FILE_LIST_MAX_FILE_SIZE_KB * 1024:
-                    result_lines.append(f"### {f}")
-                    result_lines.append("```")
-                    result_lines.append(file_content)
-                    result_lines.append("```")
-                    result_lines.append("")
-
-        return "\n".join(result_lines)
+        return "\n\n".join(sections)
 
     async def create_remediation_issues(
-        self, epic_id: str, verdict: EpicVerdict
+        self,
+        epic_id: str,
+        verdict: EpicVerdict,
+        context: EpicVerificationContext | None = None,
     ) -> list[str]:
         """Create issues for unmet criteria, return their IDs.
 
@@ -1086,13 +1086,14 @@ class EpicVerifier:
             List of created (or existing) issue IDs.
         """
         issue_ids: list[str] = []
+        context_block = self._format_remediation_context(context)
 
         for criterion in verdict.unmet_criteria:
             # Build dedup tag
             dedup_tag = f"epic_remediation:{epic_id}:{criterion.criterion_hash}"
 
             # Check for existing issue with this tag
-            existing_id = await self._find_issue_by_tag(dedup_tag)
+            existing_id = await self.beads.find_issue_by_tag_async(dedup_tag)
             if existing_id:
                 issue_ids.append(existing_id)
                 continue
@@ -1106,6 +1107,8 @@ class EpicVerifier:
 
             description = f"""## Context
 This issue was auto-created by epic verification for epic `{epic_id}`.
+
+{context_block}
 
 ## Unmet Criterion
 {criterion.criterion}
@@ -1123,7 +1126,7 @@ Address this criterion to unblock epic closure. When complete, close this issue.
             # Determine priority based on severity
             priority = await self._get_adjusted_priority(epic_id, criterion.severity)
 
-            issue_id = await self._create_issue(
+            issue_id = await self.beads.create_issue_async(
                 title=title,
                 description=description,
                 priority=priority,
@@ -1191,38 +1194,18 @@ Review the epic and its child issues manually. When satisfied, close this issue
 to unblock the epic, or use `--epic-override {epic_id}` to force closure.
 """
 
-        issue_id = await self._create_issue(
+        issue_id = await self.beads.create_issue_async(
             title=title,
             description=description,
             priority="P1",
             tags=["epic_human_review", f"epic_id:{epic_id}"],
+            parent_id=epic_id,
         )
 
         if issue_id:
             await self.add_epic_blockers(epic_id, [issue_id])
 
         return issue_id or ""
-
-    async def _find_issue_by_tag(self, tag: str) -> str | None:
-        """Find an existing issue with the given tag.
-
-        Args:
-            tag: The tag to search for.
-
-        Returns:
-            Issue ID if found, None otherwise.
-        """
-        result = await self._runner.run_async(["bd", "list", "--label", tag, "--json"])
-        if not result.ok:
-            return None
-        try:
-            issues = json.loads(result.stdout)
-            if isinstance(issues, list) and issues:
-                # Return first matching issue (should be only one due to dedup)
-                return str(issues[0].get("id", ""))
-            return None
-        except json.JSONDecodeError:
-            return None
 
     async def _get_adjusted_priority(self, epic_id: str, severity: str) -> str:
         """Get priority for remediation issue based on epic priority and severity.
@@ -1241,6 +1224,9 @@ to unblock the epic, or use `--epic-override {epic_id}` to force closure.
         if result.ok:
             try:
                 data = json.loads(result.stdout)
+                # bd show --json returns a list of issues; extract first item
+                if isinstance(data, list) and len(data) > 0:
+                    data = data[0]
                 if isinstance(data, dict):
                     priority_str = data.get("priority", "P2")
                     if isinstance(priority_str, str) and priority_str.startswith("P"):
@@ -1259,61 +1245,3 @@ to unblock the epic, or use `--epic-override {epic_id}` to force closure.
         # Cap at P5
         adjusted = min(adjusted, 5)
         return f"P{adjusted}"
-
-    async def _create_issue(
-        self,
-        title: str,
-        description: str,
-        priority: str,
-        tags: list[str],
-        parent_id: str | None = None,
-    ) -> str | None:
-        """Create a new issue via bd CLI.
-
-        Args:
-            title: Issue title.
-            description: Issue description.
-            priority: Priority string (P1, P2, etc.)
-            tags: List of tags to apply.
-            parent_id: Optional parent epic ID to attach to.
-
-        Returns:
-            Created issue ID, or None on failure.
-        """
-        cmd = [
-            "bd",
-            "create",
-            "--title",
-            title,
-            "--description",
-            description,
-            "--priority",
-            priority,
-            "--silent",
-        ]
-        if parent_id:
-            cmd.extend(["--parent", parent_id])
-        if tags:
-            cmd.extend(["--labels", ",".join(tags)])
-
-        result = await self._runner.run_async(cmd)
-        if not result.ok:
-            return None
-
-        # Parse issue ID from output (typically "Created issue: <id>" or silent id)
-        match = re.search(r"Created issue:\s*(\S+)", result.stdout)
-        if match:
-            return match.group(1)
-
-        # Try parsing as JSON if the CLI returns JSON
-        try:
-            data = json.loads(result.stdout)
-            if isinstance(data, dict):
-                issue_id = data.get("id")
-                if issue_id:
-                    return str(issue_id)
-        except json.JSONDecodeError:
-            pass
-
-        issue_id = result.stdout.strip()
-        return issue_id if issue_id else None

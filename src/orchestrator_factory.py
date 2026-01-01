@@ -233,7 +233,6 @@ def _build_dependencies(
             beads=issue_provider,
             model=cast("EpicVerificationModel", verification_model),
             repo_path=repo_path,
-            max_diff_size_kb=mala_config.max_diff_size_kb,
             event_sink=event_sink,
             lock_manager=True,
         )

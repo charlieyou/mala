@@ -2,6 +2,9 @@
 
 You are verifying whether code changes satisfy an epic's acceptance criteria.
 
+You must explore the repository yourself using the commit scope below. Do not rely on a provided diff.
+Non-code criteria (tests, linting, formatting, coverage, CI/deploy, docs) are out of scope and must NOT be listed as unmet criteria.
+
 ## Epic Acceptance Criteria
 
 {epic_criteria}
@@ -10,23 +13,29 @@ You are verifying whether code changes satisfy an epic's acceptance criteria.
 
 {spec_content}
 
-## Scoped Diff (child issue commits only)
+## Commit Scope (child issue commits only)
 
-{diff_content}
+Commit range hint:
+{commit_range}
+
+Commit list (authoritative):
+{commit_list}
 
 ## Task
 
-Analyze the diff above and determine if ALL acceptance criteria have been met.
+Analyze the code changes from the commits above and determine if ALL code-related acceptance criteria have been met.
 
-For each criterion:
+For each code-related criterion:
 1. Check if the implementation satisfies the requirement
-2. Look for evidence in the code changes
+2. Look for evidence in the repository/commits
 3. Note any gaps or missing functionality
+
+If an acceptance criterion is purely non-code (tests/lints/format/coverage/CI/docs/deploy), ignore it and do not include it in `unmet_criteria`.
 
 ## Response Format
 
 Respond with a JSON object containing:
-- `passed`: boolean - true if ALL criteria are met
+- `passed`: boolean - true if ALL code-related criteria are met
 - `confidence`: float (0.0-1.0) - confidence in your assessment
 - `reasoning`: string - explanation of your verification outcome
 - `unmet_criteria`: array of objects for any unmet criteria, each with:
@@ -50,12 +59,12 @@ Example response:
 }
 ```
 
-If all criteria are met:
+If all code-related criteria are met:
 ```json
 {
   "passed": true,
   "confidence": 0.92,
-  "reasoning": "All acceptance criteria have been satisfied by the implementation.",
+  "reasoning": "All code-related acceptance criteria have been satisfied by the implementation.",
   "unmet_criteria": []
 }
 ```

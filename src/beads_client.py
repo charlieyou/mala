@@ -577,6 +577,7 @@ class BeadsClient:
         description: str,
         priority: str,
         tags: list[str] | None = None,
+        parent_id: str | None = None,
     ) -> str | None:
         """Create a new issue via bd CLI (async version).
 
@@ -585,6 +586,7 @@ class BeadsClient:
             description: Issue description (supports markdown).
             priority: Priority string (P1, P2, P3, etc.).
             tags: Optional list of tags to apply.
+            parent_id: Optional parent epic ID to attach this issue to.
 
         Returns:
             Created issue ID, or None on failure.
@@ -600,6 +602,8 @@ class BeadsClient:
             priority,
             "--silent",
         ]
+        if parent_id:
+            cmd.extend(["--parent", parent_id])
         if tags:
             cmd.extend(["--labels", ",".join(tags)])
 

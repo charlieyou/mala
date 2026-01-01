@@ -184,8 +184,6 @@ class MalaConfig:
             Defaults to empty (no extra env).
         track_review_issues: Whether to create beads issues for P2/P3 review findings.
             Env: MALA_TRACK_REVIEW_ISSUES (default: True)
-        max_diff_size_kb: Maximum diff size for epic verification (KB).
-            Env: MALA_MAX_DIFF_SIZE_KB (default: 100)
         llm_api_key: API key for LLM calls (epic verification).
             Env: LLM_API_KEY (falls back to ANTHROPIC_API_KEY if not set)
         llm_base_url: Base URL for LLM API requests.
@@ -227,8 +225,6 @@ class MalaConfig:
     cerberus_wait_args: tuple[str, ...] = field(default_factory=tuple)
     cerberus_env: tuple[tuple[str, str], ...] = field(default_factory=tuple)
     track_review_issues: bool = field(default=True)  # Create beads issues for P2/P3
-    # Epic verification settings
-    max_diff_size_kb: int = 100  # Maximum diff size for epic verification (KB)
 
     # LLM configuration (for epic verification and other direct API calls)
     llm_api_key: str | None = (
@@ -367,11 +363,6 @@ class MalaConfig:
         track_review_issues_raw = os.environ.get("MALA_TRACK_REVIEW_ISSUES", "").lower()
         track_review_issues = track_review_issues_raw not in ("0", "false", "no", "off")
 
-        # Get epic verification settings
-        max_diff_size_kb = _safe_int(
-            os.environ.get("MALA_MAX_DIFF_SIZE_KB"), default=100
-        )
-
         # Get LLM configuration (for epic verification and other direct API calls)
         # Falls back to ANTHROPIC_API_KEY if LLM_API_KEY is not set
         llm_api_key = (
@@ -391,7 +382,6 @@ class MalaConfig:
             cerberus_wait_args=tuple(cerberus_wait_args),
             cerberus_env=_normalize_cerberus_env(cerberus_env),
             track_review_issues=track_review_issues,
-            max_diff_size_kb=max_diff_size_kb,
             llm_api_key=llm_api_key,
             llm_base_url=llm_base_url,
         )

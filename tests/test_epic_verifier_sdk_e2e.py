@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import subprocess
+
 import pytest
 
 from src.epic_verifier import ClaudeEpicVerificationModel
@@ -30,9 +32,43 @@ async def test_epic_verifier_runs_via_sdk(tmp_path: Path) -> None:
     model = ClaudeEpicVerificationModel(repo_path=tmp_path)
 
     criteria = """Acceptance Criteria:\n- The helper function add returns a + b\n"""
-    diff = """diff --git a/src/math_utils.py b/src/math_utils.py\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/src/math_utils.py\n@@\n+def add(a: int, b: int) -> int:\n+    return a + b\n"""
+    (tmp_path / "src").mkdir()
+    file_path = tmp_path / "src" / "math_utils.py"
+    file_path.write_text("def add(a: int, b: int) -> int:\n    return a + b\n")
 
-    verdict = await model.verify(criteria, diff, None)
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Add math utils"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    commit_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    commit_range = commit_sha
+    commit_list = f"- {commit_sha} Add math utils"
+
+    verdict = await model.verify(criteria, commit_range, commit_list, None)
 
     assert isinstance(verdict.passed, bool)
     assert 0.0 <= verdict.confidence <= 1.0
