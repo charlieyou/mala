@@ -248,7 +248,10 @@ class DefaultReviewer:
             # Treat "already active" as a hard error to avoid resolving another
             # session's gate. The review-gate resolve command has no session scoping,
             # so unconditionally resolving could discard a concurrent run's review.
-            if "already active" in detail.lower():
+            # Check both stderr and stdout independently since the error could be in
+            # either stream, and 'detail' only uses stderr if it's non-empty.
+            combined = f"{stderr or ''} {stdout or ''}".lower()
+            if "already active" in combined:
                 return ReviewResult(
                     passed=False,
                     issues=[],
