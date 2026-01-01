@@ -148,6 +148,7 @@ forbidden_modules = [
     "src.quality_gate",
     "src.validation",
     "src.models",
+    "src.core.models",
     "src.prompts",
     "src.beads_client",
     "src.cerberus_review",
@@ -159,11 +160,13 @@ forbidden_modules = [
     "src.telemetry",
     "src.git_utils",
     "src.protocols",
+    "src.core.protocols",
     "src.epic_verifier",
     "src.tools",
     "src.log_output",
     "src.event_sink",
     "src.log_events",
+    "src.core.log_events",
     "src.issue_manager",
     # Note: src.config is allowed - CLI reads mala.toml configuration
 ]
@@ -272,6 +275,7 @@ source_modules = [
     "src.quality_gate",
     "src.validation",
     "src.models",
+    "src.core.models",
     "src.prompts",
     "src.beads_client",
     "src.cerberus_review",
@@ -286,9 +290,12 @@ source_modules = [
     "src.git_utils",
     "src.config",
     "src.protocols",
+    "src.core.protocols",
     "src.log_events",
+    "src.core.log_events",
     "src.epic_verifier",
     "src.tools",
+    "src.core",
 ]
 forbidden_modules = ["typer"]
 
@@ -335,10 +342,14 @@ source_modules = [
     "src.git_utils",
     "src.config",
     "src.protocols",
+    "src.core.protocols",
     "src.log_events",
+    "src.core.log_events",
     "src.epic_verifier",
     "src.tools",
     "src.issue_manager",
+    "src.core",
+    "src.core.models",
 ]
 forbidden_modules = [
     "src.cli",
@@ -359,7 +370,7 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "Models is leaf"
 type = "forbidden"
-source_modules = ["src.models"]
+source_modules = ["src.models", "src.core.models"]
 forbidden_modules = [
     "src.cli",
     "src.main",
@@ -385,7 +396,9 @@ forbidden_modules = [
     "src.git_utils",
     "src.config",
     "src.protocols",
+    "src.core.protocols",
     "src.log_events",
+    "src.core.log_events",
     "src.epic_verifier",
     "src.tools",
     "src.issue_manager",
@@ -399,7 +412,7 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "Protocols is leaf"
 type = "forbidden"
-source_modules = ["src.protocols"]
+source_modules = ["src.protocols", "src.core.protocols"]
 forbidden_modules = [
     "src.cli",
     "src.main",
@@ -425,9 +438,12 @@ forbidden_modules = [
     "src.git_utils",
     "src.config",
     "src.log_events",
+    "src.core.log_events",
     "src.epic_verifier",
     "src.tools",
     "src.issue_manager",
+    "src.models",
+    "src.core.models",
 ]
 
 # -----------------------------------------------------------------------------
@@ -438,7 +454,7 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "Log events is leaf"
 type = "forbidden"
-source_modules = ["src.log_events"]
+source_modules = ["src.log_events", "src.core.log_events"]
 forbidden_modules = [
     "src.cli",
     "src.main",
@@ -464,10 +480,12 @@ forbidden_modules = [
     "src.git_utils",
     "src.config",
     "src.protocols",
+    "src.core.protocols",
     "src.epic_verifier",
     "src.tools",
     "src.issue_manager",
     "src.models",
+    "src.core.models",
 ]
 
 # -----------------------------------------------------------------------------
@@ -520,10 +538,14 @@ forbidden_modules = [
     "src.git_utils",
     "src.config",
     "src.protocols",
+    "src.core.protocols",
     "src.log_events",
+    "src.core.log_events",
     "src.epic_verifier",
     "src.models",
+    "src.core.models",
     "src.issue_manager",
+    "src.core",
 ]
 
 # -----------------------------------------------------------------------------
@@ -576,9 +598,13 @@ forbidden_modules = [
     "src.telemetry",
     "src.git_utils",
     "src.protocols",
+    "src.core.protocols",
     "src.log_events",
+    "src.core.log_events",
     "src.epic_verifier",
     "src.models",
+    "src.core.models",
     "src.tools",
     "src.issue_manager",
+    "src.core",
 ]
