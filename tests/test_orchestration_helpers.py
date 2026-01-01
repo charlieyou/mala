@@ -455,6 +455,7 @@ class TestBuildEventRunConfig:
             review_disabled_reason=None,
             morph_enabled=True,
             prioritize_wip=False,
+            orphans_only=False,
             cli_args={"verbose": True},
             mala_config=mala_config,
         )
@@ -471,6 +472,7 @@ class TestBuildEventRunConfig:
         assert config.braintrust_enabled is True
         assert config.review_enabled is True
         assert config.morph_enabled is True
+        assert config.orphans_only is False
 
     def test_morph_disabled_no_key(self, tmp_path: Path) -> None:
         """Should set morph_disabled_reason when key missing."""
@@ -495,6 +497,7 @@ class TestBuildEventRunConfig:
             review_disabled_reason=None,
             morph_enabled=False,
             prioritize_wip=False,
+            orphans_only=False,
             cli_args=None,
             mala_config=mala_config,
         )
@@ -525,6 +528,7 @@ class TestBuildEventRunConfig:
             review_disabled_reason=None,
             morph_enabled=False,
             prioritize_wip=False,
+            orphans_only=False,
             cli_args={"no_morph": True},
             mala_config=mala_config,
         )
@@ -554,6 +558,7 @@ class TestBuildRunMetadata:
                 max_gate_retries=3,
                 max_review_retries=2,
                 review_enabled=True,
+                orphans_only=False,
                 cli_args={"verbose": True},
                 version="1.0.0",
             )
@@ -568,6 +573,7 @@ class TestBuildRunMetadata:
         assert metadata.config.max_gate_retries == 3
         assert metadata.config.max_review_retries == 2
         assert metadata.config.review_enabled is True
+        assert metadata.config.orphans_only is False
 
     def test_none_timeout(self, tmp_path: Path) -> None:
         """Should handle None timeout."""
@@ -587,6 +593,7 @@ class TestBuildRunMetadata:
                 max_gate_retries=3,
                 max_review_retries=2,
                 review_enabled=False,
+                orphans_only=False,
                 cli_args=None,
                 version="1.0.0",
             )

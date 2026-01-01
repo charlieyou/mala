@@ -134,6 +134,7 @@ class MalaOrchestrator:
         morph_enabled: bool | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
+        orphans_only: bool = False,
         cli_args: dict[str, object] | None = None,
         # Protocol-based dependency injection for testability
         issue_provider: IssueProvider | None = None,
@@ -200,6 +201,7 @@ class MalaOrchestrator:
             morph_enabled=morph_enabled,
             prioritize_wip=prioritize_wip,
             focus=focus,
+            orphans_only=orphans_only,
             cli_args=cli_args,
             epic_override_ids=epic_override_ids,
         )
@@ -910,6 +912,7 @@ class MalaOrchestrator:
             review_disabled_reason=self.review_disabled_reason,
             morph_enabled=self.morph_enabled,
             prioritize_wip=self.prioritize_wip,
+            orphans_only=self.orphans_only,
             cli_args=self.cli_args,
             mala_config=self._mala_config,
         )
@@ -929,6 +932,7 @@ class MalaOrchestrator:
             max_gate_retries=self.max_gate_retries,
             max_review_retries=self.max_review_retries,
             review_enabled=self._is_review_enabled(),
+            orphans_only=self.orphans_only,
             cli_args=self.cli_args,
             version=__version__,
         )

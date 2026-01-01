@@ -33,6 +33,7 @@ def build_event_run_config(
     review_disabled_reason: str | None,
     morph_enabled: bool,
     prioritize_wip: bool,
+    orphans_only: bool,
     cli_args: dict[str, object] | None,
     mala_config: MalaConfig,
 ) -> EventRunConfig:
@@ -52,6 +53,7 @@ def build_event_run_config(
         review_disabled_reason: Reason review is disabled (if any).
         morph_enabled: Whether MorphLLM routing is enabled.
         prioritize_wip: Whether to prioritize in-progress issues.
+        orphans_only: Whether to only process issues without parent epic.
         cli_args: CLI arguments for logging.
         mala_config: MalaConfig for API key checks.
 
@@ -90,6 +92,7 @@ def build_event_run_config(
         morph_disallowed_tools=list(MORPH_DISALLOWED_TOOLS) if morph_enabled else None,
         morph_disabled_reason=morph_disabled_reason,
         prioritize_wip=prioritize_wip,
+        orphans_only=orphans_only,
         cli_args=cli_args,
     )
 
@@ -105,6 +108,7 @@ def build_run_metadata(
     max_gate_retries: int,
     max_review_retries: int,
     review_enabled: bool,
+    orphans_only: bool,
     cli_args: dict[str, object] | None,
     version: str,
 ) -> RunMetadata:
@@ -121,6 +125,7 @@ def build_run_metadata(
         max_gate_retries: Maximum quality gate retry attempts.
         max_review_retries: Maximum code review retry attempts.
         review_enabled: Whether code review is enabled.
+        orphans_only: Whether to only process issues without parent epic.
         cli_args: CLI arguments for logging.
         version: Mala version string.
 
@@ -137,6 +142,7 @@ def build_run_metadata(
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         review_enabled=review_enabled,
+        orphans_only=orphans_only,
         cli_args=cli_args,
     )
     return RunMetadata(repo_path, run_config, version)

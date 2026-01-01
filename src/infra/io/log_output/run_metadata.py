@@ -178,6 +178,8 @@ class RunConfig:
     review_enabled: bool | None = None
     # CLI args for debugging/auditing (optional for backward compatibility)
     cli_args: dict[str, object] | None = None
+    # Orphans-only filter (optional for backward compatibility)
+    orphans_only: bool = False
 
 
 class RunMetadata:
@@ -376,6 +378,7 @@ class RunMetadata:
             max_review_retries=config_data.get("max_review_retries"),
             review_enabled=config_data.get("review_enabled"),
             cli_args=config_data.get("cli_args"),
+            orphans_only=config_data.get("orphans_only", False),
         )
 
         # Create instance

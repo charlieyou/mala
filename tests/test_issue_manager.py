@@ -403,3 +403,58 @@ class TestFindMissingIds:
         """Should return empty set when only_ids is empty."""
         result = IssueManager.find_missing_ids(set(), [{"id": "a"}], set())
         assert result == set()
+
+
+class TestFilterOrphansOnly:
+    """Tests for IssueManager.filter_orphans_only."""
+
+    def test_returns_only_orphan_issues(self) -> None:
+        """Should return only issues with no parent epic."""
+        issues = [
+            {"id": "a", "parent_epic": "epic-1"},
+            {"id": "b", "parent_epic": None},
+            {"id": "c", "parent_epic": "epic-2"},
+        ]
+        result = IssueManager.filter_orphans_only(issues)
+        assert [r["id"] for r in result] == ["b"]
+
+    def test_returns_empty_when_all_have_parent(self) -> None:
+        """Should return empty list when all issues have parent epic."""
+        issues = [
+            {"id": "a", "parent_epic": "epic-1"},
+            {"id": "b", "parent_epic": "epic-2"},
+        ]
+        result = IssueManager.filter_orphans_only(issues)
+        assert result == []
+
+    def test_returns_all_when_none_have_parent(self) -> None:
+        """Should return all issues when none have parent epic."""
+        issues = [
+            {"id": "a", "parent_epic": None},
+            {"id": "b", "parent_epic": None},
+        ]
+        result = IssueManager.filter_orphans_only(issues)
+        assert [r["id"] for r in result] == ["a", "b"]
+
+    def test_empty_list_returns_empty(self) -> None:
+        """Should return empty list for empty input."""
+        result = IssueManager.filter_orphans_only([])
+        assert result == []
+
+    def test_treats_empty_string_as_no_parent(self) -> None:
+        """Should treat empty string parent_epic as no parent."""
+        issues = [
+            {"id": "a", "parent_epic": ""},
+            {"id": "b", "parent_epic": "epic-1"},
+        ]
+        result = IssueManager.filter_orphans_only(issues)
+        assert [r["id"] for r in result] == ["a"]
+
+    def test_handles_missing_parent_epic_field(self) -> None:
+        """Should treat missing parent_epic field as no parent."""
+        issues = [
+            {"id": "a"},
+            {"id": "b", "parent_epic": "epic-1"},
+        ]
+        result = IssueManager.filter_orphans_only(issues)
+        assert [r["id"] for r in result] == ["a"]

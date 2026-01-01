@@ -49,6 +49,7 @@ class EventRunConfig:
         None  # e.g., "--no-morph", "MORPH_API_KEY not set"
     )
     prioritize_wip: bool = False
+    orphans_only: bool = False
     cli_args: dict[str, object] | None = None
 
 
@@ -1014,6 +1015,12 @@ class ConsoleEventSink(BaseEventSink):
             )
         if config.prioritize_wip:
             log("◐", "wip: prioritizing in_progress issues", Colors.CYAN)
+        if config.orphans_only:
+            log(
+                "◐",
+                "orphans-only: processing only issues without parent epic",
+                Colors.CYAN,
+            )
 
         # Braintrust
         if config.braintrust_enabled:
