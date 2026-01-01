@@ -295,6 +295,20 @@ This continues for up to `max_gate_retries` attempts (default: 3). The orchestra
 - **Previous commit hash**: Detects "no progress" when commit is unchanged
 - **No-progress detection**: Stops retries early if agent makes no meaningful changes
 
+### Idle Timeout Retry
+
+When a Claude CLI subprocess hangs (no output for an extended period), the orchestrator automatically recovers:
+
+1. **Detection**: If no SDK message arrives within the idle timeout (derived from agent timeout, clamped to 5-15 minutes), an idle timeout is triggered
+2. **Disconnect**: The orchestrator calls `disconnect()` to cleanly terminate the hung subprocess
+3. **Resume strategy**:
+   - If a session ID exists: Resume the same session with a prompt explaining the timeout
+   - If no session ID but no tool calls yet: Retry fresh (no side effects to lose)
+   - If tool calls occurred without session context: Fail immediately (potential data loss)
+4. **Retry limits**: Up to `max_idle_retries` (default: 2) attempts with exponential backoff
+
+This prevents hung agents from blocking issue processing indefinitely.
+
 ### External Review (Cerberus Review-Gate)
 
 External review via Cerberus is enabled by default. After the deterministic gate passes:
@@ -311,6 +325,20 @@ External review via Cerberus is enabled by default. After the deterministic gate
 Review retries are capped at `max_review_retries` (default: 3). Use `--disable-validations=review` to disable.
 
 **Skipped for no-work resolutions**: Issues resolved with `ISSUE_NO_CHANGE`, `ISSUE_OBSOLETE`, or `ISSUE_ALREADY_COMPLETE` skip external review entirely since there's no new code to review.
+
+### Low-Priority Review Findings (P2/P3)
+
+When Cerberus review passes but includes P2/P3 priority findings, the orchestrator automatically creates tracking issues:
+
+1. **Collection**: P2/P3 findings are collected from the review result (P0/P1 block the review)
+2. **Issue creation**: After the issue is successfully closed, beads issues are created for each finding
+3. **Issue format**: Each tracking issue includes:
+   - Title: `[Review] {finding title}`
+   - File and line references
+   - Original finding description
+   - Link to the source issue
+
+This ensures low-priority review findings are tracked and not forgotten, without blocking the current issue from completing.
 
 ### Failure Handling
 
@@ -497,6 +525,7 @@ The next agent (or human) can read the issue notes with `bd show <issue_id>` and
 | `--verbose`, `-v` | false | Enable verbose output; shows full tool arguments |
 | `--no-morph` | false | Disable MorphLLM routing; use built-in tools directly |
 | `--epic-override` | - | Comma-separated epic IDs to close without verification (human bypass) |
+| `--debug-log` | false | Write debug logs to `~/.config/mala/runs/{repo-name}/{timestamp}.debug.log` |
 
 **Disable validation flags:**
 
@@ -649,3 +678,27 @@ uv run pytest --cov=src --cov-fail-under=85       # Manual coverage check
 - **Flaky test retries**: Use `--reruns N` to auto-retry failed tests (pytest-rerunfailures)
 - **Unit/Integration/E2E**: Use markers `unit`, `integration`, `e2e` to select categories
 - **Coverage**: Not run by default; quality gate adds coverage flags automatically
+
+### Package Structure
+
+The codebase is organized into layered packages with enforced import boundaries (via import-linter):
+
+```
+src/
+├── core/           # Models, protocols, log events (no internal dependencies)
+├── domain/         # Business logic: lifecycle, quality_gate, validation
+├── infra/          # Infrastructure: clients/, io/, tools/, hooks/
+├── orchestration/  # Orchestrator and CLI support
+├── pipeline/       # Agent session pipeline
+├── cli/            # CLI entry point
+├── prompts/        # Prompt templates
+└── scripts/        # Utility scripts
+```
+
+**Layer dependencies** (enforced by import-linter contracts):
+- `core` → (none)
+- `domain` → `core`
+- `infra` → `core`
+- `orchestration` → `core`, `domain`, `infra`
+- `pipeline` → `core`, `domain`, `infra`
+- `cli` → all layers
