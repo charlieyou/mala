@@ -838,7 +838,7 @@ class ConsoleEventSink:
     """Event sink that outputs to the console using existing log helpers.
 
     Implements all MalaEventSink methods, delegating to log(), log_tool(),
-    and log_agent_text() from src/log_output/console.py.
+    and log_agent_text() from src/infra/io/log_output/console.py.
 
     Example:
         sink = ConsoleEventSink()

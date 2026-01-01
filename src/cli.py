@@ -383,6 +383,13 @@ def run(
             help="Comma-separated epic IDs to close without verification (explicit human bypass)",
         ),
     ] = None,
+    debug_log: Annotated[
+        bool,
+        typer.Option(
+            "--debug-log",
+            help="Write debug logs to ~/.config/mala/runs/{repo-name}/{timestamp}_{short_id}.debug.log (or $MALA_RUNS_DIR/{repo-name}/...)",
+        ),
+    ] = False,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -561,6 +568,7 @@ def run(
         focus=focus,
         cli_args=cli_args,
         epic_override_ids=epic_override_ids,
+        debug_log=debug_log,
     )
 
     # Use factory to create orchestrator

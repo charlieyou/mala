@@ -51,7 +51,7 @@ class TestBlockDangerousCommands:
         self, make_hook_input: HookInputFactory
     ) -> None:
         """Safe commands with tool_name='Bash' should be allowed."""
-        from src.hooks import block_dangerous_commands
+        from src.infra.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Bash", "ls -la"), None, _make_context()
@@ -63,7 +63,7 @@ class TestBlockDangerousCommands:
         self, make_hook_input: HookInputFactory
     ) -> None:
         """Safe commands with tool_name='bash' (lowercase) should be allowed."""
-        from src.hooks import block_dangerous_commands
+        from src.infra.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("bash", "ls -la"), None, _make_context()
@@ -73,7 +73,7 @@ class TestBlockDangerousCommands:
     @pytest.mark.asyncio
     async def test_blocks_rm_rf_root(self, make_hook_input: HookInputFactory) -> None:
         """rm -rf / should be blocked for any tool name casing."""
-        from src.hooks import block_dangerous_commands
+        from src.infra.hooks import block_dangerous_commands
 
         for tool_name in ["Bash", "bash", "BASH"]:
             result = await block_dangerous_commands(
@@ -85,7 +85,7 @@ class TestBlockDangerousCommands:
     @pytest.mark.asyncio
     async def test_blocks_fork_bomb(self, make_hook_input: HookInputFactory) -> None:
         """Fork bomb pattern should be blocked."""
-        from src.hooks import block_dangerous_commands
+        from src.infra.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Bash", ":(){:|:&};:"), None, _make_context()
@@ -97,7 +97,7 @@ class TestBlockDangerousCommands:
         self, make_hook_input: HookInputFactory
     ) -> None:
         """curl | bash pattern should be blocked."""
-        from src.hooks import block_dangerous_commands
+        from src.infra.hooks import block_dangerous_commands
 
         # The pattern "curl | bash" must appear literally in the command
         result = await block_dangerous_commands(
@@ -113,7 +113,7 @@ class TestBlockDangerousCommands:
         self, make_hook_input: HookInputFactory
     ) -> None:
         """Force push to main branch should be blocked."""
-        from src.hooks import block_dangerous_commands
+        from src.infra.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Bash", "git push --force origin main"),
@@ -128,7 +128,7 @@ class TestBlockDangerousCommands:
         self, make_hook_input: HookInputFactory
     ) -> None:
         """Force push to ANY branch should now be blocked."""
-        from src.hooks import block_dangerous_commands
+        from src.infra.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Bash", "git push --force origin feature-branch"),
@@ -143,7 +143,7 @@ class TestBlockDangerousCommands:
         self, make_hook_input: HookInputFactory
     ) -> None:
         """Force with lease should be allowed (safer alternative)."""
-        from src.hooks import block_dangerous_commands
+        from src.infra.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Bash", "git push --force-with-lease origin feature"),
@@ -157,7 +157,7 @@ class TestBlockDangerousCommands:
         self, make_hook_input: HookInputFactory
     ) -> None:
         """Non-Bash tools should always be allowed (they don't run commands)."""
-        from src.hooks import block_dangerous_commands
+        from src.infra.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Read", "rm -rf /"), None, _make_context()
@@ -169,7 +169,7 @@ class TestBlockDangerousCommands:
         self, make_hook_input: HookInputFactory
     ) -> None:
         """Tool name matching should be case-insensitive for bash variants."""
-        from src.hooks import block_dangerous_commands
+        from src.infra.hooks import block_dangerous_commands
 
         dangerous_cmd = "rm -rf /"
 
@@ -202,7 +202,7 @@ class TestBlockDangerousCommands:
         self, make_hook_input: HookInputFactory, cmd: str
     ) -> None:
         """Destructive git commands should be blocked."""
-        from src.hooks import block_dangerous_commands
+        from src.infra.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Bash", cmd), None, _make_context()
@@ -231,7 +231,7 @@ class TestBlockDangerousCommands:
         self, make_hook_input: HookInputFactory, cmd: str
     ) -> None:
         """Safe git commands should be allowed."""
-        from src.hooks import block_dangerous_commands
+        from src.infra.hooks import block_dangerous_commands
 
         result = await block_dangerous_commands(
             make_hook_input("Bash", cmd), None, _make_context()
@@ -244,14 +244,14 @@ class TestMorphDisallowedTools:
 
     def test_edit_and_grep_are_disallowed(self) -> None:
         """Edit and Grep tools should be in disallowed_tools list."""
-        from src.hooks import MORPH_DISALLOWED_TOOLS
+        from src.infra.hooks import MORPH_DISALLOWED_TOOLS
 
         assert "Edit" in MORPH_DISALLOWED_TOOLS
         assert "Grep" in MORPH_DISALLOWED_TOOLS
 
     def test_disallowed_tools_is_list(self) -> None:
         """MORPH_DISALLOWED_TOOLS should be a list for SDK compatibility."""
-        from src.hooks import MORPH_DISALLOWED_TOOLS
+        from src.infra.hooks import MORPH_DISALLOWED_TOOLS
 
         assert isinstance(MORPH_DISALLOWED_TOOLS, list)
 
@@ -382,7 +382,7 @@ class TestMorphEnabledGating:
 
     def test_edit_blocked_when_morph_enabled(self) -> None:
         """Edit should be blocked when morph_enabled=True (normal case)."""
-        from src.hooks import MORPH_DISALLOWED_TOOLS
+        from src.infra.hooks import MORPH_DISALLOWED_TOOLS
 
         # Verify Edit is in the list of Morph-disallowed tools
         assert "Edit" in MORPH_DISALLOWED_TOOLS

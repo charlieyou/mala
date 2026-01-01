@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.env import SCRIPTS_DIR, get_cache_dir
-from src.log_output.console import Colors, log
+from src.infra.io.log_output.console import Colors, log
 from .helpers import format_step_output
 from .lint_cache import LintCache
 from .result import ValidationStepResult

@@ -221,8 +221,8 @@ class UnmetCriterionProtocol(Protocol):
     evidence: str
     """Why it's considered unmet."""
 
-    severity: str
-    """How critical the gap is (critical, major, minor)."""
+    priority: int
+    """Issue priority matching Cerberus levels (0-3). P0/P1 blocking, P2/P3 informational."""
 
     criterion_hash: str
     """SHA256 of criterion text, for deduplication."""

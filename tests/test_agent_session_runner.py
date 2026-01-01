@@ -1664,11 +1664,16 @@ class TestIdleTimeoutRetry:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_idle_timeout_first_turn_with_tool_calls_fails_fast(
+    async def test_idle_timeout_disabled_during_tool_execution(
         self,
         tmp_path: Path,
     ) -> None:
-        """Hang after tool calls but before ResultMessage; fail fast (no retry)."""
+        """Hang after tool calls - no idle timeout during tool execution.
+
+        When a ToolUseBlock is pending (waiting for result), idle timeout is
+        disabled to allow long-running tool executions. The session timeout
+        is the only backstop in this case.
+        """
         # Create a client that yields tool calls then hangs
         tool_block = ToolUseBlock(id="tool-1", name="Bash", input={"command": "ls"})
         assistant_msg = AssistantMessage(content=[tool_block], model="test-model")
@@ -1677,9 +1682,9 @@ class TestIdleTimeoutRetry:
 
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
-            timeout_seconds=60,
-            idle_timeout_seconds=0.01,
-            max_idle_retries=2,  # Would allow retry, but not safe here
+            timeout_seconds=1,  # Short session timeout for test
+            idle_timeout_seconds=0.01,  # Would fire instantly, but disabled during tool exec
+            max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
             review_enabled=False,
         )
@@ -1699,11 +1704,12 @@ class TestIdleTimeoutRetry:
 
         output = await runner.run_session(input_data)
 
-        # Verify failure with tool calls message
+        # Verify failure - session timeout, not idle timeout
         assert output.success is False
-        assert "tool calls occurred" in output.summary.lower()
+        # With idle timeout disabled during tool execution, session timeout fires
+        assert "timeout" in output.summary.lower()
 
-        # Verify only 1 client was created (no retry)
+        # Verify only 1 client was created (no retry during tool execution)
         assert len(factory.create_calls) == 1
 
     @pytest.mark.asyncio

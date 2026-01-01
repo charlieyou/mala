@@ -32,18 +32,32 @@ For each code-related criterion:
 
 If an acceptance criterion is purely non-code (tests/lints/format/coverage/CI/docs/deploy), ignore it and do not include it in `unmet_criteria`.
 
+## Priority Levels (matching Cerberus)
+
+- **P0**: Drop everything. Blocking release or major usage. Critical functional gaps.
+- **P1**: Urgent. Should address in next cycle. Significant behavioral issues.
+- **P2**: Normal. Fix eventually. Minor gaps, edge cases, polish items. **Non-blocking.**
+- **P3**: Low. Nice to have. Style preferences, subjective improvements. **Non-blocking.**
+
+**Blocking vs Non-blocking:**
+- P0/P1 issues block epic closure and create remediation tasks
+- P2/P3 issues are informational only - they are noted but do NOT block epic closure
+
+**Style/Subjective Criteria:**
+Code-style constraints (function length limits, naming preferences, refactoring suggestions) should be P3 when the implementation is functionally correct. Example: "MalaOrchestrator.__init__ under 60 lines" is P3 if the factory function works correctly but the method is 84 lines.
+
 ## Response Format
 
 Respond with a JSON object containing:
-- `passed`: boolean - true if ALL code-related criteria are met
+- `passed`: boolean - true if ALL P0/P1 criteria are met (P2/P3 issues don't block)
 - `confidence`: float (0.0-1.0) - confidence in your assessment
 - `reasoning`: string - explanation of your verification outcome
 - `unmet_criteria`: array of objects for any unmet criteria, each with:
   - `criterion`: the specific requirement not met
   - `evidence`: why it's considered unmet
-  - `severity`: "critical" | "major" | "minor"
+  - `priority`: 0 | 1 | 2 | 3 (matching Cerberus priority levels)
 
-Example response:
+Example response with blocking issue:
 ```json
 {
   "passed": false,
@@ -53,13 +67,29 @@ Example response:
     {
       "criterion": "API endpoints must return proper error codes",
       "evidence": "The /users endpoint returns 500 for invalid input instead of 400",
-      "severity": "major"
+      "priority": 1
     }
   ]
 }
 ```
 
-If all code-related criteria are met:
+Example with only non-blocking (P2/P3) issues:
+```json
+{
+  "passed": true,
+  "confidence": 0.88,
+  "reasoning": "All functional criteria met. Only a style preference remains as P3.",
+  "unmet_criteria": [
+    {
+      "criterion": "MalaOrchestrator.__init__ under 60 lines",
+      "evidence": "MalaOrchestrator.__init__ is 84 lines, but factory function works correctly.",
+      "priority": 3
+    }
+  ]
+}
+```
+
+If all criteria are met:
 ```json
 {
   "passed": true,

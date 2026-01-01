@@ -3,7 +3,7 @@
 These tests verify that `claude_agent_sdk` is NOT imported when:
 1. `import src` is executed
 2. `from src.orchestrator import MalaOrchestrator` is executed
-3. `from src.hooks import ...` is executed
+3. `from src.infra.hooks import ...` is executed
 
 This ensures that bootstrap() runs before any SDK code loads,
 which is critical for proper Braintrust integration setup.
@@ -44,7 +44,7 @@ print('PASS')
 
 
 def test_import_hooks_does_not_load_sdk() -> None:
-    """Verify `from src.hooks import ...` does NOT trigger claude_agent_sdk import."""
+    """Verify `from src.infra.hooks import ...` does NOT trigger claude_agent_sdk import."""
     code = """
 import sys
 # Clear any existing imports
@@ -52,7 +52,7 @@ for mod in list(sys.modules.keys()):
     if mod.startswith('claude_agent_sdk'):
         del sys.modules[mod]
 
-from src.hooks import block_dangerous_commands, DANGEROUS_PATTERNS
+from src.infra.hooks import block_dangerous_commands, DANGEROUS_PATTERNS
 if any(mod.startswith('claude_agent_sdk') for mod in sys.modules):
     print('FAIL: claude_agent_sdk was imported')
     sys.exit(1)

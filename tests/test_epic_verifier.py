@@ -25,7 +25,7 @@ from src.epic_verifier import (
     extract_spec_paths,
 )
 from src.models import EpicVerdict, RetryConfig, UnmetCriterion
-from src.tools.command_runner import CommandResult
+from src.infra.tools.command_runner import CommandResult
 
 
 # ============================================================================
@@ -261,7 +261,7 @@ class TestRemediationIssueCreation:
                 UnmetCriterion(
                     criterion="Must have error handling",
                     evidence="No try/catch found",
-                    severity="major",
+                    priority=1,
                     criterion_hash=_compute_criterion_hash("Must have error handling"),
                 )
             ],
@@ -269,10 +269,13 @@ class TestRemediationIssueCreation:
             reasoning="Missing error handling",
         )
 
-        issue_ids = await verifier.create_remediation_issues("epic-1", verdict)
-        assert len(issue_ids) == 1
-        assert issue_ids[0] == "remediation-1"
-        # Verify create was called with parent_id
+        blocking_ids, informational_ids = await verifier.create_remediation_issues(
+            "epic-1", verdict
+        )
+        assert len(blocking_ids) == 1
+        assert blocking_ids[0] == "remediation-1"
+        assert len(informational_ids) == 0
+        # Verify create was called with parent_id (P1 is blocking)
         mock_beads.create_issue_async.assert_called_once()
         call_kwargs = mock_beads.create_issue_async.call_args[1]
         assert call_kwargs["parent_id"] == "epic-1"
@@ -291,7 +294,7 @@ class TestRemediationIssueCreation:
                 UnmetCriterion(
                     criterion="Criterion text",
                     evidence="Evidence",
-                    severity="major",
+                    priority=1,
                     criterion_hash=_compute_criterion_hash("Criterion text"),
                 )
             ],
@@ -299,8 +302,11 @@ class TestRemediationIssueCreation:
             reasoning="Test",
         )
 
-        issue_ids = await verifier.create_remediation_issues("epic-1", verdict)
-        assert issue_ids == ["existing-issue"]
+        blocking_ids, informational_ids = await verifier.create_remediation_issues(
+            "epic-1", verdict
+        )
+        assert blocking_ids == ["existing-issue"]
+        assert informational_ids == []
 
     @pytest.mark.asyncio
     async def test_remediation_issue_format(
@@ -317,7 +323,7 @@ class TestRemediationIssueCreation:
                 UnmetCriterion(
                     criterion="API must return 400 for bad input",
                     evidence="Returns 500 instead",
-                    severity="critical",
+                    priority=0,
                     criterion_hash=_compute_criterion_hash(
                         "API must return 400 for bad input"
                     ),
@@ -336,6 +342,93 @@ class TestRemediationIssueCreation:
         assert "epic_remediation:" in call_kwargs["tags"][0]
         assert "auto_generated" in call_kwargs["tags"]
         assert call_kwargs["parent_id"] == "epic-1"
+
+    @pytest.mark.asyncio
+    async def test_creates_advisory_issue_for_p2_criterion(
+        self, verifier: EpicVerifier, mock_beads: MagicMock
+    ) -> None:
+        """P2/P3 criteria should create standalone advisory issues, not parented."""
+        mock_beads.find_issue_by_tag_async = AsyncMock(return_value=None)
+        mock_beads.create_issue_async = AsyncMock(return_value="advisory-1")
+
+        verdict = EpicVerdict(
+            passed=True,  # P2/P3 don't block
+            unmet_criteria=[
+                UnmetCriterion(
+                    criterion="Method should be under 60 lines",
+                    evidence="Method is 84 lines but works correctly",
+                    priority=3,  # P3 - advisory
+                    criterion_hash=_compute_criterion_hash(
+                        "Method should be under 60 lines"
+                    ),
+                )
+            ],
+            confidence=0.9,
+            reasoning="All functional criteria met, only style preference remains",
+        )
+
+        blocking_ids, informational_ids = await verifier.create_remediation_issues(
+            "epic-1", verdict
+        )
+
+        # P3 is informational, not blocking
+        assert blocking_ids == []
+        assert informational_ids == ["advisory-1"]
+
+        # Verify issue created with advisory prefix and no parent
+        mock_beads.create_issue_async.assert_called_once()
+        call_kwargs = mock_beads.create_issue_async.call_args[1]
+        assert call_kwargs["title"].startswith("[Advisory]")
+        assert call_kwargs["priority"] == "P3"
+        assert call_kwargs["parent_id"] is None  # Not parented to epic
+
+    @pytest.mark.asyncio
+    async def test_mixed_blocking_and_advisory_criteria(
+        self, verifier: EpicVerifier, mock_beads: MagicMock
+    ) -> None:
+        """Mixed P1 and P3 criteria should create both blocking and advisory issues."""
+        mock_beads.find_issue_by_tag_async = AsyncMock(return_value=None)
+        issue_ids = iter(["blocking-1", "advisory-1"])
+        mock_beads.create_issue_async = AsyncMock(side_effect=lambda **_: next(issue_ids))
+
+        verdict = EpicVerdict(
+            passed=False,
+            unmet_criteria=[
+                UnmetCriterion(
+                    criterion="API must return 400",
+                    evidence="Returns 500",
+                    priority=1,  # P1 - blocking
+                    criterion_hash=_compute_criterion_hash("API must return 400"),
+                ),
+                UnmetCriterion(
+                    criterion="Prefer shorter methods",
+                    evidence="Method is long",
+                    priority=3,  # P3 - advisory
+                    criterion_hash=_compute_criterion_hash("Prefer shorter methods"),
+                ),
+            ],
+            confidence=0.85,
+            reasoning="Functional issue and style suggestion",
+        )
+
+        blocking_ids, informational_ids = await verifier.create_remediation_issues(
+            "epic-1", verdict
+        )
+
+        assert blocking_ids == ["blocking-1"]
+        assert informational_ids == ["advisory-1"]
+
+        # Check both calls
+        calls = mock_beads.create_issue_async.call_args_list
+        assert len(calls) == 2
+
+        # First call (P1) should be blocking with parent
+        assert calls[0][1]["title"].startswith("[Remediation]")
+        assert calls[0][1]["parent_id"] == "epic-1"
+
+        # Second call (P3) should be advisory without parent
+        assert calls[1][1]["title"].startswith("[Advisory]")
+        assert calls[1][1]["parent_id"] is None
 
 
 # ============================================================================
@@ -540,7 +633,7 @@ class TestVerifyAndCloseEligible:
                 UnmetCriterion(
                     criterion="API must return 400 for bad input",
                     evidence="Returns 500 instead",
-                    severity="major",
+                    priority=1,
                     criterion_hash=_compute_criterion_hash(
                         "API must return 400 for bad input"
                     ),
@@ -715,7 +808,7 @@ class TestVerifyAndCloseEpic:
                 UnmetCriterion(
                     criterion="API must return 400 for bad input",
                     evidence="Returns 500 instead",
-                    severity="major",
+                    priority=1,
                     criterion_hash=_compute_criterion_hash(
                         "API must return 400 for bad input"
                     ),
@@ -1056,82 +1149,6 @@ class TestLockUsage:
 # ============================================================================
 
 
-class TestPriorityAdjustment:
-    """Tests for severity-based priority adjustment."""
-
-    @pytest.mark.asyncio
-    async def test_critical_keeps_epic_priority(self, verifier: EpicVerifier) -> None:
-        """Critical severity should keep same priority as epic."""
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "show" in cmd:
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout='{"priority": "P2"}',
-                )
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
-
-        priority = await verifier._get_adjusted_priority("epic-1", "critical")
-        assert priority == "P2"
-
-    @pytest.mark.asyncio
-    async def test_major_lowers_priority(self, verifier: EpicVerifier) -> None:
-        """Major severity should lower priority by 1."""
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "show" in cmd:
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout='{"priority": "P2"}',
-                )
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
-
-        priority = await verifier._get_adjusted_priority("epic-1", "major")
-        assert priority == "P3"
-
-    @pytest.mark.asyncio
-    async def test_minor_lowers_priority_by_two(self, verifier: EpicVerifier) -> None:
-        """Minor severity should lower priority by 2."""
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "show" in cmd:
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout='{"priority": "P2"}',
-                )
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
-
-        priority = await verifier._get_adjusted_priority("epic-1", "minor")
-        assert priority == "P4"
-
-    @pytest.mark.asyncio
-    async def test_priority_caps_at_p5(self, verifier: EpicVerifier) -> None:
-        """Priority should cap at P5."""
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "show" in cmd:
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout='{"priority": "P4"}',
-                )
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
-
-        priority = await verifier._get_adjusted_priority("epic-1", "minor")
-        assert priority == "P5"  # P4 + 2 = P6, capped to P5
-
-
 # ============================================================================
 # Test model error handling
 # ============================================================================
@@ -1328,7 +1345,7 @@ class TestEpicVerifierOrchestratorIntegration:
                     UnmetCriterion(
                         criterion="API must return 400 for bad input",
                         evidence="Returns 500 instead",
-                        severity="major",
+                        priority=1,
                         criterion_hash=_compute_criterion_hash(
                             "API must return 400 for bad input"
                         ),

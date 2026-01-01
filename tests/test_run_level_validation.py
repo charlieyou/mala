@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.log_output.run_metadata import RunConfig, RunMetadata
+from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
 from src.orchestrator import IssueResult, MalaOrchestrator
 from src.pipeline.run_coordinator import (
     RunCoordinator,

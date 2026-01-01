@@ -22,11 +22,11 @@ from .git_utils import (
     get_issue_commits_async,
 )
 from .mcp import MORPH_DISALLOWED_TOOLS
-from .log_output.console import (
+from .infra.io.log_output.console import (
     truncate_text,
     is_verbose_enabled,
 )
-from .log_output.run_metadata import (
+from .infra.io.log_output.run_metadata import (
     RunMetadata,
     RunConfig,
     IssueRun,
@@ -60,13 +60,13 @@ from .pipeline.run_coordinator import (
 )
 from .domain.quality_gate import QUALITY_GATE_IGNORED_COMMANDS, QualityGate
 from .session_log_parser import FileSystemLogProvider
-from .tools.env import (
+from .infra.tools.env import (
     USER_CONFIG_DIR,
     SCRIPTS_DIR,
     get_lock_dir,
     get_runs_dir,
 )
-from .tools.locking import (
+from .infra.tools.locking import (
     release_run_locks,
     cleanup_agent_locks,
 )
@@ -494,6 +494,7 @@ class MalaOrchestrator:
         self.focus = orch_config.focus
         self.cli_args = orch_config.cli_args
         self.epic_override_ids = orch_config.epic_override_ids or set()
+        self.debug_log = orch_config.debug_log
 
         # Review disabled reason (if any)
         self.review_disabled_reason = derived.review_disabled_reason
@@ -538,6 +539,7 @@ class MalaOrchestrator:
         event_sink: MalaEventSink | None,
         config: MalaConfig | None,
         epic_override_ids: set[str] | None,
+        debug_log: bool = False,
     ) -> None:
         """Initialize using legacy individual parameters."""
         import os
@@ -581,6 +583,7 @@ class MalaOrchestrator:
         self.focus = focus
         self.cli_args = cli_args
         self.epic_override_ids = epic_override_ids or set()
+        self.debug_log = debug_log
 
         # Initialize runtime state
         self._init_runtime_state()
@@ -1346,7 +1349,9 @@ class MalaOrchestrator:
             review_enabled=self._is_review_enabled(),
             cli_args=self.cli_args,
         )
-        return RunMetadata(self.repo_path, run_config, __version__)
+        return RunMetadata(
+            self.repo_path, run_config, __version__, debug_log=self.debug_log
+        )
 
     async def _run_main_loop(self, run_metadata: RunMetadata) -> int:
         """Run the main agent spawning and completion loop.

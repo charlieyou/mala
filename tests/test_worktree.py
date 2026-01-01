@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.tools.command_runner import CommandResult
+from src.infra.tools.command_runner import CommandResult
 from src.domain.validation.worktree import (
     WorktreeConfig,
     WorktreeContext,

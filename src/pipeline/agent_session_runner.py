@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
-from src.hooks import (
+from src.infra.hooks import (
     FileReadCache,
     LintCache,
     _detect_lint_command,
@@ -49,7 +49,7 @@ from src.domain.lifecycle import (
     LifecycleState,
 )
 from src.domain.prompts import get_gate_followup_prompt as _get_gate_followup_prompt
-from src.tools.env import SCRIPTS_DIR, get_lock_dir
+from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -200,8 +200,11 @@ class AgentSessionConfig:
             When enabled, code changes are reviewed after the gate passes.
         log_file_wait_timeout: Seconds to wait for log file after session
             completes. Default 60s allows time for SDK to flush logs under load.
-        idle_timeout_seconds: Seconds to wait for any SDK message before
-            aborting the session. None derives a default based on timeout_seconds.
+        idle_timeout_seconds: Seconds to wait for SDK message when not waiting
+            for tool execution. If None, defaults to min(900, max(300, timeout_seconds * 0.2))
+            which scales with session timeout (300-900s range). During tool execution
+            (after ToolUseBlock, before result), timeout is disabled. Set to 0 to
+            disable timeout entirely.
     """
 
     repo_path: Path
@@ -482,10 +485,13 @@ class AgentSessionRunner:
         log_file_poll_interval = 0.5
         idle_timeout_seconds = self.config.idle_timeout_seconds
         if idle_timeout_seconds is None:
+            # Scale idle timeout with session timeout: 20% of timeout, clamped to 300-900s
             derived = self.config.timeout_seconds * 0.2
             idle_timeout_seconds = min(900.0, max(300.0, derived))
         if idle_timeout_seconds <= 0:
             idle_timeout_seconds = None
+        # Track pending tool calls to disable timeout during tool execution
+        pending_tool_ids: set[str] = set()
 
         try:
             async with asyncio.timeout(self.config.timeout_seconds):
@@ -512,6 +518,7 @@ class AgentSessionRunner:
                     if pending_query is not None:
                         message_iteration_complete = False
                         tool_calls_this_turn = 0
+                        pending_tool_ids.clear()  # Reset for new iteration
 
                         while not message_iteration_complete:
                             # Backoff before retry (not on first attempt)
@@ -543,14 +550,26 @@ class AgentSessionRunner:
                             try:
                                 async with client:
                                     # Send query - only pass session_id if provided
+                                    query_start = time.time()
                                     if pending_session_id is not None:
+                                        logger.debug(
+                                            "Session %s: sending query with session_id=%s...",
+                                            input.issue_id,
+                                            pending_session_id[:8],
+                                        )
                                         await client.query(
                                             pending_query, session_id=pending_session_id
                                         )
                                     else:
+                                        logger.debug(
+                                            "Session %s: sending query (new session)",
+                                            input.issue_id,
+                                        )
                                         await client.query(pending_query)
+                                    first_message_received = False
 
                                     # Define _iter_messages (captures client from scope)
+                                    # Uses pending_tool_ids to disable timeout during tool execution
                                     async def _iter_messages() -> AsyncIterator[Any]:
                                         stream = client.receive_response()
                                         if idle_timeout_seconds is None:
@@ -558,10 +577,14 @@ class AgentSessionRunner:
                                                 yield msg
                                             return
                                         while True:
+                                            # Disable timeout while waiting for tool results
+                                            current_timeout = (
+                                                None if pending_tool_ids else idle_timeout_seconds
+                                            )
                                             try:
                                                 msg = await asyncio.wait_for(
                                                     stream.__anext__(),
-                                                    timeout=idle_timeout_seconds,
+                                                    timeout=current_timeout,
                                                 )
                                             except StopAsyncIteration:
                                                 break
@@ -574,6 +597,14 @@ class AgentSessionRunner:
 
                                     try:
                                         async for message in _iter_messages():
+                                            if not first_message_received:
+                                                first_message_received = True
+                                                latency = time.time() - query_start
+                                                logger.debug(
+                                                    "Session %s: first message after %.1fs",
+                                                    input.issue_id,
+                                                    latency,
+                                                )
                                             # Log to tracer if provided
                                             if tracer is not None:
                                                 tracer.log_message(message)
@@ -596,6 +627,8 @@ class AgentSessionRunner:
                                                         # Track tool calls for side effect
                                                         # detection
                                                         tool_calls_this_turn += 1
+                                                        # Track pending tool for timeout logic
+                                                        pending_tool_ids.add(block.id)
                                                         if (
                                                             self.callbacks.on_tool_use
                                                             is not None
@@ -625,10 +658,13 @@ class AgentSessionRunner:
                                                     elif isinstance(
                                                         block, ToolResultBlock
                                                     ):
-                                                        # Check for lint success
+                                                        # Clear pending tool (result received)
                                                         tool_use_id = getattr(
                                                             block, "tool_use_id", None
                                                         )
+                                                        if tool_use_id:
+                                                            pending_tool_ids.discard(tool_use_id)
+                                                        # Check for lint success
                                                         if (
                                                             tool_use_id
                                                             in pending_lint_commands
@@ -653,14 +689,25 @@ class AgentSessionRunner:
                                                 )
 
                                         # Success! Clear pending_query and exit retry loop
+                                        stream_duration = time.time() - query_start
+                                        logger.debug(
+                                            "Session %s: stream complete after %.1fs, "
+                                            "%d tool calls",
+                                            input.issue_id,
+                                            stream_duration,
+                                            tool_calls_this_turn,
+                                        )
                                         pending_query = None
                                         idle_retry_count = 0
                                         message_iteration_complete = True
 
                                     except IdleTimeoutError:
                                         # === CRITICAL: Always disconnect first ===
+                                        idle_duration = time.time() - query_start
                                         logger.warning(
-                                            f"Session {input.issue_id}: idle timeout, "
+                                            f"Session {input.issue_id}: idle timeout after "
+                                            f"{idle_duration:.1f}s, {tool_calls_this_turn} tool "
+                                            f"calls, first_msg={'yes' if first_message_received else 'no'}, "
                                             "disconnecting subprocess"
                                         )
                                         try:
@@ -934,12 +981,36 @@ class AgentSessionRunner:
                         if self.callbacks.on_review_check is None:
                             raise ValueError("on_review_check callback must be set")
 
+                        logger.debug(
+                            "Session %s: starting review (attempt %d/%d, session_id=%s)",
+                            input.issue_id,
+                            lifecycle_ctx.retry_state.review_attempt,
+                            self.config.max_review_retries,
+                            lifecycle_ctx.session_id[:8] if lifecycle_ctx.session_id else None,
+                        )
+                        review_start = time.time()
                         review_result = await self.callbacks.on_review_check(
                             input.issue_id,
                             input.issue_description,
                             input.baseline_commit,
                             lifecycle_ctx.session_id,
                             lifecycle_ctx.retry_state,
+                        )
+                        review_duration = time.time() - review_start
+                        issue_count = len(review_result.issues) if review_result.issues else 0
+                        blocking = sum(
+                            1 for i in review_result.issues
+                            if i.priority is not None and i.priority <= 1
+                        ) if review_result.issues else 0
+                        logger.debug(
+                            "Session %s: review completed in %.1fs "
+                            "(passed=%s, issues=%d, blocking=%d, parse_error=%s)",
+                            input.issue_id,
+                            review_duration,
+                            review_result.passed,
+                            issue_count,
+                            blocking,
+                            review_result.parse_error,
                         )
 
                         # Check for fatal error
@@ -990,22 +1061,28 @@ class AgentSessionRunner:
                             continue
 
                         if result.effect == Effect.SEND_REVIEW_RETRY:
+                            # Log review retry trigger
+                            blocking_count = sum(
+                                1
+                                for i in review_result.issues
+                                if i.priority is not None and i.priority <= 1
+                            ) if review_result.issues else 0
+                            logger.debug(
+                                "Session %s: SEND_REVIEW_RETRY triggered "
+                                "(attempt %d/%d, %d blocking issues)",
+                                input.issue_id,
+                                lifecycle_ctx.retry_state.review_attempt,
+                                self.config.max_review_retries,
+                                blocking_count,
+                            )
+
                             # Emit review retry event
                             if self.event_sink is not None:
-                                error_count = (
-                                    sum(
-                                        1
-                                        for i in review_result.issues
-                                        if i.priority is not None and i.priority <= 1
-                                    )
-                                    if review_result.issues
-                                    else None
-                                )
                                 self.event_sink.on_review_retry(
                                     input.issue_id,
                                     lifecycle_ctx.retry_state.review_attempt,
                                     self.config.max_review_retries,
-                                    error_count=error_count,
+                                    error_count=blocking_count or None,
                                     parse_error=review_result.parse_error,
                                 )
 
@@ -1029,6 +1106,13 @@ class AgentSessionRunner:
                                     "Cannot retry review: session_id not received from SDK"
                                 )
                             pending_session_id = session_id
+                            logger.debug(
+                                "Session %s: queueing review retry prompt "
+                                "(%d chars, session_id=%s)",
+                                input.issue_id,
+                                len(pending_query),
+                                session_id[:8],
+                            )
                             idle_retry_count = 0
                             continue
 

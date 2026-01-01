@@ -49,12 +49,18 @@
 2. **PR 2 (AgentSessionRunner)**: Extract `run_session` into focused helper methods (`_build_sdk_options()`, `_run_message_iteration()`, `_handle_log_waiting()`, `_handle_gate_effect()`, `_handle_review_effect()`) and add unit tests.
 3. **PR 3 (MalaOrchestrator)**: Create `IssueExecutionCoordinator` to hold execution loop logic, remove legacy init path entirely, and update ~55 test locations to use factory pattern.
 
+## Prerequisites: Import Restructure (mala-iy6l)
+
+**This plan assumes mala-iy6l is complete.** The iy6l epic restructures the codebase into layer-based packages. Key paths this plan depends on:
+- `src/orchestrator.py` → `src/orchestration/orchestrator.py` (iy6l.6)
+- `src/cli.py` → `src/cli/cli.py` (iy6l.7)
+
 ## File Existence Verification
 
 | Path | Status | Notes |
 |------|--------|-------|
 | `src/pipeline/agent_session_runner.py` | Exists | 1064 lines, run_session at 389-1064 |
-| `src/orchestrator.py` | Exists | 1565 lines, dual init paths |
+| `src/orchestration/orchestrator.py` | Exists (post-iy6l) | 1565 lines, dual init paths |
 | `src/infra/io/event_sink.py` | Exists | 1396 lines, 38 event methods, `@runtime_checkable` on line 55 |
 | `src/core/protocols.py` | Exists | Protocol definitions including `IssueProvider` |
 | `src/pipeline/__init__.py` | Exists | Pipeline module exports |
@@ -207,8 +213,8 @@
 - **Covers**: AC #3
 - **Depends on**: Task 7
 - **Changes**:
-  - `src/orchestrator.py`:
-    - Import `IssueExecutionCoordinator` from `src/pipeline/issue_execution_coordinator`
+  - `src/orchestration/orchestrator.py`:
+    - Import `IssueExecutionCoordinator` from `src.pipeline.issue_execution_coordinator`
     - Create coordinator instance in factory init path
     - Update `_run_main_loop` to delegate to `coordinator.run_loop()`
     - Keep `spawn_agent` and `_finalize_issue_result` as callbacks passed to coordinator
@@ -223,7 +229,7 @@
 - **Covers**: AC #3 (legacy init removed)
 - **Depends on**: Task 8
 - **Changes**:
-  - `src/orchestrator.py`:
+  - `src/orchestration/orchestrator.py`:
     - Remove legacy `__init__` overload (lines 312-340)
     - Remove `_init_legacy` method entirely
     - Keep only factory-based initialization
@@ -236,12 +242,12 @@
     - `tests/test_morph_integration.py` (1 location)
   - Create helper fixture `make_orchestrator()` in `tests/conftest.py` that uses factory pattern
   - Update all test files to use the new fixture or factory pattern
-  - `src/cli.py`: Verify uses factory pattern (should already via `create_orchestrator()`)
+  - `src/cli/cli.py`: Verify uses factory pattern (should already via `create_orchestrator()`)
 - **Verification**:
   - Run `uv run pytest tests/test_orchestrator.py -v`
   - Run `uv run pytest -m "unit or integration"` - full test suite passes
   - Verify no legacy init usage remains: `grep -r "MalaOrchestrator(" tests/ src/`
-  - Verify `src/orchestrator.py` line count significantly reduced (target: <1000 lines after coordinator extraction)
+  - Verify `src/orchestration/orchestrator.py` line count significantly reduced (target: <1000 lines after coordinator extraction)
 - **Rollback**:
   - Revert commit
 

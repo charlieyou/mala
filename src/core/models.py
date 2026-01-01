@@ -71,13 +71,14 @@ class UnmetCriterion:
     Attributes:
         criterion: The acceptance criterion not met.
         evidence: Why it's considered unmet.
-        severity: How critical the gap is (critical, major, minor).
+        priority: Issue priority matching Cerberus levels (0-3).
+            P0/P1 are blocking, P2/P3 are non-blocking (informational).
         criterion_hash: SHA256 of criterion text, for deduplication.
     """
 
     criterion: str
     evidence: str
-    severity: Literal["critical", "major", "minor"]
+    priority: int  # 0=P0 (blocking), 1=P1 (blocking), 2=P2 (non-blocking), 3=P3 (non-blocking)
     criterion_hash: str
 
 

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.tools.command_runner import (
+from src.infra.tools.command_runner import (
     CommandResult,
     CommandRunner,
     run_command,

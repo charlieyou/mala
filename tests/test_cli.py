@@ -11,9 +11,9 @@ import typer
 
 import src.orchestrator
 import src.beads_client
-import src.tools.locking
+import src.infra.tools.locking
 import src.cli_support
-import src.log_output.run_metadata
+import src.infra.io.log_output.run_metadata
 from src.models import EpicVerificationResult
 
 
@@ -40,7 +40,7 @@ class TestImportSafety:
         deleted_modules = [
             mod_name
             for mod_name in sys.modules.keys()
-            if mod_name.startswith("src.cli") or mod_name.startswith("src.tools.env")
+            if mod_name.startswith("src.cli") or mod_name.startswith("src.infra.tools.env")
         ]
         for mod_name in deleted_modules:
             del sys.modules[mod_name]
@@ -52,10 +52,10 @@ class TestImportSafety:
             def mock_load_user_env() -> None:
                 load_called["called"] = True
 
-            # Patch both src.tools.env and src.cli_support to ensure full isolation
+            # Patch both src.infra.tools.env and src.cli_support to ensure full isolation
             # (cli_support re-exports load_user_env from tools.env)
             with (
-                patch("src.tools.env.load_user_env", mock_load_user_env),
+                patch("src.infra.tools.env.load_user_env", mock_load_user_env),
                 patch("src.cli_support.load_user_env", mock_load_user_env),
             ):
                 # Force reimport of cli module
@@ -131,7 +131,7 @@ class TestImportSafety:
         deleted_modules = [
             mod_name
             for mod_name in sys.modules.keys()
-            if mod_name.startswith("src.cli") or mod_name.startswith("src.tools.env")
+            if mod_name.startswith("src.cli") or mod_name.startswith("src.infra.tools.env")
         ]
         for mod_name in deleted_modules:
             del sys.modules[mod_name]
@@ -530,10 +530,10 @@ def test_clean_removes_locks_and_logs(
     def _log(*args: object, **_kwargs: object) -> None:
         logs.append(args)
 
-    # Patch both cli_support (where cli imports from) and src.tools.locking
+    # Patch both cli_support (where cli imports from) and src.infra.tools.locking
     # (where cli_support imports from) to ensure full isolation
     monkeypatch.setattr(src.cli_support, "get_lock_dir", lambda: lock_dir)
-    monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
     monkeypatch.setattr(cli, "log", _log)
     monkeypatch.setattr(cli.typer, "confirm", lambda _msg: True)
@@ -561,11 +561,11 @@ def test_status_no_running_instance(
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     # Patch both cli_support and underlying modules
     monkeypatch.setattr(src.cli_support, "get_lock_dir", lambda: lock_dir)
-    monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
     # Mock to return no running instances - patch cli_support where cli imports from
     monkeypatch.setattr(src.cli_support, "get_running_instances_for_dir", lambda _: [])
     monkeypatch.setattr(
-        src.log_output.run_metadata, "get_running_instances_for_dir", lambda _: []
+        src.infra.io.log_output.run_metadata, "get_running_instances_for_dir", lambda _: []
     )
 
     cli.status()
@@ -597,7 +597,7 @@ def test_status_with_running_instance(
     (run_dir / "two.json").write_text("{}")
 
     # Create a mock RunningInstance
-    mock_instance = src.log_output.run_metadata.RunningInstance(
+    mock_instance = src.infra.io.log_output.run_metadata.RunningInstance(
         run_id="test-run-id",
         repo_path=tmp_path,
         started_at=datetime.now(UTC),
@@ -608,7 +608,7 @@ def test_status_with_running_instance(
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     # Patch both cli_support and underlying modules
     monkeypatch.setattr(src.cli_support, "get_lock_dir", lambda: lock_dir)
-    monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
     # Patch get_running_instances_for_dir in cli_support where cli imports from
     monkeypatch.setattr(
@@ -617,7 +617,7 @@ def test_status_with_running_instance(
         lambda _: [mock_instance],
     )
     monkeypatch.setattr(
-        src.log_output.run_metadata,
+        src.infra.io.log_output.run_metadata,
         "get_running_instances_for_dir",
         lambda _: [mock_instance],
     )
@@ -648,14 +648,14 @@ def test_status_all_flag(
     lock_dir.mkdir()
 
     # Create mock instances for two different directories
-    mock_instance_1 = src.log_output.run_metadata.RunningInstance(
+    mock_instance_1 = src.infra.io.log_output.run_metadata.RunningInstance(
         run_id="run-1",
         repo_path=tmp_path / "repo1",
         started_at=datetime.now(UTC),
         pid=111,
         max_agents=2,
     )
-    mock_instance_2 = src.log_output.run_metadata.RunningInstance(
+    mock_instance_2 = src.infra.io.log_output.run_metadata.RunningInstance(
         run_id="run-2",
         repo_path=tmp_path / "repo2",
         started_at=datetime.now(UTC),
@@ -666,7 +666,7 @@ def test_status_all_flag(
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     # Patch both cli_support and underlying modules
     monkeypatch.setattr(src.cli_support, "get_lock_dir", lambda: lock_dir)
-    monkeypatch.setattr(src.tools.locking, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
     # Patch get_running_instances in cli_support where cli imports from
     monkeypatch.setattr(
         src.cli_support,
@@ -674,7 +674,7 @@ def test_status_all_flag(
         lambda: [mock_instance_1, mock_instance_2],
     )
     monkeypatch.setattr(
-        src.log_output.run_metadata,
+        src.infra.io.log_output.run_metadata,
         "get_running_instances",
         lambda: [mock_instance_1, mock_instance_2],
     )
@@ -1182,7 +1182,7 @@ def test_env_overrides_runs_dir_from_dotenv(
     """Test that MALA_RUNS_DIR from .env file overrides default RUNS_DIR."""
     # Clear cached modules first
     for mod_name in list(sys.modules.keys()):
-        if mod_name.startswith("src.tools.env") or mod_name.startswith("src.cli"):
+        if mod_name.startswith("src.infra.tools.env") or mod_name.startswith("src.cli"):
             del sys.modules[mod_name]
 
     # Create a temporary .env file with custom MALA_RUNS_DIR
@@ -1196,7 +1196,7 @@ def test_env_overrides_runs_dir_from_dotenv(
     monkeypatch.delenv("MALA_RUNS_DIR", raising=False)
 
     # Import env module with patched USER_CONFIG_DIR
-    import src.tools.env as env_module
+    import src.infra.tools.env as env_module
 
     monkeypatch.setattr(env_module, "USER_CONFIG_DIR", config_dir)
     env_module.load_user_env()
@@ -1211,7 +1211,7 @@ def test_env_overrides_lock_dir_from_dotenv(
     """Test that MALA_LOCK_DIR from .env file overrides default LOCK_DIR."""
     # Clear cached modules first
     for mod_name in list(sys.modules.keys()):
-        if mod_name.startswith("src.tools.env") or mod_name.startswith("src.cli"):
+        if mod_name.startswith("src.infra.tools.env") or mod_name.startswith("src.cli"):
             del sys.modules[mod_name]
 
     # Create a temporary .env file with custom MALA_LOCK_DIR
@@ -1225,7 +1225,7 @@ def test_env_overrides_lock_dir_from_dotenv(
     monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
 
     # Import env module with patched USER_CONFIG_DIR
-    import src.tools.env as env_module
+    import src.infra.tools.env as env_module
 
     monkeypatch.setattr(env_module, "USER_CONFIG_DIR", config_dir)
     env_module.load_user_env()
@@ -1242,10 +1242,10 @@ def test_env_defaults_when_no_override(monkeypatch: pytest.MonkeyPatch) -> None:
 
     # Clear cached modules
     for mod_name in list(sys.modules.keys()):
-        if mod_name.startswith("src.tools.env") or mod_name.startswith("src.cli"):
+        if mod_name.startswith("src.infra.tools.env") or mod_name.startswith("src.cli"):
             del sys.modules[mod_name]
 
-    from src.tools.env import USER_CONFIG_DIR, get_lock_dir, get_runs_dir
+    from src.infra.tools.env import USER_CONFIG_DIR, get_lock_dir, get_runs_dir
 
     runs_dir = get_runs_dir()
     lock_dir = get_lock_dir()

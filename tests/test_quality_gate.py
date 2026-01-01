@@ -8,7 +8,7 @@ Tests for:
 import json
 from pathlib import Path
 from typing import cast
-from src.tools.command_runner import CommandResult
+from src.infra.tools.command_runner import CommandResult
 from src.domain.validation.spec import CommandKind, ValidationScope, build_validation_spec
 from unittest.mock import patch
 

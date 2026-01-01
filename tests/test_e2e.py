@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.tools.command_runner import CommandResult
+from src.infra.tools.command_runner import CommandResult
 from tests.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
 from src.domain.validation.e2e import (
     E2EConfig,
@@ -324,10 +324,10 @@ class TestE2ERunnerRun:
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
             patch("src.domain.validation.helpers.run_command", side_effect=mock_run_command),
-            patch("src.tools.command_runner.subprocess.Popen", side_effect=mock_popen),
+            patch("src.infra.tools.command_runner.subprocess.Popen", side_effect=mock_popen),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
-            patch("src.tools.command_runner.os.killpg"),  # Mock process group kill
+            patch("src.infra.tools.command_runner.os.killpg"),  # Mock process group kill
         ):
             (tmp_path / "fixture").mkdir()
             (tmp_path / "fixture" / "tests").mkdir()

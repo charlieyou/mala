@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from src.tools.locking import _lock_key, lock_path
+from src.infra.tools.locking import _lock_key, lock_path
 
 
 class TestLockKeyNormalization:

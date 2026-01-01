@@ -13,7 +13,7 @@ from claude_agent_sdk.types import PreToolUseHookInput, HookContext
 if TYPE_CHECKING:
     from claude_agent_sdk.types import StopHookInput
 
-from src.hooks import (
+from src.infra.hooks import (
     make_lock_enforcement_hook,
     block_dangerous_commands,
     DESTRUCTIVE_GIT_PATTERNS,
@@ -25,7 +25,7 @@ from src.hooks import (
     make_stop_hook,
     _get_git_state,
 )
-from src.tools.command_runner import CommandResult
+from src.infra.tools.command_runner import CommandResult
 
 
 def make_hook_input(tool_name: str, tool_input: dict[str, Any]) -> PreToolUseHookInput:
@@ -797,7 +797,7 @@ class TestDetectLintCommand:
 
     def test_detects_ruff_check(self) -> None:
         """Should detect ruff check commands."""
-        from src.hooks import _detect_lint_command
+        from src.infra.hooks import _detect_lint_command
 
         assert _detect_lint_command("uvx ruff check .") == "ruff_check"
         assert _detect_lint_command("ruff check src/") == "ruff_check"
@@ -805,7 +805,7 @@ class TestDetectLintCommand:
 
     def test_detects_ruff_format(self) -> None:
         """Should detect ruff format commands."""
-        from src.hooks import _detect_lint_command
+        from src.infra.hooks import _detect_lint_command
 
         assert _detect_lint_command("uvx ruff format .") == "ruff_format"
         assert _detect_lint_command("ruff format --check .") == "ruff_format"
@@ -813,7 +813,7 @@ class TestDetectLintCommand:
 
     def test_detects_ty_check(self) -> None:
         """Should detect ty check commands."""
-        from src.hooks import _detect_lint_command
+        from src.infra.hooks import _detect_lint_command
 
         assert _detect_lint_command("uvx ty check") == "ty_check"
         assert _detect_lint_command("ty check src/") == "ty_check"
@@ -821,7 +821,7 @@ class TestDetectLintCommand:
 
     def test_returns_none_for_non_lint_commands(self) -> None:
         """Should return None for non-lint commands."""
-        from src.hooks import _detect_lint_command
+        from src.infra.hooks import _detect_lint_command
 
         assert _detect_lint_command("git status") is None
         assert _detect_lint_command("uv run pytest") is None
@@ -830,7 +830,7 @@ class TestDetectLintCommand:
 
     def test_case_insensitive(self) -> None:
         """Should be case insensitive."""
-        from src.hooks import _detect_lint_command
+        from src.infra.hooks import _detect_lint_command
 
         assert _detect_lint_command("RUFF CHECK .") == "ruff_check"
         assert _detect_lint_command("Ruff Format .") == "ruff_format"
@@ -838,7 +838,7 @@ class TestDetectLintCommand:
 
     def test_distinguishes_ruff_check_from_format(self) -> None:
         """Should correctly distinguish ruff check from ruff format."""
-        from src.hooks import _detect_lint_command
+        from src.infra.hooks import _detect_lint_command
 
         # format should not be detected as check
         assert _detect_lint_command("ruff format .") == "ruff_format"
@@ -854,7 +854,7 @@ class TestLintCache:
 
     def test_first_lint_is_allowed(self, tmp_path: Path) -> None:
         """First lint of a type should be allowed (recorded as pending)."""
-        from src.hooks import LintCache
+        from src.infra.hooks import LintCache
 
         # Create a git repo for testing
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -893,7 +893,7 @@ class TestLintCache:
 
     def test_second_lint_unchanged_is_blocked(self, tmp_path: Path) -> None:
         """Second lint with unchanged state promotes pending to confirmed and blocks."""
-        from src.hooks import LintCache
+        from src.infra.hooks import LintCache
 
         # Create a git repo
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -940,7 +940,7 @@ class TestLintCache:
 
     def test_lint_after_file_change_is_allowed(self, tmp_path: Path) -> None:
         """Lint after file modification should be allowed."""
-        from src.hooks import LintCache
+        from src.infra.hooks import LintCache
 
         # Create a git repo
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -985,7 +985,7 @@ class TestLintCache:
 
     def test_different_lint_types_cached_separately(self, tmp_path: Path) -> None:
         """Different lint types should be cached independently."""
-        from src.hooks import LintCache
+        from src.infra.hooks import LintCache
 
         # Create a git repo
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -1037,7 +1037,7 @@ class TestLintCache:
 
     def test_invalidate_clears_specific_type(self, tmp_path: Path) -> None:
         """Invalidating a specific lint type should only clear that type."""
-        from src.hooks import LintCache
+        from src.infra.hooks import LintCache
 
         # Create a git repo
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -1083,7 +1083,7 @@ class TestLintCache:
 
     def test_invalidate_all_clears_cache(self, tmp_path: Path) -> None:
         """Invalidating without type should clear all entries."""
-        from src.hooks import LintCache
+        from src.infra.hooks import LintCache
 
         # Create a git repo
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -1125,7 +1125,7 @@ class TestLintCache:
 
     def test_non_git_repo_allows_all_lints(self, tmp_path: Path) -> None:
         """In a non-git directory, all lints should be allowed."""
-        from src.hooks import LintCache
+        from src.infra.hooks import LintCache
 
         # tmp_path is not a git repo
         cache = LintCache(repo_path=tmp_path)
@@ -1146,7 +1146,7 @@ class TestMakeLintCacheHook:
     @pytest.mark.asyncio
     async def test_allows_first_lint(self, tmp_path: Path) -> None:
         """First lint through hook should be allowed."""
-        from src.hooks import LintCache, make_lint_cache_hook
+        from src.infra.hooks import LintCache, make_lint_cache_hook
 
         # Create a git repo
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -1186,7 +1186,7 @@ class TestMakeLintCacheHook:
     @pytest.mark.asyncio
     async def test_blocks_second_lint_unchanged(self, tmp_path: Path) -> None:
         """Second lint through hook should be blocked if unchanged."""
-        from src.hooks import LintCache, make_lint_cache_hook
+        from src.infra.hooks import LintCache, make_lint_cache_hook
 
         # Create a git repo
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -1235,7 +1235,7 @@ class TestMakeLintCacheHook:
     @pytest.mark.asyncio
     async def test_allows_non_lint_bash_commands(self, tmp_path: Path) -> None:
         """Non-lint Bash commands should be allowed."""
-        from src.hooks import LintCache, make_lint_cache_hook
+        from src.infra.hooks import LintCache, make_lint_cache_hook
 
         cache = LintCache(repo_path=tmp_path)
         hook = make_lint_cache_hook(cache)
@@ -1250,7 +1250,7 @@ class TestMakeLintCacheHook:
     @pytest.mark.asyncio
     async def test_allows_non_bash_tools(self, tmp_path: Path) -> None:
         """Non-Bash tools should be allowed."""
-        from src.hooks import LintCache, make_lint_cache_hook
+        from src.infra.hooks import LintCache, make_lint_cache_hook
 
         cache = LintCache(repo_path=tmp_path)
         hook = make_lint_cache_hook(cache)
@@ -1270,7 +1270,7 @@ class TestMakeLintCacheHook:
         be allowed even if ruff check was previously cached. This ensures the
         test portion runs.
         """
-        from src.hooks import LintCache, make_lint_cache_hook
+        from src.infra.hooks import LintCache, make_lint_cache_hook
 
         # Create a git repo
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -1335,7 +1335,7 @@ class TestMakeLintCacheHook:
     @pytest.mark.asyncio
     async def test_invalidates_cache_on_write(self, tmp_path: Path) -> None:
         """Write tool should invalidate lint cache."""
-        from src.hooks import LintCache, make_lint_cache_hook
+        from src.infra.hooks import LintCache, make_lint_cache_hook
 
         # Create a git repo
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -1381,7 +1381,7 @@ class TestMakeLintCacheHook:
     @pytest.mark.asyncio
     async def test_invalidates_cache_on_edit_file(self, tmp_path: Path) -> None:
         """MCP edit_file tool should invalidate lint cache."""
-        from src.hooks import LintCache, make_lint_cache_hook
+        from src.infra.hooks import LintCache, make_lint_cache_hook
 
         # Create a git repo
         subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)

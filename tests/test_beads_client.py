@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.beads_client import BeadsClient
-from src.tools.command_runner import CommandResult
+from src.infra.tools.command_runner import CommandResult
 
 
 def make_command_result(

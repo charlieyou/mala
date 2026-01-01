@@ -457,7 +457,10 @@ def map_exit_code_to_result(
             if isinstance(data, dict):
                 parse_errors = data.get("parse_errors", [])
                 if isinstance(parse_errors, list) and parse_errors:
-                    parse_error_msg = "; ".join(str(e) for e in parse_errors)
+                    parse_error_msg = "; ".join(
+                        str(e.get("error", e)) if isinstance(e, dict) else str(e)
+                        for e in parse_errors
+                    )
         except (json.JSONDecodeError, TypeError):
             if stderr:
                 parse_error_msg = stderr.strip()

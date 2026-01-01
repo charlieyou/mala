@@ -31,4 +31,4 @@ if ! is_literal_key "$filepath"; then
     fi
 fi
 
-exec env PYTHONPATH="$MALA_ROOT" python -m src.tools.locking check "$filepath"
+exec env PYTHONPATH="$MALA_ROOT" python -m src.infra.tools.locking check "$filepath"

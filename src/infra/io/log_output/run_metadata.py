@@ -5,6 +5,7 @@ Replaces the duplicate JSONL logging with structured run metadata.
 """
 
 import json
+import logging
 import os
 import uuid
 from dataclasses import dataclass, field, asdict
@@ -18,6 +19,79 @@ from src.core.models import (
     ValidationArtifacts,
 )
 from src.infra.tools.env import get_lock_dir, get_repo_runs_dir
+
+
+def configure_debug_logging(repo_path: Path, run_id: str) -> Path:
+    """Configure Python logging to write debug logs to a file.
+
+    Creates a debug log file alongside run metadata at:
+    ~/.mala/runs/{repo}/{timestamp}_{run_id}.debug.log
+
+    All loggers in the 'src' namespace will write DEBUG+ messages to this file.
+
+    Args:
+        repo_path: Repository path for log directory.
+        run_id: Run ID (UUID) for filename.
+
+    Returns:
+        Path to the debug log file.
+    """
+    runs_dir = get_repo_runs_dir(repo_path)
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
+    short_id = run_id[:8]
+    log_path = runs_dir / f"{timestamp}_{short_id}.debug.log"
+
+    # Create file handler for debug logs
+    handler = logging.FileHandler(log_path)
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    )
+    # Tag the handler so we can identify it later
+    handler.set_name(f"mala_debug_{run_id}")
+
+    # Add handler to root logger for 'src' namespace
+    src_logger = logging.getLogger("src")
+    src_logger.setLevel(logging.DEBUG)
+
+    # Remove any previous mala debug handlers to avoid duplicates/leaks
+    for existing in src_logger.handlers[:]:
+        if getattr(existing, "name", "").startswith("mala_debug_"):
+            existing.close()
+            src_logger.removeHandler(existing)
+
+    src_logger.addHandler(handler)
+
+    return log_path
+
+
+def cleanup_debug_logging(run_id: str) -> bool:
+    """Clean up debug logging handler for a completed run.
+
+    Removes and closes the FileHandler associated with the given run_id
+    to prevent file handle leaks.
+
+    Args:
+        run_id: Run ID (UUID) whose handler should be cleaned up.
+
+    Returns:
+        True if a handler was found and cleaned up, False otherwise.
+    """
+    src_logger = logging.getLogger("src")
+    handler_name = f"mala_debug_{run_id}"
+
+    for handler in src_logger.handlers[:]:
+        if getattr(handler, "name", "") == handler_name:
+            handler.close()
+            src_logger.removeHandler(handler)
+            return True
+
+    return False
 
 
 @dataclass
@@ -106,6 +180,8 @@ class RunMetadata:
         repo_path: Path,
         config: RunConfig,
         version: str,
+        *,
+        debug_log: bool = False,
     ):
         self.run_id = str(uuid.uuid4())
         self.started_at = datetime.now(UTC)
@@ -116,6 +192,13 @@ class RunMetadata:
         self.issues: dict[str, IssueRun] = {}
         # Run-level validation results (from mala-e0i)
         self.run_validation: ValidationResult | None = None
+        # Configure debug logging for this run (if enabled)
+        if debug_log:
+            self.debug_log_path: Path | None = configure_debug_logging(
+                repo_path, self.run_id
+            )
+        else:
+            self.debug_log_path = None
 
     def record_issue(self, issue: IssueRun) -> None:
         """Record the result of an issue run."""
@@ -198,6 +281,7 @@ class RunMetadata:
                 for issue_id, issue in self.issues.items()
             },
             "run_validation": self._serialize_validation_result(self.run_validation),
+            "debug_log_path": str(self.debug_log_path) if self.debug_log_path else None,
         }
 
     @staticmethod
@@ -336,6 +420,10 @@ class RunMetadata:
             data.get("run_validation")
         )
 
+        # Restore debug_log_path (don't reconfigure logging on load)
+        debug_log_path = data.get("debug_log_path")
+        metadata.debug_log_path = Path(debug_log_path) if debug_log_path else None
+
         return metadata
 
     def save(self) -> Path:
@@ -344,10 +432,17 @@ class RunMetadata:
         Saves to a repo-specific subdirectory with timestamp-based filename
         for easier sorting: {runs_dir}/{repo-safe-name}/{timestamp}_{short-uuid}.json
 
+        Also cleans up the debug logging handler to prevent file handle leaks.
+
         Returns:
             Path to the saved metadata file.
         """
         self.completed_at = datetime.now(UTC)
+
+        # Clean up debug logging handler before saving
+        if self.debug_log_path is not None:
+            cleanup_debug_logging(self.run_id)
+
         # Use repo-specific subdirectory
         runs_dir = get_repo_runs_dir(self.repo_path)
         runs_dir.mkdir(parents=True, exist_ok=True)

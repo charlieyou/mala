@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.hooks import (
+from src.infra.hooks import (
     FileReadCache,
     LintCache,
     _detect_lint_command,
@@ -37,8 +37,8 @@ from src.hooks import (
     make_stop_hook,
 )
 from src.mcp import get_disallowed_tools, get_mcp_servers
-from src.tools.env import SCRIPTS_DIR, get_lock_dir
-from src.tools.locking import cleanup_agent_locks
+from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
+from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.e2e import E2EStatus
 from src.domain.validation.spec import (
     ValidationContext,
@@ -49,7 +49,7 @@ from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
     from src.event_sink import MalaEventSink
-    from src.log_output.run_metadata import (
+    from src.infra.io.log_output.run_metadata import (
         RunMetadata,
         ValidationResult as MetaValidationResult,
     )
@@ -153,7 +153,7 @@ class SpecResultBuilder:
         Returns:
             MetaValidationResult for run metadata.
         """
-        from src.log_output.run_metadata import ValidationResult as MetaValidationResult
+        from src.infra.io.log_output.run_metadata import ValidationResult as MetaValidationResult
 
         e2e_passed = SpecResultBuilder.derive_e2e_passed(result)
         failed_commands = (

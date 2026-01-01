@@ -263,7 +263,7 @@ class TestSetupWorkspaceBaseline:
     ) -> None:
         """When coverage.min_percent is None, setup should refresh baseline."""
         from src.domain.validation.spec_workspace import setup_workspace
-        from src.tools.command_runner import CommandResult
+        from src.infra.tools.command_runner import CommandResult
 
         spec = ValidationSpec(
             commands=[
@@ -370,7 +370,7 @@ class TestSetupWorkspaceErrors:
             SetupError,
             setup_workspace,
         )
-        from src.tools.command_runner import CommandResult
+        from src.infra.tools.command_runner import CommandResult
 
         spec = ValidationSpec(
             commands=[
@@ -409,7 +409,7 @@ class TestSetupWorkspaceErrors:
                 "src.domain.validation.worktree.create_worktree",
                 return_value=mock_worktree,
             ),
-            patch("src.tools.locking.try_lock", return_value=True),
+            patch("src.infra.tools.locking.try_lock", return_value=True),
         ):
             with pytest.raises(SetupError) as exc_info:
                 setup_workspace(

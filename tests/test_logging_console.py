@@ -1,6 +1,6 @@
 import pytest
 
-from src.log_output import console
+from src.infra.io.log_output import console
 
 
 def test_truncate_text_respects_verbose() -> None:

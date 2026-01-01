@@ -1,4 +1,4 @@
-"""Unit tests for src/log_output/run_metadata.py - RunMetadata and related types.
+"""Unit tests for RunMetadata and related types.
 
 Tests for:
 - RunMetadata serialization/deserialization
@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.log_output.run_metadata import (
+from src.infra.io.log_output.run_metadata import (
     IssueRun,
     QualityGateResult,
     RunConfig,
@@ -25,6 +25,8 @@ from src.log_output.run_metadata import (
     ValidationResult,
     _get_marker_path,
     _is_process_running,
+    cleanup_debug_logging,
+    configure_debug_logging,
     get_running_instances,
     get_running_instances_for_dir,
     remove_run_marker,
@@ -354,7 +356,7 @@ class TestRunMetadataSerialization:
                 return Path(tmpdir) / "-tmp-test-repo"
 
             with patch(
-                "src.log_output.run_metadata.get_repo_runs_dir", mock_get_repo_runs_dir
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir", mock_get_repo_runs_dir
             ):
                 # Save
                 path = metadata_with_issues.save()
@@ -419,9 +421,9 @@ class TestRunMetadataSerialization:
             )
 
             # Mock get_runs_dir to return temp directory
-            with patch("src.tools.env.get_runs_dir", return_value=Path(tmpdir)):
+            with patch("src.infra.tools.env.get_runs_dir", return_value=Path(tmpdir)):
                 # Import after patching so encode_repo_path uses real implementation
-                from src.tools.env import get_repo_runs_dir
+                from src.infra.tools.env import get_repo_runs_dir
 
                 # Verify the path is correctly segmented
                 repo_runs_dir = get_repo_runs_dir(Path("/home/user/my-project"))
@@ -432,7 +434,7 @@ class TestRunMetadataSerialization:
                 return Path(tmpdir) / "-home-user-my-project"
 
             with patch(
-                "src.log_output.run_metadata.get_repo_runs_dir", mock_get_repo_runs_dir
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir", mock_get_repo_runs_dir
             ):
                 path = metadata.save()
 
@@ -608,7 +610,7 @@ class TestRunMarkers:
             lock_dir = Path(tmpdir)
 
             with patch(
-                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
             ):
                 # Write marker
                 path = write_run_marker(
@@ -643,7 +645,7 @@ class TestRunMarkers:
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_dir = Path(tmpdir)
             with patch(
-                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
             ):
                 path = _get_marker_path("my-run-id")
                 assert path == lock_dir / "run-my-run-id.marker"
@@ -657,7 +659,7 @@ class TestGetRunningInstances:
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_dir = Path(tmpdir)
             with patch(
-                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
             ):
                 instances = get_running_instances()
                 assert instances == []
@@ -665,7 +667,7 @@ class TestGetRunningInstances:
     def test_get_running_instances_nonexistent_dir(self) -> None:
         """Test with non-existent lock directory."""
         with patch(
-            "src.log_output.run_metadata.get_lock_dir",
+            "src.infra.io.log_output.run_metadata.get_lock_dir",
             return_value=Path("/nonexistent/path"),
         ):
             instances = get_running_instances()
@@ -704,7 +706,7 @@ class TestGetRunningInstances:
             )
 
             with patch(
-                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
             ):
                 instances = get_running_instances()
 
@@ -732,11 +734,11 @@ class TestGetRunningInstances:
             )
 
             with patch(
-                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
             ):
                 # Mock _is_process_running to return False for stale PID
                 with patch(
-                    "src.log_output.run_metadata._is_process_running",
+                    "src.infra.io.log_output.run_metadata._is_process_running",
                     return_value=False,
                 ):
                     instances = get_running_instances()
@@ -769,7 +771,7 @@ class TestGetRunningInstances:
             )
 
             with patch(
-                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
             ):
                 instances = get_running_instances()
 
@@ -816,7 +818,7 @@ class TestGetRunningInstances:
             )
 
             with patch(
-                "src.log_output.run_metadata.get_lock_dir", return_value=lock_dir
+                "src.infra.io.log_output.run_metadata.get_lock_dir", return_value=lock_dir
             ):
                 # Filter for target directory
                 target_instances = get_running_instances_for_dir(target_dir)
@@ -852,3 +854,133 @@ class TestIsProcessRunning:
         # On Linux, kill(0, 0) returns permission denied for non-root
         # The function catches OSError and returns False
         assert isinstance(result, bool)
+
+
+class TestDebugLogging:
+    """Test debug logging configuration and cleanup."""
+
+    def test_configure_and_cleanup_debug_logging(self) -> None:
+        """Test that configure_debug_logging adds handler and cleanup removes it."""
+        import logging
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+
+            def mock_get_repo_runs_dir(repo_path: Path) -> Path:
+                return Path(tmpdir)
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                mock_get_repo_runs_dir,
+            ):
+                run_id = "test-run-12345678"
+
+                # Configure debug logging
+                log_path = configure_debug_logging(Path("/tmp/repo"), run_id)
+
+                # Verify handler was added
+                src_logger = logging.getLogger("src")
+                handler_names = [
+                    getattr(h, "name", "") for h in src_logger.handlers
+                ]
+                assert f"mala_debug_{run_id}" in handler_names
+                assert log_path.exists()
+
+                # Cleanup debug logging
+                cleaned = cleanup_debug_logging(run_id)
+                assert cleaned is True
+
+                # Verify handler was removed
+                handler_names_after = [
+                    getattr(h, "name", "") for h in src_logger.handlers
+                ]
+                assert f"mala_debug_{run_id}" not in handler_names_after
+
+    def test_cleanup_nonexistent_handler_returns_false(self) -> None:
+        """Test that cleanup returns False when handler doesn't exist."""
+        cleaned = cleanup_debug_logging("nonexistent-run-id")
+        assert cleaned is False
+
+    def test_save_cleans_up_debug_handler(self) -> None:
+        """Test that RunMetadata.save() cleans up the debug handler."""
+        import logging
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+
+            def mock_get_repo_runs_dir(repo_path: Path) -> Path:
+                return Path(tmpdir)
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                mock_get_repo_runs_dir,
+            ):
+                config = RunConfig(
+                    max_agents=1,
+                    timeout_minutes=10,
+                    max_issues=None,
+                    epic_id=None,
+                    only_ids=None,
+                    braintrust_enabled=False,
+                )
+                metadata = RunMetadata(
+                    repo_path=Path("/tmp/test-repo"),
+                    config=config,
+                    version="1.0.0",
+                    debug_log=True,
+                )
+
+                # Verify handler was added
+                src_logger = logging.getLogger("src")
+                handler_names = [
+                    getattr(h, "name", "") for h in src_logger.handlers
+                ]
+                assert any(
+                    name.startswith("mala_debug_") for name in handler_names
+                )
+
+                # Save should clean up the handler
+                metadata.save()
+
+                # Verify handler was removed
+                handler_names_after = [
+                    getattr(h, "name", "") for h in src_logger.handlers
+                ]
+                assert not any(
+                    name == f"mala_debug_{metadata.run_id}"
+                    for name in handler_names_after
+                )
+
+    def test_configure_removes_previous_handlers(self) -> None:
+        """Test that configuring a new handler removes old ones."""
+        import logging
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+
+            def mock_get_repo_runs_dir(repo_path: Path) -> Path:
+                return Path(tmpdir)
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                mock_get_repo_runs_dir,
+            ):
+                # Configure first handler
+                run_id_1 = "first-run-12345678"
+                configure_debug_logging(Path("/tmp/repo"), run_id_1)
+
+                src_logger = logging.getLogger("src")
+                handler_names = [
+                    getattr(h, "name", "") for h in src_logger.handlers
+                ]
+                assert f"mala_debug_{run_id_1}" in handler_names
+
+                # Configure second handler - should remove first
+                run_id_2 = "second-run-87654321"
+                configure_debug_logging(Path("/tmp/repo"), run_id_2)
+
+                handler_names_after = [
+                    getattr(h, "name", "") for h in src_logger.handlers
+                ]
+                assert f"mala_debug_{run_id_1}" not in handler_names_after
+                assert f"mala_debug_{run_id_2}" in handler_names_after
+
+                # Clean up
+                cleanup_debug_logging(run_id_2)

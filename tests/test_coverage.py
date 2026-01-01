@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from src.tools.command_runner import CommandResult
+from src.infra.tools.command_runner import CommandResult
 from src.domain.validation.coverage import (
     CoverageResult,
     CoverageStatus,

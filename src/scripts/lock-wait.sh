@@ -33,4 +33,4 @@ if ! is_literal_key "$filepath"; then
     fi
 fi
 
-exec env PYTHONPATH="$MALA_ROOT" python -m src.tools.locking wait "$filepath" "$timeout" "$poll_ms"
+exec env PYTHONPATH="$MALA_ROOT" python -m src.infra.tools.locking wait "$filepath" "$timeout" "$poll_ms"

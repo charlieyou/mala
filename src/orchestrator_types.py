@@ -49,6 +49,7 @@ class OrchestratorConfig:
         focus: Group tasks by epic for focused work.
         cli_args: CLI arguments for logging and metadata.
         epic_override_ids: Epic IDs to close without verification.
+        debug_log: Enable debug logging to file.
     """
 
     repo_path: Path
@@ -67,6 +68,7 @@ class OrchestratorConfig:
     focus: bool = True
     cli_args: dict[str, object] | None = None
     epic_override_ids: set[str] | None = None
+    debug_log: bool = False
 
 
 @dataclass

@@ -18,8 +18,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.orchestrator import _get_implementer_prompt
-from src.hooks import make_stop_hook
-from src.tools.env import SCRIPTS_DIR
+from src.infra.hooks import make_stop_hook
+from src.infra.tools.env import SCRIPTS_DIR
 
 if TYPE_CHECKING:
     from claude_agent_sdk.types import HookContext, StopHookInput
@@ -588,7 +588,7 @@ class TestRepoNamespaceIntegration:
         The hook receives absolute file paths from Claude Code tools and must compute
         the same lock key as the shell script did.
         """
-        from src.tools.locking import get_lock_holder
+        from src.infra.tools.locking import get_lock_holder
 
         agent_id = "test-agent-cross-cwd"
         repo_namespace = str(tmp_path)
@@ -633,7 +633,7 @@ class TestRepoNamespaceIntegration:
         2. Python hook checks lock with absolute path (running from any cwd)
         3. They must compute the same lock key
         """
-        from src.tools.locking import get_lock_holder
+        from src.infra.tools.locking import get_lock_holder
 
         agent_id = "cross-cwd-agent"
         repo_path = tmp_path / "repo"
@@ -778,7 +778,7 @@ class TestReleaseRunLocks:
         self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Cleanup should only remove locks owned by the specified agent IDs."""
-        from src.tools.locking import release_run_locks, try_lock
+        from src.infra.tools.locking import release_run_locks, try_lock
 
         # Set MALA_LOCK_DIR for the locking module
         monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
@@ -814,7 +814,7 @@ class TestReleaseRunLocks:
         self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Cleanup with empty agent list should not remove any locks."""
-        from src.tools.locking import release_run_locks, try_lock
+        from src.infra.tools.locking import release_run_locks, try_lock
 
         monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
 
@@ -832,7 +832,7 @@ class TestReleaseRunLocks:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Cleanup should handle non-existent lock directory gracefully."""
-        from src.tools.locking import release_run_locks
+        from src.infra.tools.locking import release_run_locks
 
         non_existent = tmp_path / "nonexistent_locks"
         monkeypatch.setenv("MALA_LOCK_DIR", str(non_existent))
@@ -849,7 +849,7 @@ class TestCLIEntryPoint:
         self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """CLI try command should acquire lock and return 0."""
-        from src.tools.locking import _cli_main, get_lock_holder
+        from src.infra.tools.locking import _cli_main, get_lock_holder
         import sys
 
         monkeypatch.setenv("LOCK_DIR", str(lock_env))
@@ -876,7 +876,7 @@ class TestCLIEntryPoint:
         self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """CLI try command should return 1 when lock is held."""
-        from src.tools.locking import _cli_main, try_lock
+        from src.infra.tools.locking import _cli_main, try_lock
         import sys
 
         monkeypatch.setenv("LOCK_DIR", str(lock_env))
@@ -905,7 +905,7 @@ class TestCLIEntryPoint:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """CLI holder command should print agent ID to stdout."""
-        from src.tools.locking import _cli_main, try_lock
+        from src.infra.tools.locking import _cli_main, try_lock
         import sys
 
         monkeypatch.setenv("LOCK_DIR", str(lock_env))
@@ -932,7 +932,7 @@ class TestCLIEntryPoint:
         self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """CLI check command should return 0 when agent holds lock."""
-        from src.tools.locking import _cli_main, try_lock
+        from src.infra.tools.locking import _cli_main, try_lock
         import sys
 
         monkeypatch.setenv("LOCK_DIR", str(lock_env))
@@ -957,7 +957,7 @@ class TestCLIEntryPoint:
         self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """CLI check command should return 1 when agent doesn't hold lock."""
-        from src.tools.locking import _cli_main, try_lock
+        from src.infra.tools.locking import _cli_main, try_lock
         import sys
 
         monkeypatch.setenv("LOCK_DIR", str(lock_env))
@@ -982,7 +982,7 @@ class TestCLIEntryPoint:
         self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """CLI release command should remove lock held by agent."""
-        from src.tools.locking import _cli_main, try_lock, get_lock_holder
+        from src.infra.tools.locking import _cli_main, try_lock, get_lock_holder
         import sys
 
         monkeypatch.setenv("LOCK_DIR", str(lock_env))
@@ -1011,7 +1011,7 @@ class TestCLIEntryPoint:
         self, lock_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """CLI release-all command should remove all locks held by agent."""
-        from src.tools.locking import _cli_main, try_lock
+        from src.infra.tools.locking import _cli_main, try_lock
         import sys
 
         monkeypatch.setenv("LOCK_DIR", str(lock_env))
@@ -1039,7 +1039,7 @@ class TestCLIEntryPoint:
 
     def test_cli_errors_without_lock_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """CLI should return 2 when LOCK_DIR is not set."""
-        from src.tools.locking import _cli_main
+        from src.infra.tools.locking import _cli_main
         import sys
 
         monkeypatch.delenv("LOCK_DIR", raising=False)
@@ -1058,7 +1058,7 @@ class TestCLIEntryPoint:
         self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """CLI should return 2 when AGENT_ID is not set (for commands that require it)."""
-        from src.tools.locking import _cli_main
+        from src.infra.tools.locking import _cli_main
         import sys
 
         monkeypatch.setenv("LOCK_DIR", str(lock_env))
