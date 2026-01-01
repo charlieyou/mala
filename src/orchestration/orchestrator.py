@@ -245,6 +245,16 @@ class MalaOrchestrator:
             if value is None:
                 raise ValueError(f"{name} is required when using factory path")
 
+        # Type narrowing assertions - the loop above ensures these are not None
+        assert mala_config is not None
+        assert derived is not None
+        assert issue_provider is not None
+        assert code_reviewer is not None
+        assert gate_checker is not None
+        assert log_provider is not None
+        assert telemetry_provider is not None
+        assert event_sink is not None
+
         self._mala_config = mala_config
         self.repo_path = orch_config.repo_path.resolve()
         self.max_agents = orch_config.max_agents
