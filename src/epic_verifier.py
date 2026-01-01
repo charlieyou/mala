@@ -649,17 +649,29 @@ class EpicVerifier:
         Returns:
             List of epic IDs that have all children closed.
         """
-        # Use bd epic list --eligible to get epics ready for closure
+        # Prefer bd epic status --eligible-only when supported; fall back to
+        # full status and filter eligible_for_close.
         result = await self._runner.run_async(
-            ["bd", "epic", "list", "--eligible", "--json"]
+            ["bd", "epic", "status", "--eligible-only", "--json"]
         )
+        if not result.ok:
+            result = await self._runner.run_async(["bd", "epic", "status", "--json"])
         if not result.ok:
             return []
         try:
-            epics = json.loads(result.stdout)
-            if isinstance(epics, list):
-                return [str(e.get("id", "")) for e in epics if e.get("id")]
-            return []
+            rows = json.loads(result.stdout)
+            eligible: list[str] = []
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    if row.get("eligible_for_close"):
+                        epic = row.get("epic") or {}
+                        if isinstance(epic, dict):
+                            epic_id = epic.get("id")
+                            if epic_id:
+                                eligible.append(str(epic_id))
+            return eligible
         except json.JSONDecodeError:
             return []
 
