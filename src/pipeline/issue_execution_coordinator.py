@@ -61,6 +61,7 @@ class CoordinatorConfig:
         only_ids: Set of issue IDs to process exclusively.
         prioritize_wip: Prioritize in_progress issues before open issues.
         focus: Group tasks by epic for focused work.
+        orphans_only: Only process issues with no parent epic.
     """
 
     max_agents: int | None = None
@@ -69,6 +70,7 @@ class CoordinatorConfig:
     only_ids: set[str] | None = None
     prioritize_wip: bool = False
     focus: bool = True
+    orphans_only: bool = False
 
 
 class IssueExecutionCoordinator:
@@ -184,6 +186,7 @@ class IssueExecutionCoordinator:
                     suppress_warn_ids=suppress_warn_ids,
                     prioritize_wip=self.config.prioritize_wip,
                     focus=self.config.focus,
+                    orphans_only=self.config.orphans_only,
                 )
                 if not limit_reached
                 else []

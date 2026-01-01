@@ -242,3 +242,17 @@ class IssueManager:
         if not only_ids:
             return set()
         return only_ids - {str(i["id"]) for i in issues} - suppress_ids
+
+    @staticmethod
+    def filter_orphans_only(
+        issues: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Filter to only issues with no parent epic.
+
+        Args:
+            issues: List of issue dicts with parent_epic field populated.
+
+        Returns:
+            List containing only issues where parent_epic is None/empty.
+        """
+        return [issue for issue in issues if not issue.get("parent_epic")]

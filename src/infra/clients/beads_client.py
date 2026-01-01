@@ -320,6 +320,7 @@ class BeadsClient:
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
+        orphans_only: bool = False,
     ) -> list[dict[str, object]]:
         """Fetch, filter, enrich, and sort ready issues."""
         exclude_ids = exclude_ids or set()
@@ -338,6 +339,9 @@ class BeadsClient:
         self._warn_missing_ids(only_ids, issues, suppress_warn_ids or set())
         filtered = self._apply_filters(issues, exclude_ids, epic_children, only_ids)
         enriched = await self._enrich_with_epics(filtered)
+        # Apply orphans_only filter after enrichment (needs parent_epic info)
+        if orphans_only:
+            enriched = IssueManager.filter_orphans_only(enriched)
         return self._sort_issues(enriched, focus, prioritize_wip)
 
     async def get_ready_async(
@@ -348,6 +352,7 @@ class BeadsClient:
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
+        orphans_only: bool = False,
     ) -> list[str]:
         """Get list of ready issue IDs via bd CLI, sorted by priority (async version).
 
@@ -361,6 +366,7 @@ class BeadsClient:
                 When focus=True, groups are sorted by (min_priority, max_updated DESC)
                 and within groups by (priority, updated DESC). Orphan tasks form a
                 virtual group with the same sorting rules.
+            orphans_only: If True, only return issues with no parent epic.
 
         Returns:
             List of issue IDs sorted by priority (lower = higher priority).
@@ -374,6 +380,7 @@ class BeadsClient:
             suppress_warn_ids=suppress_warn_ids,
             prioritize_wip=prioritize_wip,
             focus=focus,
+            orphans_only=orphans_only,
         )
         return [str(i["id"]) for i in filtered]
 
@@ -385,6 +392,7 @@ class BeadsClient:
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
+        orphans_only: bool = False,
     ) -> list[dict[str, object]]:
         """Get list of ready issues with full metadata, sorted by priority (async version).
 
@@ -398,6 +406,7 @@ class BeadsClient:
             suppress_warn_ids: Optional set of issue IDs to suppress from warnings.
             prioritize_wip: If True, sort in_progress issues before open issues.
             focus: If True, group tasks by parent epic and complete one epic at a time.
+            orphans_only: If True, only return issues with no parent epic.
 
         Returns:
             List of issue dicts with id, title, priority, status, and parent_epic fields.
@@ -410,6 +419,7 @@ class BeadsClient:
             suppress_warn_ids=suppress_warn_ids,
             prioritize_wip=prioritize_wip,
             focus=focus,
+            orphans_only=orphans_only,
         )
 
     async def claim_async(self, issue_id: str) -> bool:

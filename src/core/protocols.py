@@ -349,6 +349,7 @@ class IssueProvider(Protocol):
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
+        orphans_only: bool = False,
     ) -> list[str]:
         """Get list of ready issue IDs, sorted by priority.
 
@@ -359,6 +360,7 @@ class IssueProvider(Protocol):
             suppress_warn_ids: Set of issue IDs to suppress from warnings.
             prioritize_wip: If True, sort in_progress issues first.
             focus: If True, group tasks by parent epic.
+            orphans_only: If True, only return issues with no parent epic.
 
         Returns:
             List of issue IDs sorted by priority (lower = higher priority).

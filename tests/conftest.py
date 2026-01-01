@@ -96,6 +96,7 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
         morph_enabled: bool | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
+        orphans_only: bool = False,
         cli_args: dict[str, Any] | None = None,
         epic_override_ids: set[str] | None = None,
         issue_provider: IssueProvider | None = None,
@@ -124,6 +125,7 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
             morph_enabled=morph_enabled,
             prioritize_wip=prioritize_wip,
             focus=focus,
+            orphans_only=orphans_only,
             cli_args=cli_args,
             epic_override_ids=epic_override_ids,
         )

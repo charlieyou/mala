@@ -271,6 +271,7 @@ class MalaOrchestrator:
         self.coverage_threshold = orch_config.coverage_threshold
         self.prioritize_wip = orch_config.prioritize_wip
         self.focus = orch_config.focus
+        self.orphans_only = orch_config.orphans_only
         self.cli_args = orch_config.cli_args
         self.epic_override_ids = orch_config.epic_override_ids or set()
         self.review_disabled_reason = derived.review_disabled_reason
@@ -348,6 +349,7 @@ class MalaOrchestrator:
             only_ids=self.only_ids,
             prioritize_wip=self.prioritize_wip,
             focus=self.focus,
+            orphans_only=self.orphans_only,
         )
         self.issue_coordinator = IssueExecutionCoordinator(
             beads=self.beads,

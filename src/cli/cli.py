@@ -383,6 +383,13 @@ def run(
             help="Comma-separated epic IDs to close without verification (explicit human bypass)",
         ),
     ] = None,
+    orphans_only: Annotated[
+        bool,
+        typer.Option(
+            "--orphans-only",
+            help="Only process issues with no parent epic (standalone/orphan issues)",
+        ),
+    ] = False,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -464,6 +471,7 @@ def run(
                 only_ids=only_ids,
                 prioritize_wip=wip,
                 focus=focus,
+                orphans_only=orphans_only,
             )
             display_dry_run_tasks(issues, focus=focus)
 
@@ -561,6 +569,7 @@ def run(
         focus=focus,
         cli_args=cli_args,
         epic_override_ids=epic_override_ids,
+        orphans_only=orphans_only,
     )
 
     # Use factory to create orchestrator

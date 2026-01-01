@@ -666,6 +666,7 @@ class TestRunLevelValidationIntegration:
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
+            orphans_only: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -727,6 +728,7 @@ class TestRunLevelValidationIntegration:
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
+            orphans_only: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -804,6 +806,7 @@ class TestRunLevelValidationIntegration:
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
+            orphans_only: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -873,6 +876,7 @@ class TestRunLevelValidationIntegration:
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
+            orphans_only: bool = False,
         ) -> list[str]:
             nonlocal first_call
             if first_call:

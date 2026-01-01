@@ -34,6 +34,7 @@ class MockIssueProvider:
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
+        orphans_only: bool = False,
     ) -> list[str]:
         """Return next sequence of ready issues."""
         exclude = exclude_ids or set()

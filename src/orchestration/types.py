@@ -49,6 +49,7 @@ class OrchestratorConfig:
         focus: Group tasks by epic for focused work.
         cli_args: CLI arguments for logging and metadata.
         epic_override_ids: Epic IDs to close without verification.
+        orphans_only: Only process issues with no parent epic.
     """
 
     repo_path: Path
@@ -67,6 +68,7 @@ class OrchestratorConfig:
     focus: bool = True
     cli_args: dict[str, object] | None = None
     epic_override_ids: set[str] | None = None
+    orphans_only: bool = False
 
 
 @dataclass
