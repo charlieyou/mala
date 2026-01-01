@@ -21,11 +21,13 @@ from claude_agent_sdk.types import ResultMessage
 
 from src.infra.clients.beads_client import BeadsClient
 from src.orchestration.orchestrator import (
-    IssueResult,
     MalaOrchestrator,
-    _get_fixer_prompt,
-    _get_implementer_prompt,
-    _get_review_followup_prompt,
+)
+from src.orchestration.issue_result import IssueResult
+from src.orchestration.prompts import (
+    get_fixer_prompt as _get_fixer_prompt,
+    get_implementer_prompt as _get_implementer_prompt,
+    get_review_followup_prompt as _get_review_followup_prompt,
 )
 from src.domain.prompts import get_gate_followup_prompt as _get_gate_followup_prompt
 from src.infra.tools.command_runner import CommandResult
@@ -4563,7 +4565,9 @@ class TestBuildGateMetadata:
 
     def test_none_gate_result_returns_empty_metadata(self) -> None:
         """When gate_result is None, returns empty GateMetadata."""
-        from src.orchestration.orchestrator import _build_gate_metadata
+        from src.orchestration.gate_metadata import (
+            build_gate_metadata as _build_gate_metadata,
+        )
 
         result = _build_gate_metadata(None, passed=True)
 
@@ -4572,7 +4576,9 @@ class TestBuildGateMetadata:
 
     def test_successful_gate_with_full_evidence(self) -> None:
         """Successful gate result with full evidence extracts all fields."""
-        from src.orchestration.orchestrator import _build_gate_metadata
+        from src.orchestration.gate_metadata import (
+            build_gate_metadata as _build_gate_metadata,
+        )
         from src.domain.quality_gate import GateResult, ValidationEvidence
         from src.domain.validation.spec import CommandKind
 
@@ -4601,7 +4607,9 @@ class TestBuildGateMetadata:
 
     def test_failed_gate_with_partial_evidence(self) -> None:
         """Failed gate result extracts failure reasons and evidence."""
-        from src.orchestration.orchestrator import _build_gate_metadata
+        from src.orchestration.gate_metadata import (
+            build_gate_metadata as _build_gate_metadata,
+        )
         from src.domain.quality_gate import GateResult, ValidationEvidence
         from src.domain.validation.spec import CommandKind
 
@@ -4632,7 +4640,9 @@ class TestBuildGateMetadata:
 
     def test_empty_failure_reasons_and_missing_commit(self) -> None:
         """Gate result with empty failure reasons and missing commit."""
-        from src.orchestration.orchestrator import _build_gate_metadata
+        from src.orchestration.gate_metadata import (
+            build_gate_metadata as _build_gate_metadata,
+        )
         from src.domain.quality_gate import GateResult, ValidationEvidence
 
         evidence = ValidationEvidence(commands_ran={}, failed_commands=[])
@@ -4651,7 +4661,9 @@ class TestBuildGateMetadata:
 
     def test_passed_true_overrides_gate_result_passed(self) -> None:
         """When passed=True, quality_gate_result.passed should be True."""
-        from src.orchestration.orchestrator import _build_gate_metadata
+        from src.orchestration.gate_metadata import (
+            build_gate_metadata as _build_gate_metadata,
+        )
         from src.domain.quality_gate import GateResult, ValidationEvidence
 
         evidence = ValidationEvidence(commands_ran={}, failed_commands=[])
@@ -4679,7 +4691,9 @@ class TestBuildGateMetadataFromLogs:
         """When per_issue_spec is None, returns empty GateMetadata."""
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestration.orchestrator import _build_gate_metadata_from_logs
+        from src.orchestration.gate_metadata import (
+            build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
+        )
         from src.domain.quality_gate import QualityGate
 
         if TYPE_CHECKING:
@@ -4705,7 +4719,9 @@ class TestBuildGateMetadataFromLogs:
         import re
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestration.orchestrator import _build_gate_metadata_from_logs
+        from src.orchestration.gate_metadata import (
+            build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
+        )
         from src.domain.quality_gate import QualityGate
         from src.domain.validation.spec import (
             CommandKind,
@@ -4753,7 +4769,9 @@ class TestBuildGateMetadataFromLogs:
         """result_success parameter determines quality_gate_result.passed."""
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestration.orchestrator import _build_gate_metadata_from_logs
+        from src.orchestration.gate_metadata import (
+            build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
+        )
         from src.domain.quality_gate import QualityGate
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
@@ -4782,7 +4800,9 @@ class TestBuildGateMetadataFromLogs:
         """Extracts failure reasons from 'Quality gate failed:' prefix."""
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestration.orchestrator import _build_gate_metadata_from_logs
+        from src.orchestration.gate_metadata import (
+            build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
+        )
         from src.domain.quality_gate import QualityGate
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
@@ -4813,7 +4833,9 @@ class TestBuildGateMetadataFromLogs:
         """Builds validation_result (not None) matching _build_gate_metadata behavior."""
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestration.orchestrator import _build_gate_metadata_from_logs
+        from src.orchestration.gate_metadata import (
+            build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
+        )
         from src.domain.quality_gate import QualityGate
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 

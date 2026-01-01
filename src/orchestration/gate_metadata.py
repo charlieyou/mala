@@ -1,0 +1,173 @@
+"""Gate metadata extraction for MalaOrchestrator.
+
+This module contains the GateMetadata dataclass and helper functions for
+extracting quality gate results for run finalization.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, cast
+
+from src.domain.quality_gate import QUALITY_GATE_IGNORED_COMMANDS, QualityGate
+from src.infra.io.log_output.run_metadata import (
+    QualityGateResult,
+    ValidationResult as MetaValidationResult,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from src.core.protocols import (
+        GateChecker,
+        GateResultProtocol,
+        ValidationSpecProtocol,
+    )
+    from src.domain.quality_gate import GateResult
+    from src.domain.validation.spec import ValidationSpec
+
+
+@dataclass
+class GateMetadata:
+    """Metadata extracted from quality gate results for finalization.
+
+    This dataclass holds the processed results from a quality gate check,
+    separating the extraction logic from the finalization flow.
+    """
+
+    quality_gate_result: QualityGateResult | None = None
+    validation_result: MetaValidationResult | None = None
+
+
+def build_gate_metadata(
+    gate_result: GateResult | GateResultProtocol | None,
+    passed: bool,
+) -> GateMetadata:
+    """Build GateMetadata from a stored gate result.
+
+    Extracts evidence from the stored gate result without re-running validation.
+    This is the primary path used when gate results are available from
+    _run_quality_gate_sync.
+
+    Args:
+        gate_result: The stored gate result (may be None if no gate ran).
+        passed: Whether the overall run passed (affects quality_gate_result.passed).
+
+    Returns:
+        GateMetadata with extracted quality gate and validation results.
+    """
+    if gate_result is None:
+        return GateMetadata()
+
+    evidence = gate_result.validation_evidence
+    commit_hash = gate_result.commit_hash
+
+    # Build evidence dict from stored evidence
+    evidence_dict: dict[str, bool] = {}
+    if evidence is not None:
+        evidence_dict = evidence.to_evidence_dict()
+    evidence_dict["commit_found"] = commit_hash is not None
+
+    quality_gate_result = QualityGateResult(
+        passed=passed if passed else gate_result.passed,
+        evidence=evidence_dict,
+        failure_reasons=[] if passed else list(gate_result.failure_reasons),
+    )
+
+    validation_result: MetaValidationResult | None = None
+    if evidence is not None:
+        # Use KIND_TO_NAME for consistent command names with commands_failed
+        commands_run = [
+            QualityGate.KIND_TO_NAME.get(kind, kind.value)
+            for kind, ran in evidence.commands_ran.items()
+            if ran
+        ]
+        # Filter to only show commands that affected the gate decision
+        # (exclude ignored commands like 'uv sync')
+        gate_failed_commands = [
+            cmd
+            for cmd in evidence.failed_commands
+            if cmd not in QUALITY_GATE_IGNORED_COMMANDS
+        ]
+        validation_result = MetaValidationResult(
+            passed=passed if passed else gate_result.passed,
+            commands_run=commands_run,
+            commands_failed=gate_failed_commands,
+        )
+
+    return GateMetadata(
+        quality_gate_result=quality_gate_result,
+        validation_result=validation_result,
+    )
+
+
+def build_gate_metadata_from_logs(
+    log_path: Path,
+    result_summary: str,
+    result_success: bool,
+    quality_gate: GateChecker,
+    per_issue_spec: ValidationSpec | ValidationSpecProtocol | None,
+) -> GateMetadata:
+    """Build GateMetadata by parsing logs directly (fallback path).
+
+    This is a fallback path used when no stored gate result is available.
+    It parses the log file directly to extract validation evidence.
+
+    Args:
+        log_path: Path to the session log file.
+        result_summary: Summary from the issue result (for extracting failure reasons).
+        result_success: Whether the run succeeded (determines passed status).
+        quality_gate: The GateChecker instance for parsing.
+        per_issue_spec: ValidationSpec for parsing evidence (if None, returns empty).
+
+    Returns:
+        GateMetadata with extracted results, or empty if spec is None.
+    """
+    if per_issue_spec is None:
+        return GateMetadata()
+
+    evidence = quality_gate.parse_validation_evidence_with_spec(
+        log_path, cast("ValidationSpecProtocol", per_issue_spec)
+    )
+
+    # Extract failure reasons from result summary
+    failure_reasons: list[str] = []
+    if "Quality gate failed:" in result_summary:
+        reasons_part = result_summary.replace("Quality gate failed: ", "")
+        failure_reasons = [r.strip() for r in reasons_part.split(";")]
+
+    # Build spec-driven evidence dict
+    evidence_dict = evidence.to_evidence_dict()
+
+    # Check commit exists (we don't have stored result, so check now)
+    # Note: We don't call check_commit_exists here because it's expensive
+    # and this is a fallback path - just mark as unknown
+    evidence_dict["commit_found"] = False
+
+    quality_gate_result = QualityGateResult(
+        passed=result_success,
+        evidence=evidence_dict,
+        failure_reasons=failure_reasons,
+    )
+
+    # Build validation result from evidence (matches build_gate_metadata behavior)
+    commands_run = [
+        QualityGate.KIND_TO_NAME.get(kind, kind.value)
+        for kind, ran in evidence.commands_ran.items()
+        if ran
+    ]
+    gate_failed_commands = [
+        cmd
+        for cmd in evidence.failed_commands
+        if cmd not in QUALITY_GATE_IGNORED_COMMANDS
+    ]
+    validation_result = MetaValidationResult(
+        passed=result_success,
+        commands_run=commands_run,
+        commands_failed=gate_failed_commands,
+    )
+
+    return GateMetadata(
+        quality_gate_result=quality_gate_result,
+        validation_result=validation_result,
+    )

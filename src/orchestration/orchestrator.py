@@ -3,14 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import functools
-import hashlib
 import uuid
-from dataclasses import dataclass
-from pathlib import Path
-from typing import TYPE_CHECKING, cast, overload
+from typing import TYPE_CHECKING
 
-from src.domain.quality_gate import QUALITY_GATE_IGNORED_COMMANDS, QualityGate
 from src.domain.validation.spec import (
     ValidationScope,
     build_validation_spec,
@@ -28,16 +23,11 @@ from src.infra.io.log_output.console import (
 )
 from src.infra.io.log_output.run_metadata import (
     IssueRun,
-    QualityGateResult,
-    RunConfig,
-    RunMetadata,
-    ValidationResult as MetaValidationResult,
     remove_run_marker,
     write_run_marker,
 )
 from src.infra.tools.env import (
     SCRIPTS_DIR,
-    USER_CONFIG_DIR,
     get_lock_dir,
     get_runs_dir,
 )
@@ -45,7 +35,6 @@ from src.infra.tools.locking import (
     cleanup_agent_locks,
     release_run_locks,
 )
-from src.infra.mcp import MORPH_DISALLOWED_TOOLS
 from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
@@ -72,18 +61,26 @@ from src.pipeline.run_coordinator import (
     RunCoordinatorConfig,
     RunLevelValidationInput,
 )
+from src.orchestration.gate_metadata import (
+    GateMetadata,
+    build_gate_metadata,
+    build_gate_metadata_from_logs,
+)
+from src.orchestration.issue_result import IssueResult
+from src.orchestration.prompts import get_implementer_prompt
+from src.orchestration.review_tracking import create_review_tracking_issues
+from src.orchestration.run_config import build_event_run_config, build_run_metadata
 
 if TYPE_CHECKING:
-    from src.core.models import IssueResolution
+    from pathlib import Path
+
     from src.core.protocols import (
         CodeReviewer,
         GateChecker,
         GateResultProtocol,
         IssueProvider,
         LogProvider,
-        ReviewIssueProtocol,
         ReviewResultProtocol,
-        ValidationSpecProtocol,
     )
     from src.domain.lifecycle import RetryState
     from src.domain.quality_gate import GateResult
@@ -91,7 +88,8 @@ if TYPE_CHECKING:
     from src.infra.clients.cerberus_review import ReviewResult
     from src.infra.epic_verifier import EpicVerifier
     from src.infra.io.config import MalaConfig
-    from src.infra.io.event_sink import EventRunConfig, MalaEventSink
+    from src.infra.io.event_sink import MalaEventSink
+    from src.infra.io.log_output.run_metadata import RunMetadata
     from src.infra.telemetry import TelemetryProvider
 
     from .types import OrchestratorConfig, _DerivedConfig
@@ -102,197 +100,11 @@ from importlib.metadata import version as pkg_version
 
 __version__ = pkg_version("mala")
 
-# Prompt file paths (actual file reads deferred to first use)
-_PROMPT_DIR = Path(__file__).parent.parent / "prompts"
-PROMPT_FILE = _PROMPT_DIR / "implementer_prompt.md"
-REVIEW_FOLLOWUP_FILE = _PROMPT_DIR / "review_followup.md"
-FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
-
 # Bounded wait for log file (seconds) - used by AgentSessionRunner
 # Re-exported here for backwards compatibility with tests.
 # 60s allows time for Claude SDK to flush logs, especially under load.
 LOG_FILE_WAIT_TIMEOUT = 60
 LOG_FILE_POLL_INTERVAL = 0.5
-
-
-@functools.cache
-def _get_implementer_prompt() -> str:
-    """Load implementer prompt template (cached on first use)."""
-    return PROMPT_FILE.read_text()
-
-
-@functools.cache
-def _get_review_followup_prompt() -> str:
-    """Load review follow-up prompt (cached on first use)."""
-    return REVIEW_FOLLOWUP_FILE.read_text()
-
-
-@functools.cache
-def _get_fixer_prompt() -> str:
-    """Load fixer prompt (cached on first use)."""
-    return FIXER_PROMPT_FILE.read_text()
-
-
-@dataclass
-class IssueResult:
-    """Result from a single issue implementation."""
-
-    issue_id: str
-    agent_id: str
-    success: bool
-    summary: str
-    duration_seconds: float = 0.0
-    session_id: str | None = None  # Claude SDK session ID
-    gate_attempts: int = 1  # Number of gate retry attempts
-    review_attempts: int = 0  # Number of Codex review attempts
-    resolution: IssueResolution | None = None  # Resolution outcome if using markers
-    low_priority_review_issues: list[ReviewIssueProtocol] | None = None  # P2/P3 issues
-
-
-@dataclass
-class GateMetadata:
-    """Metadata extracted from quality gate results for finalization.
-
-    This dataclass holds the processed results from a quality gate check,
-    separating the extraction logic from the finalization flow.
-    """
-
-    quality_gate_result: QualityGateResult | None = None
-    validation_result: MetaValidationResult | None = None
-
-
-def _build_gate_metadata(
-    gate_result: GateResult | GateResultProtocol | None,
-    passed: bool,
-) -> GateMetadata:
-    """Build GateMetadata from a stored gate result.
-
-    Extracts evidence from the stored gate result without re-running validation.
-    This is the primary path used when gate results are available from
-    _run_quality_gate_sync.
-
-    Args:
-        gate_result: The stored gate result (may be None if no gate ran).
-        passed: Whether the overall run passed (affects quality_gate_result.passed).
-
-    Returns:
-        GateMetadata with extracted quality gate and validation results.
-    """
-    if gate_result is None:
-        return GateMetadata()
-
-    evidence = gate_result.validation_evidence
-    commit_hash = gate_result.commit_hash
-
-    # Build evidence dict from stored evidence
-    evidence_dict: dict[str, bool] = {}
-    if evidence is not None:
-        evidence_dict = evidence.to_evidence_dict()
-    evidence_dict["commit_found"] = commit_hash is not None
-
-    quality_gate_result = QualityGateResult(
-        passed=passed if passed else gate_result.passed,
-        evidence=evidence_dict,
-        failure_reasons=[] if passed else list(gate_result.failure_reasons),
-    )
-
-    validation_result: MetaValidationResult | None = None
-    if evidence is not None:
-        # Use KIND_TO_NAME for consistent command names with commands_failed
-        commands_run = [
-            QualityGate.KIND_TO_NAME.get(kind, kind.value)
-            for kind, ran in evidence.commands_ran.items()
-            if ran
-        ]
-        # Filter to only show commands that affected the gate decision
-        # (exclude ignored commands like 'uv sync')
-        gate_failed_commands = [
-            cmd
-            for cmd in evidence.failed_commands
-            if cmd not in QUALITY_GATE_IGNORED_COMMANDS
-        ]
-        validation_result = MetaValidationResult(
-            passed=passed if passed else gate_result.passed,
-            commands_run=commands_run,
-            commands_failed=gate_failed_commands,
-        )
-
-    return GateMetadata(
-        quality_gate_result=quality_gate_result,
-        validation_result=validation_result,
-    )
-
-
-def _build_gate_metadata_from_logs(
-    log_path: Path,
-    result_summary: str,
-    result_success: bool,
-    quality_gate: GateChecker,
-    per_issue_spec: ValidationSpec | ValidationSpecProtocol | None,
-) -> GateMetadata:
-    """Build GateMetadata by parsing logs directly (fallback path).
-
-    This is a fallback path used when no stored gate result is available.
-    It parses the log file directly to extract validation evidence.
-
-    Args:
-        log_path: Path to the session log file.
-        result_summary: Summary from the issue result (for extracting failure reasons).
-        result_success: Whether the run succeeded (determines passed status).
-        quality_gate: The GateChecker instance for parsing.
-        per_issue_spec: ValidationSpec for parsing evidence (if None, returns empty).
-
-    Returns:
-        GateMetadata with extracted results, or empty if spec is None.
-    """
-    if per_issue_spec is None:
-        return GateMetadata()
-
-    evidence = quality_gate.parse_validation_evidence_with_spec(
-        log_path, cast("ValidationSpecProtocol", per_issue_spec)
-    )
-
-    # Extract failure reasons from result summary
-    failure_reasons: list[str] = []
-    if "Quality gate failed:" in result_summary:
-        reasons_part = result_summary.replace("Quality gate failed: ", "")
-        failure_reasons = [r.strip() for r in reasons_part.split(";")]
-
-    # Build spec-driven evidence dict
-    evidence_dict = evidence.to_evidence_dict()
-
-    # Check commit exists (we don't have stored result, so check now)
-    # Note: We don't call check_commit_exists here because it's expensive
-    # and this is a fallback path - just mark as unknown
-    evidence_dict["commit_found"] = False
-
-    quality_gate_result = QualityGateResult(
-        passed=result_success,
-        evidence=evidence_dict,
-        failure_reasons=failure_reasons,
-    )
-
-    # Build validation result from evidence (matches _build_gate_metadata behavior)
-    commands_run = [
-        QualityGate.KIND_TO_NAME.get(kind, kind.value)
-        for kind, ran in evidence.commands_ran.items()
-        if ran
-    ]
-    gate_failed_commands = [
-        cmd
-        for cmd in evidence.failed_commands
-        if cmd not in QUALITY_GATE_IGNORED_COMMANDS
-    ]
-    validation_result = MetaValidationResult(
-        passed=result_success,
-        commands_run=commands_run,
-        commands_failed=gate_failed_commands,
-    )
-
-    return GateMetadata(
-        quality_gate_result=quality_gate_result,
-        validation_result=validation_result,
-    )
 
 
 class MalaOrchestrator:
@@ -305,54 +117,6 @@ class MalaOrchestrator:
     The factory pattern is preferred for new code as it provides cleaner
     separation of concerns and easier testing.
     """
-
-    @overload
-    def __init__(
-        self,
-        repo_path: Path,
-        max_agents: int | None = ...,
-        timeout_minutes: int | None = ...,
-        max_issues: int | None = ...,
-        epic_id: str | None = ...,
-        only_ids: set[str] | None = ...,
-        braintrust_enabled: bool | None = ...,
-        max_gate_retries: int = ...,
-        max_review_retries: int = ...,
-        disable_validations: set[str] | None = ...,
-        coverage_threshold: float | None = ...,
-        morph_enabled: bool | None = ...,
-        prioritize_wip: bool = ...,
-        focus: bool = ...,
-        cli_args: dict[str, object] | None = ...,
-        issue_provider: IssueProvider | None = ...,
-        code_reviewer: CodeReviewer | None = ...,
-        gate_checker: GateChecker | None = ...,
-        log_provider: LogProvider | None = ...,
-        telemetry_provider: TelemetryProvider | None = ...,
-        event_sink: MalaEventSink | None = ...,
-        config: MalaConfig | None = ...,
-        epic_override_ids: set[str] | None = ...,
-    ) -> None:
-        """Legacy constructor signature for backward compatibility."""
-        ...
-
-    @overload
-    def __init__(
-        self,
-        *,
-        _config: OrchestratorConfig,
-        _mala_config: MalaConfig,
-        _derived: _DerivedConfig,
-        _issue_provider: IssueProvider,
-        _code_reviewer: CodeReviewer,
-        _gate_checker: GateChecker,
-        _log_provider: LogProvider,
-        _telemetry_provider: TelemetryProvider,
-        _event_sink: MalaEventSink,
-        _epic_verifier: EpicVerifier | None,
-    ) -> None:
-        """Internal constructor used by create_orchestrator()."""
-        ...
 
     def __init__(
         self,
@@ -467,27 +231,21 @@ class MalaOrchestrator:
         epic_verifier: EpicVerifier | None,
     ) -> None:
         """Initialize from factory-provided config and dependencies."""
-        if mala_config is None:
-            raise ValueError("_mala_config is required when using factory path")
-        if derived is None:
-            raise ValueError("_derived is required when using factory path")
-        if issue_provider is None:
-            raise ValueError("_issue_provider is required when using factory path")
-        if code_reviewer is None:
-            raise ValueError("_code_reviewer is required when using factory path")
-        if gate_checker is None:
-            raise ValueError("_gate_checker is required when using factory path")
-        if log_provider is None:
-            raise ValueError("_log_provider is required when using factory path")
-        if telemetry_provider is None:
-            raise ValueError("_telemetry_provider is required when using factory path")
-        if event_sink is None:
-            raise ValueError("_event_sink is required when using factory path")
+        required = [
+            ("_mala_config", mala_config),
+            ("_derived", derived),
+            ("_issue_provider", issue_provider),
+            ("_code_reviewer", code_reviewer),
+            ("_gate_checker", gate_checker),
+            ("_log_provider", log_provider),
+            ("_telemetry_provider", telemetry_provider),
+            ("_event_sink", event_sink),
+        ]
+        for name, value in required:
+            if value is None:
+                raise ValueError(f"{name} is required when using factory path")
 
-        # Store configs
         self._mala_config = mala_config
-
-        # Set all attributes from config
         self.repo_path = orch_config.repo_path.resolve()
         self.max_agents = orch_config.max_agents
         self.timeout_seconds = derived.timeout_seconds
@@ -505,15 +263,8 @@ class MalaOrchestrator:
         self.focus = orch_config.focus
         self.cli_args = orch_config.cli_args
         self.epic_override_ids = orch_config.epic_override_ids or set()
-        self.debug_log = orch_config.debug_log
-
-        # Review disabled reason (if any)
         self.review_disabled_reason = derived.review_disabled_reason
-
-        # Initialize runtime state
         self._init_runtime_state()
-
-        # Set dependencies
         self.log_provider = log_provider
         self.quality_gate = gate_checker
         self.event_sink = event_sink
@@ -521,8 +272,6 @@ class MalaOrchestrator:
         self.epic_verifier = epic_verifier
         self.code_reviewer = code_reviewer
         self.telemetry_provider = telemetry_provider
-
-        # Build pipeline runners
         self._init_pipeline_runners()
 
     def _init_runtime_state(self) -> None:
@@ -780,93 +529,6 @@ class MalaOrchestrator:
                 issue_id, result.summary, log_path=log_path
             )
 
-    async def _create_review_tracking_issues(
-        self,
-        source_issue_id: str,
-        review_issues: list[ReviewIssueProtocol],
-    ) -> None:
-        """Create beads issues from P2/P3 review findings.
-
-        These are low-priority issues that didn't block the review but should
-        be tracked for later resolution. Each issue is created with appropriate
-        priority and linked to the source issue via tags.
-
-        Args:
-            source_issue_id: The issue ID that triggered the review.
-            review_issues: List of ReviewIssueProtocol objects from the review.
-        """
-        for issue in review_issues:
-            # Access protocol-defined attributes directly
-            file_path = issue.file
-            line_start = issue.line_start
-            line_end = issue.line_end
-            priority = issue.priority
-            title = issue.title
-            body = issue.body
-            reviewer = issue.reviewer
-
-            # Map priority to beads priority string (P2, P3, etc.)
-            priority_str = f"P{priority}" if priority is not None else "P3"
-
-            # Build location string
-            if line_start == line_end or line_end == 0:
-                location = f"{file_path}:{line_start}" if file_path else ""
-            else:
-                location = f"{file_path}:{line_start}-{line_end}" if file_path else ""
-
-            # Build dedup tag from content hash to prevent duplicate issues
-            # Hash key: file + line + title (not body, which may vary)
-            hash_key = f"{file_path}:{line_start}:{line_end}:{title}"
-            content_hash = hashlib.sha256(hash_key.encode()).hexdigest()[:12]
-            dedup_tag = f"review_finding:{content_hash}"
-
-            # Check for existing issue with this dedup tag
-            existing_id = await self.beads.find_issue_by_tag_async(dedup_tag)
-            if existing_id:
-                # Already exists, skip creation
-                continue
-
-            # Build issue title with location
-            issue_title = f"[Review] {title}"
-            if location:
-                issue_title = f"[Review] {location}: {title}"
-
-            # Build description
-            description_parts = [
-                "## Review Finding",
-                "",
-                f"This issue was auto-created from a {priority_str} review finding.",
-                "",
-                f"**Source issue:** {source_issue_id}",
-                f"**Reviewer:** {reviewer}",
-            ]
-            if location:
-                description_parts.append(f"**Location:** {location}")
-            if body:
-                description_parts.extend(["", "## Details", "", body])
-
-            description = "\n".join(description_parts)
-
-            # Tags for tracking and deduplication
-            tags = [
-                "auto_generated",
-                "review_finding",
-                f"source:{source_issue_id}",
-                dedup_tag,
-            ]
-
-            new_issue_id = await self.beads.create_issue_async(
-                title=issue_title,
-                description=description,
-                priority=priority_str,
-                tags=tags,
-            )
-            if new_issue_id:
-                self.event_sink.on_warning(
-                    f"Created tracking issue {new_issue_id} for {priority_str} review finding",
-                    agent_id=source_issue_id,
-                )
-
     async def _finalize_issue_result(
         self,
         issue_id: str,
@@ -884,9 +546,9 @@ class MalaOrchestrator:
 
         # Build gate metadata from stored result or logs
         if stored_gate_result is not None:
-            gate_metadata = _build_gate_metadata(stored_gate_result, result.success)
+            gate_metadata = build_gate_metadata(stored_gate_result, result.success)
         elif not result.success and log_path and log_path.exists():
-            gate_metadata = _build_gate_metadata_from_logs(
+            gate_metadata = build_gate_metadata_from_logs(
                 log_path,
                 result.summary,
                 result.success,
@@ -903,8 +565,11 @@ class MalaOrchestrator:
 
             # Create tracking issues for P2/P3 review findings (if enabled)
             if self._config.track_review_issues and result.low_priority_review_issues:
-                await self._create_review_tracking_issues(
-                    issue_id, result.low_priority_review_issues
+                await create_review_tracking_issues(
+                    self.beads,
+                    self.event_sink,
+                    issue_id,
+                    result.low_priority_review_issues,
                 )
 
         # Update tracking state
@@ -1058,7 +723,7 @@ class MalaOrchestrator:
         if baseline_commit is None:
             baseline_commit = await get_git_commit_async(self.repo_path)
 
-        prompt = _get_implementer_prompt().format(
+        prompt = get_implementer_prompt().format(
             issue_id=issue_id,
             repo_path=self.repo_path,
             lock_dir=get_lock_dir(),
@@ -1140,73 +805,6 @@ class MalaOrchestrator:
         self.event_sink.on_agent_started(issue_id, issue_id)
         return True
 
-    def _build_run_config(self) -> EventRunConfig:
-        """Build EventRunConfig for on_run_started event."""
-        from src.infra.io.event_sink import EventRunConfig
-
-        review_enabled = self._is_review_enabled()
-
-        # Compute morph disabled reason
-        morph_disabled_reason: str | None = None
-        if not self.morph_enabled:
-            if self.cli_args and self.cli_args.get("no_morph"):
-                morph_disabled_reason = "--no-morph"
-            elif not self._config.morph_api_key:
-                morph_disabled_reason = "MORPH_API_KEY not set"
-            else:
-                morph_disabled_reason = "disabled by config"
-
-        # Compute braintrust disabled reason
-        braintrust_disabled_reason: str | None = None
-        if not self.braintrust_enabled:
-            braintrust_disabled_reason = (
-                f"add BRAINTRUST_API_KEY to {USER_CONFIG_DIR}/.env"
-            )
-
-        return EventRunConfig(
-            repo_path=str(self.repo_path),
-            max_agents=self.max_agents,
-            timeout_minutes=self.timeout_seconds // 60
-            if self.timeout_seconds
-            else None,
-            max_issues=self.max_issues,
-            max_gate_retries=self.max_gate_retries,
-            max_review_retries=self.max_review_retries,
-            epic_id=self.epic_id,
-            only_ids=list(self.only_ids) if self.only_ids else None,
-            braintrust_enabled=self.braintrust_enabled,
-            braintrust_disabled_reason=braintrust_disabled_reason,
-            review_enabled=review_enabled,
-            review_disabled_reason=self.review_disabled_reason,
-            morph_enabled=self.morph_enabled,
-            morph_disallowed_tools=list(MORPH_DISALLOWED_TOOLS)
-            if self.morph_enabled
-            else None,
-            morph_disabled_reason=morph_disabled_reason,
-            prioritize_wip=self.prioritize_wip,
-            cli_args=self.cli_args,
-        )
-
-    def _create_run_metadata(self) -> RunMetadata:
-        """Create run metadata tracker with current configuration."""
-        run_config = RunConfig(
-            max_agents=self.max_agents,
-            timeout_minutes=self.timeout_seconds // 60
-            if self.timeout_seconds
-            else None,
-            max_issues=self.max_issues,
-            epic_id=self.epic_id,
-            only_ids=list(self.only_ids) if self.only_ids else None,
-            braintrust_enabled=self.braintrust_enabled,
-            max_gate_retries=self.max_gate_retries,
-            max_review_retries=self.max_review_retries,
-            review_enabled=self._is_review_enabled(),
-            cli_args=self.cli_args,
-        )
-        return RunMetadata(
-            self.repo_path, run_config, __version__, debug_log=self.debug_log
-        )
-
     async def _run_main_loop(self, run_metadata: RunMetadata) -> int:
         """Run the main agent spawning and completion loop.
 
@@ -1286,12 +884,42 @@ class MalaOrchestrator:
 
     async def run(self) -> tuple[int, int]:
         """Main orchestration loop. Returns (success_count, total_count)."""
-        self.event_sink.on_run_started(self._build_run_config())
+        run_config = build_event_run_config(
+            repo_path=self.repo_path,
+            max_agents=self.max_agents,
+            timeout_seconds=self.timeout_seconds,
+            max_issues=self.max_issues,
+            max_gate_retries=self.max_gate_retries,
+            max_review_retries=self.max_review_retries,
+            epic_id=self.epic_id,
+            only_ids=self.only_ids,
+            braintrust_enabled=self.braintrust_enabled,
+            review_enabled=self._is_review_enabled(),
+            review_disabled_reason=self.review_disabled_reason,
+            morph_enabled=self.morph_enabled,
+            prioritize_wip=self.prioritize_wip,
+            cli_args=self.cli_args,
+            mala_config=self._mala_config,
+        )
+        self.event_sink.on_run_started(run_config)
 
         get_lock_dir().mkdir(parents=True, exist_ok=True)
         get_runs_dir().mkdir(parents=True, exist_ok=True)
 
-        run_metadata = self._create_run_metadata()
+        run_metadata = build_run_metadata(
+            repo_path=self.repo_path,
+            max_agents=self.max_agents,
+            timeout_seconds=self.timeout_seconds,
+            max_issues=self.max_issues,
+            epic_id=self.epic_id,
+            only_ids=self.only_ids,
+            braintrust_enabled=self.braintrust_enabled,
+            max_gate_retries=self.max_gate_retries,
+            max_review_retries=self.max_review_retries,
+            review_enabled=self._is_review_enabled(),
+            cli_args=self.cli_args,
+            version=__version__,
+        )
         self.per_issue_spec = build_validation_spec(
             scope=ValidationScope.PER_ISSUE,
             disable_validations=self._disabled_validations,
