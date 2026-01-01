@@ -932,7 +932,6 @@ class TestDebugLogging:
                     repo_path=Path("/tmp/test-repo"),
                     config=config,
                     version="1.0.0",
-                    debug_log=True,
                 )
 
                 # Verify handler was added

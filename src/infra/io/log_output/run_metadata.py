@@ -180,8 +180,6 @@ class RunMetadata:
         repo_path: Path,
         config: RunConfig,
         version: str,
-        *,
-        debug_log: bool = False,
     ):
         self.run_id = str(uuid.uuid4())
         self.started_at = datetime.now(UTC)
@@ -192,13 +190,10 @@ class RunMetadata:
         self.issues: dict[str, IssueRun] = {}
         # Run-level validation results (from mala-e0i)
         self.run_validation: ValidationResult | None = None
-        # Configure debug logging for this run (if enabled)
-        if debug_log:
-            self.debug_log_path: Path | None = configure_debug_logging(
-                repo_path, self.run_id
-            )
-        else:
-            self.debug_log_path = None
+        # Configure debug logging for this run (always enabled)
+        self.debug_log_path: Path | None = configure_debug_logging(
+            repo_path, self.run_id
+        )
 
     def record_issue(self, issue: IssueRun) -> None:
         """Record the result of an issue run."""

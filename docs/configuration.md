@@ -23,7 +23,6 @@
 | `--verbose`, `-v` | false | Enable verbose output; shows full tool arguments |
 | `--no-morph` | false | Disable MorphLLM routing; use built-in tools directly |
 | `--epic-override` | - | Comma-separated epic IDs to close without verification (human bypass) |
-| `--debug-log` | false | Write debug logs to `~/.config/mala/runs/{repo-name}/{timestamp}.debug.log` |
 
 ### Disable Validation Flags
 
