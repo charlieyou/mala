@@ -2,8 +2,8 @@
 """
 mala: Agent SDK orchestrator for parallel issue processing.
 
-This module is a thin shim that exposes the CLI app from src.cli.
-The actual implementation lives in src/cli.py.
+This module is a thin shim that exposes the CLI app from src.cli.cli.
+The actual implementation lives in src/cli/cli.py.
 
 Usage:
     mala run [OPTIONS] [REPO_PATH]
@@ -14,7 +14,7 @@ Usage:
 
 from .cli import bootstrap
 
-# Call bootstrap at module import time so the console entrypoint (src.main:app)
+# Call bootstrap at module import time so the console entrypoint (src.cli.main:app)
 # runs bootstrap before importing the CLI app (which imports claude_agent_sdk)
 bootstrap()
 

@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
+from ..orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
 
 # Bootstrap state: tracks whether bootstrap() has been called
 # These are populated on first access via __getattr__
@@ -74,7 +74,7 @@ def bootstrap() -> None:
     # This patches the SDK before any imports can use the unpatched version
     # Note: We use MalaConfig here to read BRAINTRUST_API_KEY consistently
     # from the environment (which now includes user .env after load_user_env)
-    from .config import MalaConfig
+    from ..config import MalaConfig
 
     config = MalaConfig.from_env(validate=False)
     if config.braintrust_api_key:
@@ -104,7 +104,7 @@ from typing import Annotated, Never
 
 import typer
 
-from .orchestration.cli_support import Colors, log, set_verbose
+from ..orchestration.cli_support import Colors, log, set_verbose
 
 # SDK-dependent imports (BeadsClient, MalaOrchestrator, get_lock_dir, run_metadata)
 # are lazy-loaded via __getattr__ to ensure bootstrap() runs before claude_agent_sdk
@@ -505,7 +505,7 @@ def run(
 
     if cerberus_spawn_args is not None:
         try:
-            from .config import _parse_cerberus_args
+            from ..config import _parse_cerberus_args
 
             spawn_args = tuple(
                 _parse_cerberus_args(
@@ -519,7 +519,7 @@ def run(
 
     if cerberus_wait_args is not None:
         try:
-            from .config import _parse_cerberus_args
+            from ..config import _parse_cerberus_args
 
             wait_args = tuple(
                 _parse_cerberus_args(cerberus_wait_args, source="--cerberus-wait-args")
@@ -531,7 +531,7 @@ def run(
 
     if cerberus_env is not None:
         try:
-            from .config import _normalize_cerberus_env, _parse_cerberus_env
+            from ..config import _normalize_cerberus_env, _parse_cerberus_env
 
             env_map = _parse_cerberus_env(cerberus_env, source="--cerberus-env")
             config = replace(config, cerberus_env=_normalize_cerberus_env(env_map))
@@ -895,35 +895,35 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         return _lazy_modules[name]
 
     if name == "BeadsClient":
-        from .orchestration.cli_support import BeadsClient
+        from ..orchestration.cli_support import BeadsClient
 
         _lazy_modules[name] = BeadsClient
     elif name == "MalaConfig":
-        from .config import MalaConfig
+        from ..config import MalaConfig
 
         _lazy_modules[name] = MalaConfig
     elif name == "MalaOrchestrator":
-        from .orchestration.orchestrator import MalaOrchestrator
+        from ..orchestration.orchestrator import MalaOrchestrator
 
         _lazy_modules[name] = MalaOrchestrator
     elif name == "OrchestratorConfig":
-        from .orchestration.types import OrchestratorConfig
+        from ..orchestration.types import OrchestratorConfig
 
         _lazy_modules[name] = OrchestratorConfig
     elif name == "create_orchestrator":
-        from .orchestration.factory import create_orchestrator
+        from ..orchestration.factory import create_orchestrator
 
         _lazy_modules[name] = create_orchestrator
     elif name == "get_lock_dir":
-        from .orchestration.cli_support import get_lock_dir
+        from ..orchestration.cli_support import get_lock_dir
 
         _lazy_modules[name] = get_lock_dir
     elif name == "get_running_instances":
-        from .orchestration.cli_support import get_running_instances
+        from ..orchestration.cli_support import get_running_instances
 
         _lazy_modules[name] = get_running_instances
     elif name == "get_running_instances_for_dir":
-        from .orchestration.cli_support import get_running_instances_for_dir
+        from ..orchestration.cli_support import get_running_instances_for_dir
 
         _lazy_modules[name] = get_running_instances_for_dir
 

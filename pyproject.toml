@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mala = "src.main:app"
+mala = "src.cli.main:app"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0", "pytest-cov>=5.0.0"]
@@ -140,7 +140,8 @@ name = "CLI only depends on orchestrator"
 type = "forbidden"
 source_modules = [
     "src.cli",
-    "src.main",
+    "src.cli.cli",
+    "src.cli.main",
 ]
 forbidden_modules = [
     "src.pipeline",
@@ -208,7 +209,8 @@ source_modules = [
 ]
 forbidden_modules = [
     "src.cli",
-    "src.main",
+    "src.cli.cli",
+    "src.cli.main",
     "src.orchestration",
     "src.orchestration.orchestrator",
     "src.orchestration.factory",
@@ -228,7 +230,8 @@ type = "forbidden"
 source_modules = ["src.pipeline"]
 forbidden_modules = [
     "src.cli",
-    "src.main",
+    "src.cli.cli",
+    "src.cli.main",
     "src.orchestration",
     "src.orchestration.orchestrator",
     "src.orchestration.factory",
@@ -407,7 +410,8 @@ source_modules = [
 ]
 forbidden_modules = [
     "src.cli",
-    "src.main",
+    "src.cli.cli",
+    "src.cli.main",
     "src.orchestration",
     "src.orchestration.orchestrator",
     "src.orchestration.factory",
@@ -428,7 +432,8 @@ type = "forbidden"
 source_modules = ["src.models", "src.core.models"]
 forbidden_modules = [
     "src.cli",
-    "src.main",
+    "src.cli.cli",
+    "src.cli.main",
     "src.orchestration",
     "src.orchestration.orchestrator",
     "src.orchestration.factory",
@@ -483,7 +488,8 @@ type = "forbidden"
 source_modules = ["src.protocols", "src.core.protocols"]
 forbidden_modules = [
     "src.cli",
-    "src.main",
+    "src.cli.cli",
+    "src.cli.main",
     "src.orchestration",
     "src.orchestration.orchestrator",
     "src.orchestration.factory",
@@ -538,7 +544,8 @@ type = "forbidden"
 source_modules = ["src.log_events", "src.core.log_events"]
 forbidden_modules = [
     "src.cli",
-    "src.main",
+    "src.cli.cli",
+    "src.cli.main",
     "src.orchestration",
     "src.orchestration.orchestrator",
     "src.orchestration.factory",
@@ -610,7 +617,8 @@ type = "forbidden"
 source_modules = ["src.tools", "src.infra.tools"]
 forbidden_modules = [
     "src.cli",
-    "src.main",
+    "src.cli.cli",
+    "src.cli.main",
     "src.orchestration",
     "src.orchestration.orchestrator",
     "src.orchestration.factory",
@@ -687,7 +695,8 @@ type = "forbidden"
 source_modules = ["src.config"]
 forbidden_modules = [
     "src.cli",
-    "src.main",
+    "src.cli.cli",
+    "src.cli.main",
     "src.orchestration",
     "src.orchestration.orchestrator",
     "src.orchestration.factory",

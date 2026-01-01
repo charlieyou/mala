@@ -15,7 +15,7 @@ import pytest
 from claude_agent_sdk.types import PreToolUseHookInput, HookContext
 
 # Call bootstrap() to ensure env is loaded before tests that may need it
-from src.cli import bootstrap
+from src.cli.cli import bootstrap
 
 bootstrap()
 
