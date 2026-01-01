@@ -557,8 +557,6 @@ class TestRunOrchestrationLoop:
     ) -> None:
         """Should stop after processing max_issues."""
         orchestrator.max_issues = 2
-        # Also update the coordinator's config (it has its own copy)
-        orchestrator.issue_coordinator.config.max_issues = 2
         call_count = 0
         spawned: list[str] = []
 

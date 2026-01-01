@@ -118,6 +118,9 @@ class MalaOrchestrator:
     separation of concerns and easier testing.
     """
 
+    # Type annotations for attributes set during initialization
+    _max_issues: int | None
+
     def __init__(
         self,
         repo_path: Path | None = None,
@@ -288,11 +291,13 @@ class MalaOrchestrator:
         self._init_pipeline_runners()
 
     def _init_runtime_state(self) -> None:
-        """Initialize runtime state that's common to both init paths."""
-        self.active_tasks: dict[str, asyncio.Task[IssueResult]] = {}
+        """Initialize runtime state that's common to both init paths.
+
+        Note: active_tasks and failed_issues are delegated to issue_coordinator
+        to maintain a single source of truth. See the corresponding properties.
+        """
         self.agent_ids: dict[str, str] = {}
         self.completed: list[IssueResult] = []
-        self.failed_issues: set[str] = set()
         self.abort_run: bool = False
         self.abort_reason: str | None = None
         self.session_log_paths: dict[str, Path] = {}
@@ -346,7 +351,7 @@ class MalaOrchestrator:
         # IssueExecutionCoordinator
         coordinator_config = CoordinatorConfig(
             max_agents=self.max_agents,
-            max_issues=self.max_issues,
+            max_issues=self._max_issues,
             epic_id=self.epic_id,
             only_ids=self.only_ids,
             prioritize_wip=self.prioritize_wip,
@@ -369,6 +374,29 @@ class MalaOrchestrator:
     def _config(self, value: MalaConfig) -> None:
         """Backward compatibility setter for MalaConfig."""
         self._mala_config = value
+
+    # Delegate state to issue_coordinator (single source of truth)
+    @property
+    def active_tasks(self) -> dict[str, asyncio.Task[IssueResult]]:
+        """Active agent tasks, delegated to issue_coordinator."""
+        return self.issue_coordinator.active_tasks  # type: ignore[return-value]
+
+    @property
+    def failed_issues(self) -> set[str]:
+        """Failed issue IDs, delegated to issue_coordinator."""
+        return self.issue_coordinator.failed_issues
+
+    @property
+    def max_issues(self) -> int | None:
+        """Maximum issues to process, synced with issue_coordinator."""
+        return self.issue_coordinator.config.max_issues
+
+    @max_issues.setter
+    def max_issues(self, value: int | None) -> None:
+        """Set max_issues and sync to issue_coordinator."""
+        self._max_issues = value
+        if hasattr(self, "issue_coordinator"):
+            self.issue_coordinator.config.max_issues = value
 
     def _cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup)."""
@@ -586,9 +614,8 @@ class MalaOrchestrator:
                     result.low_priority_review_issues,
                 )
 
-        # Update tracking state
+        # Update tracking state (active_tasks is updated by mark_completed in finalize_callback)
         self.completed.append(result)
-        self.active_tasks.pop(issue_id, None)
 
         # Record to run metadata and cleanup
         self._record_issue_run(issue_id, result, log_path, gate_metadata, run_metadata)
@@ -808,13 +835,11 @@ class MalaOrchestrator:
     async def spawn_agent(self, issue_id: str) -> bool:
         """Spawn a new agent task for an issue. Returns True if spawned."""
         if not await self.beads.claim_async(issue_id):
-            self.failed_issues.add(issue_id)
             self.issue_coordinator.mark_failed(issue_id)
             self.event_sink.on_claim_failed(issue_id, issue_id)
             return False
 
         task = asyncio.create_task(self.run_implementer(issue_id))
-        self.active_tasks[issue_id] = task
         self.issue_coordinator.register_task(issue_id, task)
         self.event_sink.on_agent_started(issue_id, issue_id)
         return True
