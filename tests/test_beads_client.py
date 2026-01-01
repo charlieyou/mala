@@ -1407,3 +1407,279 @@ class TestResolveEpicChildren:
         assert result == set()
         assert len(warnings) == 1
         assert "epic-1" in warnings[0]
+
+
+class TestOrphansOnlyIntegration:
+    """Integration tests for orphans_only filter in BeadsClient.
+
+    Verifies that orphans_only=True is properly passed through and applied
+    in get_ready_async() and get_ready_issues_async().
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_ready_async_filters_to_orphans_only(
+        self, tmp_path: Path
+    ) -> None:
+        """get_ready_async with orphans_only=True should return only orphan tasks."""
+        beads = BeadsClient(tmp_path)
+
+        # Ready response with mixed orphan and non-orphan tasks
+        ready_response = json.dumps(
+            [
+                {"id": "orphan-1", "issue_type": "task", "priority": 1},
+                {"id": "parented-1", "issue_type": "task", "priority": 2},
+                {"id": "orphan-2", "issue_type": "task", "priority": 3},
+                {"id": "parented-2", "issue_type": "task", "priority": 1},
+            ]
+        )
+
+        # Parent epic mappings - orphans have None, parented have epic
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {
+                "orphan-1": None,
+                "parented-1": "epic-a",
+                "orphan-2": None,
+                "parented-2": "epic-b",
+            }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
+            )
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+
+            result = await beads.get_ready_async(orphans_only=True)
+
+        # Should only include orphan tasks
+        assert "orphan-1" in result
+        assert "orphan-2" in result
+        assert "parented-1" not in result
+        assert "parented-2" not in result
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_ready_issues_async_filters_to_orphans_only(
+        self, tmp_path: Path
+    ) -> None:
+        """get_ready_issues_async with orphans_only=True should return only orphan tasks."""
+        beads = BeadsClient(tmp_path)
+
+        ready_response = json.dumps(
+            [
+                {"id": "orphan-1", "issue_type": "task", "priority": 1},
+                {"id": "parented-1", "issue_type": "task", "priority": 2},
+                {"id": "orphan-2", "issue_type": "task", "priority": 3},
+            ]
+        )
+
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {
+                "orphan-1": None,
+                "parented-1": "epic-a",
+                "orphan-2": None,
+            }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
+            )
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+
+            result = await beads.get_ready_issues_async(orphans_only=True)
+
+        # Should only include orphan tasks with full issue dicts
+        result_ids = [str(i["id"]) for i in result]
+        assert "orphan-1" in result_ids
+        assert "orphan-2" in result_ids
+        assert "parented-1" not in result_ids
+        assert len(result) == 2
+        # Verify issues have parent_epic field populated (as None for orphans)
+        for issue in result:
+            assert issue.get("parent_epic") is None
+
+    @pytest.mark.asyncio
+    async def test_orphans_only_false_returns_all_tasks(self, tmp_path: Path) -> None:
+        """get_ready_async with orphans_only=False should return all tasks."""
+        beads = BeadsClient(tmp_path)
+
+        ready_response = json.dumps(
+            [
+                {"id": "orphan-1", "issue_type": "task", "priority": 1},
+                {"id": "parented-1", "issue_type": "task", "priority": 2},
+            ]
+        )
+
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {
+                "orphan-1": None,
+                "parented-1": "epic-a",
+            }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
+            )
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+
+            result = await beads.get_ready_async(orphans_only=False)
+
+        # Should include both orphan and parented tasks
+        assert "orphan-1" in result
+        assert "parented-1" in result
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_orphans_only_returns_empty_when_all_have_parents(
+        self, tmp_path: Path
+    ) -> None:
+        """get_ready_async with orphans_only=True should return empty if all have parents."""
+        beads = BeadsClient(tmp_path)
+
+        ready_response = json.dumps(
+            [
+                {"id": "parented-1", "issue_type": "task", "priority": 1},
+                {"id": "parented-2", "issue_type": "task", "priority": 2},
+            ]
+        )
+
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {
+                "parented-1": "epic-a",
+                "parented-2": "epic-b",
+            }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
+            )
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+
+            result = await beads.get_ready_async(orphans_only=True)
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_orphans_only_combined_with_prioritize_wip(
+        self, tmp_path: Path
+    ) -> None:
+        """orphans_only should work correctly with prioritize_wip=True."""
+        beads = BeadsClient(tmp_path)
+
+        ready_response = json.dumps(
+            [
+                {
+                    "id": "orphan-1",
+                    "issue_type": "task",
+                    "priority": 2,
+                    "status": "open",
+                },
+                {
+                    "id": "parented-1",
+                    "issue_type": "task",
+                    "priority": 1,
+                    "status": "open",
+                },
+            ]
+        )
+
+        wip_response = json.dumps(
+            [
+                {
+                    "id": "wip-orphan",
+                    "issue_type": "task",
+                    "priority": 3,
+                    "status": "in_progress",
+                },
+                {
+                    "id": "wip-parented",
+                    "issue_type": "task",
+                    "priority": 1,
+                    "status": "in_progress",
+                },
+            ]
+        )
+
+        async def mock_run(cmd: list[str]) -> CommandResult:
+            if "--status" in cmd and "in_progress" in cmd:
+                return make_command_result(stdout=wip_response)
+            return make_command_result(stdout=ready_response)
+
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {
+                "orphan-1": None,
+                "parented-1": "epic-a",
+                "wip-orphan": None,
+                "wip-parented": "epic-b",
+            }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+
+            result = await beads.get_ready_async(
+                orphans_only=True, prioritize_wip=True, focus=False
+            )
+
+        # Should only include orphan tasks, and WIP should come first
+        assert "wip-orphan" in result
+        assert "orphan-1" in result
+        assert "parented-1" not in result
+        assert "wip-parented" not in result
+        assert len(result) == 2
+        # WIP orphan should come first due to prioritize_wip
+        assert result[0] == "wip-orphan"
+
+    @pytest.mark.asyncio
+    async def test_orphans_only_treats_empty_string_parent_as_orphan(
+        self, tmp_path: Path
+    ) -> None:
+        """Tasks with empty string parent_epic should be treated as orphans."""
+        beads = BeadsClient(tmp_path)
+
+        ready_response = json.dumps(
+            [
+                {"id": "empty-parent", "issue_type": "task", "priority": 1},
+                {"id": "real-parent", "issue_type": "task", "priority": 2},
+            ]
+        )
+
+        async def mock_get_parent_epics(
+            issue_ids: list[str],
+        ) -> dict[str, str | None]:
+            return {
+                "empty-parent": "",  # Empty string treated as no parent
+                "real-parent": "epic-a",
+            }
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=ready_response)),
+            )
+            mp.setattr(beads, "get_parent_epics_async", mock_get_parent_epics)
+
+            result = await beads.get_ready_async(orphans_only=True)
+
+        # Empty string parent should be treated as orphan
+        assert "empty-parent" in result
+        assert "real-parent" not in result
+        assert len(result) == 1
