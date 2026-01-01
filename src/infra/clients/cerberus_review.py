@@ -280,6 +280,13 @@ class DefaultReviewer:
                     spawn_result = await runner.run_async(
                         spawn_cmd, env=env, timeout=timeout
                     )
+                    if spawn_result.timed_out:
+                        return ReviewResult(
+                            passed=False,
+                            issues=[],
+                            parse_error="spawn timeout",
+                            fatal_error=False,
+                        )
                     if spawn_result.returncode == 0:
                         # Successfully spawned after clearing gate
                         pass  # Continue to wait phase below
