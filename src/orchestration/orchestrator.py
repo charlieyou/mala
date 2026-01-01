@@ -415,19 +415,26 @@ class MalaOrchestrator:
         self._mala_config = value
 
     # Delegate state to issue_coordinator (single source of truth)
+    # These properties return empty containers if accessed before coordinator init
     @property
     def active_tasks(self) -> dict[str, asyncio.Task[IssueResult]]:
         """Active agent tasks, delegated to issue_coordinator."""
+        if not hasattr(self, "issue_coordinator"):
+            return {}
         return self.issue_coordinator.active_tasks  # type: ignore[return-value]
 
     @property
     def failed_issues(self) -> set[str]:
         """Failed issue IDs, delegated to issue_coordinator."""
+        if not hasattr(self, "issue_coordinator"):
+            return set()
         return self.issue_coordinator.failed_issues
 
     @property
     def max_issues(self) -> int | None:
         """Maximum issues to process, synced with issue_coordinator."""
+        if not hasattr(self, "issue_coordinator"):
+            return self._max_issues if hasattr(self, "_max_issues") else None
         return self.issue_coordinator.config.max_issues
 
     @max_issues.setter
@@ -705,6 +712,8 @@ class MalaOrchestrator:
                     summary=f"Aborted due to unrecoverable error: {reason}",
                 )
             await self._finalize_issue_result(issue_id, result, run_metadata)
+            # Mark completed in coordinator to keep state consistent
+            self.issue_coordinator.mark_completed(issue_id)
 
     def _build_session_callbacks(self, issue_id: str) -> SessionCallbacks:
         """Build callbacks for session operations.
