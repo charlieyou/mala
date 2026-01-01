@@ -48,17 +48,17 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
-    from src.config import MalaConfig
-    from src.epic_verifier import EpicVerifier
-    from src.event_sink import MalaEventSink
-    from src.protocols import (
+    from src.core.protocols import (
         CodeReviewer,
         EpicVerificationModel,
         GateChecker,
         IssueProvider,
         LogProvider,
     )
-    from src.telemetry import TelemetryProvider
+    from src.infra.epic_verifier import EpicVerifier
+    from src.infra.io.config import MalaConfig
+    from src.infra.io.event_sink import MalaEventSink
+    from src.infra.telemetry import TelemetryProvider
 
     from .orchestrator import MalaOrchestrator
 
@@ -174,15 +174,15 @@ def _build_dependencies(
     Returns:
         Tuple of all required dependencies.
     """
-    from src.beads_client import BeadsClient
-    from src.braintrust_integration import BraintrustProvider
-    from src.cerberus_review import DefaultReviewer
+    from src.core.models import RetryConfig
     from src.domain.quality_gate import QualityGate
-    from src.epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
-    from src.event_sink import ConsoleEventSink
-    from src.models import RetryConfig
-    from src.session_log_parser import FileSystemLogProvider
-    from src.telemetry import NullTelemetryProvider
+    from src.infra.clients.beads_client import BeadsClient
+    from src.infra.clients.braintrust_integration import BraintrustProvider
+    from src.infra.clients.cerberus_review import DefaultReviewer
+    from src.infra.epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
+    from src.infra.io.event_sink import ConsoleEventSink
+    from src.infra.io.session_log_parser import FileSystemLogProvider
+    from src.infra.telemetry import NullTelemetryProvider
 
     # Get resolved path
     repo_path = config.repo_path.resolve()
@@ -314,7 +314,7 @@ def create_orchestrator(
         )
         orchestrator = create_orchestrator(config, deps=deps)
     """
-    from src.config import MalaConfig
+    from src.infra.io.config import MalaConfig
 
     from .orchestrator import MalaOrchestrator
 

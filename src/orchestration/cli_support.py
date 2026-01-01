@@ -16,8 +16,8 @@ from src.infra.tools.env import (
     load_user_env,
 )
 
-# BeadsClient (from src.beads_client)
-from src.beads_client import BeadsClient
+# BeadsClient (from src.infra.clients.beads_client)
+from src.infra.clients.beads_client import BeadsClient
 
 # Locking utilities (from src.infra.tools.locking)
 from src.infra.tools.locking import get_lock_dir
