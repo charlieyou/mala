@@ -9,10 +9,10 @@ from unittest.mock import patch
 import pytest
 import typer
 
-import src.orchestrator
+import src.orchestration.orchestrator
 import src.beads_client
 import src.infra.tools.locking
-import src.cli_support
+import src.orchestration.cli_support
 import src.infra.io.log_output.run_metadata
 from src.models import EpicVerificationResult
 
@@ -56,7 +56,7 @@ class TestImportSafety:
             # (cli_support re-exports load_user_env from tools.env)
             with (
                 patch("src.infra.tools.env.load_user_env", mock_load_user_env),
-                patch("src.cli_support.load_user_env", mock_load_user_env),
+                patch("src.orchestration.cli_support.load_user_env", mock_load_user_env),
             ):
                 # Force reimport of cli module
                 if "src.cli" in sys.modules:
@@ -274,10 +274,10 @@ def test_run_without_morph_api_key_passes_config(
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     # CLI now uses create_orchestrator from factory
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -304,10 +304,10 @@ def test_run_with_morph_api_key_passes_config(
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     # CLI now uses create_orchestrator from factory
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -355,10 +355,10 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     # CLI now uses create_orchestrator from factory
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -408,10 +408,10 @@ def test_run_verbose_mode_sets_verbose_true(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -438,10 +438,10 @@ def test_run_default_quiet_mode(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -486,10 +486,10 @@ def test_epic_verify_invokes_verifier(
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator_with_verifier(verifier),
     )
@@ -532,7 +532,7 @@ def test_clean_removes_locks_and_logs(
 
     # Patch both cli_support (where cli imports from) and src.infra.tools.locking
     # (where cli_support imports from) to ensure full isolation
-    monkeypatch.setattr(src.cli_support, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(src.orchestration.cli_support, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
     monkeypatch.setattr(cli, "log", _log)
@@ -560,10 +560,10 @@ def test_status_no_running_instance(
 
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     # Patch both cli_support and underlying modules
-    monkeypatch.setattr(src.cli_support, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(src.orchestration.cli_support, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
     # Mock to return no running instances - patch cli_support where cli imports from
-    monkeypatch.setattr(src.cli_support, "get_running_instances_for_dir", lambda _: [])
+    monkeypatch.setattr(src.orchestration.cli_support, "get_running_instances_for_dir", lambda _: [])
     monkeypatch.setattr(
         src.infra.io.log_output.run_metadata, "get_running_instances_for_dir", lambda _: []
     )
@@ -607,12 +607,12 @@ def test_status_with_running_instance(
 
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     # Patch both cli_support and underlying modules
-    monkeypatch.setattr(src.cli_support, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(src.orchestration.cli_support, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
     # Patch get_running_instances_for_dir in cli_support where cli imports from
     monkeypatch.setattr(
-        src.cli_support,
+        src.orchestration.cli_support,
         "get_running_instances_for_dir",
         lambda _: [mock_instance],
     )
@@ -665,11 +665,11 @@ def test_status_all_flag(
 
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
     # Patch both cli_support and underlying modules
-    monkeypatch.setattr(src.cli_support, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(src.orchestration.cli_support, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
     # Patch get_running_instances in cli_support where cli imports from
     monkeypatch.setattr(
-        src.cli_support,
+        src.orchestration.cli_support,
         "get_running_instances",
         lambda: [mock_instance_1, mock_instance_2],
     )
@@ -702,10 +702,10 @@ def test_run_disable_validations_valid(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -793,10 +793,10 @@ def test_run_validation_flags_passed_to_orchestrator(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -824,10 +824,10 @@ def test_run_validation_flags_defaults(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -852,10 +852,10 @@ def test_run_wip_flag_passed_to_orchestrator(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -878,10 +878,10 @@ def test_run_focus_flag_default_true(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -904,10 +904,10 @@ def test_run_no_focus_flag_passed_to_orchestrator(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -930,10 +930,10 @@ def test_run_focus_composes_with_wip(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -957,10 +957,10 @@ def test_run_review_disabled_via_disable_validations(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -1015,10 +1015,10 @@ def test_run_review_timeout_default(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -1045,10 +1045,10 @@ def test_run_review_timeout_custom(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -1075,10 +1075,10 @@ def test_run_cerberus_overrides(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
@@ -1284,14 +1284,14 @@ def test_dry_run_exits_without_processing(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestrator_factory
+    import src.orchestration.factory
 
     monkeypatch.setattr(
-        src.orchestrator_factory,
+        src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
-    monkeypatch.setattr(src.cli_support, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(src.orchestration.cli_support, "BeadsClient", DummyBeadsClient)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -1314,7 +1314,7 @@ def test_dry_run_passes_flags_to_beads_client(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.cli_support, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(src.orchestration.cli_support, "BeadsClient", DummyBeadsClient)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit):
@@ -1345,7 +1345,7 @@ def test_dry_run_displays_empty_task_list(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.cli_support, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(src.orchestration.cli_support, "BeadsClient", DummyBeadsClient)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -1382,7 +1382,7 @@ def test_dry_run_displays_tasks_with_metadata(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.cli_support, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(src.orchestration.cli_support, "BeadsClient", DummyBeadsClient)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -1429,7 +1429,7 @@ def test_dry_run_focus_mode_groups_by_epic(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.cli_support, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(src.orchestration.cli_support, "BeadsClient", DummyBeadsClient)
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:

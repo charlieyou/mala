@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.beads_client import BeadsClient
-from src.orchestrator import MalaOrchestrator
+from src.orchestration.orchestrator import MalaOrchestrator
 
 
 def make_subprocess_result(

@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.orchestrator import _get_implementer_prompt
+from src.orchestration.orchestrator import _get_implementer_prompt
 from src.infra.hooks import make_stop_hook
 from src.infra.tools.env import SCRIPTS_DIR
 
@@ -349,7 +349,7 @@ class TestOrchestratorCleanup:
     ) -> None:
         """Orchestrator cleans up locks when agent crashes/times out."""
         from src.event_sink import NullEventSink
-        from src.orchestrator import MalaOrchestrator
+        from src.orchestration.orchestrator import MalaOrchestrator
 
         agent_id = "bd-crashed-agent"
         env = {

@@ -10,81 +10,83 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast, overload
 
-from .beads_client import BeadsClient
-from .braintrust_integration import BraintrustProvider
-from .config import MalaConfig
-from .event_sink import ConsoleEventSink
-from .telemetry import NullTelemetryProvider
-from .git_utils import (
-    get_git_commit_async,
-    get_git_branch_async,
+from src.beads_client import BeadsClient
+from src.braintrust_integration import BraintrustProvider
+from src.cerberus_review import DefaultReviewer
+from src.config import MalaConfig
+from src.domain.quality_gate import QUALITY_GATE_IGNORED_COMMANDS, QualityGate
+from src.domain.validation.spec import (
+    ValidationScope,
+    build_validation_spec,
+)
+from src.epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
+from src.event_sink import ConsoleEventSink
+from src.git_utils import (
     get_baseline_for_issue,
+    get_git_branch_async,
+    get_git_commit_async,
     get_issue_commits_async,
 )
-from .mcp import MORPH_DISALLOWED_TOOLS
-from .infra.io.log_output.console import (
-    truncate_text,
+from src.infra.io.log_output.console import (
     is_verbose_enabled,
+    truncate_text,
 )
-from .infra.io.log_output.run_metadata import (
-    RunMetadata,
-    RunConfig,
+from src.infra.io.log_output.run_metadata import (
     IssueRun,
     QualityGateResult,
+    RunConfig,
+    RunMetadata,
     ValidationResult as MetaValidationResult,
     remove_run_marker,
     write_run_marker,
 )
-from .pipeline.agent_session_runner import (
+from src.infra.tools.env import (
+    SCRIPTS_DIR,
+    USER_CONFIG_DIR,
+    get_lock_dir,
+    get_runs_dir,
+)
+from src.infra.tools.locking import (
+    cleanup_agent_locks,
+    release_run_locks,
+)
+from src.mcp import MORPH_DISALLOWED_TOOLS
+from src.models import RetryConfig
+from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
     AgentSessionRunner,
     SessionCallbacks,
 )
-from .cerberus_review import DefaultReviewer
-from .pipeline.gate_runner import (
+from src.pipeline.gate_runner import (
     GateRunner,
     GateRunnerConfig,
     PerIssueGateInput,
 )
-from .pipeline.review_runner import (
+from src.pipeline.review_runner import (
     NoProgressInput,
     ReviewInput,
     ReviewRunner,
     ReviewRunnerConfig,
 )
-from .pipeline.run_coordinator import (
+from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
     RunLevelValidationInput,
 )
-from .domain.quality_gate import QUALITY_GATE_IGNORED_COMMANDS, QualityGate
-from .session_log_parser import FileSystemLogProvider
-from .infra.tools.env import (
-    USER_CONFIG_DIR,
-    SCRIPTS_DIR,
-    get_lock_dir,
-    get_runs_dir,
-)
-from .infra.tools.locking import (
-    release_run_locks,
-    cleanup_agent_locks,
-)
-from .domain.validation.spec import (
-    ValidationScope,
-    build_validation_spec,
-)
-from .epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
-from .models import RetryConfig
-from .orchestrator_types import DEFAULT_AGENT_TIMEOUT_MINUTES
+from src.session_log_parser import FileSystemLogProvider
+from src.telemetry import NullTelemetryProvider
+
+from .types import DEFAULT_AGENT_TIMEOUT_MINUTES
 
 if TYPE_CHECKING:
-    from .cerberus_review import ReviewResult
-    from .event_sink import EventRunConfig, MalaEventSink
-    from .domain.lifecycle import RetryState
-    from .models import IssueResolution
-    from .orchestrator_types import OrchestratorConfig, _DerivedConfig
-    from .protocols import (
+    from src.cerberus_review import ReviewResult
+    from src.domain.lifecycle import RetryState
+    from src.domain.quality_gate import GateResult
+    from src.domain.validation.spec import ValidationSpec
+    from src.event_sink import EventRunConfig, MalaEventSink
+    from src.models import IssueResolution
+    from src.protocols import (
         CodeReviewer,
         EpicVerificationModel,
         GateChecker,
@@ -95,9 +97,9 @@ if TYPE_CHECKING:
         ReviewResultProtocol,
         ValidationSpecProtocol,
     )
-    from .domain.quality_gate import GateResult
-    from .telemetry import TelemetryProvider
-    from .domain.validation.spec import ValidationSpec
+    from src.telemetry import TelemetryProvider
+
+    from .types import OrchestratorConfig, _DerivedConfig
 
 
 # Version (from package metadata)
@@ -106,7 +108,7 @@ from importlib.metadata import version as pkg_version
 __version__ = pkg_version("mala")
 
 # Prompt file paths (actual file reads deferred to first use)
-_PROMPT_DIR = Path(__file__).parent / "prompts"
+_PROMPT_DIR = Path(__file__).parent.parent / "prompts"
 PROMPT_FILE = _PROMPT_DIR / "implementer_prompt.md"
 REVIEW_FOLLOWUP_FILE = _PROMPT_DIR / "review_followup.md"
 FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
@@ -1288,7 +1290,7 @@ class MalaOrchestrator:
 
     def _build_run_config(self) -> EventRunConfig:
         """Build EventRunConfig for on_run_started event."""
-        from .event_sink import EventRunConfig
+        from src.event_sink import EventRunConfig
 
         review_enabled = self._is_review_enabled()
 

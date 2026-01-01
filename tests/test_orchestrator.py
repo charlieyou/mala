@@ -20,7 +20,7 @@ import pytest
 from claude_agent_sdk.types import ResultMessage
 
 from src.beads_client import BeadsClient
-from src.orchestrator import (
+from src.orchestration.orchestrator import (
     IssueResult,
     MalaOrchestrator,
     _get_fixer_prompt,
@@ -165,7 +165,7 @@ class TestPromptLazyLoading:
     def test_import_succeeds_without_prompt_files(self, tmp_path: Path) -> None:
         """Import succeeds even when prompt files don't exist (lazy loading).
 
-        This validates the first acceptance criterion: 'import src.orchestrator
+        This validates the first acceptance criterion: 'import src.orchestration.orchestrator
         succeeds without filesystem access to prompts'.
         """
         # Create a test script that patches prompt paths to non-existent files
@@ -190,7 +190,7 @@ Path.__truediv__ = _patched_truediv
 
 # Now import orchestrator - should succeed without reading files
 try:
-    from src import orchestrator
+    from src.orchestration import orchestrator
     print("IMPORT_SUCCESS")
 except FileNotFoundError:
     print("IMPORT_FAILED: FileNotFoundError during import")
@@ -533,9 +533,9 @@ class TestRunOrchestrationLoop:
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=MagicMock()),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.release_run_locks"),
         ):
             result = await orchestrator.run()
 
@@ -584,9 +584,9 @@ class TestRunOrchestrationLoop:
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ),
             patch.object(orchestrator, "spawn_agent", side_effect=mock_spawn),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=MagicMock()),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             # Orchestrator needs active_tasks to be empty to exit
@@ -655,9 +655,9 @@ class TestFailedTaskResetsIssue:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=MagicMock()),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -719,9 +719,9 @@ class TestFailedTaskResetsIssue:
             patch.object(
                 orchestrator.beads, "reset_async", side_effect=mock_reset_async
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=MagicMock()),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -1394,9 +1394,9 @@ class TestOrchestratorQualityGateIntegration:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -1455,9 +1455,9 @@ class TestOrchestratorQualityGateIntegration:
             patch.object(
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             success_count, _total = await orchestrator.run()
@@ -1569,9 +1569,9 @@ class TestAsyncBeadsClientWithTimeout:
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ) as mock_ready,
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=MagicMock()),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.release_run_locks"),
         ):
             await orchestrator.run()
 
@@ -1606,7 +1606,7 @@ class TestMissingLogFile:
     @pytest.mark.asyncio
     async def test_exits_quickly_when_log_file_missing(self, tmp_path: Path) -> None:
         """run_implementer should exit within bounded wait when log file missing."""
-        from src.orchestrator import MalaOrchestrator
+        from src.orchestration.orchestrator import MalaOrchestrator
 
         orchestrator = MalaOrchestrator(
             repo_path=tmp_path,
@@ -1639,8 +1639,8 @@ class TestMissingLogFile:
         # Patch ClaudeSDKClient to return our mock
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch("src.orchestrator.get_git_branch_async", return_value="main"),
-            patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
+            patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
+            patch("src.orchestration.orchestrator.get_git_commit_async", return_value="abc123"),
             # TracedAgentExecution removed - telemetry_provider injected via constructor
         ):
             start = time.monotonic()
@@ -1665,7 +1665,7 @@ class TestMissingLogFile:
     @pytest.mark.asyncio
     async def test_summary_indicates_missing_log(self, tmp_path: Path) -> None:
         """Failure summary should clearly indicate the log file was missing."""
-        from src.orchestrator import MalaOrchestrator
+        from src.orchestration.orchestrator import MalaOrchestrator
 
         orchestrator = MalaOrchestrator(
             repo_path=tmp_path,
@@ -1695,8 +1695,8 @@ class TestMissingLogFile:
 
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch("src.orchestrator.get_git_branch_async", return_value="main"),
-            patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
+            patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
+            patch("src.orchestration.orchestrator.get_git_commit_async", return_value="abc123"),
             # TracedAgentExecution removed - telemetry_provider injected via constructor
         ):
             result = await orchestrator.run_implementer("issue-xyz")
@@ -1891,8 +1891,8 @@ class TestAgentEnvInheritance:
         try:
             with (
                 patch("claude_agent_sdk.ClaudeSDKClient", MockClient),
-                patch("src.orchestrator.get_git_branch_async", return_value="main"),
-                patch("src.orchestrator.get_git_commit_async", return_value="abc123"),
+                patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
+                patch("src.orchestration.orchestrator.get_git_commit_async", return_value="abc123"),
                 # TracedAgentExecution removed - telemetry_provider injected via constructor
             ):
                 await orchestrator.run_implementer("test-issue")
@@ -1945,9 +1945,9 @@ class TestLockDirNestedCreation:
             patch.object(
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=nested_lock_dir),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=nested_lock_dir),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
+            patch("src.orchestration.orchestrator.release_run_locks"),
         ):
             # This should not raise even though parent dirs don't exist
             await orchestrator.run()
@@ -2031,9 +2031,9 @@ class TestGateFlowSequencing:
             patch.object(
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             success_count, _total = await orchestrator.run()
@@ -2111,9 +2111,9 @@ class TestGateFlowSequencing:
             patch.object(
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             success_count, _total = await orchestrator.run()
@@ -2190,9 +2190,9 @@ class TestRetryExhaustion:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             success_count, _total = await orchestrator.run()
@@ -2255,9 +2255,9 @@ class TestRetryExhaustion:
             patch.object(
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -2334,9 +2334,9 @@ class TestRunLevelValidation:
             patch.object(
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             success_count, _total = await orchestrator.run()
@@ -2416,9 +2416,9 @@ class TestRunLevelValidation:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             success_count, _total = await orchestrator.run()
@@ -2497,9 +2497,9 @@ class TestRunLevelValidation:
                 "mark_needs_followup_async",
                 side_effect=mock_mark_followup_async,
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -2604,9 +2604,9 @@ class TestValidationResultMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
         ):
             await orchestrator.run()
 
@@ -2713,9 +2713,9 @@ class TestValidationResultMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
         ):
             await orchestrator.run()
 
@@ -2821,9 +2821,9 @@ class TestResolutionRecordingInMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             success_count, total = await orchestrator.run()
@@ -2911,9 +2911,9 @@ class TestResolutionRecordingInMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             success_count, total = await orchestrator.run()
@@ -2993,9 +2993,9 @@ class TestResolutionRecordingInMetadata:
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             success_count, total = await orchestrator.run()
@@ -3107,9 +3107,9 @@ class TestEpicClosureAfterChildCompletion:
                 side_effect=mock_verify_and_close_epic,
             ),
             patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -3180,9 +3180,9 @@ class TestEpicClosureAfterChildCompletion:
             patch.object(
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -3284,9 +3284,9 @@ class TestEpicClosureAfterChildCompletion:
                 side_effect=mock_verify_and_close_epic,
             ),
             patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -3384,9 +3384,9 @@ class TestEpicClosureAfterChildCompletion:
                 side_effect=mock_verify_and_close_epic,
             ),
             patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
             await orchestrator.run()
@@ -3439,7 +3439,7 @@ class TestQualityGateAsync:
             return (mock_gate_result, 0)
 
         with (
-            patch("src.orchestrator.asyncio.to_thread", side_effect=mock_to_thread),
+            patch("src.orchestration.orchestrator.asyncio.to_thread", side_effect=mock_to_thread),
         ):
             result, offset = await orchestrator._run_quality_gate_async(
                 "test-issue", log_path, retry_state
@@ -3541,9 +3541,9 @@ class TestFailedRunQualityGateEvidence:
                 orchestrator.beads, "mark_needs_followup_async", return_value=True
             ),
             patch.object(RunMetadata, "record_issue", capture_record),
-            patch("src.orchestrator.get_lock_dir", return_value=MagicMock()),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
             # Mock subprocess to return no commit found
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
@@ -3601,7 +3601,7 @@ class TestBaselineCommitSelection:
         self, tmp_path: Path
     ) -> None:
         """Fresh issue with no prior commits should use HEAD as baseline."""
-        from src.orchestrator import MalaOrchestrator
+        from src.orchestration.orchestrator import MalaOrchestrator
 
         # Create a fake log file for the session
         log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
@@ -3661,11 +3661,11 @@ class TestBaselineCommitSelection:
 
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch("src.orchestrator.get_git_branch_async", return_value="main"),
+            patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
             # HEAD commit for fresh issue
-            patch("src.orchestrator.get_git_commit_async", return_value="headabc123"),
+            patch("src.orchestration.orchestrator.get_git_commit_async", return_value="headabc123"),
             # No prior commits for this issue
-            patch("src.orchestrator.get_baseline_for_issue", return_value=None),
+            patch("src.orchestration.orchestrator.get_baseline_for_issue", return_value=None),
             patch.object(
                 orchestrator.code_reviewer,
                 "__call__",
@@ -3687,7 +3687,7 @@ class TestBaselineCommitSelection:
         self, tmp_path: Path
     ) -> None:
         """Resumed issue should use parent of first issue commit as baseline."""
-        from src.orchestrator import MalaOrchestrator
+        from src.orchestration.orchestrator import MalaOrchestrator
 
         log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -3744,11 +3744,11 @@ class TestBaselineCommitSelection:
 
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch("src.orchestrator.get_git_branch_async", return_value="main"),
-            patch("src.orchestrator.get_git_commit_async", return_value="currenthead"),
+            patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
+            patch("src.orchestration.orchestrator.get_git_commit_async", return_value="currenthead"),
             # Prior commits exist - return parent of first commit
             patch(
-                "src.orchestrator.get_baseline_for_issue", return_value="parentofirst"
+                "src.orchestration.orchestrator.get_baseline_for_issue", return_value="parentofirst"
             ),
             patch.object(
                 orchestrator.code_reviewer,
@@ -3769,7 +3769,7 @@ class TestBaselineCommitSelection:
     @pytest.mark.asyncio
     async def test_baseline_selection_priority(self, tmp_path: Path) -> None:
         """Verify get_baseline_for_issue is called first, HEAD used as fallback."""
-        from src.orchestrator import MalaOrchestrator
+        from src.orchestration.orchestrator import MalaOrchestrator
 
         log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -3817,13 +3817,13 @@ class TestBaselineCommitSelection:
 
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch("src.orchestrator.get_git_branch_async", return_value="main"),
+            patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
             patch(
-                "src.orchestrator.get_git_commit_async",
+                "src.orchestration.orchestrator.get_git_commit_async",
                 side_effect=mock_get_git_commit_async,
             ),
             patch(
-                "src.orchestrator.get_baseline_for_issue",
+                "src.orchestration.orchestrator.get_baseline_for_issue",
                 side_effect=mock_get_baseline_for_issue,
             ),
             patch.object(
@@ -3852,7 +3852,7 @@ class TestReviewUsesIssueCommits:
     async def test_review_scopes_to_issue_commits(self, tmp_path: Path) -> None:
         """Review should use the issue's commit list, not unrelated commits."""
         from src.cerberus_review import ReviewResult
-        from src.orchestrator import MalaOrchestrator
+        from src.orchestration.orchestrator import MalaOrchestrator
         from src.domain.quality_gate import GateResult
 
         # Create a fake log file
@@ -3944,14 +3944,14 @@ class TestReviewUsesIssueCommits:
 
         with (
             patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
-            patch("src.orchestrator.get_git_branch_async", return_value="main"),
+            patch("src.orchestration.orchestrator.get_git_branch_async", return_value="main"),
             patch(
-                "src.orchestrator.get_git_commit_async",
+                "src.orchestration.orchestrator.get_git_commit_async",
                 side_effect=mock_get_git_commit_async,
             ),
-            patch("src.orchestrator.get_baseline_for_issue", return_value=None),
+            patch("src.orchestration.orchestrator.get_baseline_for_issue", return_value=None),
             patch(
-                "src.orchestrator.get_issue_commits_async",
+                "src.orchestration.orchestrator.get_issue_commits_async",
                 return_value=issue_commits,
             ),
             patch.object(orchestrator.review_runner, "code_reviewer", mock_reviewer),
@@ -4018,10 +4018,10 @@ class TestRunSync:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
-            patch("src.orchestrator.write_run_marker"),
-            patch("src.orchestrator.remove_run_marker"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
+            patch("src.orchestration.orchestrator.write_run_marker"),
+            patch("src.orchestration.orchestrator.remove_run_marker"),
         ):
             (tmp_path / "locks").mkdir(exist_ok=True)
             (tmp_path / "runs").mkdir(exist_ok=True)
@@ -4103,10 +4103,10 @@ class TestEventSinkIntegration:
                 new_callable=AsyncMock,
                 return_value=[],  # No ready issues
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
-            patch("src.orchestrator.write_run_marker"),
-            patch("src.orchestrator.remove_run_marker"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
+            patch("src.orchestration.orchestrator.write_run_marker"),
+            patch("src.orchestration.orchestrator.remove_run_marker"),
         ):
             (tmp_path / "locks").mkdir(exist_ok=True)
             (tmp_path / "runs").mkdir(exist_ok=True)
@@ -4144,10 +4144,10 @@ class TestEventSinkIntegration:
                 new_callable=AsyncMock,
                 return_value=[],
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
-            patch("src.orchestrator.write_run_marker"),
-            patch("src.orchestrator.remove_run_marker"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path / "runs"),
+            patch("src.orchestration.orchestrator.write_run_marker"),
+            patch("src.orchestration.orchestrator.remove_run_marker"),
         ):
             (tmp_path / "locks").mkdir(exist_ok=True)
             (tmp_path / "runs").mkdir(exist_ok=True)
@@ -4174,8 +4174,8 @@ class TestOrchestratorFactory:
 
     def test_create_orchestrator_with_minimal_config(self, tmp_path: Path) -> None:
         """create_orchestrator works with just repo_path."""
-        from src.orchestrator_factory import create_orchestrator
-        from src.orchestrator_types import OrchestratorConfig
+        from src.orchestration.factory import create_orchestrator
+        from src.orchestration.types import OrchestratorConfig
 
         config = OrchestratorConfig(repo_path=tmp_path)
         orchestrator = create_orchestrator(config)
@@ -4186,8 +4186,8 @@ class TestOrchestratorFactory:
 
     def test_create_orchestrator_with_full_config(self, tmp_path: Path) -> None:
         """create_orchestrator respects all config options."""
-        from src.orchestrator_factory import create_orchestrator
-        from src.orchestrator_types import OrchestratorConfig
+        from src.orchestration.factory import create_orchestrator
+        from src.orchestration.types import OrchestratorConfig
 
         config = OrchestratorConfig(
             repo_path=tmp_path,
@@ -4222,8 +4222,8 @@ class TestOrchestratorFactory:
         from dataclasses import replace
 
         from src.config import MalaConfig
-        from src.orchestrator_factory import create_orchestrator
-        from src.orchestrator_types import OrchestratorConfig
+        from src.orchestration.factory import create_orchestrator
+        from src.orchestration.types import OrchestratorConfig
 
         config = OrchestratorConfig(repo_path=tmp_path)
         mala_config = MalaConfig.from_env(validate=False)
@@ -4238,8 +4238,8 @@ class TestOrchestratorFactory:
     def test_create_orchestrator_with_custom_dependencies(self, tmp_path: Path) -> None:
         """create_orchestrator uses provided dependencies."""
         from src.event_sink import NullEventSink
-        from src.orchestrator_factory import create_orchestrator
-        from src.orchestrator_types import OrchestratorConfig, OrchestratorDependencies
+        from src.orchestration.factory import create_orchestrator
+        from src.orchestration.types import OrchestratorConfig, OrchestratorDependencies
 
         custom_sink = NullEventSink()
         deps = OrchestratorDependencies(event_sink=custom_sink)
@@ -4251,8 +4251,8 @@ class TestOrchestratorFactory:
 
     def test_create_orchestrator_timeout_defaults_to_60(self, tmp_path: Path) -> None:
         """Default timeout is 60 minutes when not specified."""
-        from src.orchestrator_factory import create_orchestrator
-        from src.orchestrator_types import (
+        from src.orchestration.factory import create_orchestrator
+        from src.orchestration.types import (
             DEFAULT_AGENT_TIMEOUT_MINUTES,
             OrchestratorConfig,
         )
@@ -4266,8 +4266,8 @@ class TestOrchestratorFactory:
         self, tmp_path: Path
     ) -> None:
         """Timeout of 0 is treated as falsy and uses default."""
-        from src.orchestrator_factory import create_orchestrator
-        from src.orchestrator_types import (
+        from src.orchestration.factory import create_orchestrator
+        from src.orchestration.types import (
             DEFAULT_AGENT_TIMEOUT_MINUTES,
             OrchestratorConfig,
         )
@@ -4280,7 +4280,7 @@ class TestOrchestratorFactory:
 
     def test_factory_path_requires_all_dependencies(self, tmp_path: Path) -> None:
         """Factory path raises ValueError if required deps are missing."""
-        from src.orchestrator_types import OrchestratorConfig, _DerivedConfig
+        from src.orchestration.types import OrchestratorConfig, _DerivedConfig
 
         config = OrchestratorConfig(repo_path=tmp_path)
         derived = _DerivedConfig(
@@ -4314,8 +4314,8 @@ class TestOrchestratorFactory:
         self, tmp_path: Path
     ) -> None:
         """Legacy and factory paths produce equivalent orchestrators."""
-        from src.orchestrator_factory import create_orchestrator
-        from src.orchestrator_types import OrchestratorConfig
+        from src.orchestration.factory import create_orchestrator
+        from src.orchestration.types import OrchestratorConfig
 
         # Create via legacy path
         legacy = MalaOrchestrator(
@@ -4342,7 +4342,7 @@ class TestOrchestratorFactory:
 
     def test_orchestrator_config_defaults(self) -> None:
         """OrchestratorConfig has sensible defaults."""
-        from src.orchestrator_types import OrchestratorConfig
+        from src.orchestration.types import OrchestratorConfig
 
         config = OrchestratorConfig(repo_path=Path("/tmp"))
 
@@ -4362,7 +4362,7 @@ class TestOrchestratorFactory:
 
     def test_orchestrator_dependencies_all_optional(self) -> None:
         """OrchestratorDependencies allows all fields to be None."""
-        from src.orchestrator_types import OrchestratorDependencies
+        from src.orchestration.types import OrchestratorDependencies
 
         deps = OrchestratorDependencies()
 
@@ -4379,7 +4379,7 @@ class TestBuildGateMetadata:
 
     def test_none_gate_result_returns_empty_metadata(self) -> None:
         """When gate_result is None, returns empty GateMetadata."""
-        from src.orchestrator import _build_gate_metadata
+        from src.orchestration.orchestrator import _build_gate_metadata
 
         result = _build_gate_metadata(None, passed=True)
 
@@ -4388,7 +4388,7 @@ class TestBuildGateMetadata:
 
     def test_successful_gate_with_full_evidence(self) -> None:
         """Successful gate result with full evidence extracts all fields."""
-        from src.orchestrator import _build_gate_metadata
+        from src.orchestration.orchestrator import _build_gate_metadata
         from src.domain.quality_gate import GateResult, ValidationEvidence
         from src.domain.validation.spec import CommandKind
 
@@ -4417,7 +4417,7 @@ class TestBuildGateMetadata:
 
     def test_failed_gate_with_partial_evidence(self) -> None:
         """Failed gate result extracts failure reasons and evidence."""
-        from src.orchestrator import _build_gate_metadata
+        from src.orchestration.orchestrator import _build_gate_metadata
         from src.domain.quality_gate import GateResult, ValidationEvidence
         from src.domain.validation.spec import CommandKind
 
@@ -4448,7 +4448,7 @@ class TestBuildGateMetadata:
 
     def test_empty_failure_reasons_and_missing_commit(self) -> None:
         """Gate result with empty failure reasons and missing commit."""
-        from src.orchestrator import _build_gate_metadata
+        from src.orchestration.orchestrator import _build_gate_metadata
         from src.domain.quality_gate import GateResult, ValidationEvidence
 
         evidence = ValidationEvidence(commands_ran={}, failed_commands=[])
@@ -4467,7 +4467,7 @@ class TestBuildGateMetadata:
 
     def test_passed_true_overrides_gate_result_passed(self) -> None:
         """When passed=True, quality_gate_result.passed should be True."""
-        from src.orchestrator import _build_gate_metadata
+        from src.orchestration.orchestrator import _build_gate_metadata
         from src.domain.quality_gate import GateResult, ValidationEvidence
 
         evidence = ValidationEvidence(commands_ran={}, failed_commands=[])
@@ -4495,7 +4495,7 @@ class TestBuildGateMetadataFromLogs:
         """When per_issue_spec is None, returns empty GateMetadata."""
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestrator import _build_gate_metadata_from_logs
+        from src.orchestration.orchestrator import _build_gate_metadata_from_logs
         from src.domain.quality_gate import QualityGate
 
         if TYPE_CHECKING:
@@ -4521,7 +4521,7 @@ class TestBuildGateMetadataFromLogs:
         import re
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestrator import _build_gate_metadata_from_logs
+        from src.orchestration.orchestrator import _build_gate_metadata_from_logs
         from src.domain.quality_gate import QualityGate
         from src.domain.validation.spec import (
             CommandKind,
@@ -4569,7 +4569,7 @@ class TestBuildGateMetadataFromLogs:
         """result_success parameter determines quality_gate_result.passed."""
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestrator import _build_gate_metadata_from_logs
+        from src.orchestration.orchestrator import _build_gate_metadata_from_logs
         from src.domain.quality_gate import QualityGate
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
@@ -4598,7 +4598,7 @@ class TestBuildGateMetadataFromLogs:
         """Extracts failure reasons from 'Quality gate failed:' prefix."""
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestrator import _build_gate_metadata_from_logs
+        from src.orchestration.orchestrator import _build_gate_metadata_from_logs
         from src.domain.quality_gate import QualityGate
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
@@ -4629,7 +4629,7 @@ class TestBuildGateMetadataFromLogs:
         """Builds validation_result (not None) matching _build_gate_metadata behavior."""
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestrator import _build_gate_metadata_from_logs
+        from src.orchestration.orchestrator import _build_gate_metadata_from_logs
         from src.domain.quality_gate import QualityGate
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 

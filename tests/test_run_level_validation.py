@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
-from src.orchestrator import IssueResult, MalaOrchestrator
+from src.orchestration.orchestrator import IssueResult, MalaOrchestrator
 from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
@@ -689,9 +689,9 @@ class TestRunLevelValidationIntegration:
                 "run_validation",
                 side_effect=mock_run_validation,
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
         ):
             (tmp_path / "locks").mkdir(exist_ok=True)
             await orchestrator.run()
@@ -752,9 +752,9 @@ class TestRunLevelValidationIntegration:
                 "run_validation",
                 side_effect=mock_run_level_fails,
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
         ):
             (tmp_path / "locks").mkdir(exist_ok=True)
             success_count, total = await orchestrator.run()
@@ -822,9 +822,9 @@ class TestRunLevelValidationIntegration:
                 "run_validation",
                 side_effect=mock_run_validation,
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
         ):
             (tmp_path / "locks").mkdir(exist_ok=True)
             await orchestrator.run()
@@ -878,9 +878,9 @@ class TestRunLevelValidationIntegration:
             patch.object(
                 orchestrator.beads, "close_eligible_epics_async", return_value=False
             ),
-            patch("src.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
-            patch("src.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestrator.release_run_locks"),
+            patch("src.orchestration.orchestrator.get_lock_dir", return_value=tmp_path / "locks"),
+            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
+            patch("src.orchestration.orchestrator.release_run_locks"),
         ):
             (tmp_path / "locks").mkdir(exist_ok=True)
             success_count, total = await orchestrator.run()

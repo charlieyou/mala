@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
+from .orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
 
 # Bootstrap state: tracks whether bootstrap() has been called
 # These are populated on first access via __getattr__
@@ -104,7 +104,7 @@ from typing import Annotated, Never
 
 import typer
 
-from .cli_support import Colors, log, set_verbose
+from .orchestration.cli_support import Colors, log, set_verbose
 
 # SDK-dependent imports (BeadsClient, MalaOrchestrator, get_lock_dir, run_metadata)
 # are lazy-loaded via __getattr__ to ensure bootstrap() runs before claude_agent_sdk
@@ -895,7 +895,7 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         return _lazy_modules[name]
 
     if name == "BeadsClient":
-        from .cli_support import BeadsClient
+        from .orchestration.cli_support import BeadsClient
 
         _lazy_modules[name] = BeadsClient
     elif name == "MalaConfig":
@@ -903,27 +903,27 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
 
         _lazy_modules[name] = MalaConfig
     elif name == "MalaOrchestrator":
-        from .orchestrator import MalaOrchestrator
+        from .orchestration.orchestrator import MalaOrchestrator
 
         _lazy_modules[name] = MalaOrchestrator
     elif name == "OrchestratorConfig":
-        from .orchestrator_types import OrchestratorConfig
+        from .orchestration.types import OrchestratorConfig
 
         _lazy_modules[name] = OrchestratorConfig
     elif name == "create_orchestrator":
-        from .orchestrator_factory import create_orchestrator
+        from .orchestration.factory import create_orchestrator
 
         _lazy_modules[name] = create_orchestrator
     elif name == "get_lock_dir":
-        from .cli_support import get_lock_dir
+        from .orchestration.cli_support import get_lock_dir
 
         _lazy_modules[name] = get_lock_dir
     elif name == "get_running_instances":
-        from .cli_support import get_running_instances
+        from .orchestration.cli_support import get_running_instances
 
         _lazy_modules[name] = get_running_instances
     elif name == "get_running_instances_for_dir":
-        from .cli_support import get_running_instances_for_dir
+        from .orchestration.cli_support import get_running_instances_for_dir
 
         _lazy_modules[name] = get_running_instances_for_dir
 

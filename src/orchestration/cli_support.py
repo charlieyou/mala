@@ -10,26 +10,26 @@ This maintains the architectural boundary: CLI -> orchestration -> infra.
 from __future__ import annotations
 
 # Environment configuration (from src.infra.tools.env)
-from .infra.tools.env import (
+from src.infra.tools.env import (
     USER_CONFIG_DIR,
     get_runs_dir,
     load_user_env,
 )
 
 # BeadsClient (from src.beads_client)
-from .beads_client import BeadsClient
+from src.beads_client import BeadsClient
 
 # Locking utilities (from src.infra.tools.locking)
-from .infra.tools.locking import get_lock_dir
+from src.infra.tools.locking import get_lock_dir
 
 # Run metadata
-from .infra.io.log_output.run_metadata import (
+from src.infra.io.log_output.run_metadata import (
     get_running_instances,
     get_running_instances_for_dir,
 )
 
 # Console utilities
-from .infra.io.log_output.console import (
+from src.infra.io.log_output.console import (
     Colors,
     log,
     set_verbose,

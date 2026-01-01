@@ -17,9 +17,9 @@ from pathlib import Path  # noqa: TC003 - needed at runtime for dataclass field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .event_sink import MalaEventSink
-    from .protocols import CodeReviewer, GateChecker, IssueProvider, LogProvider
-    from .telemetry import TelemetryProvider
+    from src.event_sink import MalaEventSink
+    from src.protocols import CodeReviewer, GateChecker, IssueProvider, LogProvider
+    from src.telemetry import TelemetryProvider
 
 # Default timeout for agent execution (protects against hung MCP server subprocesses)
 DEFAULT_AGENT_TIMEOUT_MINUTES = 60

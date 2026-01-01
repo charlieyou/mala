@@ -31,8 +31,8 @@ import os
 import shutil
 from typing import TYPE_CHECKING, cast
 
-# Import shared types from orchestrator_types (breaks circular import)
-from .orchestrator_types import (
+# Import shared types from types module (breaks circular import)
+from .types import (
     DEFAULT_AGENT_TIMEOUT_MINUTES,
     OrchestratorConfig,
     OrchestratorDependencies,
@@ -48,18 +48,19 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
-    from .config import MalaConfig
-    from .epic_verifier import EpicVerifier
-    from .event_sink import MalaEventSink
-    from .orchestrator import MalaOrchestrator
-    from .protocols import (
+    from src.config import MalaConfig
+    from src.epic_verifier import EpicVerifier
+    from src.event_sink import MalaEventSink
+    from src.protocols import (
         CodeReviewer,
         EpicVerificationModel,
         GateChecker,
         IssueProvider,
         LogProvider,
     )
-    from .telemetry import TelemetryProvider
+    from src.telemetry import TelemetryProvider
+
+    from .orchestrator import MalaOrchestrator
 
 
 def _derive_config(
@@ -173,15 +174,15 @@ def _build_dependencies(
     Returns:
         Tuple of all required dependencies.
     """
-    from .beads_client import BeadsClient
-    from .braintrust_integration import BraintrustProvider
-    from .cerberus_review import DefaultReviewer
-    from .epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
-    from .event_sink import ConsoleEventSink
-    from .models import RetryConfig
-    from .domain.quality_gate import QualityGate
-    from .session_log_parser import FileSystemLogProvider
-    from .telemetry import NullTelemetryProvider
+    from src.beads_client import BeadsClient
+    from src.braintrust_integration import BraintrustProvider
+    from src.cerberus_review import DefaultReviewer
+    from src.domain.quality_gate import QualityGate
+    from src.epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
+    from src.event_sink import ConsoleEventSink
+    from src.models import RetryConfig
+    from src.session_log_parser import FileSystemLogProvider
+    from src.telemetry import NullTelemetryProvider
 
     # Get resolved path
     repo_path = config.repo_path.resolve()
@@ -313,7 +314,8 @@ def create_orchestrator(
         )
         orchestrator = create_orchestrator(config, deps=deps)
     """
-    from .config import MalaConfig
+    from src.config import MalaConfig
+
     from .orchestrator import MalaOrchestrator
 
     # Load MalaConfig if not provided

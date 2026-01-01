@@ -368,7 +368,7 @@ class TestMorphEnabledGating:
     def test_edit_blocked_when_morph_disabled(self) -> None:
         """Edit and Grep should be allowed when morph_enabled=False."""
         from src.mcp import get_disallowed_tools
-        from src.orchestrator import MalaOrchestrator
+        from src.orchestration.orchestrator import MalaOrchestrator
 
         # Create orchestrator with morph disabled
         orchestrator = MalaOrchestrator(

@@ -2,7 +2,7 @@
 
 These tests verify that `claude_agent_sdk` is NOT imported when:
 1. `import src` is executed
-2. `from src.orchestrator import MalaOrchestrator` is executed
+2. `from src.orchestration.orchestrator import MalaOrchestrator` is executed
 3. `from src.infra.hooks import ...` is executed
 
 This ensures that bootstrap() runs before any SDK code loads,
@@ -94,7 +94,7 @@ print('PASS')
 
 
 def test_import_orchestrator_class_does_not_load_sdk() -> None:
-    """Verify `from src.orchestrator import MalaOrchestrator` does NOT trigger SDK import."""
+    """Verify `from src.orchestration.orchestrator import MalaOrchestrator` does NOT trigger SDK import."""
     code = """
 import sys
 # Clear any existing imports
@@ -102,7 +102,7 @@ for mod in list(sys.modules.keys()):
     if mod.startswith('claude_agent_sdk'):
         del sys.modules[mod]
 
-from src.orchestrator import MalaOrchestrator
+from src.orchestration.orchestrator import MalaOrchestrator
 if any(mod.startswith('claude_agent_sdk') for mod in sys.modules):
     print('FAIL: claude_agent_sdk was imported')
     sys.exit(1)
@@ -129,14 +129,14 @@ for mod in list(sys.modules.keys()):
 
 import src
 # Just importing src shouldn't load orchestrator
-if 'src.orchestrator' in sys.modules:
-    print('FAIL: src.orchestrator was imported on `import src`')
+if 'src.orchestration.orchestrator' in sys.modules:
+    print('FAIL: src.orchestration.orchestrator was imported on `import src`')
     sys.exit(1)
 
 # Accessing MalaOrchestrator should trigger lazy load
 cls = src.MalaOrchestrator
-if 'src.orchestrator' not in sys.modules:
-    print('FAIL: src.orchestrator was NOT imported after accessing MalaOrchestrator')
+if 'src.orchestration.orchestrator' not in sys.modules:
+    print('FAIL: src.orchestration.orchestrator was NOT imported after accessing MalaOrchestrator')
     sys.exit(1)
 
 # But still should not have loaded claude_agent_sdk
