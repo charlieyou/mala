@@ -64,12 +64,22 @@ if TYPE_CHECKING:
 # Prompt file paths
 _PROMPT_DIR = Path(__file__).parent.parent / "prompts"
 REVIEW_FOLLOWUP_FILE = _PROMPT_DIR / "review_followup.md"
+IDLE_RESUME_PROMPT_FILE = _PROMPT_DIR / "idle_resume.md"
+
+# Timeout for disconnect() call
+DISCONNECT_TIMEOUT = 10.0
 
 
 @functools.cache
 def _get_review_followup_prompt() -> str:
     """Load review follow-up prompt (cached on first use)."""
     return REVIEW_FOLLOWUP_FILE.read_text()
+
+
+@functools.cache
+def _get_idle_resume_prompt() -> str:
+    """Load idle resume prompt (cached on first use)."""
+    return IDLE_RESUME_PROMPT_FILE.read_text()
 
 
 class IdleTimeoutError(Exception):
@@ -113,6 +123,14 @@ class SDKClientProtocol(Protocol):
 
         Yields:
             SDK message objects (AssistantMessage, ResultMessage, etc.)
+        """
+        ...
+
+    async def disconnect(self) -> None:
+        """Disconnect and terminate the subprocess.
+
+        This should be called when an idle timeout is detected to ensure
+        the hung subprocess is terminated before creating a new client.
         """
         ...
 
@@ -186,6 +204,8 @@ class AgentSessionConfig:
     review_enabled: bool = True
     log_file_wait_timeout: float = 60.0
     idle_timeout_seconds: float | None = None
+    max_idle_retries: int = 2
+    idle_retry_backoff: tuple[float, ...] = (0.0, 5.0, 15.0)
 
 
 @dataclass
@@ -457,363 +477,524 @@ class AgentSessionRunner:
         if idle_timeout_seconds <= 0:
             idle_timeout_seconds = None
 
+        # Import logging for idle retry messages
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         try:
             async with asyncio.timeout(self.config.timeout_seconds):
-                # Use factory if provided, otherwise create real client
-                if self.sdk_client_factory is not None:
-                    client = self.sdk_client_factory.create(options)
-                else:
-                    client = ClaudeSDKClient(options=options)
+                # Start lifecycle before client creation
+                lifecycle.start()
+                if self.event_sink is not None:
+                    self.event_sink.on_lifecycle_state(
+                        input.issue_id, lifecycle.state.name
+                    )
 
-                async with client:
-                    # Start lifecycle
-                    lifecycle.start()
+                # Track state for query + message iteration
+                pending_query: str | None = input.prompt
+                pending_session_id: str | None = None
+                idle_retry_count: int = 0
+                tool_calls_this_turn: int = 0
+
+                # Main lifecycle loop
+                while not lifecycle.is_terminal:
+                    # === QUERY + MESSAGE ITERATION (only if pending_query is set) ===
+                    if pending_query is not None:
+                        message_iteration_complete = False
+                        tool_calls_this_turn = 0
+
+                        while not message_iteration_complete:
+                            # Backoff before retry (not on first attempt)
+                            if idle_retry_count > 0:
+                                backoff_idx = min(
+                                    idle_retry_count - 1,
+                                    len(self.config.idle_retry_backoff) - 1,
+                                )
+                                backoff = self.config.idle_retry_backoff[backoff_idx]
+                                if backoff > 0:
+                                    logger.info(
+                                        f"Idle retry {idle_retry_count}: "
+                                        f"waiting {backoff}s"
+                                    )
+                                    await asyncio.sleep(backoff)
+
+                            # Create client for this attempt
+                            if self.sdk_client_factory is not None:
+                                client = self.sdk_client_factory.create(options)
+                            else:
+                                client = ClaudeSDKClient(options=options)
+
+                            try:
+                                async with client:
+                                    # Send query
+                                    if pending_session_id is not None:
+                                        await client.query(
+                                            pending_query, session_id=pending_session_id
+                                        )
+                                    else:
+                                        await client.query(pending_query)
+
+                                    # Define _iter_messages (captures client from scope)
+                                    async def _iter_messages() -> AsyncIterator[Any]:
+                                        stream = client.receive_response()
+                                        if idle_timeout_seconds is None:
+                                            async for msg in stream:
+                                                yield msg
+                                            return
+                                        while True:
+                                            try:
+                                                msg = await asyncio.wait_for(
+                                                    stream.__anext__(),
+                                                    timeout=idle_timeout_seconds,
+                                                )
+                                            except StopAsyncIteration:
+                                                break
+                                            except TimeoutError as exc:
+                                                raise IdleTimeoutError(
+                                                    "SDK stream idle for "
+                                                    f"{idle_timeout_seconds:.0f} seconds"
+                                                ) from exc
+                                            yield msg
+
+                                    try:
+                                        async for message in _iter_messages():
+                                            # Log to tracer if provided
+                                            if tracer is not None:
+                                                tracer.log_message(message)
+
+                                            # Process message types
+                                            if isinstance(message, AssistantMessage):
+                                                for block in message.content:
+                                                    if isinstance(block, TextBlock):
+                                                        if (
+                                                            self.callbacks.on_agent_text
+                                                            is not None
+                                                        ):
+                                                            self.callbacks.on_agent_text(
+                                                                input.issue_id,
+                                                                block.text,
+                                                            )
+                                                    elif isinstance(
+                                                        block, ToolUseBlock
+                                                    ):
+                                                        # Track tool calls for side effect
+                                                        # detection
+                                                        tool_calls_this_turn += 1
+                                                        if (
+                                                            self.callbacks.on_tool_use
+                                                            is not None
+                                                        ):
+                                                            self.callbacks.on_tool_use(
+                                                                input.issue_id,
+                                                                block.name,
+                                                                block.input,
+                                                            )
+                                                        # Track lint commands
+                                                        if block.name.lower() == "bash":
+                                                            cmd = block.input.get(
+                                                                "command", ""
+                                                            )
+                                                            lint_type = (
+                                                                _detect_lint_command(
+                                                                    cmd
+                                                                )
+                                                            )
+                                                            if lint_type:
+                                                                pending_lint_commands[
+                                                                    block.id
+                                                                ] = (
+                                                                    lint_type,
+                                                                    cmd,
+                                                                )
+                                                    elif isinstance(
+                                                        block, ToolResultBlock
+                                                    ):
+                                                        # Check for lint success
+                                                        tool_use_id = getattr(
+                                                            block, "tool_use_id", None
+                                                        )
+                                                        if (
+                                                            tool_use_id
+                                                            in pending_lint_commands
+                                                        ):
+                                                            lint_type, cmd = (
+                                                                pending_lint_commands.pop(
+                                                                    tool_use_id
+                                                                )
+                                                            )
+                                                            if not getattr(
+                                                                block, "is_error", False
+                                                            ):
+                                                                lint_cache.mark_success(
+                                                                    lint_type, cmd
+                                                                )
+
+                                            elif isinstance(message, ResultMessage):
+                                                session_id = message.session_id
+                                                lifecycle_ctx.session_id = session_id
+                                                lifecycle_ctx.final_result = (
+                                                    message.result or ""
+                                                )
+
+                                        # Success! Clear pending_query and exit retry loop
+                                        pending_query = None
+                                        idle_retry_count = 0
+                                        message_iteration_complete = True
+
+                                    except IdleTimeoutError:
+                                        # === CRITICAL: Always disconnect first ===
+                                        logger.warning(
+                                            f"Session {input.issue_id}: idle timeout, "
+                                            "disconnecting subprocess"
+                                        )
+                                        try:
+                                            await asyncio.wait_for(
+                                                client.disconnect(),
+                                                timeout=DISCONNECT_TIMEOUT,
+                                            )
+                                        except TimeoutError:
+                                            logger.warning(
+                                                "disconnect() timed out, "
+                                                "subprocess abandoned"
+                                            )
+                                        except Exception as e:
+                                            logger.debug(
+                                                f"Error during disconnect: {e}"
+                                            )
+
+                                        # Check if we can retry
+                                        if (
+                                            idle_retry_count
+                                            >= self.config.max_idle_retries
+                                        ):
+                                            logger.error(
+                                                f"Session {input.issue_id}: max idle "
+                                                f"retries ({self.config.max_idle_retries})"
+                                                " exceeded"
+                                            )
+                                            raise IdleTimeoutError(
+                                                f"Max idle retries "
+                                                f"({self.config.max_idle_retries}) "
+                                                "exceeded"
+                                            ) from None
+
+                                        # Prepare for retry
+                                        idle_retry_count += 1
+
+                                        # Determine resume strategy
+                                        resume_id = (
+                                            session_id or lifecycle_ctx.session_id
+                                        )
+                                        if resume_id is not None:
+                                            # Have session context - resume with minimal
+                                            # prompt
+                                            pending_session_id = resume_id
+                                            pending_query = (
+                                                _get_idle_resume_prompt().format(
+                                                    issue_id=input.issue_id,
+                                                )
+                                            )
+                                            logger.info(
+                                                f"Session {input.issue_id}: retrying with "
+                                                f"resume (session_id={resume_id[:8]}..., "
+                                                f"attempt {idle_retry_count})"
+                                            )
+                                        elif tool_calls_this_turn == 0:
+                                            # No session context AND no side effects -
+                                            # safe to start fresh
+                                            pending_session_id = None
+                                            # Keep original pending_query (don't replace)
+                                            logger.info(
+                                                f"Session {input.issue_id}: retrying with "
+                                                "fresh session (no session_id, no side "
+                                                f"effects, attempt {idle_retry_count})"
+                                            )
+                                        else:
+                                            # No session context BUT side effects
+                                            # occurred - unsafe to retry
+                                            logger.error(
+                                                f"Session {input.issue_id}: cannot retry - "
+                                                f"{tool_calls_this_turn} tool calls "
+                                                "occurred without session_id"
+                                            )
+                                            raise IdleTimeoutError(
+                                                f"Cannot retry: {tool_calls_this_turn} "
+                                                "tool calls occurred without session "
+                                                "context"
+                                            ) from None
+
+                                        # Loop continues to retry
+
+                            except IdleTimeoutError:
+                                # Re-raise if we got here (means we gave up)
+                                raise
+
+                    # === END QUERY + MESSAGE ITERATION ===
+
+                    # Messages complete - transition lifecycle
+                    result = lifecycle.on_messages_complete(
+                        lifecycle_ctx, has_session_id=bool(session_id)
+                    )
                     if self.event_sink is not None:
                         self.event_sink.on_lifecycle_state(
                             input.issue_id, lifecycle.state.name
                         )
 
-                    # Initial query
-                    await client.query(input.prompt)
+                    if result.effect == Effect.COMPLETE_FAILURE:
+                        final_result = lifecycle_ctx.final_result
+                        break
 
-                    # Main message loop
-                    while not lifecycle.is_terminal:
-
-                        async def _iter_messages() -> AsyncIterator[Any]:
-                            stream = client.receive_response()
-                            if idle_timeout_seconds is None:
-                                async for msg in stream:
-                                    yield msg
-                                return
-                            while True:
-                                try:
-                                    msg = await asyncio.wait_for(
-                                        stream.__anext__(),
-                                        timeout=idle_timeout_seconds,
-                                    )
-                                except StopAsyncIteration:
-                                    break
-                                except TimeoutError as exc:
-                                    raise IdleTimeoutError(
-                                        "SDK stream idle for "
-                                        f"{idle_timeout_seconds:.0f} seconds"
-                                    ) from exc
-                                yield msg
-
-                        async for message in _iter_messages():
-                            # Log to tracer if provided
-                            if tracer is not None:
-                                tracer.log_message(message)
-
-                            # Process message types
-                            if isinstance(message, AssistantMessage):
-                                for block in message.content:
-                                    if isinstance(block, TextBlock):
-                                        if self.callbacks.on_agent_text is not None:
-                                            self.callbacks.on_agent_text(
-                                                input.issue_id, block.text
-                                            )
-                                    elif isinstance(block, ToolUseBlock):
-                                        if self.callbacks.on_tool_use is not None:
-                                            self.callbacks.on_tool_use(
-                                                input.issue_id,
-                                                block.name,
-                                                block.input,
-                                            )
-                                        # Track lint commands
-                                        if block.name.lower() == "bash":
-                                            cmd = block.input.get("command", "")
-                                            lint_type = _detect_lint_command(cmd)
-                                            if lint_type:
-                                                pending_lint_commands[block.id] = (
-                                                    lint_type,
-                                                    cmd,
-                                                )
-                                    elif isinstance(block, ToolResultBlock):
-                                        # Check for lint success
-                                        tool_use_id = getattr(
-                                            block, "tool_use_id", None
-                                        )
-                                        if tool_use_id in pending_lint_commands:
-                                            lint_type, cmd = pending_lint_commands.pop(
-                                                tool_use_id
-                                            )
-                                            if not getattr(block, "is_error", False):
-                                                lint_cache.mark_success(lint_type, cmd)
-
-                            elif isinstance(message, ResultMessage):
-                                session_id = message.session_id
-                                lifecycle_ctx.session_id = session_id
-                                lifecycle_ctx.final_result = message.result or ""
-
-                        # Messages complete - transition lifecycle
-                        result = lifecycle.on_messages_complete(
-                            lifecycle_ctx, has_session_id=bool(session_id)
-                        )
+                    # Handle WAIT_FOR_LOG
+                    if result.effect == Effect.WAIT_FOR_LOG:
+                        if self.callbacks.get_log_path is None:
+                            raise ValueError("get_log_path callback must be set")
+                        log_path = self.callbacks.get_log_path(session_id)  # type: ignore[arg-type]
                         if self.event_sink is not None:
-                            self.event_sink.on_lifecycle_state(
-                                input.issue_id, lifecycle.state.name
+                            self.event_sink.on_log_waiting(input.issue_id)
+
+                        # Wait for log file
+                        wait_elapsed = 0.0
+                        while not log_path.exists():
+                            if wait_elapsed >= log_file_wait_timeout:
+                                result = lifecycle.on_log_timeout(
+                                    lifecycle_ctx, str(log_path)
+                                )
+                                if self.event_sink is not None:
+                                    self.event_sink.on_log_timeout(
+                                        input.issue_id, str(log_path)
+                                    )
+                                break
+                            await asyncio.sleep(log_file_poll_interval)
+                            wait_elapsed += log_file_poll_interval
+
+                        if lifecycle.state == LifecycleState.FAILED:
+                            final_result = lifecycle_ctx.final_result
+                            break
+
+                        if log_path.exists():
+                            if self.event_sink is not None:
+                                self.event_sink.on_log_ready(input.issue_id)
+                        result = lifecycle.on_log_ready(lifecycle_ctx)
+
+                    # Handle RUN_GATE
+                    if result.effect == Effect.RUN_GATE:
+                        if self.event_sink is not None:
+                            self.event_sink.on_gate_started(
+                                input.issue_id,
+                                lifecycle_ctx.retry_state.gate_attempt,
+                                self.config.max_gate_retries,
                             )
+
+                        if self.callbacks.on_gate_check is None:
+                            raise ValueError("on_gate_check callback must be set")
+
+                        assert log_path is not None
+                        (
+                            gate_result,
+                            new_offset,
+                        ) = await self.callbacks.on_gate_check(
+                            input.issue_id, log_path, lifecycle_ctx.retry_state
+                        )
+
+                        result = lifecycle.on_gate_result(
+                            lifecycle_ctx, gate_result, new_offset
+                        )
+
+                        if result.effect == Effect.COMPLETE_SUCCESS:
+                            if self.event_sink is not None:
+                                self.event_sink.on_gate_passed(input.issue_id)
+                            final_result = lifecycle_ctx.final_result
+                            break
+
+                        if result.effect == Effect.COMPLETE_FAILURE:
+                            if self.event_sink is not None:
+                                self.event_sink.on_gate_failed(
+                                    input.issue_id,
+                                    lifecycle_ctx.retry_state.gate_attempt,
+                                    self.config.max_gate_retries,
+                                )
+                                self.event_sink.on_gate_result(
+                                    input.issue_id,
+                                    passed=False,
+                                    failure_reasons=list(gate_result.failure_reasons),
+                                )
+                            final_result = lifecycle_ctx.final_result
+                            break
+
+                        if result.effect == Effect.SEND_GATE_RETRY:
+                            if self.event_sink is not None:
+                                self.event_sink.on_gate_retry(
+                                    input.issue_id,
+                                    lifecycle_ctx.retry_state.gate_attempt,
+                                    self.config.max_gate_retries,
+                                )
+                                self.event_sink.on_gate_result(
+                                    input.issue_id,
+                                    passed=False,
+                                    failure_reasons=list(gate_result.failure_reasons),
+                                )
+                            # Build follow-up prompt
+                            failure_text = "\n".join(
+                                f"- {r}" for r in gate_result.failure_reasons
+                            )
+                            pending_query = _get_gate_followup_prompt().format(
+                                attempt=lifecycle_ctx.retry_state.gate_attempt,
+                                max_attempts=self.config.max_gate_retries,
+                                failure_reasons=failure_text,
+                                issue_id=input.issue_id,
+                            )
+                            pending_session_id = session_id
+                            idle_retry_count = 0
+                            continue
+
+                    # Handle RUN_REVIEW
+                    if result.effect == Effect.RUN_REVIEW:
+                        # Check no-progress before running review
+                        if (
+                            lifecycle_ctx.retry_state.review_attempt > 1
+                            and self.callbacks.on_review_no_progress is not None
+                        ):
+                            current_commit = (
+                                lifecycle_ctx.last_gate_result.commit_hash
+                                if lifecycle_ctx.last_gate_result
+                                else None
+                            )
+                            no_progress = self.callbacks.on_review_no_progress(
+                                log_path,  # type: ignore[arg-type]
+                                lifecycle_ctx.retry_state.log_offset,
+                                lifecycle_ctx.retry_state.previous_commit_hash,
+                                current_commit,
+                            )
+                            if no_progress:
+                                if self.event_sink is not None:
+                                    self.event_sink.on_review_skipped_no_progress(
+                                        input.issue_id
+                                    )
+                                # Create synthetic failed review
+                                from src.cerberus_review import ReviewResult
+
+                                synthetic = ReviewResult(
+                                    passed=False, issues=[], parse_error=None
+                                )
+                                new_offset = (
+                                    self.callbacks.get_log_offset(
+                                        log_path,  # type: ignore[arg-type]
+                                        lifecycle_ctx.retry_state.log_offset,
+                                    )
+                                    if self.callbacks.get_log_offset
+                                    else 0
+                                )
+                                result = lifecycle.on_review_result(
+                                    lifecycle_ctx,
+                                    synthetic,
+                                    new_offset,
+                                    no_progress=True,
+                                )
+                                final_result = lifecycle_ctx.final_result
+                                break
+
+                        if self.event_sink is not None:
+                            self.event_sink.on_review_started(
+                                input.issue_id,
+                                lifecycle_ctx.retry_state.review_attempt,
+                                self.config.max_review_retries,
+                            )
+
+                        if self.callbacks.on_review_check is None:
+                            raise ValueError("on_review_check callback must be set")
+
+                        review_result = await self.callbacks.on_review_check(
+                            input.issue_id,
+                            input.issue_description,
+                            input.baseline_commit,
+                            lifecycle_ctx.session_id,
+                            lifecycle_ctx.retry_state,
+                        )
+
+                        # Check for fatal error
+                        if review_result.fatal_error:
+                            if self.callbacks.on_abort is not None:
+                                self.callbacks.on_abort(
+                                    review_result.parse_error
+                                    or "Unrecoverable review error"
+                                )
+
+                        # Capture Cerberus review log if available
+                        log_attr = getattr(review_result, "review_log_path", None)
+                        if log_attr is not None:
+                            cerberus_review_log_path = str(log_attr)
+
+                        # Get new log offset
+                        new_offset = (
+                            self.callbacks.get_log_offset(
+                                log_path,  # type: ignore[arg-type]
+                                lifecycle_ctx.retry_state.log_offset,
+                            )
+                            if self.callbacks.get_log_offset
+                            else 0
+                        )
+
+                        result = lifecycle.on_review_result(
+                            lifecycle_ctx, review_result, new_offset
+                        )
+
+                        if result.effect == Effect.COMPLETE_SUCCESS:
+                            if self.event_sink is not None:
+                                self.event_sink.on_review_passed(input.issue_id)
+                            final_result = lifecycle_ctx.final_result
+                            break
 
                         if result.effect == Effect.COMPLETE_FAILURE:
                             final_result = lifecycle_ctx.final_result
                             break
 
-                        # Handle WAIT_FOR_LOG
-                        if result.effect == Effect.WAIT_FOR_LOG:
-                            if self.callbacks.get_log_path is None:
-                                raise ValueError("get_log_path callback must be set")
-                            log_path = self.callbacks.get_log_path(session_id)  # type: ignore[arg-type]
-                            if self.event_sink is not None:
-                                self.event_sink.on_log_waiting(input.issue_id)
-
-                            # Wait for log file
-                            wait_elapsed = 0.0
-                            while not log_path.exists():
-                                if wait_elapsed >= log_file_wait_timeout:
-                                    result = lifecycle.on_log_timeout(
-                                        lifecycle_ctx, str(log_path)
-                                    )
-                                    if self.event_sink is not None:
-                                        self.event_sink.on_log_timeout(
-                                            input.issue_id, str(log_path)
-                                        )
-                                    break
-                                await asyncio.sleep(log_file_poll_interval)
-                                wait_elapsed += log_file_poll_interval
-
-                            if lifecycle.state == LifecycleState.FAILED:
-                                final_result = lifecycle_ctx.final_result
-                                break
-
-                            if log_path.exists():
-                                if self.event_sink is not None:
-                                    self.event_sink.on_log_ready(input.issue_id)
-                            result = lifecycle.on_log_ready(lifecycle_ctx)
-
-                        # Handle RUN_GATE
-                        if result.effect == Effect.RUN_GATE:
-                            if self.event_sink is not None:
-                                self.event_sink.on_gate_started(
-                                    input.issue_id,
-                                    lifecycle_ctx.retry_state.gate_attempt,
-                                    self.config.max_gate_retries,
-                                )
-
-                            if self.callbacks.on_gate_check is None:
-                                raise ValueError("on_gate_check callback must be set")
-
-                            assert log_path is not None
-                            (
-                                gate_result,
-                                new_offset,
-                            ) = await self.callbacks.on_gate_check(
-                                input.issue_id, log_path, lifecycle_ctx.retry_state
-                            )
-
-                            result = lifecycle.on_gate_result(
-                                lifecycle_ctx, gate_result, new_offset
-                            )
-
-                            if result.effect == Effect.COMPLETE_SUCCESS:
-                                if self.event_sink is not None:
-                                    self.event_sink.on_gate_passed(input.issue_id)
-                                final_result = lifecycle_ctx.final_result
-                                break
-
-                            if result.effect == Effect.COMPLETE_FAILURE:
-                                if self.event_sink is not None:
-                                    self.event_sink.on_gate_failed(
-                                        input.issue_id,
-                                        lifecycle_ctx.retry_state.gate_attempt,
-                                        self.config.max_gate_retries,
-                                    )
-                                    self.event_sink.on_gate_result(
-                                        input.issue_id,
-                                        passed=False,
-                                        failure_reasons=list(
-                                            gate_result.failure_reasons
-                                        ),
-                                    )
-                                final_result = lifecycle_ctx.final_result
-                                break
-
-                            if result.effect == Effect.SEND_GATE_RETRY:
-                                if self.event_sink is not None:
-                                    self.event_sink.on_gate_retry(
-                                        input.issue_id,
-                                        lifecycle_ctx.retry_state.gate_attempt,
-                                        self.config.max_gate_retries,
-                                    )
-                                    self.event_sink.on_gate_result(
-                                        input.issue_id,
-                                        passed=False,
-                                        failure_reasons=list(
-                                            gate_result.failure_reasons
-                                        ),
-                                    )
-                                # Build follow-up prompt
-                                failure_text = "\n".join(
-                                    f"- {r}" for r in gate_result.failure_reasons
-                                )
-                                followup = _get_gate_followup_prompt().format(
-                                    attempt=lifecycle_ctx.retry_state.gate_attempt,
-                                    max_attempts=self.config.max_gate_retries,
-                                    failure_reasons=failure_text,
-                                    issue_id=input.issue_id,
-                                )
-                                assert session_id is not None
-                                await client.query(followup, session_id=session_id)
-                                continue
-
-                        # Handle RUN_REVIEW
+                        # parse_error retry: lifecycle returns RUN_REVIEW to re-run
+                        # review without prompting agent (no code changes needed)
                         if result.effect == Effect.RUN_REVIEW:
-                            # Check no-progress before running review
-                            if (
-                                lifecycle_ctx.retry_state.review_attempt > 1
-                                and self.callbacks.on_review_no_progress is not None
-                            ):
-                                current_commit = (
-                                    lifecycle_ctx.last_gate_result.commit_hash
-                                    if lifecycle_ctx.last_gate_result
+                            if self.event_sink is not None:
+                                self.event_sink.on_warning(
+                                    f"Review tool error: {review_result.parse_error}; retrying",
+                                    agent_id=input.issue_id,
+                                )
+                            continue
+
+                        if result.effect == Effect.SEND_REVIEW_RETRY:
+                            # Emit review retry event
+                            if self.event_sink is not None:
+                                error_count = (
+                                    sum(
+                                        1
+                                        for i in review_result.issues
+                                        if i.priority is not None and i.priority <= 1
+                                    )
+                                    if review_result.issues
                                     else None
                                 )
-                                no_progress = self.callbacks.on_review_no_progress(
-                                    log_path,  # type: ignore[arg-type]
-                                    lifecycle_ctx.retry_state.log_offset,
-                                    lifecycle_ctx.retry_state.previous_commit_hash,
-                                    current_commit,
-                                )
-                                if no_progress:
-                                    if self.event_sink is not None:
-                                        self.event_sink.on_review_skipped_no_progress(
-                                            input.issue_id
-                                        )
-                                    # Create synthetic failed review
-                                    from src.cerberus_review import ReviewResult
-
-                                    synthetic = ReviewResult(
-                                        passed=False, issues=[], parse_error=None
-                                    )
-                                    new_offset = (
-                                        self.callbacks.get_log_offset(
-                                            log_path,  # type: ignore[arg-type]
-                                            lifecycle_ctx.retry_state.log_offset,
-                                        )
-                                        if self.callbacks.get_log_offset
-                                        else 0
-                                    )
-                                    result = lifecycle.on_review_result(
-                                        lifecycle_ctx,
-                                        synthetic,
-                                        new_offset,
-                                        no_progress=True,
-                                    )
-                                    final_result = lifecycle_ctx.final_result
-                                    break
-
-                            if self.event_sink is not None:
-                                self.event_sink.on_review_started(
+                                self.event_sink.on_review_retry(
                                     input.issue_id,
                                     lifecycle_ctx.retry_state.review_attempt,
                                     self.config.max_review_retries,
+                                    error_count=error_count,
+                                    parse_error=review_result.parse_error,
                                 )
 
-                            if self.callbacks.on_review_check is None:
-                                raise ValueError("on_review_check callback must be set")
+                            # Build follow-up prompt for legitimate review issues
+                            from src.cerberus_review import format_review_issues
 
-                            review_result = await self.callbacks.on_review_check(
-                                input.issue_id,
-                                input.issue_description,
-                                input.baseline_commit,
-                                lifecycle_ctx.session_id,
-                                lifecycle_ctx.retry_state,
+                            review_issues_text = format_review_issues(
+                                review_result.issues,  # type: ignore[arg-type]
+                                base_path=self.config.repo_path,
                             )
-
-                            # Check for fatal error
-                            if review_result.fatal_error:
-                                if self.callbacks.on_abort is not None:
-                                    self.callbacks.on_abort(
-                                        review_result.parse_error
-                                        or "Unrecoverable review error"
-                                    )
-
-                            # Capture Cerberus review log if available
-                            log_attr = getattr(review_result, "review_log_path", None)
-                            if log_attr is not None:
-                                cerberus_review_log_path = str(log_attr)
-
-                            # Get new log offset
-                            new_offset = (
-                                self.callbacks.get_log_offset(
-                                    log_path,  # type: ignore[arg-type]
-                                    lifecycle_ctx.retry_state.log_offset,
-                                )
-                                if self.callbacks.get_log_offset
-                                else 0
+                            pending_query = _get_review_followup_prompt().format(
+                                attempt=lifecycle_ctx.retry_state.review_attempt,
+                                max_attempts=self.config.max_review_retries,
+                                review_issues=review_issues_text,
+                                issue_id=input.issue_id,
                             )
-
-                            result = lifecycle.on_review_result(
-                                lifecycle_ctx, review_result, new_offset
-                            )
-
-                            if result.effect == Effect.COMPLETE_SUCCESS:
-                                if self.event_sink is not None:
-                                    self.event_sink.on_review_passed(input.issue_id)
-                                final_result = lifecycle_ctx.final_result
-                                break
-
-                            if result.effect == Effect.COMPLETE_FAILURE:
-                                final_result = lifecycle_ctx.final_result
-                                break
-
-                            # parse_error retry: lifecycle returns RUN_REVIEW to re-run
-                            # review without prompting agent (no code changes needed)
-                            if result.effect == Effect.RUN_REVIEW:
-                                if self.event_sink is not None:
-                                    self.event_sink.on_warning(
-                                        f"Review tool error: {review_result.parse_error}; retrying",
-                                        agent_id=input.issue_id,
-                                    )
-                                continue
-
-                            if result.effect == Effect.SEND_REVIEW_RETRY:
-                                # Emit review retry event
-                                if self.event_sink is not None:
-                                    error_count = (
-                                        sum(
-                                            1
-                                            for i in review_result.issues
-                                            if i.priority is not None
-                                            and i.priority <= 1
-                                        )
-                                        if review_result.issues
-                                        else None
-                                    )
-                                    self.event_sink.on_review_retry(
-                                        input.issue_id,
-                                        lifecycle_ctx.retry_state.review_attempt,
-                                        self.config.max_review_retries,
-                                        error_count=error_count,
-                                        parse_error=review_result.parse_error,
-                                    )
-
-                                # Build follow-up prompt for legitimate review issues
-                                from src.cerberus_review import format_review_issues
-
-                                review_issues_text = format_review_issues(
-                                    review_result.issues,  # type: ignore[arg-type]
-                                    base_path=self.config.repo_path,
-                                )
-                                followup = _get_review_followup_prompt().format(
-                                    attempt=lifecycle_ctx.retry_state.review_attempt,
-                                    max_attempts=self.config.max_review_retries,
-                                    review_issues=review_issues_text,
-                                    issue_id=input.issue_id,
-                                )
-                                assert session_id is not None
-                                await client.query(followup, session_id=session_id)
-                                continue
+                            pending_session_id = session_id
+                            idle_retry_count = 0
+                            continue
 
         except IdleTimeoutError as e:
             lifecycle.on_error(lifecycle_ctx, e)
