@@ -1,76 +1,17 @@
-"""Hook logic for Claude Agent SDK.
+"""Backward-compatibility shim for src.hooks package.
 
-Contains PreToolUse hooks and related constants for blocking dangerous commands
-and managing tool restrictions.
+This module re-exports all public symbols from src.infra.hooks.
+New code should import directly from src.infra.hooks.
 
-This package provides:
-- Security hooks: block_dangerous_commands, block_morph_replaced_tools
-- File caching: FileReadCache, make_file_read_cache_hook
-- Lint caching: LintCache, make_lint_cache_hook
-- Locking: make_lock_enforcement_hook, make_stop_hook
+Sub-module imports like `from src.hooks.locking import ...` are supported
+via __path__ manipulation.
 """
 
-from __future__ import annotations
+import sys
 
-# Re-export all public symbols for backward compatibility
-from .dangerous_commands import (
-    BASH_TOOL_NAMES,
-    DANGEROUS_PATTERNS,
-    DESTRUCTIVE_GIT_PATTERNS,
-    PreToolUseHook,
-    SAFE_GIT_ALTERNATIVES,
-    block_dangerous_commands,
-    block_morph_replaced_tools,
-)
-from .file_cache import (
-    FILE_PATH_KEYS,
-    FILE_WRITE_TOOLS,
-    CachedFileInfo,
-    FileReadCache,
-    make_file_read_cache_hook,
-)
-from .lint_cache import (
-    LINT_COMMAND_PATTERNS,
-    LintCache,
-    LintCacheEntry,
-    _detect_lint_command,
-    _get_git_state,
-    make_lint_cache_hook,
-)
-from .locking import (
-    StopHook,
-    get_lock_holder,
-    make_lock_enforcement_hook,
-    make_stop_hook,
-    run_command,
-)
+from src.infra.hooks import *  # noqa: F403
 
-# Re-export from mcp for backward compatibility
-from ..mcp import MORPH_DISALLOWED_TOOLS
+# Enable sub-module imports: from src.hooks.locking import ...
+from src.infra import hooks as _new_hooks
 
-__all__ = [
-    "BASH_TOOL_NAMES",
-    "DANGEROUS_PATTERNS",
-    "DESTRUCTIVE_GIT_PATTERNS",
-    "FILE_PATH_KEYS",
-    "FILE_WRITE_TOOLS",
-    "LINT_COMMAND_PATTERNS",
-    "MORPH_DISALLOWED_TOOLS",
-    "SAFE_GIT_ALTERNATIVES",
-    "CachedFileInfo",
-    "FileReadCache",
-    "LintCache",
-    "LintCacheEntry",
-    "PreToolUseHook",
-    "StopHook",
-    "_detect_lint_command",
-    "_get_git_state",
-    "block_dangerous_commands",
-    "block_morph_replaced_tools",
-    "get_lock_holder",
-    "make_file_read_cache_hook",
-    "make_lint_cache_hook",
-    "make_lock_enforcement_hook",
-    "make_stop_hook",
-    "run_command",
-]
+sys.modules[__name__].__path__ = _new_hooks.__path__  # type: ignore[attr-defined]

@@ -168,6 +168,12 @@ forbidden_modules = [
     "src.log_events",
     "src.core.log_events",
     "src.issue_manager",
+    # New infra paths (shims redirect to these)
+    "src.infra",
+    "src.infra.clients",
+    "src.infra.hooks",
+    "src.infra.io",
+    "src.infra.tools",
     # Note: src.config is allowed - CLI reads mala.toml configuration
 ]
 # Allow indirect imports through orchestration layer (e.g., cli -> cli_support -> tools)
@@ -256,6 +262,8 @@ forbidden_modules = [
     "braintrust",
     "src.anthropic_client",
     "src.braintrust_integration",
+    "src.infra.clients.anthropic_client",
+    "src.infra.clients.braintrust_integration",
 ]
 
 # -----------------------------------------------------------------------------
@@ -296,6 +304,12 @@ source_modules = [
     "src.epic_verifier",
     "src.tools",
     "src.core",
+    # New infra paths
+    "src.infra",
+    "src.infra.clients",
+    "src.infra.hooks",
+    "src.infra.io",
+    "src.infra.tools",
 ]
 forbidden_modules = ["typer"]
 
@@ -307,7 +321,7 @@ forbidden_modules = ["typer"]
 [[tool.importlinter.contracts]]
 name = "Hooks isolated"
 type = "forbidden"
-source_modules = ["src.hooks"]
+source_modules = ["src.hooks", "src.infra.hooks"]
 forbidden_modules = [
     "src.pipeline",
     "src.lifecycle",
@@ -350,6 +364,12 @@ source_modules = [
     "src.issue_manager",
     "src.core",
     "src.core.models",
+    # New infra paths
+    "src.infra",
+    "src.infra.clients",
+    "src.infra.hooks",
+    "src.infra.io",
+    "src.infra.tools",
 ]
 forbidden_modules = [
     "src.cli",
@@ -402,6 +422,12 @@ forbidden_modules = [
     "src.epic_verifier",
     "src.tools",
     "src.issue_manager",
+    # New infra paths
+    "src.infra",
+    "src.infra.clients",
+    "src.infra.hooks",
+    "src.infra.io",
+    "src.infra.tools",
 ]
 
 # -----------------------------------------------------------------------------
@@ -444,6 +470,12 @@ forbidden_modules = [
     "src.issue_manager",
     "src.models",
     "src.core.models",
+    # New infra paths
+    "src.infra",
+    "src.infra.clients",
+    "src.infra.hooks",
+    "src.infra.io",
+    "src.infra.tools",
 ]
 
 # -----------------------------------------------------------------------------
@@ -486,6 +518,12 @@ forbidden_modules = [
     "src.issue_manager",
     "src.models",
     "src.core.models",
+    # New infra paths
+    "src.infra",
+    "src.infra.clients",
+    "src.infra.hooks",
+    "src.infra.io",
+    "src.infra.tools",
 ]
 
 # -----------------------------------------------------------------------------
@@ -497,9 +535,10 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "Telemetry abstraction pure"
 type = "forbidden"
-source_modules = ["src.telemetry"]
+source_modules = ["src.telemetry", "src.infra.telemetry"]
 forbidden_modules = [
     "src.braintrust_integration",
+    "src.infra.clients.braintrust_integration",
     "braintrust",
 ]
 
@@ -512,7 +551,7 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "Tools is foundational"
 type = "forbidden"
-source_modules = ["src.tools"]
+source_modules = ["src.tools", "src.infra.tools"]
 forbidden_modules = [
     "src.cli",
     "src.main",
@@ -546,6 +585,10 @@ forbidden_modules = [
     "src.core.models",
     "src.issue_manager",
     "src.core",
+    # New infra paths (except infra.tools itself)
+    "src.infra.clients",
+    "src.infra.hooks",
+    "src.infra.io",
 ]
 
 # -----------------------------------------------------------------------------
