@@ -17,14 +17,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.epic_verifier import (
+from src.infra.epic_verifier import (
     ClaudeEpicVerificationModel,
     EpicVerifier,
     _compute_criterion_hash,
     _extract_json_from_code_blocks,
     extract_spec_paths,
 )
-from src.models import EpicVerdict, RetryConfig, UnmetCriterion
+from src.core.models import EpicVerdict, RetryConfig, UnmetCriterion
 from src.infra.tools.command_runner import CommandResult
 
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.cerberus_review import (
+from src.infra.clients.cerberus_review import (
     DefaultReviewer,
     ReviewIssue,
     ReviewResult,

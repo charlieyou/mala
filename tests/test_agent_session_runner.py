@@ -1335,7 +1335,7 @@ class TestAgentSessionRunnerEventSink:
         tmp_log_path: Path,
     ) -> None:
         """Runner should emit on_review_started and on_review_passed when review passes."""
-        from src.cerberus_review import ReviewResult
+        from src.infra.clients.cerberus_review import ReviewResult
 
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
@@ -1402,6 +1402,22 @@ class TestAgentSessionRunnerEventSink:
         assert "on_review_started" in event_names
         assert "on_review_passed" in event_names
 
+        # Verify gate passed events are emitted before review when review is enabled
+        # This ensures every on_validation_started has a corresponding on_validation_result
+        assert "on_gate_passed" in event_names
+        assert "on_validation_result" in event_names
+
+        # Verify ordering: gate_passed and validation_result before review_started
+        gate_passed_idx = event_names.index("on_gate_passed")
+        validation_result_idx = event_names.index("on_validation_result")
+        review_started_idx = event_names.index("on_review_started")
+        assert gate_passed_idx < review_started_idx, (
+            "on_gate_passed should be emitted before on_review_started"
+        )
+        assert validation_result_idx < review_started_idx, (
+            "on_validation_result should be emitted before on_review_started"
+        )
+
         # Verify on_review_started was called with correct args
         review_started = next(
             e for e in fake_sink.events if e[0] == "on_review_started"
@@ -1417,7 +1433,7 @@ class TestAgentSessionRunnerEventSink:
         tmp_log_path: Path,
     ) -> None:
         """Runner should emit on_review_retry when review fails and retries are available."""
-        from src.cerberus_review import ReviewIssue, ReviewResult
+        from src.infra.clients.cerberus_review import ReviewIssue, ReviewResult
 
         session_config = AgentSessionConfig(
             repo_path=tmp_path,

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from src import git_utils
+from src.infra import git_utils
 from src.infra import git_utils as infra_git_utils
 from src.infra.tools.command_runner import CommandResult
 

@@ -77,7 +77,7 @@ for mod in list(sys.modules.keys()):
     if mod.startswith('claude_agent_sdk'):
         del sys.modules[mod]
 
-from src.braintrust_integration import is_braintrust_enabled
+from src.infra.clients.braintrust_integration import is_braintrust_enabled
 if any(mod.startswith('claude_agent_sdk') for mod in sys.modules):
     print('FAIL: claude_agent_sdk was imported')
     sys.exit(1)

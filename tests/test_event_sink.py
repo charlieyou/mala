@@ -605,3 +605,25 @@ class TestConsoleEventSink:
 
         mock_log.assert_called_once()
         assert mock_log.call_args.kwargs.get("issue_id") == "issue-jkl"
+
+    @patch("src.infra.io.event_sink.log")
+    def test_gate_result_passes_issue_id(self, mock_log: MagicMock) -> None:
+        """on_gate_result passes issue_id to log()."""
+        sink = ConsoleEventSink()
+        sink.on_gate_result(
+            "agent-1", passed=False, failure_reasons=["lint"], issue_id="issue-mno"
+        )
+
+        mock_log.assert_called_once()
+        assert mock_log.call_args.kwargs.get("issue_id") == "issue-mno"
+
+    @patch("src.infra.io.event_sink.log")
+    def test_validation_result_passed_passes_issue_id(
+        self, mock_log: MagicMock
+    ) -> None:
+        """on_validation_result (passed) passes issue_id to log()."""
+        sink = ConsoleEventSink()
+        sink.on_validation_result("agent-1", passed=True, issue_id="issue-pqr")
+
+        mock_log.assert_called_once()
+        assert mock_log.call_args.kwargs.get("issue_id") == "issue-pqr"

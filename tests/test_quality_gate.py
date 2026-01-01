@@ -2989,8 +2989,8 @@ class TestLogProviderInjection:
         """QualityGate should accept a custom LogProvider."""
         from collections.abc import Iterator
 
-        from src.log_events import AssistantLogEntry, AssistantMessage, ToolUseBlock
-        from src.session_log_parser import JsonlEntry
+        from src.core.log_events import AssistantLogEntry, AssistantMessage, ToolUseBlock
+        from src.infra.io.session_log_parser import JsonlEntry
 
         class MockLogProvider:
             """Mock LogProvider that returns synthetic events."""
@@ -3055,7 +3055,7 @@ class TestLogProviderInjection:
         """get_log_end_offset should delegate to LogProvider."""
         from collections.abc import Iterator
 
-        from src.session_log_parser import JsonlEntry
+        from src.infra.io.session_log_parser import JsonlEntry
 
         class MockLogProvider:
             def get_log_path(self, repo_path: Path, session_id: str) -> Path:
@@ -3079,7 +3079,7 @@ class TestLogProviderInjection:
 
     def test_default_uses_filesystem_provider(self, tmp_path: Path) -> None:
         """QualityGate should use FileSystemLogProvider by default."""
-        from src.session_log_parser import FileSystemLogProvider
+        from src.infra.io.session_log_parser import FileSystemLogProvider
 
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)

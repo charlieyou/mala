@@ -98,7 +98,7 @@ class TestRunLevelValidation:
 
         with (
             patch(
-                "src.git_utils.get_git_commit_async",
+                "src.infra.git_utils.get_git_commit_async",
                 side_effect=mock_get_commit,
             ),
             patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
@@ -166,7 +166,7 @@ class TestRunLevelValidation:
 
         with (
             patch(
-                "src.git_utils.get_git_commit_async",
+                "src.infra.git_utils.get_git_commit_async",
                 side_effect=mock_get_commit,
             ),
             patch.object(RunCoordinator, "_run_fixer_agent", side_effect=mock_fixer),
@@ -241,7 +241,7 @@ class TestRunLevelValidation:
 
         with (
             patch(
-                "src.git_utils.get_git_commit_async",
+                "src.infra.git_utils.get_git_commit_async",
                 side_effect=mock_get_commit,
             ),
             patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
@@ -345,7 +345,7 @@ class TestRunLevelValidation:
 
         with (
             patch(
-                "src.git_utils.get_git_commit_async",
+                "src.infra.git_utils.get_git_commit_async",
                 side_effect=mock_get_commit,
             ),
             patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
@@ -408,7 +408,7 @@ class TestRunLevelValidation:
 
         with (
             patch(
-                "src.git_utils.get_git_commit_async",
+                "src.infra.git_utils.get_git_commit_async",
                 side_effect=mock_get_commit,
             ),
             patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
@@ -472,7 +472,7 @@ class TestRunLevelValidation:
 
         with (
             patch(
-                "src.git_utils.get_git_commit_async",
+                "src.infra.git_utils.get_git_commit_async",
                 side_effect=mock_get_commit,
             ),
             patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
@@ -544,7 +544,7 @@ class TestRunLevelValidation:
 
         with (
             patch(
-                "src.git_utils.get_git_commit_async",
+                "src.infra.git_utils.get_git_commit_async",
                 side_effect=mock_get_commit,
             ),
             patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,
@@ -611,7 +611,7 @@ class TestRunLevelValidation:
 
         with (
             patch(
-                "src.git_utils.get_git_commit_async",
+                "src.infra.git_utils.get_git_commit_async",
                 side_effect=mock_get_commit,
             ),
             patch("src.pipeline.run_coordinator.SpecValidationRunner") as MockRunner,

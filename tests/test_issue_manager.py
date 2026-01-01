@@ -5,7 +5,7 @@ All tests use fixture data directly, demonstrating the testability benefits of
 separating domain logic from I/O.
 """
 
-from src.issue_manager import IssueManager
+from src.infra.issue_manager import IssueManager
 
 
 class TestMergeWipIssues:

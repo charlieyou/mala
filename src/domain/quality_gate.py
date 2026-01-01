@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
 from src.infra.tools.command_runner import run_command
-from src.session_log_parser import FileSystemLogProvider, JsonlEntry, SessionLogParser
+from src.infra.io.session_log_parser import FileSystemLogProvider, JsonlEntry, SessionLogParser
 
 from .validation.spec import (
     CommandKind,
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from src.protocols import (
+    from src.core.protocols import (
         IssueResolutionProtocol,
         LogProvider,
         ValidationEvidenceProtocol,

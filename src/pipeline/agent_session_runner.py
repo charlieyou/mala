@@ -40,7 +40,7 @@ from src.infra.hooks import (
     make_lock_enforcement_hook,
     make_stop_hook,
 )
-from src.mcp import get_disallowed_tools, get_mcp_servers
+from src.infra.mcp import get_disallowed_tools, get_mcp_servers
 from src.domain.lifecycle import (
     Effect,
     ImplementerLifecycle,
@@ -55,16 +55,16 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from typing import Self
 
-    from src.event_sink import MalaEventSink
+    from src.infra.io.event_sink import MalaEventSink
     from src.domain.lifecycle import (
         GateOutcome,
         RetryState,
         ReviewOutcome,
         TransitionResult,
     )
-    from src.models import IssueResolution
-    from src.protocols import ReviewIssueProtocol
-    from src.telemetry import TelemetrySpan
+    from src.core.models import IssueResolution
+    from src.core.protocols import ReviewIssueProtocol
+    from src.infra.telemetry import TelemetrySpan
 
 
 # Module-level logger for idle retry messages
@@ -986,6 +986,24 @@ class AgentSessionRunner:
 
                     # Handle RUN_REVIEW
                     if result.effect == Effect.RUN_REVIEW:
+                        # Emit gate passed events when first entering review
+                        # (review_attempt == 1 means gate just passed)
+                        # This ensures every on_validation_started has a corresponding
+                        # on_validation_result
+                        if (
+                            lifecycle_ctx.retry_state.review_attempt == 1
+                            and self.event_sink is not None
+                        ):
+                            self.event_sink.on_gate_passed(
+                                input.issue_id,
+                                issue_id=input.issue_id,
+                            )
+                            self.event_sink.on_validation_result(
+                                input.issue_id,
+                                passed=True,
+                                issue_id=input.issue_id,
+                            )
+
                         # Check no-progress before running review
                         if (
                             lifecycle_ctx.retry_state.review_attempt > 1
@@ -1008,7 +1026,7 @@ class AgentSessionRunner:
                                         input.issue_id
                                     )
                                 # Create synthetic failed review
-                                from src.cerberus_review import ReviewResult
+                                from src.infra.clients.cerberus_review import ReviewResult
 
                                 synthetic = ReviewResult(
                                     passed=False, issues=[], parse_error=None
@@ -1164,7 +1182,7 @@ class AgentSessionRunner:
                                 )
 
                             # Build follow-up prompt for legitimate review issues
-                            from src.cerberus_review import format_review_issues
+                            from src.infra.clients.cerberus_review import format_review_issues
 
                             review_issues_text = format_review_issues(
                                 review_result.issues,  # type: ignore[arg-type]

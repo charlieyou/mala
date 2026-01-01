@@ -284,7 +284,7 @@ class TestMcpServerConfig:
 
     def test_get_mcp_servers_returns_morphllm_config(self) -> None:
         """get_mcp_servers should return correct MorphLLM config."""
-        from src.mcp import get_mcp_servers
+        from src.infra.mcp import get_mcp_servers
 
         config = get_mcp_servers(Path("/tmp/repo"), morph_api_key="test-key")
 
@@ -295,7 +295,7 @@ class TestMcpServerConfig:
 
     def test_get_mcp_servers_includes_api_key(self) -> None:
         """MCP server config should include API key in env."""
-        from src.mcp import get_mcp_servers
+        from src.infra.mcp import get_mcp_servers
 
         # Now pass morph_api_key directly
         config = get_mcp_servers(Path("/tmp/repo"), morph_api_key="my-secret-key")
@@ -304,7 +304,7 @@ class TestMcpServerConfig:
 
     def test_get_mcp_servers_enables_all_tools(self) -> None:
         """MCP server config should enable all tools."""
-        from src.mcp import get_mcp_servers
+        from src.infra.mcp import get_mcp_servers
 
         config = get_mcp_servers(Path("/tmp/repo"), morph_api_key="test-key")
 
@@ -312,7 +312,7 @@ class TestMcpServerConfig:
 
     def test_get_mcp_servers_enables_workspace_mode(self) -> None:
         """MCP server config should enable workspace mode."""
-        from src.mcp import get_mcp_servers
+        from src.infra.mcp import get_mcp_servers
 
         config = get_mcp_servers(Path("/tmp/repo"), morph_api_key="test-key")
 
@@ -320,7 +320,7 @@ class TestMcpServerConfig:
 
     def test_get_mcp_servers_sets_cwd(self) -> None:
         """MCP server config should set cwd to repo_path."""
-        from src.mcp import get_mcp_servers
+        from src.infra.mcp import get_mcp_servers
 
         config = get_mcp_servers(Path("/my/project/path"), morph_api_key="test-key")
 
@@ -328,7 +328,7 @@ class TestMcpServerConfig:
 
     def test_get_mcp_servers_sets_workspace_path(self) -> None:
         """MCP server config should set WORKSPACE_PATH env var to repo_path."""
-        from src.mcp import get_mcp_servers
+        from src.infra.mcp import get_mcp_servers
 
         config = get_mcp_servers(Path("/my/project/path"), morph_api_key="test-key")
 
@@ -336,7 +336,7 @@ class TestMcpServerConfig:
 
     def test_get_mcp_servers_disabled_returns_empty(self) -> None:
         """get_mcp_servers should return empty dict when morph_enabled=False."""
-        from src.mcp import get_mcp_servers
+        from src.infra.mcp import get_mcp_servers
 
         config = get_mcp_servers(Path("/tmp/repo"), morph_enabled=False)
 
@@ -344,7 +344,7 @@ class TestMcpServerConfig:
 
     def test_get_mcp_servers_enabled_explicitly(self) -> None:
         """get_mcp_servers should return config when morph_enabled=True."""
-        from src.mcp import get_mcp_servers
+        from src.infra.mcp import get_mcp_servers
 
         config = get_mcp_servers(
             Path("/tmp/repo"), morph_api_key="test-key", morph_enabled=True
@@ -358,7 +358,7 @@ class TestMorphEnabledGating:
 
     def test_get_mcp_servers_defaults_to_enabled(self) -> None:
         """get_mcp_servers should default to morph_enabled=True when api_key provided."""
-        from src.mcp import get_mcp_servers
+        from src.infra.mcp import get_mcp_servers
 
         # No morph_enabled param - should default to True (enabled)
         config = get_mcp_servers(Path("/tmp/repo"), morph_api_key="test-key")
@@ -367,7 +367,7 @@ class TestMorphEnabledGating:
 
     def test_edit_blocked_when_morph_disabled(self) -> None:
         """Edit and Grep should be allowed when morph_enabled=False."""
-        from src.mcp import get_disallowed_tools
+        from src.infra.mcp import get_disallowed_tools
         from src.orchestration.orchestrator import MalaOrchestrator
 
         # Create orchestrator with morph disabled

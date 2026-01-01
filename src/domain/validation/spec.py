@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Literal
 
 # Re-export shared types from models for backward compatibility
 # Note: Using explicit aliases (X as X) marks these as intentional re-exports
-from src.models import (
+from src.core.models import (
     IssueResolution as IssueResolution,
     ResolutionOutcome as ResolutionOutcome,
     ValidationArtifacts as ValidationArtifacts,

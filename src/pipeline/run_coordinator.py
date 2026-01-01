@@ -36,7 +36,7 @@ from src.infra.hooks import (
     make_lock_enforcement_hook,
     make_stop_hook,
 )
-from src.mcp import get_disallowed_tools, get_mcp_servers
+from src.infra.mcp import get_disallowed_tools, get_mcp_servers
 from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.e2e import E2EStatus
@@ -48,12 +48,12 @@ from src.domain.validation.spec import (
 from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
-    from src.event_sink import MalaEventSink
+    from src.infra.io.event_sink import MalaEventSink
     from src.infra.io.log_output.run_metadata import (
         RunMetadata,
         ValidationResult as MetaValidationResult,
     )
-    from src.protocols import GateChecker
+    from src.core.protocols import GateChecker
     from src.domain.validation.result import ValidationResult
 
 
@@ -211,7 +211,7 @@ class RunCoordinator:
         Returns:
             RunLevelValidationOutput indicating pass/fail.
         """
-        from src.git_utils import get_git_commit_async
+        from src.infra.git_utils import get_git_commit_async
 
         # Check if run-level validation is disabled
         if "run-level-validate" in (self.config.disable_validations or set()):

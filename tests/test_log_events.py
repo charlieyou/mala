@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.log_events import (
+from src.core.log_events import (
     AssistantLogEntry,
     AssistantMessage,
     LogParseError,
@@ -31,7 +31,7 @@ from src.log_events import (
 )
 
 if TYPE_CHECKING:
-    from src.log_events import ContentBlock, LogEntry
+    from src.core.log_events import ContentBlock, LogEntry
 
 
 # Path to JSONL fixture file

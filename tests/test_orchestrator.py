@@ -784,21 +784,21 @@ class TestOrchestratorInitialization:
         self, tmp_path: Path
     ) -> None:
         """Default telemetry provider is NullTelemetryProvider when braintrust disabled."""
-        from src.telemetry import NullTelemetryProvider
+        from src.infra.telemetry import NullTelemetryProvider
 
         orch = MalaOrchestrator(repo_path=tmp_path, braintrust_enabled=False)
         assert isinstance(orch.telemetry_provider, NullTelemetryProvider)
 
     def test_telemetry_provider_braintrust_when_enabled(self, tmp_path: Path) -> None:
         """Telemetry provider is BraintrustProvider when braintrust_enabled=True."""
-        from src.braintrust_integration import BraintrustProvider
+        from src.infra.clients.braintrust_integration import BraintrustProvider
 
         orch = MalaOrchestrator(repo_path=tmp_path, braintrust_enabled=True)
         assert isinstance(orch.telemetry_provider, BraintrustProvider)
 
     def test_telemetry_provider_injection(self, tmp_path: Path) -> None:
         """Telemetry provider can be injected for testing."""
-        from src.telemetry import NullTelemetryProvider
+        from src.infra.telemetry import NullTelemetryProvider
 
         custom_provider = NullTelemetryProvider()
         orch = MalaOrchestrator(
@@ -3098,7 +3098,7 @@ class TestEpicClosureAfterChildCompletion:
         epic_closure_calls: list[str] = []
 
         # Create mock for epic_verifier.verify_and_close_epic
-        from src.models import EpicVerificationResult
+        from src.core.models import EpicVerificationResult
 
         async def mock_verify_and_close_epic(
             epic_id: str,
@@ -3276,7 +3276,7 @@ class TestEpicClosureAfterChildCompletion:
         epic_closure_calls: list[str] = []
         issues_processed = []
 
-        from src.models import EpicVerificationResult
+        from src.core.models import EpicVerificationResult
 
         async def mock_verify_and_close_epic(
             epic_id: str,
@@ -3385,7 +3385,7 @@ class TestEpicClosureAfterChildCompletion:
         epic_closure_calls: list[str] = []
         issues_processed = []
 
-        from src.models import EpicVerificationResult
+        from src.core.models import EpicVerificationResult
 
         async def mock_verify_and_close_epic(
             epic_id: str,
@@ -3658,7 +3658,7 @@ def _make_mock_log_provider(log_file: Path) -> object:
     """Create a mock LogProvider that returns the given log file."""
     from collections.abc import Iterator
 
-    from src.session_log_parser import JsonlEntry
+    from src.infra.io.session_log_parser import JsonlEntry
 
     class MockLogProvider:
         def get_log_path(self, repo_path: Path, session_id: str) -> Path:
@@ -3955,7 +3955,7 @@ class TestReviewUsesIssueCommits:
     @pytest.mark.asyncio
     async def test_review_scopes_to_issue_commits(self, tmp_path: Path) -> None:
         """Review should use the issue's commit list, not unrelated commits."""
-        from src.cerberus_review import ReviewResult
+        from src.infra.clients.cerberus_review import ReviewResult
         from src.orchestration.orchestrator import MalaOrchestrator
         from src.domain.quality_gate import GateResult
 
@@ -4153,14 +4153,14 @@ class TestGetMcpServers:
 
     def test_returns_empty_when_morph_disabled(self, tmp_path: Path) -> None:
         """get_mcp_servers returns empty dict when morph_enabled=False."""
-        from src.mcp import get_mcp_servers
+        from src.infra.mcp import get_mcp_servers
 
         result = get_mcp_servers(tmp_path, morph_enabled=False)
         assert result == {}
 
     def test_returns_config_when_api_key_set(self, tmp_path: Path) -> None:
         """get_mcp_servers returns config when morph_api_key is provided."""
-        from src.mcp import get_mcp_servers
+        from src.infra.mcp import get_mcp_servers
 
         result = get_mcp_servers(tmp_path, morph_api_key="test-key", morph_enabled=True)
 
@@ -4169,7 +4169,7 @@ class TestGetMcpServers:
 
     def test_raises_error_when_api_key_missing(self, tmp_path: Path) -> None:
         """get_mcp_servers raises ValueError when morph_api_key missing but morph_enabled=True."""
-        from src.mcp import get_mcp_servers
+        from src.infra.mcp import get_mcp_servers
 
         with pytest.raises(ValueError) as exc_info:
             # morph_api_key is None but morph_enabled=True (default)
@@ -4189,7 +4189,7 @@ class TestEventSinkIntegration:
         Verifies that on_no_more_issues is called with 'none_ready' when
         get_ready returns empty and max_issues is not reached.
         """
-        from src.event_sink import NullEventSink
+        from src.infra.io.event_sink import NullEventSink
 
         # Create a tracking sink that records calls
         class TrackingSink(NullEventSink):
@@ -4243,7 +4243,7 @@ class TestEventSinkIntegration:
     @pytest.mark.asyncio
     async def test_run_emits_limit_reached_event(self, tmp_path: Path) -> None:
         """on_no_more_issues is called with limit_reached when max_issues=0."""
-        from src.event_sink import NullEventSink
+        from src.infra.io.event_sink import NullEventSink
 
         class TrackingSink(NullEventSink):
             def __init__(self) -> None:
@@ -4290,7 +4290,7 @@ class TestEventSinkIntegration:
     @pytest.mark.asyncio
     async def test_event_sink_defaults_to_console_sink(self, tmp_path: Path) -> None:
         """Event sink defaults to ConsoleEventSink when not specified."""
-        from src.event_sink import ConsoleEventSink
+        from src.infra.io.event_sink import ConsoleEventSink
 
         orchestrator = MalaOrchestrator(repo_path=tmp_path)
 
@@ -4365,7 +4365,7 @@ class TestOrchestratorFactory:
 
     def test_create_orchestrator_with_custom_dependencies(self, tmp_path: Path) -> None:
         """create_orchestrator uses provided dependencies."""
-        from src.event_sink import NullEventSink
+        from src.infra.io.event_sink import NullEventSink
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig, OrchestratorDependencies
 
@@ -4627,7 +4627,7 @@ class TestBuildGateMetadataFromLogs:
         from src.domain.quality_gate import QualityGate
 
         if TYPE_CHECKING:
-            from src.protocols import GateChecker
+            from src.core.protocols import GateChecker
 
         log_path = tmp_path / "test.log"
         log_path.write_text("{}")
@@ -4659,7 +4659,7 @@ class TestBuildGateMetadataFromLogs:
         )
 
         if TYPE_CHECKING:
-            from src.protocols import GateChecker
+            from src.core.protocols import GateChecker
 
         log_path = tmp_path / "test.log"
         # Write a minimal log entry
@@ -4702,7 +4702,7 @@ class TestBuildGateMetadataFromLogs:
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         if TYPE_CHECKING:
-            from src.protocols import GateChecker
+            from src.core.protocols import GateChecker
 
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
@@ -4731,7 +4731,7 @@ class TestBuildGateMetadataFromLogs:
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         if TYPE_CHECKING:
-            from src.protocols import GateChecker
+            from src.core.protocols import GateChecker
 
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
@@ -4762,7 +4762,7 @@ class TestBuildGateMetadataFromLogs:
         from src.domain.validation.spec import ValidationScope, ValidationSpec
 
         if TYPE_CHECKING:
-            from src.protocols import GateChecker
+            from src.core.protocols import GateChecker
 
         # Create log file
         log_path = tmp_path / "test.log"

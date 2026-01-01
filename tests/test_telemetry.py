@@ -6,7 +6,7 @@ from typing import Any, Self
 import pytest
 
 import src.infra.clients.braintrust_integration as infra_braintrust
-from src.braintrust_integration import (
+from src.infra.clients.braintrust_integration import (
     BraintrustProvider,
     BraintrustSpan,
 )

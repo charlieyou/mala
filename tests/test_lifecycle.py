@@ -7,7 +7,7 @@ machine that can be tested with simple data inputs.
 
 import pytest
 
-from src.cerberus_review import ReviewIssue, ReviewResult
+from src.infra.clients.cerberus_review import ReviewIssue, ReviewResult
 from src.domain.lifecycle import (
     Effect,
     ImplementerLifecycle,

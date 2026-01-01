@@ -11,7 +11,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
-import src.braintrust_integration as braintrust_integration
+import src.infra.clients.braintrust_integration as braintrust_integration
 import src.infra.clients.braintrust_integration as infra_braintrust
 
 

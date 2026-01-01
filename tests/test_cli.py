@@ -10,11 +10,11 @@ import pytest
 import typer
 
 import src.orchestration.orchestrator
-import src.beads_client
+import src.infra.clients.beads_client
 import src.infra.tools.locking
 import src.orchestration.cli_support
 import src.infra.io.log_output.run_metadata
-from src.models import EpicVerificationResult
+from src.core.models import EpicVerificationResult
 
 
 def _reload_cli(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:

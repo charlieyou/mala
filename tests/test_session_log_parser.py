@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 import pytest
-from src.session_log_parser import JsonlEntry, SessionLogParser
+from src.infra.io.session_log_parser import JsonlEntry, SessionLogParser
 
 
 class TestIterJsonlEntries:
@@ -470,7 +470,7 @@ class TestFileSystemLogProvider:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """get_log_path should compute the Claude SDK log path."""
-        from src.session_log_parser import FileSystemLogProvider
+        from src.infra.io.session_log_parser import FileSystemLogProvider
 
         # Mock the Claude config dir to use tmp_path
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
@@ -486,7 +486,7 @@ class TestFileSystemLogProvider:
 
     def test_iter_events_delegates_to_parser(self, tmp_path: Path) -> None:
         """iter_events should delegate to SessionLogParser."""
-        from src.session_log_parser import FileSystemLogProvider
+        from src.infra.io.session_log_parser import FileSystemLogProvider
 
         log_path = tmp_path / "session.jsonl"
         entry = {
@@ -503,7 +503,7 @@ class TestFileSystemLogProvider:
 
     def test_iter_events_respects_offset(self, tmp_path: Path) -> None:
         """iter_events should start from the given offset."""
-        from src.session_log_parser import FileSystemLogProvider
+        from src.infra.io.session_log_parser import FileSystemLogProvider
 
         log_path = tmp_path / "session.jsonl"
         first_entry = json.dumps({"type": "assistant", "message": {"content": []}})
@@ -519,7 +519,7 @@ class TestFileSystemLogProvider:
 
     def test_get_end_offset_returns_file_size(self, tmp_path: Path) -> None:
         """get_end_offset should return the file size."""
-        from src.session_log_parser import FileSystemLogProvider
+        from src.infra.io.session_log_parser import FileSystemLogProvider
 
         log_path = tmp_path / "session.jsonl"
         content = json.dumps({"type": "assistant", "message": {"content": []}}) + "\n"
@@ -534,7 +534,7 @@ class TestFileSystemLogProvider:
         self, tmp_path: Path
     ) -> None:
         """get_end_offset should return start_offset for missing files."""
-        from src.session_log_parser import FileSystemLogProvider
+        from src.infra.io.session_log_parser import FileSystemLogProvider
 
         provider = FileSystemLogProvider()
         nonexistent = tmp_path / "nonexistent.jsonl"
@@ -546,7 +546,7 @@ class TestFileSystemLogProvider:
     def test_conforms_to_log_provider_protocol(self, tmp_path: Path) -> None:
         """FileSystemLogProvider should conform to LogProvider protocol."""
         from src.core.protocols import LogProvider
-        from src.session_log_parser import FileSystemLogProvider
+        from src.infra.io.session_log_parser import FileSystemLogProvider
 
         provider = FileSystemLogProvider()
 
