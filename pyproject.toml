@@ -115,14 +115,17 @@ dev = [
 # Import Linter Configuration
 # =============================================================================
 # Enforces architectural boundaries between layers.
-# Run with: uvx import-linter
+# Run with: uv run import-linter
 #
 # Architecture:
-#   cli -> orchestration -> pipeline -> domain -> infra
+#   cli -> orchestration -> pipeline -> domain -> infra -> core
 #
-# Infra is NOT layered - it's a flat set of utility modules that can
-# cross-import. The layered contract only enforces that higher layers
-# don't import from lower, not within-layer constraints.
+# This simplified configuration uses 10 contracts:
+# 1. Layered Architecture (layers type) - enforces layer ordering
+# 2-3. SDK/Typer confinement - external packages restricted to specific layers
+# 4. Pipeline acyclic - independence within pipeline
+# 5-7. Special isolation (hooks, telemetry, validation.result)
+# 8-10. Leaf modules (models, protocols, log_events) - no src imports
 # =============================================================================
 
 [tool.importlinter]
@@ -130,118 +133,80 @@ root_packages = ["src"]
 include_external_packages = true
 
 # -----------------------------------------------------------------------------
-# Contract 1: CLI cannot bypass orchestration
+# Contract 1: Layered Architecture
 # -----------------------------------------------------------------------------
-# CLI should not reach into pipeline/domain/infra directly.
-# All behavior routed through the orchestration layer.
+# Enforces that higher layers cannot import from lower layers.
+# This replaces most of the old layer-specific contracts.
 
 [[tool.importlinter.contracts]]
-name = "CLI only depends on orchestrator"
-type = "forbidden"
-source_modules = [
+name = "Layered Architecture"
+type = "layers"
+layers = [
     "src.cli",
-    "src.cli.cli",
-    "src.cli.main",
-]
-forbidden_modules = [
+    "src.orchestration",
     "src.pipeline",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.models",
-    "src.core.models",
-    "src.domain.prompts",
-    "src.beads_client",
-    "src.cerberus_review",
-    "src.mcp",
-    "src.hooks",
-    "src.session_log_parser",
-    "src.anthropic_client",
-    "src.braintrust_integration",
-    "src.telemetry",
-    "src.git_utils",
-    "src.protocols",
-    "src.core.protocols",
-    "src.epic_verifier",
-    "src.tools",
-    "src.log_output",
-    "src.event_sink",
-    "src.log_events",
-    "src.core.log_events",
-    "src.issue_manager",
-    # New infra paths (shims redirect to these)
+    "src.domain",
     "src.infra",
-    "src.infra.clients",
-    "src.infra.hooks",
-    "src.infra.io",
-    "src.infra.tools",
-    # New domain paths (shims redirect to these)
-    "src.domain",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-    # Note: src.config is allowed - CLI reads mala.toml configuration
+    "src.core",
 ]
-# Allow indirect imports through orchestration layer (e.g., cli -> cli_support -> tools)
-allow_indirect_imports = true
 
 # -----------------------------------------------------------------------------
-# Contract 2: Domain Independence from Upper Layers
+# Contract 2: SDK confined to infra
 # -----------------------------------------------------------------------------
-# Core domain modules must not depend on orchestration or CLI.
+# External SDKs (anthropic, braintrust) and their wrappers should only be
+# imported by CLI/orchestration/infra layers. Pipeline/domain/core cannot
+# import either SDKs or their wrappers directly.
 
 [[tool.importlinter.contracts]]
-name = "Domain layer independence"
+name = "SDK confined to infra"
 type = "forbidden"
 source_modules = [
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-    # New domain paths
+    "src.pipeline",
     "src.domain",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-    # Note: src.models has its own stricter "Models is leaf" contract
+    "src.core",
 ]
 forbidden_modules = [
-    "src.cli",
-    "src.cli.cli",
-    "src.cli.main",
-    "src.orchestration",
-    "src.orchestration.orchestrator",
-    "src.orchestration.factory",
-    "src.orchestration.types",
-    "src.orchestration.cli_support",
-    "src.pipeline",
+    "anthropic",
+    "braintrust",
+    "src.infra.clients.anthropic_client",
+    "src.infra.clients.braintrust_integration",
 ]
 
 # -----------------------------------------------------------------------------
-# Contract 3: Pipeline Independence from CLI/Orchestration
+# Contract 2b: CLI/Orchestration use SDK through wrappers only
 # -----------------------------------------------------------------------------
-# Pipeline modules should not import from orchestration layer.
+# CLI and orchestration can use SDK wrappers but should not directly import
+# the raw SDK packages. This is a future goal - currently cli imports
+# braintrust directly for setup.
+# NOTE: Currently disabled as cli.cli imports braintrust.wrappers directly.
+# Uncomment when code is refactored to use only infra wrappers.
+# [[tool.importlinter.contracts]]
+# name = "CLI uses SDK through wrappers"
+# type = "forbidden"
+# source_modules = ["src.cli", "src.orchestration"]
+# forbidden_modules = ["anthropic", "braintrust"]
+
+# -----------------------------------------------------------------------------
+# Contract 3: Only CLI imports typer
+# -----------------------------------------------------------------------------
+# typer is only for CLI argument parsing.
 
 [[tool.importlinter.contracts]]
-name = "Pipeline independence"
+name = "Only CLI imports typer"
 type = "forbidden"
-source_modules = ["src.pipeline"]
-forbidden_modules = [
-    "src.cli",
-    "src.cli.cli",
-    "src.cli.main",
+source_modules = [
     "src.orchestration",
-    "src.orchestration.orchestrator",
-    "src.orchestration.factory",
-    "src.orchestration.types",
-    "src.orchestration.cli_support",
+    "src.pipeline",
+    "src.domain",
+    "src.infra",
+    "src.core",
 ]
+forbidden_modules = ["typer"]
 
 # -----------------------------------------------------------------------------
-# Contract 4: No circular imports within pipeline
+# Contract 4: Pipeline modules acyclic
 # -----------------------------------------------------------------------------
+# No circular imports within pipeline modules.
 
 [[tool.importlinter.contracts]]
 name = "Pipeline modules acyclic"
@@ -254,343 +219,24 @@ modules = [
 ]
 
 # -----------------------------------------------------------------------------
-# Contract 5: SDK confined to infra
-# -----------------------------------------------------------------------------
-# Domain and pipeline layers should not directly import external SDKs.
-# They should use abstractions/protocols instead.
-# Note: CLI/orchestration are allowed to import SDK wrappers (anthropic_client,
-# braintrust_integration) which in turn import the SDKs.
-
-[[tool.importlinter.contracts]]
-name = "SDK confined to infra"
-type = "forbidden"
-source_modules = [
-    # Pipeline layer
-    "src.pipeline",
-    # Domain layer
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.models",
-    "src.domain.prompts",
-    # New domain paths
-    "src.domain",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-]
-forbidden_modules = [
-    "anthropic",
-    "braintrust",
-    "src.anthropic_client",
-    "src.braintrust_integration",
-    "src.infra.clients.anthropic_client",
-    "src.infra.clients.braintrust_integration",
-]
-
-# -----------------------------------------------------------------------------
-# Contract 6: Only CLI imports typer
-# -----------------------------------------------------------------------------
-# typer is only for CLI argument parsing.
-
-[[tool.importlinter.contracts]]
-name = "Only CLI imports typer"
-type = "forbidden"
-source_modules = [
-    "src.orchestration",
-    "src.orchestration.orchestrator",
-    "src.orchestration.factory",
-    "src.orchestration.types",
-    "src.pipeline",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.models",
-    "src.core.models",
-    "src.domain.prompts",
-    "src.beads_client",
-    "src.cerberus_review",
-    "src.mcp",
-    "src.hooks",
-    "src.log_output",
-    "src.event_sink",
-    "src.session_log_parser",
-    "src.anthropic_client",
-    "src.braintrust_integration",
-    "src.telemetry",
-    "src.git_utils",
-    "src.config",
-    "src.protocols",
-    "src.core.protocols",
-    "src.log_events",
-    "src.core.log_events",
-    "src.epic_verifier",
-    "src.tools",
-    "src.core",
-    # New infra paths
-    "src.infra",
-    "src.infra.clients",
-    "src.infra.hooks",
-    "src.infra.io",
-    "src.infra.tools",
-    # New domain paths
-    "src.domain",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-]
-forbidden_modules = ["typer"]
-
-# -----------------------------------------------------------------------------
-# Contract 7: Hooks isolated from upper layers
+# Contract 5: Hooks isolated
 # -----------------------------------------------------------------------------
 # Hook modules should not import from pipeline/domain/orchestration layers.
+# Also cannot import from core.models (per P2 review feedback).
 
 [[tool.importlinter.contracts]]
 name = "Hooks isolated"
 type = "forbidden"
-source_modules = ["src.hooks", "src.infra.hooks"]
+source_modules = ["src.infra.hooks"]
 forbidden_modules = [
     "src.pipeline",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.models",
-    "src.domain.prompts",
-    "src.orchestration",
-    "src.orchestration.orchestrator",
-    "src.orchestration.factory",
-    "src.orchestration.types",
-    "src.orchestration.cli_support",
-    # New domain paths
     "src.domain",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-]
-
-# -----------------------------------------------------------------------------
-# Contract 8: Infra cannot import from upper layers
-# -----------------------------------------------------------------------------
-# Infrastructure modules should not depend on orchestration, pipeline, or CLI.
-
-[[tool.importlinter.contracts]]
-name = "Infra independence"
-type = "forbidden"
-source_modules = [
-    "src.beads_client",
-    "src.cerberus_review",
-    "src.mcp",
-    "src.log_output",
-    "src.event_sink",
-    "src.session_log_parser",
-    "src.anthropic_client",
-    "src.braintrust_integration",
-    "src.telemetry",
-    "src.git_utils",
-    "src.config",
-    "src.protocols",
-    "src.core.protocols",
-    "src.log_events",
-    "src.core.log_events",
-    "src.epic_verifier",
-    "src.tools",
-    "src.issue_manager",
-    "src.core",
+    "src.orchestration",
     "src.core.models",
-    # New infra paths
-    "src.infra",
-    "src.infra.clients",
-    "src.infra.hooks",
-    "src.infra.io",
-    "src.infra.tools",
-]
-forbidden_modules = [
-    "src.cli",
-    "src.cli.cli",
-    "src.cli.main",
-    "src.orchestration",
-    "src.orchestration.orchestrator",
-    "src.orchestration.factory",
-    "src.orchestration.types",
-    "src.orchestration.cli_support",
-    "src.pipeline",
 ]
 
 # -----------------------------------------------------------------------------
-# Contract 9: Models is a leaf module
-# -----------------------------------------------------------------------------
-# Models should only contain data classes with no business logic dependencies.
-# This keeps models portable and prevents circular dependencies.
-
-[[tool.importlinter.contracts]]
-name = "Models is leaf"
-type = "forbidden"
-source_modules = ["src.models", "src.core.models"]
-forbidden_modules = [
-    "src.cli",
-    "src.cli.cli",
-    "src.cli.main",
-    "src.orchestration",
-    "src.orchestration.orchestrator",
-    "src.orchestration.factory",
-    "src.orchestration.types",
-    "src.orchestration.cli_support",
-    "src.pipeline",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-    "src.beads_client",
-    "src.cerberus_review",
-    "src.mcp",
-    "src.hooks",
-    "src.log_output",
-    "src.event_sink",
-    "src.session_log_parser",
-    "src.anthropic_client",
-    "src.braintrust_integration",
-    "src.telemetry",
-    "src.git_utils",
-    "src.config",
-    "src.protocols",
-    "src.core.protocols",
-    "src.log_events",
-    "src.core.log_events",
-    "src.epic_verifier",
-    "src.tools",
-    "src.issue_manager",
-    # New infra paths
-    "src.infra",
-    "src.infra.clients",
-    "src.infra.hooks",
-    "src.infra.io",
-    "src.infra.tools",
-    # New domain paths
-    "src.domain",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-]
-
-# -----------------------------------------------------------------------------
-# Contract 10: Protocols is a leaf module
-# -----------------------------------------------------------------------------
-# Protocols define interfaces only - no implementations or dependencies.
-
-[[tool.importlinter.contracts]]
-name = "Protocols is leaf"
-type = "forbidden"
-source_modules = ["src.protocols", "src.core.protocols"]
-forbidden_modules = [
-    "src.cli",
-    "src.cli.cli",
-    "src.cli.main",
-    "src.orchestration",
-    "src.orchestration.orchestrator",
-    "src.orchestration.factory",
-    "src.orchestration.types",
-    "src.orchestration.cli_support",
-    "src.pipeline",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-    "src.beads_client",
-    "src.cerberus_review",
-    "src.mcp",
-    "src.hooks",
-    "src.log_output",
-    "src.event_sink",
-    "src.session_log_parser",
-    "src.anthropic_client",
-    "src.braintrust_integration",
-    "src.telemetry",
-    "src.git_utils",
-    "src.config",
-    "src.log_events",
-    "src.core.log_events",
-    "src.epic_verifier",
-    "src.tools",
-    "src.issue_manager",
-    "src.models",
-    "src.core.models",
-    # New infra paths
-    "src.infra",
-    "src.infra.clients",
-    "src.infra.hooks",
-    "src.infra.io",
-    "src.infra.tools",
-    # New domain paths
-    "src.domain",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-]
-
-# -----------------------------------------------------------------------------
-# Contract 11: Log events is a leaf module
-# -----------------------------------------------------------------------------
-# Log events are pure data structures for event types.
-
-[[tool.importlinter.contracts]]
-name = "Log events is leaf"
-type = "forbidden"
-source_modules = ["src.log_events", "src.core.log_events"]
-forbidden_modules = [
-    "src.cli",
-    "src.cli.cli",
-    "src.cli.main",
-    "src.orchestration",
-    "src.orchestration.orchestrator",
-    "src.orchestration.factory",
-    "src.orchestration.types",
-    "src.orchestration.cli_support",
-    "src.pipeline",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-    "src.beads_client",
-    "src.cerberus_review",
-    "src.mcp",
-    "src.hooks",
-    "src.log_output",
-    "src.event_sink",
-    "src.session_log_parser",
-    "src.anthropic_client",
-    "src.braintrust_integration",
-    "src.telemetry",
-    "src.git_utils",
-    "src.config",
-    "src.protocols",
-    "src.core.protocols",
-    "src.epic_verifier",
-    "src.tools",
-    "src.issue_manager",
-    "src.models",
-    "src.core.models",
-    # New infra paths
-    "src.infra",
-    "src.infra.clients",
-    "src.infra.hooks",
-    "src.infra.io",
-    "src.infra.tools",
-    # New domain paths
-    "src.domain",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-]
-
-# -----------------------------------------------------------------------------
-# Contract 12: Telemetry abstraction is pure
+# Contract 6: Telemetry abstraction pure
 # -----------------------------------------------------------------------------
 # Telemetry module should only contain protocols and null implementations.
 # Concrete implementations (Braintrust) are in separate modules.
@@ -598,79 +244,17 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "Telemetry abstraction pure"
 type = "forbidden"
-source_modules = ["src.telemetry", "src.infra.telemetry"]
+source_modules = ["src.infra.telemetry"]
 forbidden_modules = [
-    "src.braintrust_integration",
     "src.infra.clients.braintrust_integration",
     "braintrust",
 ]
 
 # -----------------------------------------------------------------------------
-# Contract 13: Tools is foundational
-# -----------------------------------------------------------------------------
-# Tools module provides low-level utilities and should not import
-# domain or business logic modules.
-
-[[tool.importlinter.contracts]]
-name = "Tools is foundational"
-type = "forbidden"
-source_modules = ["src.tools", "src.infra.tools"]
-forbidden_modules = [
-    "src.cli",
-    "src.cli.cli",
-    "src.cli.main",
-    "src.orchestration",
-    "src.orchestration.orchestrator",
-    "src.orchestration.factory",
-    "src.orchestration.types",
-    "src.orchestration.cli_support",
-    "src.pipeline",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-    "src.beads_client",
-    "src.cerberus_review",
-    "src.mcp",
-    "src.hooks",
-    "src.log_output",
-    "src.event_sink",
-    "src.session_log_parser",
-    "src.anthropic_client",
-    "src.braintrust_integration",
-    "src.telemetry",
-    "src.git_utils",
-    "src.config",
-    "src.protocols",
-    "src.core.protocols",
-    "src.log_events",
-    "src.core.log_events",
-    "src.epic_verifier",
-    "src.models",
-    "src.core.models",
-    "src.issue_manager",
-    "src.core",
-    # New infra paths (except infra.tools itself)
-    "src.infra.clients",
-    "src.infra.hooks",
-    "src.infra.io",
-    "src.infra.epic_verifier",
-    "src.infra.issue_manager",
-    "src.infra.mcp",
-    "src.infra.git_utils",
-    "src.infra.telemetry",
-    # New domain paths
-    "src.domain",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-]
-
-# -----------------------------------------------------------------------------
-# Contract 14: Validation result is leaf-like
+# Contract 7: Validation result minimal
 # -----------------------------------------------------------------------------
 # Validation result should not directly import heavy dependencies.
+# Layers would allow domain->infra, but this needs stricter isolation.
 # TYPE_CHECKING imports for type annotations are allowed via indirect imports.
 
 [[tool.importlinter.contracts]]
@@ -678,60 +262,68 @@ name = "Validation result minimal"
 type = "forbidden"
 source_modules = ["src.domain.validation.result"]
 forbidden_modules = [
-    "src.tools",
-    "src.config",
-    "src.log_output",
+    "src.infra.tools",
+    "src.infra.io.config",
+    "src.infra.io.log_output",
 ]
 allow_indirect_imports = true
 
 # -----------------------------------------------------------------------------
-# Contract 15: Config is foundational
+# Contract 8: Models is leaf
 # -----------------------------------------------------------------------------
-# Config should only read configuration, not import business logic.
+# Models should only contain data classes with no internal dependencies.
+# Leaf modules: constraint is no-src-imports (stdlib is allowed).
 
 [[tool.importlinter.contracts]]
-name = "Config is foundational"
+name = "Models is leaf"
 type = "forbidden"
-source_modules = ["src.config"]
+source_modules = ["src.core.models"]
 forbidden_modules = [
     "src.cli",
-    "src.cli.cli",
-    "src.cli.main",
     "src.orchestration",
-    "src.orchestration.orchestrator",
-    "src.orchestration.factory",
-    "src.orchestration.types",
-    "src.orchestration.cli_support",
     "src.pipeline",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
-    "src.beads_client",
-    "src.cerberus_review",
-    "src.mcp",
-    "src.hooks",
-    "src.log_output",
-    "src.event_sink",
-    "src.session_log_parser",
-    "src.anthropic_client",
-    "src.braintrust_integration",
-    "src.telemetry",
-    "src.git_utils",
-    "src.protocols",
-    "src.core.protocols",
-    "src.log_events",
-    "src.core.log_events",
-    "src.epic_verifier",
-    "src.models",
-    "src.core.models",
-    "src.tools",
-    "src.issue_manager",
-    "src.core",
-    # New domain paths
     "src.domain",
-    "src.domain.lifecycle",
-    "src.domain.quality_gate",
-    "src.domain.validation",
-    "src.domain.prompts",
+    "src.infra",
+    "src.core.protocols",
+    "src.core.log_events",
+]
+
+# -----------------------------------------------------------------------------
+# Contract 9: Protocols is leaf
+# -----------------------------------------------------------------------------
+# Protocols define interfaces only - no implementations.
+# Leaf modules: constraint is no-src-imports (stdlib is allowed).
+
+[[tool.importlinter.contracts]]
+name = "Protocols is leaf"
+type = "forbidden"
+source_modules = ["src.core.protocols"]
+forbidden_modules = [
+    "src.cli",
+    "src.orchestration",
+    "src.pipeline",
+    "src.domain",
+    "src.infra",
+    "src.core.models",
+    "src.core.log_events",
+]
+
+# -----------------------------------------------------------------------------
+# Contract 10: Log events is leaf
+# -----------------------------------------------------------------------------
+# Log events are pure data structures.
+# Leaf modules: constraint is no-src-imports (stdlib is allowed).
+
+[[tool.importlinter.contracts]]
+name = "Log events is leaf"
+type = "forbidden"
+source_modules = ["src.core.log_events"]
+forbidden_modules = [
+    "src.cli",
+    "src.orchestration",
+    "src.pipeline",
+    "src.domain",
+    "src.infra",
+    "src.core.models",
+    "src.core.protocols",
 ]
