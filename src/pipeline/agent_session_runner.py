@@ -277,7 +277,7 @@ class SessionCallbacks:
     """Callbacks for external actions during session execution.
 
     These callbacks allow the orchestrator to inject behavior for
-    actions that require external state (gate checking, review, etc.)
+    actions that require external state (gate checks, review, etc.)
     without coupling AgentSessionRunner to those implementations.
 
     Attributes:
@@ -824,7 +824,23 @@ class AgentSessionRunner:
                     if result.effect == Effect.WAIT_FOR_LOG:
                         if self.callbacks.get_log_path is None:
                             raise ValueError("get_log_path callback must be set")
-                        log_path = self.callbacks.get_log_path(session_id)  # type: ignore[arg-type]
+                        new_log_path = self.callbacks.get_log_path(session_id)  # type: ignore[arg-type]
+
+                        # Reset log_offset if log file changed (new session started)
+                        # This prevents using a stale offset from a previous session's
+                        # larger log file when parsing a new, smaller log file
+                        if log_path is not None and new_log_path != log_path:
+                            logger.info(
+                                "Session %s: log path changed from %s to %s, "
+                                "resetting log_offset from %d to 0",
+                                input.issue_id,
+                                log_path.name,
+                                new_log_path.name,
+                                lifecycle_ctx.retry_state.log_offset,
+                            )
+                            lifecycle_ctx.retry_state.log_offset = 0
+
+                        log_path = new_log_path
                         if self.event_sink is not None:
                             self.event_sink.on_log_waiting(input.issue_id)
 
@@ -926,6 +942,13 @@ class AgentSessionRunner:
                                     "Cannot retry gate: session_id not received from SDK"
                                 )
                             pending_session_id = session_id
+                            logger.debug(
+                                "Session %s: queueing gate retry prompt "
+                                "(%d chars, session_id=%s)",
+                                input.issue_id,
+                                len(pending_query),
+                                session_id[:8],
+                            )
                             idle_retry_count = 0
                             continue
 

@@ -1854,3 +1854,115 @@ class TestIdleTimeoutRetry:
         # - Retry 1: backoff_idx = 0 -> 0.0s (but we don't sleep for 0)
         # - Retry 2: backoff_idx = 1 -> 5.0s
         assert 5.0 in sleep_calls, f"Expected 5.0s backoff, got: {sleep_calls}"
+
+    @pytest.mark.asyncio
+    async def test_gate_retry_resets_log_offset_when_session_changes(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Regression test: log_offset must reset when session file changes.
+
+        When Claude SDK creates a new session file for a gate retry (instead of
+        appending to the original), the stale log_offset from the old session
+        must be reset to 0. Otherwise, seeking to an offset larger than the new
+        file's size yields no entries → "Missing validation evidence".
+
+        This was a real bug: mala-iy6l.6 failed because log_offset was ~4MB
+        (from old session) but new session file was only 34KB.
+        """
+        # Create two separate log files to simulate session change
+        log_path_1 = tmp_path / "session1.jsonl"
+        log_path_2 = tmp_path / "session2.jsonl"
+        log_path_1.write_text("")
+        log_path_2.write_text("")
+
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=2,
+            morph_enabled=False,
+            review_enabled=False,
+        )
+
+        # Track which session IDs we return
+        session_ids = ["session1", "session2"]
+
+        def make_client_for_session(session_id: str) -> FakeSDKClient:
+            return FakeSDKClient(
+                result_message=make_result_message(session_id=session_id)
+            )
+
+        # Factory that returns clients with different session IDs
+        class SessionChangingFactory:
+            def __init__(self) -> None:
+                self.create_calls: list[Any] = []
+                self.idx = 0
+
+            def create(self, options: object) -> SDKClientProtocol:
+                self.create_calls.append(options)
+                sid = session_ids[min(self.idx, len(session_ids) - 1)]
+                self.idx += 1
+                return cast("SDKClientProtocol", make_client_for_session(sid))
+
+        fake_factory = SessionChangingFactory()
+
+        # Track log_offset values passed to gate check
+        gate_log_offsets: list[int] = []
+
+        def get_log_path(session_id: str) -> Path:
+            if session_id == "session1":
+                return log_path_1
+            return log_path_2
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            gate_log_offsets.append(retry_state.log_offset)
+
+            if len(gate_log_offsets) == 1:
+                # First check: fail and return large offset (simulating big log)
+                return (
+                    GateResult(
+                        passed=False,
+                        failure_reasons=["Tests failed"],
+                        commit_hash=None,
+                    ),
+                    4_000_000,  # 4MB offset - larger than any real new session file
+                )
+            else:
+                # Second check: verify offset was reset, then pass
+                return (
+                    GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                    5000,
+                )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,  # type: ignore[arg-type]
+        )
+
+        input_data = AgentSessionInput(
+            issue_id="test-offset-reset",
+            prompt="Test prompt",
+        )
+
+        output = await runner.run_session(input_data)
+
+        assert output.success is True
+        assert len(gate_log_offsets) == 2
+
+        # First gate check should have offset 0 (initial)
+        assert gate_log_offsets[0] == 0
+
+        # Second gate check MUST have offset 0 (reset due to session change)
+        # Before the fix, this would be 4_000_000 (stale from first session)
+        assert gate_log_offsets[1] == 0, (
+            f"log_offset should be reset to 0 when session changes, "
+            f"but got {gate_log_offsets[1]}"
+        )
