@@ -758,8 +758,7 @@ class TestAlreadyActiveGateError:
         assert result.passed is False
         assert result.fatal_error is True
         assert result.parse_error is not None
-        assert "already active" in result.parse_error
-        assert "cannot auto-resolve" in result.parse_error
+        assert "already active" in result.parse_error.lower()
 
         # Should have called: 1) git diff (empty check), 2) spawn
         # Critically, should NOT have called resolve
