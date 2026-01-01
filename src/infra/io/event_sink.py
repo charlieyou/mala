@@ -197,6 +197,7 @@ class MalaEventSink(Protocol):
         agent_id: str | None,
         attempt: int,
         max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
         """Called when a quality gate check begins.
 
@@ -204,14 +205,20 @@ class MalaEventSink(Protocol):
             agent_id: Agent ID (None for run-level gate).
             attempt: Current attempt number (1-indexed).
             max_attempts: Maximum retry attempts.
+            issue_id: Issue being validated (for display).
         """
         ...
 
-    def on_gate_passed(self, agent_id: str | None) -> None:
+    def on_gate_passed(
+        self,
+        agent_id: str | None,
+        issue_id: str | None = None,
+    ) -> None:
         """Called when a quality gate passes.
 
         Args:
             agent_id: Agent ID (None for run-level gate).
+            issue_id: Issue being validated (for display).
         """
         ...
 
@@ -220,6 +227,7 @@ class MalaEventSink(Protocol):
         agent_id: str | None,
         attempt: int,
         max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
         """Called when a quality gate fails after all retries.
 
@@ -227,6 +235,7 @@ class MalaEventSink(Protocol):
             agent_id: Agent ID (None for run-level gate).
             attempt: Final attempt number.
             max_attempts: Maximum retry attempts.
+            issue_id: Issue being validated (for display).
         """
         ...
 
@@ -235,6 +244,7 @@ class MalaEventSink(Protocol):
         agent_id: str,
         attempt: int,
         max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
         """Called when retrying a quality gate after failure.
 
@@ -242,6 +252,7 @@ class MalaEventSink(Protocol):
             agent_id: Agent being retried.
             attempt: Current retry attempt number.
             max_attempts: Maximum retry attempts.
+            issue_id: Issue being validated (for display).
         """
         ...
 
@@ -250,6 +261,7 @@ class MalaEventSink(Protocol):
         agent_id: str | None,
         passed: bool,
         failure_reasons: list[str] | None = None,
+        issue_id: str | None = None,
     ) -> None:
         """Called when a quality gate check completes with its result.
 
@@ -260,6 +272,7 @@ class MalaEventSink(Protocol):
             agent_id: Agent ID (None for run-level gate).
             passed: Whether the gate passed.
             failure_reasons: List of failure reasons (if failed).
+            issue_id: Issue being validated (for display).
         """
         ...
 
@@ -272,6 +285,7 @@ class MalaEventSink(Protocol):
         agent_id: str,
         attempt: int,
         max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
         """Called when a Codex review begins.
 
@@ -279,14 +293,20 @@ class MalaEventSink(Protocol):
             agent_id: Agent being reviewed.
             attempt: Current attempt number.
             max_attempts: Maximum review attempts.
+            issue_id: Issue being reviewed (for display).
         """
         ...
 
-    def on_review_passed(self, agent_id: str) -> None:
+    def on_review_passed(
+        self,
+        agent_id: str,
+        issue_id: str | None = None,
+    ) -> None:
         """Called when a Codex review passes.
 
         Args:
             agent_id: Agent that passed review.
+            issue_id: Issue being reviewed (for display).
         """
         ...
 
@@ -297,6 +317,7 @@ class MalaEventSink(Protocol):
         max_attempts: int,
         error_count: int | None = None,
         parse_error: str | None = None,
+        issue_id: str | None = None,
     ) -> None:
         """Called when retrying a Codex review after issues found.
 
@@ -306,6 +327,7 @@ class MalaEventSink(Protocol):
             max_attempts: Maximum review attempts.
             error_count: Number of errors found (if available).
             parse_error: Parse error message (if review failed to parse).
+            issue_id: Issue being reviewed (for display).
         """
         ...
 
@@ -385,16 +407,31 @@ class MalaEventSink(Protocol):
         """
         ...
 
+    def on_validation_started(
+        self,
+        agent_id: str,
+        issue_id: str | None = None,
+    ) -> None:
+        """Called when per-issue validation begins.
+
+        Args:
+            agent_id: Agent being validated.
+            issue_id: Issue being validated (for display).
+        """
+        ...
+
     def on_validation_result(
         self,
         agent_id: str,
         passed: bool,
+        issue_id: str | None = None,
     ) -> None:
         """Called when per-issue validation completes.
 
         Args:
             agent_id: Agent that was validated.
             passed: Whether validation passed.
+            issue_id: Issue being validated (for display).
         """
         ...
 
@@ -664,10 +701,15 @@ class NullEventSink:
         agent_id: str | None,
         attempt: int,
         max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
         pass
 
-    def on_gate_passed(self, agent_id: str | None) -> None:
+    def on_gate_passed(
+        self,
+        agent_id: str | None,
+        issue_id: str | None = None,
+    ) -> None:
         pass
 
     def on_gate_failed(
@@ -675,6 +717,7 @@ class NullEventSink:
         agent_id: str | None,
         attempt: int,
         max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
         pass
 
@@ -683,6 +726,7 @@ class NullEventSink:
         agent_id: str,
         attempt: int,
         max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
         pass
 
@@ -691,6 +735,7 @@ class NullEventSink:
         agent_id: str | None,
         passed: bool,
         failure_reasons: list[str] | None = None,
+        issue_id: str | None = None,
     ) -> None:
         pass
 
@@ -699,10 +744,15 @@ class NullEventSink:
         agent_id: str,
         attempt: int,
         max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
         pass
 
-    def on_review_passed(self, agent_id: str) -> None:
+    def on_review_passed(
+        self,
+        agent_id: str,
+        issue_id: str | None = None,
+    ) -> None:
         pass
 
     def on_review_retry(
@@ -712,6 +762,7 @@ class NullEventSink:
         max_attempts: int,
         error_count: int | None = None,
         parse_error: str | None = None,
+        issue_id: str | None = None,
     ) -> None:
         pass
 
@@ -744,10 +795,18 @@ class NullEventSink:
     def on_epic_closed(self, agent_id: str) -> None:
         pass
 
+    def on_validation_started(
+        self,
+        agent_id: str,
+        issue_id: str | None = None,
+    ) -> None:
+        pass
+
     def on_validation_result(
         self,
         agent_id: str,
         passed: bool,
+        issue_id: str | None = None,
     ) -> None:
         pass
 
@@ -1076,6 +1135,7 @@ class ConsoleEventSink:
         agent_id: str | None,
         attempt: int,
         max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
         """Log quality gate check start."""
         scope = "run-level" if agent_id is None else ""
@@ -1086,7 +1146,11 @@ class ConsoleEventSink:
             agent_id=agent_id,
         )
 
-    def on_gate_passed(self, agent_id: str | None) -> None:
+    def on_gate_passed(
+        self,
+        agent_id: str | None,
+        issue_id: str | None = None,
+    ) -> None:
         """Log quality gate passed."""
         scope = "Run-level gate" if agent_id is None else "Gate"
         log("✓", f"{scope} passed", Colors.GREEN, agent_id=agent_id)
@@ -1096,6 +1160,7 @@ class ConsoleEventSink:
         agent_id: str | None,
         attempt: int,
         max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
         """Log quality gate failed after all retries."""
         scope = "Run-level gate" if agent_id is None else "Gate"
@@ -1111,6 +1176,7 @@ class ConsoleEventSink:
         agent_id: str,
         attempt: int,
         max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
         """Log quality gate retry."""
         log(
@@ -1125,6 +1191,7 @@ class ConsoleEventSink:
         agent_id: str | None,
         passed: bool,
         failure_reasons: list[str] | None = None,
+        issue_id: str | None = None,
     ) -> None:
         """Log detailed gate result.
 
@@ -1148,6 +1215,7 @@ class ConsoleEventSink:
         agent_id: str,
         attempt: int,
         max_attempts: int,
+        issue_id: str | None = None,
     ) -> None:
         """Log review start."""
         log_verbose(
@@ -1157,7 +1225,11 @@ class ConsoleEventSink:
             agent_id=agent_id,
         )
 
-    def on_review_passed(self, agent_id: str) -> None:
+    def on_review_passed(
+        self,
+        agent_id: str,
+        issue_id: str | None = None,
+    ) -> None:
         """Log review passed."""
         log("✓", "Review passed", Colors.GREEN, agent_id=agent_id)
 
@@ -1168,6 +1240,7 @@ class ConsoleEventSink:
         max_attempts: int,
         error_count: int | None = None,
         parse_error: str | None = None,
+        issue_id: str | None = None,
     ) -> None:
         """Log review retry."""
         if parse_error:
@@ -1236,10 +1309,19 @@ class ConsoleEventSink:
         """Log parent epic auto-closure."""
         log("✓", "Parent epic auto-closed", Colors.GREEN, agent_id=agent_id)
 
+    def on_validation_started(
+        self,
+        agent_id: str,
+        issue_id: str | None = None,
+    ) -> None:
+        """Log per-issue validation start."""
+        log_verbose("→", "Validation started", Colors.MUTED, agent_id=agent_id)
+
     def on_validation_result(
         self,
         agent_id: str,
         passed: bool,
+        issue_id: str | None = None,
     ) -> None:
         """Log per-issue validation result."""
         if passed:

@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from src.event_sink import (
+from src.infra.io.event_sink import (
     MalaEventSink,
     NullEventSink,
     EventRunConfig,
@@ -155,6 +155,7 @@ class TestNullEventSink:
             sink.on_issue_completed("agent-1", "issue-2", False, 60.0, "Failed") is None
         )
         assert sink.on_epic_closed("agent-1") is None
+        assert sink.on_validation_started("agent-1") is None
         assert sink.on_validation_result("agent-1", True) is None
 
         # Warnings and diagnostics
@@ -239,6 +240,39 @@ class TestNullEventSink:
         # All protocol methods should be in the sink
         missing = protocol_methods - sink_methods
         assert not missing, f"NullEventSink missing protocol methods: {missing}"
+
+    def test_on_validation_started_returns_none(self) -> None:
+        """on_validation_started returns None (no-op)."""
+        sink = NullEventSink()
+        assert sink.on_validation_started("agent-1") is None
+        assert sink.on_validation_started("agent-1", issue_id="issue-1") is None
+
+    def test_methods_accept_issue_id_param(self) -> None:
+        """Methods with issue_id parameter accept it without error."""
+        sink = NullEventSink()
+
+        # Gate methods with issue_id
+        assert sink.on_gate_started("agent-1", 1, 3, issue_id="issue-1") is None
+        assert sink.on_gate_started(None, 1, 3, issue_id=None) is None
+        assert sink.on_gate_passed("agent-1", issue_id="issue-1") is None
+        assert sink.on_gate_passed(None, issue_id=None) is None
+        assert sink.on_gate_failed("agent-1", 3, 3, issue_id="issue-1") is None
+        assert sink.on_gate_retry("agent-1", 2, 3, issue_id="issue-1") is None
+        assert (
+            sink.on_gate_result("agent-1", False, ["lint"], issue_id="issue-1") is None
+        )
+
+        # Review methods with issue_id
+        assert sink.on_review_started("agent-1", 1, 2, issue_id="issue-1") is None
+        assert sink.on_review_passed("agent-1", issue_id="issue-1") is None
+        assert (
+            sink.on_review_retry("agent-1", 2, 2, error_count=5, issue_id="issue-1")
+            is None
+        )
+
+        # Validation methods with issue_id
+        assert sink.on_validation_started("agent-1", issue_id="issue-1") is None
+        assert sink.on_validation_result("agent-1", True, issue_id="issue-1") is None
 
 
 class TestConsoleEventSink:
