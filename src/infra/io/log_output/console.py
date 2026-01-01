@@ -119,19 +119,33 @@ def log(
     color: str = Colors.RESET,
     dim: bool = False,
     agent_id: str | None = None,
+    issue_id: str | None = None,
 ) -> None:
     """Claude Code style logging with optional agent color coding.
 
     Note: The dim parameter is accepted for API compatibility but no longer
     applies the DIM ANSI attribute, as it reduces visibility on dark terminals.
     Callers should use Colors.GRAY or Colors.MUTED directly for subdued output.
+
+    Args:
+        icon: Icon to display (e.g. "→", "◦").
+        message: Message to log.
+        color: Color for the message.
+        dim: Kept for API compatibility (no longer applies DIM).
+        agent_id: Optional agent ID for color mapping.
+        issue_id: Optional issue ID for display. When provided, shows [issue_id]
+            instead of [agent_id], but still uses agent_id for color mapping.
     """
     # Use caller's color directly - dim parameter kept for API compatibility
     # but no longer reduces visibility (improves dark terminal readability)
     timestamp = datetime.now().strftime("%H:%M:%S")
 
-    # Use agent color if provided, otherwise use specified color
-    if agent_id:
+    # Build prefix: prefer issue_id for display, agent_id for color
+    if issue_id:
+        # Use issue_id as display, agent_id for color mapping
+        agent_color = get_agent_color(agent_id) if agent_id else Colors.CYAN
+        prefix = f"{agent_color}[{issue_id}]{Colors.RESET} "
+    elif agent_id:
         agent_color = get_agent_color(agent_id)
         prefix = f"{agent_color}[{agent_id}]{Colors.RESET} "
     else:
