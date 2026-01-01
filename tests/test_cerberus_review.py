@@ -729,7 +729,6 @@ class TestAlreadyActiveGateError:
 
     async def test_already_active_returns_fatal_error(self) -> None:
         """Returns fatal error instead of auto-resolving on 'already active'."""
-        from pathlib import Path
         from unittest.mock import AsyncMock, MagicMock, patch
 
         reviewer = DefaultReviewer(repo_path=Path("/tmp"))
