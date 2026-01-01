@@ -1,10 +1,26 @@
 """Pytest configuration for mala tests."""
 
+from __future__ import annotations
+
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from src.core.protocols import (
+        CodeReviewer,
+        GateChecker,
+        IssueProvider,
+        LogProvider,
+    )
+    from src.infra.io.config import MalaConfig
+    from src.infra.io.event_sink import MalaEventSink
+    from src.infra.telemetry import TelemetryProvider
+    from src.orchestration.orchestrator import MalaOrchestrator
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -44,7 +60,7 @@ def pytest_collection_modifyitems(
 
 
 @pytest.fixture
-def make_orchestrator():
+def make_orchestrator() -> Callable[..., MalaOrchestrator]:
     """Factory fixture for creating MalaOrchestrator instances.
 
     Returns a callable that creates orchestrators using the factory pattern.
@@ -66,25 +82,25 @@ def make_orchestrator():
         timeout_minutes: int | None = None,
         max_issues: int | None = None,
         epic_id: str | None = None,
-        only_ids: set | None = None,
+        only_ids: set[str] | None = None,
         braintrust_enabled: bool | None = None,
         max_gate_retries: int = 3,
         max_review_retries: int = 3,
-        disable_validations: set | None = None,
+        disable_validations: set[str] | None = None,
         coverage_threshold: float | None = None,
         morph_enabled: bool | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
-        cli_args: dict | None = None,
-        epic_override_ids: set | None = None,
-        issue_provider=None,
-        code_reviewer=None,
-        gate_checker=None,
-        log_provider=None,
-        telemetry_provider=None,
-        event_sink=None,
-        config=None,
-    ):
+        cli_args: dict[str, Any] | None = None,
+        epic_override_ids: set[str] | None = None,
+        issue_provider: IssueProvider | None = None,
+        code_reviewer: CodeReviewer | None = None,
+        gate_checker: GateChecker | None = None,
+        log_provider: LogProvider | None = None,
+        telemetry_provider: TelemetryProvider | None = None,
+        event_sink: MalaEventSink | None = None,
+        config: MalaConfig | None = None,
+    ) -> MalaOrchestrator:
         """Create an orchestrator using the factory pattern."""
         from src.orchestration.factory import OrchestratorDependencies
 

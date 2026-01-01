@@ -3,13 +3,20 @@
 Tests the implementation of Gate 4 validation that runs after all issues complete.
 """
 
+from __future__ import annotations
+
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+if TYPE_CHECKING:
+    from src.orchestration.orchestrator import MalaOrchestrator
+
 from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
-from src.orchestration.orchestrator import IssueResult, MalaOrchestrator
+from src.orchestration.orchestrator import IssueResult
 from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
@@ -634,7 +641,9 @@ class TestRunLevelValidationIntegration:
     """Integration tests for Gate 4 in the orchestrator run() method."""
 
     @pytest.mark.asyncio
-    async def test_run_calls_gate4_after_issues_complete(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_run_calls_gate4_after_issues_complete(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """run() should call run-level validation after all issues complete."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -703,7 +712,7 @@ class TestRunLevelValidationIntegration:
 
     @pytest.mark.asyncio
     async def test_run_returns_zero_success_on_gate4_failure(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """run() should return 0 successes if Gate 4 fails."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
@@ -770,7 +779,9 @@ class TestRunLevelValidationIntegration:
         assert total == 1
 
     @pytest.mark.asyncio
-    async def test_run_skips_gate4_when_no_successes(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_run_skips_gate4_when_no_successes(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """run() should skip Gate 4 when there are no successful issues."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -842,7 +853,9 @@ class TestRunLevelValidationIntegration:
         assert gate4_called is False
 
     @pytest.mark.asyncio
-    async def test_run_skips_gate4_when_disabled(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_run_skips_gate4_when_disabled(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """run() should skip Gate 4 when run-level-validate is disabled."""
         orchestrator = make_orchestrator(
             repo_path=tmp_path,

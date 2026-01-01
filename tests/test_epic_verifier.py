@@ -12,10 +12,15 @@ Tests the EpicVerifier class and ClaudeEpicVerificationModel including:
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from src.orchestration.orchestrator import MalaOrchestrator
 
 from src.infra.epic_verifier import (
     ClaudeEpicVerificationModel,
@@ -1247,10 +1252,9 @@ class TestEpicVerifierOrchestratorIntegration:
 
     @pytest.mark.asyncio
     async def test_orchestrator_uses_epic_verifier_for_closure(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Orchestrator should use EpicVerifier instead of close_eligible_epics_async."""
-        from src.orchestration.orchestrator import MalaOrchestrator
         from src.infra.io.config import MalaConfig
 
         # Create orchestrator with mock beads
@@ -1266,10 +1270,9 @@ class TestEpicVerifierOrchestratorIntegration:
 
     @pytest.mark.asyncio
     async def test_orchestrator_respects_epic_override_ids(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Orchestrator should pass epic_override_ids to verify_and_close_eligible."""
-        from src.orchestration.orchestrator import MalaOrchestrator
         from src.infra.io.config import MalaConfig
 
         override_ids = {"epic-1", "epic-2"}

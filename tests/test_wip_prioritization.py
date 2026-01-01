@@ -1,6 +1,9 @@
 """Unit tests for --wip flag prioritization logic and focus mode."""
 
+from __future__ import annotations
+
 import json
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -25,7 +28,9 @@ def make_subprocess_result(
 
 
 @pytest.fixture
-def orchestrator(tmp_path: Path, make_orchestrator) -> MalaOrchestrator:
+def orchestrator(
+    tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+) -> MalaOrchestrator:
     """Create an orchestrator with a temporary repo path."""
     return make_orchestrator(
         repo_path=tmp_path,
@@ -241,12 +246,16 @@ class TestWipFetchWorkaround:
 class TestOrchestratorPrioritizeWip:
     """Test orchestrator stores and uses prioritize_wip flag."""
 
-    def test_orchestrator_stores_prioritize_wip(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_orchestrator_stores_prioritize_wip(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Orchestrator should store prioritize_wip parameter."""
         orch = make_orchestrator(repo_path=tmp_path, prioritize_wip=True)
         assert orch.prioritize_wip is True
 
-    def test_orchestrator_default_prioritize_wip_is_false(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_orchestrator_default_prioritize_wip_is_false(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Default prioritize_wip should be False."""
         orch = make_orchestrator(repo_path=tmp_path)
         assert orch.prioritize_wip is False

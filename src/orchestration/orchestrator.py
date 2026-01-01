@@ -1215,7 +1215,8 @@ class MalaOrchestrator:
         """
 
         async def finalize_callback(
-            issue_id: str, task: asyncio.Task  # type: ignore[type-arg]
+            issue_id: str,
+            task: asyncio.Task,  # type: ignore[type-arg]
         ) -> None:
             """Finalize a completed task."""
             try:

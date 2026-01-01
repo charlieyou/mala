@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import AsyncGenerator, Generator, Sequence
+from collections.abc import AsyncGenerator, Callable, Generator, Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -32,7 +32,9 @@ from src.infra.tools.command_runner import CommandResult
 
 
 @pytest.fixture
-def orchestrator(tmp_path: Path, make_orchestrator) -> MalaOrchestrator:
+def orchestrator(
+    tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+) -> MalaOrchestrator:
     """Create an orchestrator with a temporary repo path."""
     return make_orchestrator(
         repo_path=tmp_path,
@@ -751,12 +753,16 @@ class TestFailedTaskResetsIssue:
 class TestOrchestratorInitialization:
     """Test orchestrator initialization."""
 
-    def test_timeout_conversion(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_timeout_conversion(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Timeout minutes should be converted to seconds."""
         orch = make_orchestrator(repo_path=tmp_path, timeout_minutes=15)
         assert orch.timeout_seconds == 15 * 60
 
-    def test_default_values(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_default_values(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Default values should be set correctly."""
         orch = make_orchestrator(repo_path=tmp_path)
         assert orch.max_agents is None  # Unlimited by default
@@ -764,24 +770,30 @@ class TestOrchestratorInitialization:
         assert orch.timeout_seconds == 60 * 60
         assert orch.max_issues is None
 
-    def test_repo_path_resolved(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_repo_path_resolved(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Repo path should be resolved to absolute."""
         relative = Path(".")
         orch = make_orchestrator(repo_path=relative)
         assert orch.repo_path.is_absolute()
 
-    def test_focus_default_true(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_focus_default_true(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Focus parameter should default to True."""
         orch = make_orchestrator(repo_path=tmp_path)
         assert orch.focus is True
 
-    def test_focus_explicit_false(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_focus_explicit_false(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Focus parameter can be explicitly set to False."""
         orch = make_orchestrator(repo_path=tmp_path, focus=False)
         assert orch.focus is False
 
     def test_telemetry_provider_default_null_when_braintrust_disabled(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Default telemetry provider is NullTelemetryProvider when braintrust disabled."""
         from src.infra.telemetry import NullTelemetryProvider
@@ -789,14 +801,18 @@ class TestOrchestratorInitialization:
         orch = make_orchestrator(repo_path=tmp_path, braintrust_enabled=False)
         assert isinstance(orch.telemetry_provider, NullTelemetryProvider)
 
-    def test_telemetry_provider_braintrust_when_enabled(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_telemetry_provider_braintrust_when_enabled(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Telemetry provider is BraintrustProvider when braintrust_enabled=True."""
         from src.infra.clients.braintrust_integration import BraintrustProvider
 
         orch = make_orchestrator(repo_path=tmp_path, braintrust_enabled=True)
         assert isinstance(orch.telemetry_provider, BraintrustProvider)
 
-    def test_telemetry_provider_injection(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_telemetry_provider_injection(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Telemetry provider can be injected for testing."""
         from src.infra.telemetry import NullTelemetryProvider
 
@@ -945,12 +961,16 @@ class TestEpicFilterAsync:
 class TestOrchestratorWithEpicId:
     """Test orchestrator with epic_id parameter."""
 
-    def test_epic_id_stored(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_epic_id_stored(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """epic_id parameter should be stored on orchestrator."""
         orch = make_orchestrator(repo_path=tmp_path, epic_id="test-epic")
         assert orch.epic_id == "test-epic"
 
-    def test_epic_id_defaults_to_none(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_epic_id_defaults_to_none(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """epic_id should default to None."""
         orch = make_orchestrator(repo_path=tmp_path)
         assert orch.epic_id is None
@@ -1628,9 +1648,10 @@ class TestMissingLogFile:
             yield
 
     @pytest.mark.asyncio
-    async def test_exits_quickly_when_log_file_missing(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_exits_quickly_when_log_file_missing(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """run_implementer should exit within bounded wait when log file missing."""
-        from src.orchestration.orchestrator import MalaOrchestrator
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -1693,9 +1714,10 @@ class TestMissingLogFile:
         )
 
     @pytest.mark.asyncio
-    async def test_summary_indicates_missing_log(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_summary_indicates_missing_log(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Failure summary should clearly indicate the log file was missing."""
-        from src.orchestration.orchestrator import MalaOrchestrator
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -1883,7 +1905,9 @@ class TestAgentEnvInheritance:
             yield
 
     @pytest.mark.asyncio
-    async def test_agent_env_includes_os_environ(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_agent_env_includes_os_environ(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Agent environment should include inherited env vars plus lock overrides."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -1963,7 +1987,9 @@ class TestLockDirNestedCreation:
     """
 
     @pytest.mark.asyncio
-    async def test_lock_dir_created_with_parents(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_lock_dir_created_with_parents(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """LOCK_DIR.mkdir should use parents=True for nested directories."""
         # Create a nested path that doesn't exist
         nested_lock_dir = tmp_path / "deeply" / "nested" / "lock" / "dir"
@@ -2011,7 +2037,7 @@ class TestGateFlowSequencing:
 
     @pytest.mark.asyncio
     async def test_no_op_resolution_skips_per_issue_validation(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """No-op resolution should skip Gate 2/3 (commit + validation evidence)."""
         from src.domain.validation.spec import IssueResolution, ResolutionOutcome
@@ -2094,7 +2120,7 @@ class TestGateFlowSequencing:
 
     @pytest.mark.asyncio
     async def test_obsolete_resolution_skips_per_issue_validation(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Obsolete resolution should skip Gate 2/3 (commit + validation evidence)."""
         from src.domain.validation.spec import IssueResolution, ResolutionOutcome
@@ -2179,7 +2205,9 @@ class TestRetryExhaustion:
     """Test retry exhaustion and failure handling."""
 
     @pytest.mark.asyncio
-    async def test_gate_retry_exhaustion_marks_failed(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_gate_retry_exhaustion_marks_failed(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """When gate retries are exhausted, issue should be marked failed."""
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -2256,7 +2284,9 @@ class TestRetryExhaustion:
         assert "issue-retry-fail" in orchestrator.failed_issues
 
     @pytest.mark.asyncio
-    async def test_no_progress_stops_retries_early(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_no_progress_stops_retries_early(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """When no progress is detected, retries should stop early."""
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -2325,7 +2355,9 @@ class TestRetryExhaustion:
 class TestDisableValidationsRespected:
     """Test that disable-validations flags are respected."""
 
-    def test_orchestrator_stores_disable_validations(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_orchestrator_stores_disable_validations(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Orchestrator should store disable_validations parameter."""
         disable_set = {"post-validate", "coverage"}
         orch = make_orchestrator(
@@ -2335,7 +2367,7 @@ class TestDisableValidationsRespected:
         assert orch.disable_validations == disable_set
 
     def test_orchestrator_default_disable_validations_is_none(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Default disable_validations should be None."""
         orch = make_orchestrator(repo_path=tmp_path)
@@ -2346,7 +2378,9 @@ class TestRunLevelValidation:
     """Test run-level validation after all issues complete."""
 
     @pytest.mark.asyncio
-    async def test_run_returns_non_zero_exit_on_failure(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_run_returns_non_zero_exit_on_failure(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Run should indicate failure when issues fail."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -2403,7 +2437,9 @@ class TestRunLevelValidation:
         assert _total == 1
 
     @pytest.mark.asyncio
-    async def test_issues_closed_only_after_gate_passes(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_issues_closed_only_after_gate_passes(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Issues should only be closed when quality gate passes."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -2487,7 +2523,9 @@ class TestRunLevelValidation:
         assert "issue-pass" in close_calls
 
     @pytest.mark.asyncio
-    async def test_failed_issue_not_closed(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_failed_issue_not_closed(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Failed issues should not be closed, only marked needs-followup."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -2582,7 +2620,7 @@ class TestValidationResultMetadata:
 
     @pytest.mark.asyncio
     async def test_validation_result_populated_from_gate_evidence(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Validation metadata should be derived from gate result's validation_evidence.
 
@@ -2693,7 +2731,7 @@ class TestValidationResultMetadata:
 
     @pytest.mark.asyncio
     async def test_gate_and_metadata_share_same_validation_evidence(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Gate decisions and metadata should derive from the same validation result.
 
@@ -2818,7 +2856,7 @@ class TestResolutionRecordingInMetadata:
 
     @pytest.mark.asyncio
     async def test_no_change_resolution_recorded_in_issue_run(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """ISSUE_NO_CHANGE resolution should be recorded in IssueRun metadata."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
@@ -2910,7 +2948,7 @@ class TestResolutionRecordingInMetadata:
 
     @pytest.mark.asyncio
     async def test_obsolete_resolution_recorded_in_issue_run(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """ISSUE_OBSOLETE resolution should be recorded in IssueRun metadata."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
@@ -3001,7 +3039,9 @@ class TestResolutionRecordingInMetadata:
         assert issue_run.resolution.rationale == "Feature removed in refactoring"
 
     @pytest.mark.asyncio
-    async def test_normal_success_has_no_resolution(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_normal_success_has_no_resolution(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Normal success (with commit) should have no resolution marker."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
 
@@ -3091,7 +3131,9 @@ class TestEpicClosureAfterChildCompletion:
     """
 
     @pytest.mark.asyncio
-    async def test_epic_closure_called_after_issue_closes(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_epic_closure_called_after_issue_closes(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """verify_and_close_epic should be called for the affected epic after issue closes."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
@@ -3194,7 +3236,7 @@ class TestEpicClosureAfterChildCompletion:
 
     @pytest.mark.asyncio
     async def test_epic_closure_not_called_when_issue_fails(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """close_eligible_epics_async should NOT be called when issue fails."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
@@ -3268,7 +3310,7 @@ class TestEpicClosureAfterChildCompletion:
 
     @pytest.mark.asyncio
     async def test_multiple_issues_same_epic_no_duplicate_verification(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Multiple issues from same epic should only trigger one verification."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=2)
@@ -3377,7 +3419,7 @@ class TestEpicClosureAfterChildCompletion:
 
     @pytest.mark.asyncio
     async def test_multiple_issues_different_epics_each_verified(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Issues from different epics should each trigger verification for their epic."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=2)
@@ -3545,7 +3587,7 @@ class TestFailedRunQualityGateEvidence:
 
     @pytest.mark.asyncio
     async def test_failed_run_records_quality_gate_evidence(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Failed run should populate quality_gate with evidence and failure reasons."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
@@ -3683,10 +3725,9 @@ class TestBaselineCommitSelection:
 
     @pytest.mark.asyncio
     async def test_fresh_issue_uses_current_head_as_baseline(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Fresh issue with no prior commits should use HEAD as baseline."""
-        from src.orchestration.orchestrator import MalaOrchestrator
 
         # Create a fake log file for the session
         log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
@@ -3778,10 +3819,9 @@ class TestBaselineCommitSelection:
 
     @pytest.mark.asyncio
     async def test_resumed_issue_uses_git_derived_baseline(
-        self, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Resumed issue should use parent of first issue commit as baseline."""
-        from src.orchestration.orchestrator import MalaOrchestrator
 
         log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -3868,9 +3908,10 @@ class TestBaselineCommitSelection:
         # not the current HEAD
 
     @pytest.mark.asyncio
-    async def test_baseline_selection_priority(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_baseline_selection_priority(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Verify get_baseline_for_issue is called first, HEAD used as fallback."""
-        from src.orchestration.orchestrator import MalaOrchestrator
 
         log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -3953,10 +3994,11 @@ class TestReviewUsesIssueCommits:
     """
 
     @pytest.mark.asyncio
-    async def test_review_scopes_to_issue_commits(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_review_scopes_to_issue_commits(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Review should use the issue's commit list, not unrelated commits."""
         from src.infra.clients.cerberus_review import ReviewResult
-        from src.orchestration.orchestrator import MalaOrchestrator
         from src.domain.quality_gate import GateResult
 
         # Create a fake log file
@@ -4083,7 +4125,9 @@ class TestReviewUsesIssueCommits:
 class TestRunSync:
     """Test run_sync() method for synchronous usage."""
 
-    def test_run_sync_from_sync_context(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_run_sync_from_sync_context(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """run_sync() should work when called from sync code."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_issues=0)
 
@@ -4099,7 +4143,9 @@ class TestRunSync:
         assert success_count == 0
         assert total == 0
 
-    def test_run_sync_from_async_context_raises(self, tmp_path: Path, make_orchestrator) -> None:
+    def test_run_sync_from_async_context_raises(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """run_sync() should raise RuntimeError when called from async context."""
         orchestrator = make_orchestrator(repo_path=tmp_path)
 
@@ -4116,7 +4162,9 @@ class TestRunSync:
         assert "await orchestrator.run()" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_run_works_in_async_context(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_run_works_in_async_context(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """run() should work when awaited from async context."""
         orchestrator = make_orchestrator(repo_path=tmp_path, max_issues=0)
 
@@ -4183,7 +4231,9 @@ class TestEventSinkIntegration:
     """Tests for event sink integration with orchestrator run lifecycle."""
 
     @pytest.mark.asyncio
-    async def test_run_emits_none_ready_event(self, tmp_path: Path) -> None:
+    async def test_run_emits_none_ready_event(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """on_no_more_issues is emitted with none_ready when no issues available.
 
         Verifies that on_no_more_issues is called with 'none_ready' when
@@ -4241,7 +4291,9 @@ class TestEventSinkIntegration:
         assert "none_ready" in no_more_calls[0][1][0]
 
     @pytest.mark.asyncio
-    async def test_run_emits_limit_reached_event(self, tmp_path: Path) -> None:
+    async def test_run_emits_limit_reached_event(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """on_no_more_issues is called with limit_reached when max_issues=0."""
         from src.infra.io.event_sink import NullEventSink
 
@@ -4288,7 +4340,9 @@ class TestEventSinkIntegration:
         assert "limit_reached" in tracking_sink.no_more_reasons[0]
 
     @pytest.mark.asyncio
-    async def test_event_sink_defaults_to_console_sink(self, tmp_path: Path, make_orchestrator) -> None:
+    async def test_event_sink_defaults_to_console_sink(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Event sink defaults to ConsoleEventSink when not specified."""
         from src.infra.io.event_sink import ConsoleEventSink
 
@@ -4439,7 +4493,7 @@ class TestOrchestratorFactory:
             MalaOrchestrator(repo_path=None)  # type: ignore[arg-type]  # Intentionally passing None to test error handling
 
     def test_legacy_and_factory_produce_equivalent_orchestrators(
-        self, tmp_path: Path, make_orchestrator
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Legacy and factory paths produce equivalent orchestrators."""
         from src.orchestration.factory import create_orchestrator

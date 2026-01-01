@@ -4,13 +4,18 @@ Unit tests for the MorphLLM MCP server configuration and tool blocking.
 These tests are fast and don't require API keys or network access.
 """
 
+from __future__ import annotations
+
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from src.orchestration.orchestrator import MalaOrchestrator
 
 from claude_agent_sdk.types import PreToolUseHookInput, HookContext
 
@@ -365,10 +370,11 @@ class TestMorphEnabledGating:
 
         assert "morphllm" in config
 
-    def test_edit_blocked_when_morph_disabled(self) -> None:
+    def test_edit_blocked_when_morph_disabled(
+        self, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
         """Edit and Grep should be allowed when morph_enabled=False."""
         from src.infra.mcp import get_disallowed_tools
-        from src.orchestration.orchestrator import MalaOrchestrator
 
         # Create orchestrator with morph disabled
         orchestrator = make_orchestrator(

@@ -376,9 +376,7 @@ class TestRunLoop:
         assert ("abort_requested", ("test abort",)) in event_sink.events
 
     @pytest.mark.asyncio
-    async def test_abort_active_tasks_cancels(
-        self, event_sink: MockEventSink
-    ) -> None:
+    async def test_abort_active_tasks_cancels(self, event_sink: MockEventSink) -> None:
         """abort_active_tasks cancels running tasks."""
         beads = MockIssueProvider()
         coord = IssueExecutionCoordinator(
@@ -401,7 +399,7 @@ class TestRunLoop:
         # Wait for the task to process cancellation
         try:
             await asyncio.wait_for(task, timeout=0.1)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
+        except (TimeoutError, asyncio.CancelledError):
             pass
 
         assert task.cancelled()

@@ -2989,7 +2989,11 @@ class TestLogProviderInjection:
         """QualityGate should accept a custom LogProvider."""
         from collections.abc import Iterator
 
-        from src.core.log_events import AssistantLogEntry, AssistantMessage, ToolUseBlock
+        from src.core.log_events import (
+            AssistantLogEntry,
+            AssistantMessage,
+            ToolUseBlock,
+        )
         from src.infra.io.session_log_parser import JsonlEntry
 
         class MockLogProvider:
