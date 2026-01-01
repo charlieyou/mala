@@ -5,6 +5,7 @@ It handles:
 - Exit code mapping to ReviewResult
 - JSON parsing of review output
 - Issue formatting for follow-up prompts
+- Auto-resolving stale gates on spawn retry
 
 The adapter includes DefaultReviewer for CLI execution in the repo_path.
 """
@@ -172,6 +173,33 @@ class DefaultReviewer:
             i += 1
         return None
 
+    async def _resolve_stale_gate(
+        self, runner: CommandRunner, env: dict[str, str]
+    ) -> bool:
+        """Resolve a stale/pending gate to allow retry.
+
+        Called when spawn-code-review fails with "already active" error.
+        This clears the stuck gate so the next spawn attempt can proceed.
+
+        Args:
+            runner: CommandRunner instance for executing commands.
+            env: Environment variables for the command.
+
+        Returns:
+            True if gate was resolved successfully, False otherwise.
+        """
+        resolve_cmd = [
+            self._review_gate_bin(),
+            "resolve",
+            "--reason",
+            "mala: auto-clearing stale gate for retry",
+        ]
+        try:
+            result = await runner.run_async(resolve_cmd, env=env, timeout=30)
+            return result.returncode == 0
+        except Exception:
+            return False
+
     async def __call__(
         self,
         diff_range: str,
@@ -219,7 +247,8 @@ class DefaultReviewer:
 
         spawn_cmd = [self._review_gate_bin(), "spawn-code-review"]
         # Always exclude .beads/ directory (auto-generated issue tracker files)
-        spawn_cmd.extend(["--exclude", ".beads/*"])
+        # Use directory path instead of glob for robust exclusion of hidden files and nested subdirs
+        spawn_cmd.extend(["--exclude", ".beads/"])
         if context_file is not None:
             spawn_cmd.extend(["--context-file", str(context_file)])
         if self.spawn_args:
@@ -243,12 +272,41 @@ class DefaultReviewer:
             stderr = spawn_result.stderr_tail()
             stdout = spawn_result.stdout_tail()
             detail = stderr or stdout or "spawn failed"
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error=f"spawn failed: {detail}",
-                fatal_error=False,
-            )
+
+            # Check for stale gate error and auto-resolve
+            if "already active" in detail.lower():
+                if await self._resolve_stale_gate(runner, env):
+                    # Retry spawn after resolving the stale gate
+                    spawn_result = await runner.run_async(
+                        spawn_cmd, env=env, timeout=timeout
+                    )
+                    if spawn_result.returncode == 0:
+                        # Successfully spawned after clearing gate
+                        pass  # Continue to wait phase below
+                    else:
+                        stderr = spawn_result.stderr_tail()
+                        stdout = spawn_result.stdout_tail()
+                        detail = stderr or stdout or "spawn failed after gate resolve"
+                        return ReviewResult(
+                            passed=False,
+                            issues=[],
+                            parse_error=f"spawn failed: {detail}",
+                            fatal_error=False,
+                        )
+                else:
+                    return ReviewResult(
+                        passed=False,
+                        issues=[],
+                        parse_error=f"spawn failed: {detail} (auto-resolve failed)",
+                        fatal_error=False,
+                    )
+            else:
+                return ReviewResult(
+                    passed=False,
+                    issues=[],
+                    parse_error=f"spawn failed: {detail}",
+                    fatal_error=False,
+                )
 
         # spawn-code-review doesn't output JSON to stdout - it just spawns reviewers
         # and writes state to disk. We use --session-id with the Claude session ID
