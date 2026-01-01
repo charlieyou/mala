@@ -15,9 +15,11 @@ from unittest.mock import patch
 import pytest
 
 if TYPE_CHECKING:
+    from claude_agent_sdk.types import HookContext
+
     from src.orchestration.orchestrator import MalaOrchestrator
 
-from claude_agent_sdk.types import PreToolUseHookInput, HookContext
+from claude_agent_sdk.types import PreToolUseHookInput
 
 # Call bootstrap() to ensure env is loaded before tests that may need it
 from src.cli.cli import bootstrap

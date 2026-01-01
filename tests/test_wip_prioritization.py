@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+    from src.orchestration.orchestrator import MalaOrchestrator
+
 from src.infra.clients.beads_client import BeadsClient
-from src.orchestration.orchestrator import MalaOrchestrator
 
 
 def make_subprocess_result(

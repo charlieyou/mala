@@ -5,14 +5,15 @@ Tests the implementation of Gate 4 validation that runs after all issues complet
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
     from src.orchestration.orchestrator import MalaOrchestrator
 
 from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata

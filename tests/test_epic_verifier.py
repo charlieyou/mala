@@ -12,7 +12,6 @@ Tests the EpicVerifier class and ClaudeEpicVerificationModel including:
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,6 +19,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.orchestration.orchestrator import MalaOrchestrator
 
 from src.infra.epic_verifier import (
