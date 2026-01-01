@@ -472,8 +472,7 @@ class BaselineCoverageService:
         Returns:
             BaselineRefreshResult with the new baseline percentage or error.
         """
-        from src.tools.command_runner import CommandRunner
-
+        from src.infra.tools.command_runner import CommandRunner
         from src.infra.tools.env import get_lock_dir
         from .worktree import (
             WorktreeConfig,

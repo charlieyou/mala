@@ -17,9 +17,9 @@ import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from src.log_output.console import Colors, log
+from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.env import SCRIPTS_DIR, get_cache_dir
-from src.tools.command_runner import CommandRunner
+from src.log_output.console import Colors, log
 from .helpers import format_step_output
 from .lint_cache import LintCache
 from .result import ValidationStepResult
@@ -166,10 +166,16 @@ class SpecCommandExecutor:
         """Create lint cache if enabled and repo_path is set.
 
         Args:
-            cwd: Working directory (used as repo_path for cache).
+            cwd: Working directory for git commands (may be a worktree).
 
         Returns:
             LintCache instance or None if disabled.
+
+        Note:
+            Uses config.repo_path (the main repo) for stable cache keys across
+            runs, while cwd (which may be a per-run worktree) is used for git
+            state queries. This ensures cache hits when the same commit is
+            validated in different worktrees.
         """
         if not self.config.enable_lint_cache:
             return None
@@ -177,7 +183,8 @@ class SpecCommandExecutor:
             return None
         return LintCache(
             cache_dir=get_cache_dir(),
-            repo_path=cwd,
+            repo_path=self.config.repo_path,
+            git_cwd=cwd,
         )
 
     def _should_skip_cached(

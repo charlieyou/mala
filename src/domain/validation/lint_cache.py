@@ -135,15 +135,24 @@ class LintCache:
                 cache.mark_passed("ruff check")
     """
 
-    def __init__(self, cache_dir: Path, repo_path: Path) -> None:
+    def __init__(
+        self,
+        cache_dir: Path,
+        repo_path: Path,
+        git_cwd: Path | None = None,
+    ) -> None:
         """Initialize the lint cache.
 
         Args:
             cache_dir: Directory to store the cache file.
-            repo_path: Path to the git repository.
+            repo_path: Path to the git repository (used for cache key stability).
+            git_cwd: Working directory for git commands. If None, uses repo_path.
+                This allows using a stable repo_path for cache keys while running
+                git commands in a per-run worktree.
         """
         self.cache_dir = cache_dir
         self.repo_path = repo_path
+        self._git_cwd = git_cwd if git_cwd is not None else repo_path
         self._cache_file = cache_dir / "lint_cache.json"
         self._entries: dict[str, dict[str, str | bool | None]] = {}
         self._load()
@@ -185,7 +194,7 @@ class LintCache:
         """
         # Get HEAD SHA
         try:
-            head_sha = _run_git_command(["rev-parse", "HEAD"], self.repo_path)
+            head_sha = _run_git_command(["rev-parse", "HEAD"], self._git_cwd)
             if head_sha is None:
                 # Not a git repo, no commits, or subprocess mocked - can't cache
                 return None
@@ -195,7 +204,7 @@ class LintCache:
 
         # Check for uncommitted changes
         try:
-            status_output = _run_git_command(["status", "--porcelain"], self.repo_path)
+            status_output = _run_git_command(["status", "--porcelain"], self._git_cwd)
             if status_output is None:
                 # Can't determine state - don't cache
                 return None
@@ -225,7 +234,7 @@ class LintCache:
 
         # Get staged + unstaged diff (captures tracked file changes)
         try:
-            diff = _run_git_command(["diff", "HEAD"], self.repo_path)
+            diff = _run_git_command(["diff", "HEAD"], self._git_cwd)
             if diff is None:
                 diff = ""
         except Exception:
@@ -235,7 +244,7 @@ class LintCache:
         # Get untracked files and include their contents in the hash
         try:
             untracked_output = _run_git_command(
-                ["ls-files", "--others", "--exclude-standard"], self.repo_path
+                ["ls-files", "--others", "--exclude-standard"], self._git_cwd
             )
             if untracked_output:
                 untracked_files = untracked_output.split("\n")
@@ -246,7 +255,7 @@ class LintCache:
                         hasher.update(f"\n--- untracked: {filepath}\n".encode())
                         # Include the file content using chunked reading
                         # to avoid OOM on large files
-                        full_path = self.repo_path / filepath
+                        full_path = self._git_cwd / filepath
                         try:
                             with open(full_path, "rb") as f:
                                 for chunk in iter(lambda: f.read(65536), b""):
