@@ -275,9 +275,26 @@ def _build_gate_metadata_from_logs(
         failure_reasons=failure_reasons,
     )
 
+    # Build validation result from evidence (matches _build_gate_metadata behavior)
+    commands_run = [
+        QualityGate.KIND_TO_NAME.get(kind, kind.value)
+        for kind, ran in evidence.commands_ran.items()
+        if ran
+    ]
+    gate_failed_commands = [
+        cmd
+        for cmd in evidence.failed_commands
+        if cmd not in QUALITY_GATE_IGNORED_COMMANDS
+    ]
+    validation_result = MetaValidationResult(
+        passed=result_success,
+        commands_run=commands_run,
+        commands_failed=gate_failed_commands,
+    )
+
     return GateMetadata(
         quality_gate_result=quality_gate_result,
-        validation_result=None,  # No validation metadata in fallback path
+        validation_result=validation_result,
     )
 
 

@@ -4561,8 +4561,9 @@ class TestBuildGateMetadataFromLogs:
         assert result.quality_gate_result is not None
         assert result.quality_gate_result.passed is False
         assert "pytest failed" in result.quality_gate_result.failure_reasons
-        # validation_result is None in fallback path
-        assert result.validation_result is None
+        # validation_result is now populated with parsed evidence
+        assert result.validation_result is not None
+        assert result.validation_result.passed is False
 
     def test_result_success_determines_passed_status(self, tmp_path: Path) -> None:
         """result_success parameter determines quality_gate_result.passed."""
@@ -4623,3 +4624,37 @@ class TestBuildGateMetadataFromLogs:
             "lint failed",
             "no commit",
         ]
+
+    def test_builds_validation_result_from_evidence(self, tmp_path: Path) -> None:
+        """Builds validation_result (not None) matching _build_gate_metadata behavior."""
+        from typing import TYPE_CHECKING, cast
+
+        from src.orchestrator import _build_gate_metadata_from_logs
+        from src.quality_gate import QualityGate
+        from src.validation.spec import ValidationScope, ValidationSpec
+
+        if TYPE_CHECKING:
+            from src.protocols import GateChecker
+
+        # Create log file
+        log_path = tmp_path / "test.log"
+        log_path.write_text('{"type":"result"}\n')
+
+        quality_gate = cast("GateChecker", QualityGate(repo_path=tmp_path))
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
+
+        result = _build_gate_metadata_from_logs(
+            log_path=log_path,
+            result_summary="Success",
+            result_success=True,
+            quality_gate=quality_gate,
+            per_issue_spec=spec,
+        )
+
+        # Key assertion: validation_result is now populated (not None)
+        # This matches _build_gate_metadata behavior per spec
+        assert result.validation_result is not None
+        assert result.validation_result.passed is True
+        # commands_run and commands_failed are lists (may be empty if no commands detected)
+        assert isinstance(result.validation_result.commands_run, list)
+        assert isinstance(result.validation_result.commands_failed, list)

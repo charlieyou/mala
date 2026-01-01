@@ -10,7 +10,7 @@ isinstance checks work correctly in the runner.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import pytest
 
@@ -26,11 +26,13 @@ from src.pipeline.agent_session_runner import (
 from src.quality_gate import GateResult
 
 if TYPE_CHECKING:
+    from src.pipeline.agent_session_runner import (
+        SDKClientProtocol,
+    )
     from collections.abc import AsyncIterator
     from pathlib import Path
 
     from src.lifecycle import RetryState
-    from src.pipeline.agent_session_runner import SDKClientProtocol
 
 
 def make_result_message(
@@ -126,7 +128,7 @@ class FakeSDKClientFactory:
 
     def create(self, options: object) -> SDKClientProtocol:
         self.create_calls.append(options)
-        return self.client
+        return cast("SDKClientProtocol", self.client)
 
 
 class TestAgentSessionRunnerBasics:

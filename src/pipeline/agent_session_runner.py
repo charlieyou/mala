@@ -527,7 +527,7 @@ class AgentSessionRunner:
 
                             try:
                                 async with client:
-                                    # Send query
+                                    # Send query - only pass session_id if provided
                                     if pending_session_id is not None:
                                         await client.query(
                                             pending_query, session_id=pending_session_id
