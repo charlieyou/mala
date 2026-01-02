@@ -1,0 +1,4 @@
+# Invalid mala.yaml with unknown field
+commands:
+  test: pytest
+unknown_field: some value

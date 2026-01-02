@@ -1,0 +1,31 @@
+# Full mala.yaml with all configuration options
+preset: python-uv
+
+commands:
+  setup: uv sync
+  test:
+    command: uv run pytest
+    timeout: 300
+  lint: uvx ruff check .
+  format: uvx ruff format --check .
+  typecheck: uvx ty check
+  e2e: uv run pytest -m e2e
+
+coverage:
+  format: xml
+  file: coverage.xml
+  threshold: 85
+  command: uv run pytest --cov
+  timeout: 600
+
+code_patterns:
+  - "**/*.py"
+  - "*.py"
+
+config_files:
+  - pyproject.toml
+  - ruff.toml
+
+setup_files:
+  - uv.lock
+  - pyproject.toml

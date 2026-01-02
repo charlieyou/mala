@@ -1,0 +1,4 @@
+# Invalid mala.yaml with no commands and no preset
+# This should fail validation
+code_patterns:
+  - "**/*.py"

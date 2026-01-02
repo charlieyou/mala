@@ -1,0 +1,8 @@
+# Invalid mala.yaml with unsupported coverage format
+commands:
+  test: pytest
+
+coverage:
+  format: lcov
+  file: lcov.info
+  threshold: 80

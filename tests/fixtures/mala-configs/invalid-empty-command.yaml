@@ -1,0 +1,3 @@
+# Invalid mala.yaml with empty command string
+commands:
+  test: ""

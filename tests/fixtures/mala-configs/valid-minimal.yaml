@@ -1,0 +1,3 @@
+# Minimal valid mala.yaml with just a test command
+commands:
+  test: pytest
