@@ -138,8 +138,10 @@ class SpecValidationRunner:
         ):
             self._invalidate_lint_cache_for_config_change()
 
-        # Note: setup commands always run (not cached), so setup_files changes
-        # automatically trigger setup re-run. No explicit invalidation needed.
+        # Note: setup commands always run fresh (not cached per CACHEABLE_KINDS in
+        # spec_executor.py). The should_invalidate_setup_cache() function in
+        # validation_gating.py exists for future setup caching support but is not
+        # currently wired up.
 
         # Delegate workspace setup to spec_workspace module
         try:
