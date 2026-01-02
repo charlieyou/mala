@@ -256,6 +256,8 @@ class CommandsConfig:
         format: Formatter check command (e.g., "uvx ruff format --check .").
         typecheck: Type checker command (e.g., "uvx ty check", "tsc --noEmit").
         e2e: End-to-end test command (e.g., "uv run pytest -m e2e").
+        _fields_set: Set of field names that were explicitly provided in source.
+            Used by the merger to distinguish "not set" from "explicitly null".
     """
 
     setup: CommandConfig | None = None
@@ -264,6 +266,7 @@ class CommandsConfig:
     format: CommandConfig | None = None
     typecheck: CommandConfig | None = None
     e2e: CommandConfig | None = None
+    _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
     def from_dict(cls, data: dict[str, object] | None) -> CommandsConfig:
@@ -290,7 +293,12 @@ class CommandsConfig:
                 f"Valid kinds: {', '.join(valid_kinds)}"
             )
 
+        # Track which fields were explicitly present in the source dict
+        fields_set: set[str] = set()
+
         def parse_command(key: str) -> CommandConfig | None:
+            if key in data:
+                fields_set.add(key)
             value = data.get(key)
             if value is None:
                 return None
@@ -308,6 +316,7 @@ class CommandsConfig:
             format=parse_command("format"),
             typecheck=parse_command("typecheck"),
             e2e=parse_command("e2e"),
+            _fields_set=frozenset(fields_set),
         )
 
 
@@ -325,6 +334,8 @@ class ValidationConfig:
         code_patterns: Glob patterns for code files that trigger validation.
         config_files: Tool config files that invalidate lint/format cache.
         setup_files: Lock/dependency files that invalidate setup cache.
+        _fields_set: Set of field names that were explicitly provided in source.
+            Used by the merger to distinguish "not set" from "explicitly set".
     """
 
     commands: CommandsConfig = field(default_factory=CommandsConfig)
@@ -333,6 +344,7 @@ class ValidationConfig:
     code_patterns: tuple[str, ...] = field(default_factory=tuple)
     config_files: tuple[str, ...] = field(default_factory=tuple)
     setup_files: tuple[str, ...] = field(default_factory=tuple)
+    _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
         """Normalize list fields to tuples for immutability."""
@@ -357,13 +369,20 @@ class ValidationConfig:
         Raises:
             ConfigError: If any field is invalid.
         """
+        # Track which fields were explicitly present in the source dict
+        fields_set: set[str] = set()
+
         # Parse preset
         preset = data.get("preset")
+        if "preset" in data:
+            fields_set.add("preset")
         if preset is not None and not isinstance(preset, str):
             raise ConfigError(f"preset must be a string, got {type(preset).__name__}")
 
         # Parse commands
         commands_data = data.get("commands")
+        if "commands" in data:
+            fields_set.add("commands")
         if commands_data is not None and not isinstance(commands_data, dict):
             raise ConfigError(
                 f"commands must be an object, got {type(commands_data).__name__}"
@@ -373,7 +392,9 @@ class ValidationConfig:
             cast("dict[str, object] | None", commands_data)
         )
 
-        # Parse coverage
+        # Parse coverage - track if explicitly present (even if null)
+        if "coverage" in data:
+            fields_set.add("coverage")
         coverage_data = data.get("coverage")
         coverage: YamlCoverageConfig | None = None
         if coverage_data is not None:
@@ -386,8 +407,10 @@ class ValidationConfig:
                 cast("dict[str, object]", coverage_data)
             )
 
-        # Parse list fields
+        # Parse list fields - track if explicitly present (even if empty list)
         def parse_string_list(key: str) -> tuple[str, ...]:
+            if key in data:
+                fields_set.add(key)
             value = data.get(key)
             if value is None:
                 return ()
@@ -413,6 +436,7 @@ class ValidationConfig:
             code_patterns=code_patterns,
             config_files=config_files,
             setup_files=setup_files,
+            _fields_set=frozenset(fields_set),
         )
 
     def has_any_command(self) -> bool:

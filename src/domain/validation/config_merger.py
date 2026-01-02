@@ -5,19 +5,19 @@ with user overrides. User values take precedence over preset values.
 
 Merge rules:
 - If no preset, return user config as-is
-- Command fields: user replaces preset if present; explicit null disables; omitted inherits
-- Coverage: user replaces preset entirely if present; explicit null disables; omitted inherits
-- List fields (code_patterns, config_files, setup_files): user replaces preset entirely
+- Command fields: user replaces preset if explicitly set; omitted inherits
+- Coverage: user replaces preset if explicitly set; omitted inherits
+- List fields (code_patterns, config_files, setup_files): user replaces if explicitly set
 
-To distinguish "field not set" from "explicitly disabled", this module defines
-a DISABLED sentinel. When a command or coverage is set to DISABLED, it means the user
-explicitly wants to disable that feature even if the preset defines it.
+Field presence is tracked via the `_fields_set` attribute on configs, which
+records which fields were explicitly provided in the source YAML (even if
+the value was null/empty). This allows distinguishing "not set" from
+"explicitly set to null/empty".
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING
 
 from src.domain.validation.config import (
     CommandsConfig,
@@ -31,55 +31,16 @@ if TYPE_CHECKING:
     )
 
 
-@dataclass(frozen=True)
-class _DisabledSentinel:
-    """Sentinel value indicating a command or coverage is explicitly disabled.
-
-    This is used to distinguish between:
-    - None: field not specified (inherit from preset)
-    - DISABLED: field explicitly set to null (disable even if preset defines it)
-    """
-
-    pass
-
-
-DISABLED: Final[_DisabledSentinel] = _DisabledSentinel()
-"""Sentinel value for explicitly disabled commands or coverage.
-
-Use this when parsing user config where a command or coverage is explicitly set to null,
-as opposed to being omitted entirely.
-
-Example:
-    # User YAML with explicit null:
-    # commands:
-    #   lint: null  # <-- explicitly disabled
-    #   test: "pytest"  # <-- override
-    #   # format not mentioned, will inherit from preset
-    # coverage: null  # <-- explicitly disabled
-
-    # In the parser:
-    user_commands = CommandsConfig(
-        lint=DISABLED,  # type: ignore[arg-type]  # explicit null
-        test=CommandConfig(command="pytest"),  # override
-        # format is omitted, defaults to None (inherit)
-    )
-    user_config = ValidationConfig(
-        commands=user_commands,
-        coverage=DISABLED,  # type: ignore[arg-type]  # explicit null disables coverage
-    )
-"""
-
-
 def merge_configs(
     preset: ValidationConfig | None,
     user: ValidationConfig,
 ) -> ValidationConfig:
     """Merge preset configuration with user overrides.
 
-    User values take precedence over preset values. When a user field is None
-    (not specified), the preset value is inherited. When a user field is
-    explicitly set to DISABLED sentinel, the feature is disabled even if
-    the preset defines it.
+    User values take precedence over preset values. When a user field is not
+    explicitly set (not in _fields_set), the preset value is inherited. When
+    a user field is explicitly set (in _fields_set), the user value is used
+    even if it's None or empty.
 
     Args:
         preset: Base preset configuration to merge with, or None.
@@ -115,17 +76,23 @@ def merge_configs(
     # Merge commands
     merged_commands = _merge_commands(preset.commands, user.commands)
 
-    # Coverage: user replaces entirely if present, DISABLED disables, None inherits
-    merged_coverage = _merge_coverage(preset.coverage, user.coverage)
+    # Coverage: user replaces if explicitly set, otherwise inherit
+    merged_coverage = _merge_coverage(
+        preset.coverage, user.coverage, "coverage" in user._fields_set
+    )
 
-    # List fields: user replaces entirely if non-empty
+    # List fields: user replaces if explicitly set, otherwise inherit
     merged_code_patterns = (
-        user.code_patterns if user.code_patterns else preset.code_patterns
+        user.code_patterns
+        if "code_patterns" in user._fields_set
+        else preset.code_patterns
     )
     merged_config_files = (
-        user.config_files if user.config_files else preset.config_files
+        user.config_files if "config_files" in user._fields_set else preset.config_files
     )
-    merged_setup_files = user.setup_files if user.setup_files else preset.setup_files
+    merged_setup_files = (
+        user.setup_files if "setup_files" in user._fields_set else preset.setup_files
+    )
 
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
@@ -134,6 +101,7 @@ def merge_configs(
         code_patterns=merged_code_patterns,
         config_files=merged_config_files,
         setup_files=merged_setup_files,
+        _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 
 
@@ -144,39 +112,38 @@ def _merge_commands(
     """Merge preset and user command configurations.
 
     For each command field:
-    - If user value is DISABLED sentinel: result is None (disabled)
-    - If user value is a CommandConfig: use user value (override)
-    - If user value is None: use preset value (inherit)
+    - If field is in user._fields_set: use user value (even if None)
+    - If field is not in user._fields_set: inherit from preset
     """
     return CommandsConfig(
-        setup=_merge_command_field(preset.setup, user.setup),
-        test=_merge_command_field(preset.test, user.test),
-        lint=_merge_command_field(preset.lint, user.lint),
-        format=_merge_command_field(preset.format, user.format),
-        typecheck=_merge_command_field(preset.typecheck, user.typecheck),
-        e2e=_merge_command_field(preset.e2e, user.e2e),
+        setup=_merge_command_field(preset.setup, user.setup, "setup", user._fields_set),
+        test=_merge_command_field(preset.test, user.test, "test", user._fields_set),
+        lint=_merge_command_field(preset.lint, user.lint, "lint", user._fields_set),
+        format=_merge_command_field(
+            preset.format, user.format, "format", user._fields_set
+        ),
+        typecheck=_merge_command_field(
+            preset.typecheck, user.typecheck, "typecheck", user._fields_set
+        ),
+        e2e=_merge_command_field(preset.e2e, user.e2e, "e2e", user._fields_set),
+        _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 
 
 def _merge_command_field(
     preset_cmd: CommandConfig | None,
     user_cmd: CommandConfig | None,
+    field_name: str,
+    user_fields_set: frozenset[str],
 ) -> CommandConfig | None:
     """Merge a single command field.
 
-    The user_cmd may be:
-    - DISABLED sentinel: explicitly disabled, return None
-    - CommandConfig instance: user override, return it
-    - None: not specified, inherit from preset
+    If the field was explicitly set by the user (in user_fields_set),
+    use the user value (which may be None to disable). Otherwise,
+    inherit from preset.
     """
-    # Check if user explicitly disabled this command
-    # The sentinel is passed through the type system as CommandConfig | None
-    # but at runtime it's actually DISABLED
-    if user_cmd is DISABLED:  # type: ignore[comparison-overlap]
-        return None
-
-    # If user specified a command, use it (override)
-    if user_cmd is not None:
+    # If user explicitly set this field, use their value (even if None)
+    if field_name in user_fields_set:
         return user_cmd
 
     # Otherwise inherit from preset
@@ -186,22 +153,15 @@ def _merge_command_field(
 def _merge_coverage(
     preset_cov: YamlCoverageConfig | None,
     user_cov: YamlCoverageConfig | None,
+    user_explicitly_set: bool,
 ) -> YamlCoverageConfig | None:
     """Merge coverage configurations.
 
-    The user_cov may be:
-    - DISABLED sentinel: explicitly disabled, return None
-    - YamlCoverageConfig instance: user override, return it
-    - None: not specified, inherit from preset
+    If user explicitly set coverage (even to null), use user value.
+    Otherwise inherit from preset.
     """
-    # Check if user explicitly disabled coverage
-    # The sentinel is passed through the type system as YamlCoverageConfig | None
-    # but at runtime it's actually DISABLED
-    if user_cov is DISABLED:  # type: ignore[comparison-overlap]
-        return None
-
-    # If user specified coverage, use it (override)
-    if user_cov is not None:
+    # If user explicitly set coverage, use their value (even if None)
+    if user_explicitly_set:
         return user_cov
 
     # Otherwise inherit from preset
