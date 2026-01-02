@@ -32,6 +32,7 @@ from .validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
+from .validation.tool_name_extractor import extract_tool_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -323,12 +324,11 @@ class QualityGate:
         command: str,
         evidence: ValidationEvidence,
         kind_patterns: dict[CommandKind, list[re.Pattern[str]]],
-        kind_to_name: dict[CommandKind, str],
     ) -> str | None:
         """Check command against spec-defined patterns and update evidence.
 
         Checks ALL patterns independently (a command may match multiple).
-        Returns the last matched command name for failure tracking.
+        Returns the extracted tool name for failure tracking.
 
         This method is spec-driven: any CommandKind from the spec will be
         recorded in evidence.commands_ran without requiring code changes.
@@ -337,31 +337,20 @@ class QualityGate:
             command: The bash command string.
             evidence: ValidationEvidence to update.
             kind_patterns: Mapping of CommandKind to detection patterns.
-            kind_to_name: Mapping of CommandKind to human-readable names.
 
         Returns:
-            Last matched command name (for failure tracking), None if no match.
+            Extracted tool name (for failure tracking), None if no match.
         """
-        last_match: str | None = None
+        matched = False
         for kind, patterns in kind_patterns.items():
             for pattern in patterns:
                 if pattern.search(command):
                     # Spec-driven: record any CommandKind directly
                     evidence.commands_ran[kind] = True
-                    last_match = kind_to_name.get(kind)
+                    matched = True
                     break  # Found match for this kind, try next kind
-        return last_match
-
-    # Map CommandKind to human-readable names for failure reporting
-    # All CommandKind values must be mapped to ensure failure tracking works
-    KIND_TO_NAME: ClassVar[dict[CommandKind, str]] = {
-        CommandKind.SETUP: "uv sync",
-        CommandKind.TEST: "pytest",
-        CommandKind.LINT: "ruff check",
-        CommandKind.FORMAT: "ruff format",
-        CommandKind.TYPECHECK: "ty check",
-        CommandKind.E2E: "e2e",
-    }
+        # Use extract_tool_name for human-readable display (e.g., "pytest" not "uv run pytest")
+        return extract_tool_name(command) if matched else None
 
     def _build_spec_patterns(
         self, spec: ValidationSpec
@@ -479,9 +468,7 @@ class QualityGate:
 
         for entry in self._iter_jsonl_entries(log_path, offset):
             for tool_id, command in self._parser.extract_bash_commands(entry):
-                cmd_name = self._match_spec_pattern(
-                    command, evidence, kind_patterns, self.KIND_TO_NAME
-                )
+                cmd_name = self._match_spec_pattern(command, evidence, kind_patterns)
                 if cmd_name:
                     tool_id_to_command[tool_id] = cmd_name
             for tool_use_id, is_error in self._parser.extract_tool_results(entry):

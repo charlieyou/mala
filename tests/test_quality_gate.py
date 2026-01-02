@@ -3316,3 +3316,187 @@ class TestLogProviderInjection:
 
         # Verify internal provider is FileSystemLogProvider
         assert isinstance(gate._log_provider, FileSystemLogProvider)
+
+
+class TestExtractedToolNames:
+    """Test that quality gate uses extracted tool names instead of hardcoded KIND_TO_NAME.
+
+    These tests verify that:
+    - Quality gate shows "pytest" not "uv run pytest" in failure messages
+    - Quality gate shows "eslint" not "npx eslint ." in failure messages
+    - ValidationEvidence.failed_commands contains extracted names
+    """
+
+    def test_failed_commands_shows_pytest_not_full_command(
+        self, tmp_path: Path
+    ) -> None:
+        """Failed commands should show 'pytest' not 'uv run pytest'."""
+        log_path = tmp_path / "session.jsonl"
+
+        # Tool use for pytest
+        tool_use_entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_pytest_123",
+                            "name": "Bash",
+                            "input": {"command": "uv run pytest"},
+                        }
+                    ]
+                },
+            }
+        )
+        # Tool result showing pytest FAILED
+        tool_result_entry = json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_pytest_123",
+                            "content": "Exit code 1\n1 failed",
+                            "is_error": True,
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
+
+        gate = QualityGate(tmp_path)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        # Should have "pytest" in failed_commands, not "uv run pytest"
+        assert "pytest" in evidence.failed_commands
+        assert "uv run pytest" not in evidence.failed_commands
+
+    def test_failed_commands_shows_ruff_not_full_command(self, tmp_path: Path) -> None:
+        """Failed commands should show 'ruff' not 'uvx ruff check .'."""
+        log_path = tmp_path / "session.jsonl"
+
+        # Tool use for ruff check
+        tool_use_entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_ruff_123",
+                            "name": "Bash",
+                            "input": {"command": "uvx ruff check ."},
+                        }
+                    ]
+                },
+            }
+        )
+        # Tool result showing ruff check FAILED
+        tool_result_entry = json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_ruff_123",
+                            "content": "Exit code 1\nFound 3 errors",
+                            "is_error": True,
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
+
+        gate = QualityGate(tmp_path)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        # Should have "ruff" in failed_commands, not "uvx ruff check ."
+        assert "ruff" in evidence.failed_commands
+        assert "uvx ruff check ." not in evidence.failed_commands
+
+    def test_gate_failure_message_shows_extracted_names(self, tmp_path: Path) -> None:
+        """Gate failure messages should show extracted tool names like 'pytest'."""
+        log_path = tmp_path / "session.jsonl"
+
+        # All commands succeed except pytest (which fails)
+        commands = [
+            ("toolu_pytest_1", "uv run pytest", True, "Exit code 1\n1 failed"),
+            ("toolu_ruff_check_1", "uvx ruff check .", False, "All good"),
+            ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
+            ("toolu_ty_check_1", "uvx ty check", False, "No errors"),
+        ]
+        lines = []
+        for tool_id, cmd, is_error, output in commands:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "id": tool_id,
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_id,
+                                    "content": output,
+                                    "is_error": is_error,
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        gate = QualityGate(tmp_path)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+
+        with patch("src.domain.quality_gate.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                command=[],
+                returncode=0,
+                stdout="abc1234 1703502000 bd-test-123: Fix\n",
+                stderr="",
+            )
+            result = gate.check_with_resolution(
+                issue_id="test-123",
+                log_path=log_path,
+                baseline_timestamp=1703501000,
+                spec=spec,
+            )
+
+        # Should fail because pytest failed
+        assert result.passed is False
+        # Failure message should contain "pytest", not "uv run pytest"
+        failed_msg = next(r for r in result.failure_reasons if "failed" in r.lower())
+        assert "pytest" in failed_msg
+        assert "uv run pytest" not in failed_msg
