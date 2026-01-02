@@ -657,14 +657,17 @@ class BaselineCoverageService:
             if "e2e" in marker_expr:
                 marker_expr = "unit or integration"
 
-            # Ensure XML coverage output is requested at the configured path.
+            # Ensure XML coverage output is written to the configured path.
+            # Strip any existing --cov-report=xml or --cov-report=xml:<path> arguments
+            # to avoid path mismatches where output goes to a different location than
+            # coverage_config.file specifies.
             coverage_file = self.coverage_config.file
-            has_xml_report = any(
-                arg == "--cov-report=xml" or arg.startswith("--cov-report=xml:")
+            new_coverage_cmd = [
+                arg
                 for arg in new_coverage_cmd
-            )
-            if not has_xml_report:
-                new_coverage_cmd.append(f"--cov-report=xml:{coverage_file}")
+                if arg != "--cov-report=xml" and not arg.startswith("--cov-report=xml:")
+            ]
+            new_coverage_cmd.append(f"--cov-report=xml:{coverage_file}")
 
             new_coverage_cmd.append("--cov-fail-under=0")
             new_coverage_cmd.extend(["-m", marker_expr])

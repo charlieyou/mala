@@ -1910,6 +1910,229 @@ class TestSpecRunnerBaselineRefresh:
         # Verify other coverage flags preserved
         assert "--cov=src" in pytest_cmd, f"Expected --cov=src in: {pytest_cmd}"
 
+    def test_baseline_refresh_forces_cov_report_to_match_config_file(
+        self, tmp_path: Path
+    ) -> None:
+        """Baseline refresh should strip existing --cov-report=xml and use config path.
+
+        When the coverage command contains --cov-report=xml or --cov-report=xml:<path>
+        but coverage_config.file is a different path, the refresh should strip the
+        existing --cov-report arguments and add --cov-report=xml:<coverage_config.file>
+        to ensure coverage output goes to the configured location.
+        """
+        from src.domain.validation.config import YamlCoverageConfig
+
+        # Create service with custom coverage file path
+        coverage_config = YamlCoverageConfig(
+            format="xml",
+            file="reports/coverage.xml",  # Non-default path
+            threshold=0.0,
+            command="uv run pytest --cov=src --cov-report=xml",  # Default path
+        )
+        service = BaselineCoverageService(tmp_path, coverage_config=coverage_config)
+
+        # Create the reports directory in the main repo (for atomic copy destination)
+        (tmp_path / "reports").mkdir()
+
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command="uv run pytest --cov=src --cov-report=xml",
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.RUN_LEVEL,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        # Mock worktree for refresh
+        mock_worktree = MagicMock(spec=WorktreeContext)
+        mock_worktree.state = WorktreeState.CREATED
+        mock_worktree.path = tmp_path / "baseline-worktree"
+        mock_worktree.path.mkdir()
+        (mock_worktree.path / "reports").mkdir()
+        (mock_worktree.path / "reports" / "coverage.xml").write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.88" branch-rate="0.82" />'
+        )
+
+        # Capture the command that was run
+        captured_commands: list[list[str]] = []
+
+        def mock_popen_capture(
+            cmd: list[str], *args: object, **kwargs: object
+        ) -> MagicMock:
+            captured_commands.append(cmd)
+            mock = MagicMock()
+            mock.communicate.return_value = ("ok", "")
+            mock.returncode = 0
+            mock.stdout = MagicMock()
+            mock.stderr = MagicMock()
+            mock.stdout.close = MagicMock()
+            mock.stderr.close = MagicMock()
+            mock.wait = MagicMock(return_value=0)
+            return mock
+
+        def mock_git_run(args: list[str], **kwargs: object) -> CommandResult:
+            if "status" in args and "--porcelain" in args:
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
+            elif "log" in args:
+                return CommandResult(
+                    command=args, returncode=0, stdout="1700000000\n", stderr=""
+                )
+            return CommandResult(command=args, returncode=0, stdout="", stderr="")
+
+        with (
+            patch(
+                "src.domain.validation.worktree.create_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.domain.validation.worktree.remove_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.infra.tools.command_runner.subprocess.Popen",
+                side_effect=mock_popen_capture,
+            ),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
+            patch("src.infra.tools.locking.try_lock", return_value=True),
+        ):
+            service.refresh_if_stale(spec)
+
+        # Find the pytest command
+        pytest_cmds = [c for c in captured_commands if "pytest" in c]
+        assert len(pytest_cmds) >= 1, (
+            f"Expected pytest command, got: {captured_commands}"
+        )
+
+        pytest_cmd = pytest_cmds[-1]  # The actual pytest run (not uv sync)
+
+        # Verify old --cov-report=xml was stripped
+        assert "--cov-report=xml" not in pytest_cmd, (
+            f"Expected --cov-report=xml to be stripped, but found in: {pytest_cmd}"
+        )
+
+        # Verify new --cov-report=xml:<config_path> was added
+        assert "--cov-report=xml:reports/coverage.xml" in pytest_cmd, (
+            f"Expected --cov-report=xml:reports/coverage.xml, but got: {pytest_cmd}"
+        )
+
+        # Verify other coverage flags preserved
+        assert "--cov=src" in pytest_cmd, f"Expected --cov=src in: {pytest_cmd}"
+
+    def test_baseline_refresh_strips_explicit_cov_report_path(
+        self, tmp_path: Path
+    ) -> None:
+        """Baseline refresh should strip --cov-report=xml:<old_path> and use config.
+
+        Even when the command specifies an explicit path like --cov-report=xml:old.xml,
+        it should be replaced with the path from coverage_config.file.
+        """
+        from src.domain.validation.config import YamlCoverageConfig
+
+        # Create service with custom coverage file path
+        coverage_config = YamlCoverageConfig(
+            format="xml",
+            file="reports/coverage.xml",  # Configured path
+            threshold=0.0,
+            command="uv run pytest --cov=src --cov-report=xml:old.xml",  # Different path
+        )
+        service = BaselineCoverageService(tmp_path, coverage_config=coverage_config)
+
+        # Create the reports directory in the main repo (for atomic copy destination)
+        (tmp_path / "reports").mkdir()
+
+        spec = ValidationSpec(
+            commands=[
+                ValidationCommand(
+                    name="pytest",
+                    command="uv run pytest --cov=src --cov-report=xml:old.xml",
+                    kind=CommandKind.TEST,
+                ),
+            ],
+            scope=ValidationScope.RUN_LEVEL,
+            coverage=CoverageConfig(enabled=True, min_percent=None),
+            e2e=E2EConfig(enabled=False),
+        )
+
+        # Mock worktree for refresh
+        mock_worktree = MagicMock(spec=WorktreeContext)
+        mock_worktree.state = WorktreeState.CREATED
+        mock_worktree.path = tmp_path / "baseline-worktree"
+        mock_worktree.path.mkdir()
+        (mock_worktree.path / "reports").mkdir()
+        (mock_worktree.path / "reports" / "coverage.xml").write_text(
+            '<?xml version="1.0"?>\n<coverage line-rate="0.75" branch-rate="0.70" />'
+        )
+
+        # Capture the command that was run
+        captured_commands: list[list[str]] = []
+
+        def mock_popen_capture(
+            cmd: list[str], *args: object, **kwargs: object
+        ) -> MagicMock:
+            captured_commands.append(cmd)
+            mock = MagicMock()
+            mock.communicate.return_value = ("ok", "")
+            mock.returncode = 0
+            mock.stdout = MagicMock()
+            mock.stderr = MagicMock()
+            mock.stdout.close = MagicMock()
+            mock.stderr.close = MagicMock()
+            mock.wait = MagicMock(return_value=0)
+            return mock
+
+        def mock_git_run(args: list[str], **kwargs: object) -> CommandResult:
+            if "status" in args and "--porcelain" in args:
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
+            elif "log" in args:
+                return CommandResult(
+                    command=args, returncode=0, stdout="1700000000\n", stderr=""
+                )
+            return CommandResult(command=args, returncode=0, stdout="", stderr="")
+
+        with (
+            patch(
+                "src.domain.validation.worktree.create_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.domain.validation.worktree.remove_worktree",
+                return_value=mock_worktree,
+            ),
+            patch(
+                "src.infra.tools.command_runner.subprocess.Popen",
+                side_effect=mock_popen_capture,
+            ),
+            patch(
+                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            ),
+            patch("src.infra.tools.locking.try_lock", return_value=True),
+        ):
+            service.refresh_if_stale(spec)
+
+        # Find the pytest command
+        pytest_cmds = [c for c in captured_commands if "pytest" in c]
+        assert len(pytest_cmds) >= 1, (
+            f"Expected pytest command, got: {captured_commands}"
+        )
+
+        pytest_cmd = pytest_cmds[-1]  # The actual pytest run (not uv sync)
+
+        # Verify old --cov-report=xml:old.xml was stripped
+        assert "--cov-report=xml:old.xml" not in pytest_cmd, (
+            f"Expected --cov-report=xml:old.xml to be stripped, but found in: {pytest_cmd}"
+        )
+
+        # Verify new --cov-report=xml:<config_path> was added
+        assert "--cov-report=xml:reports/coverage.xml" in pytest_cmd, (
+            f"Expected --cov-report=xml:reports/coverage.xml, but got: {pytest_cmd}"
+        )
+
 
 class TestBaselineCaptureOrder:
     """Tests verifying baseline is captured BEFORE worktree/validation.
