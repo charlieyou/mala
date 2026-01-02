@@ -481,7 +481,7 @@ class TestSpawnAgent:
         ):
             result = await orchestrator.spawn_agent("unclaimed-issue")
 
-        assert result is False
+        assert result is None
         assert "unclaimed-issue" in orchestrator.failed_issues
 
     @pytest.mark.asyncio
@@ -510,8 +510,9 @@ class TestSpawnAgent:
         ):
             result = await orchestrator.spawn_agent("claimable-issue")
 
-        assert result is True
-        assert "claimable-issue" in orchestrator.active_tasks
+        # spawn_agent returns the Task on success (caller is responsible for registration)
+        assert result is not None
+        assert isinstance(result, asyncio.Task)
 
 
 class TestRunOrchestrationLoop:
@@ -576,18 +577,18 @@ class TestRunOrchestrationLoop:
                 return ["issue-1", "issue-2", "issue-3"]
             return []
 
-        async def mock_spawn(issue_id: str) -> bool:
+        async def mock_spawn(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
             spawned.append(issue_id)
-            # Create a completed result immediately
-            orchestrator.completed.append(
-                IssueResult(
+
+            async def work() -> IssueResult:
+                return IssueResult(
                     issue_id=issue_id,
                     agent_id=f"{issue_id}-agent",
                     success=True,
                     summary="done",
                 )
-            )
-            return True
+
+            return asyncio.create_task(work())
 
         with (
             patch.object(
