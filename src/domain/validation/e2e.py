@@ -15,6 +15,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -279,6 +280,13 @@ class E2ERunner:
         if issue_id:
             annotate_issue(fixture_path, issue_id)
 
+        # Override CLAUDE_SESSION_ID to avoid conflicts with parent session's review gate.
+        # The Cerberus review-gate tracks pending reviews per session, so running e2e
+        # inside an existing mala session (which already has a review gate active) would
+        # fail with "Review gate already active" unless we use a distinct session ID.
+        child_env = dict(env)
+        child_env["CLAUDE_SESSION_ID"] = f"e2e-{uuid.uuid4()}"
+
         # Convert timeout from seconds to minutes for CLI (which expects minutes)
         timeout_minutes = max(1, int(self.config.timeout_seconds // 60))
         cmd = [
@@ -303,7 +311,7 @@ class E2ERunner:
         runner = CommandRunner(
             cwd=cwd, timeout_seconds=self.config.timeout_seconds + 30
         )
-        result = runner.run(cmd, env=dict(env))
+        result = runner.run(cmd, env=child_env)
 
         if result.ok:
             return E2EResult(
