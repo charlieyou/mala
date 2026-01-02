@@ -70,8 +70,20 @@ _SHELL_BUILTINS: frozenset[str] = frozenset(
 _PATH_BUILTINS: frozenset[str] = frozenset({"source", ".", "cd", "pushd", "popd"})
 
 # Built-ins whose arguments are not commands (skip the rest of the segment)
+# export and set operate on variable assignments or shell options/positional
+# parameters rather than executing commands passed as arguments.
 _SKIP_REST_BUILTINS: frozenset[str] = frozenset(
-    {"unset", "alias", "unalias", "declare", "local", "readonly", "typeset"}
+    {
+        "export",
+        "set",
+        "unset",
+        "alias",
+        "unalias",
+        "declare",
+        "local",
+        "readonly",
+        "typeset",
+    }
 )
 
 # Wrapper flags that consume a value (skip flag + value)
@@ -144,9 +156,9 @@ def _skip_builtin_arguments(tokens: list[str], idx: int, builtin: str) -> int:
     """Skip arguments to a shell built-in.
 
     Different built-ins have different argument patterns:
-    - export: VAR=value assignments
-    - set: flags like -e, -x, -o pipefail; -- marks end of options and all
-           remaining tokens are positional parameters (not commands)
+    - export/set and others in _SKIP_REST_BUILTINS: skip all remaining tokens
+      (their arguments are variable assignments, options, or positional params,
+      not commands to execute)
     - source/.: a single path argument
 
     Args:
@@ -157,35 +169,14 @@ def _skip_builtin_arguments(tokens: list[str], idx: int, builtin: str) -> int:
     Returns:
         New index after skipping all built-in arguments.
     """
-    if builtin == "export":
-        # export takes VAR=value assignments
-        while idx < len(tokens) and _is_env_assignment(tokens[idx]):
-            idx += 1
-    elif builtin == "set":
-        # set takes flags like -e, -x, -o pipefail, +e, etc.
-        # IMPORTANT: -- marks end of options; all remaining tokens are positional
-        # parameters to set (not commands to execute), so skip them all.
-        while idx < len(tokens):
-            token = tokens[idx]
-            if token == "--":
-                # End of options marker - skip ALL remaining tokens
-                # (they're positional parameters, not commands)
-                return len(tokens)
-            if token.startswith("-") or token.startswith("+"):
-                idx += 1
-                # -o takes an additional argument (e.g., -o pipefail)
-                if token in ("-o", "+o") and idx < len(tokens):
-                    idx += 1
-            else:
-                break
+    if builtin in _SKIP_REST_BUILTINS:
+        # These built-ins operate on variables/definitions/options; remaining
+        # tokens are not commands to execute in this segment.
+        return len(tokens)
     elif builtin in _PATH_BUILTINS:
         # source/. take a single path argument
         if idx < len(tokens):
             idx += 1
-    elif builtin in _SKIP_REST_BUILTINS:
-        # These built-ins operate on variables/definitions; remaining tokens
-        # are not commands to execute in this segment.
-        return len(tokens)
     return idx
 
 
