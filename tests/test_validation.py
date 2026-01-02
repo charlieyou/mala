@@ -516,10 +516,10 @@ class TestSpecValidationRunner:
             e2e=E2EConfig(enabled=False),
         )
 
-        captured_cmd: list[str] = []
+        captured_cmd: list[str | list[str]] = []
 
-        def capture_popen(cmd: list[str], **kwargs: object) -> MagicMock:
-            captured_cmd.extend(cmd)
+        def capture_popen(cmd: str | list[str], **kwargs: object) -> MagicMock:
+            captured_cmd.append(cmd)
             mock_proc = MagicMock()
             mock_proc.communicate.return_value = ("ok", "")
             mock_proc.returncode = 0
@@ -531,8 +531,12 @@ class TestSpecValidationRunner:
         ):
             runner._run_spec_sync(spec, context, log_dir=tmp_path)
 
-        assert "test-mutex.sh" in captured_cmd[0]
-        assert "pytest" in captured_cmd
+        # With shell=True (default), command is passed as a string
+        assert len(captured_cmd) == 1
+        cmd = captured_cmd[0]
+        assert isinstance(cmd, str)
+        assert "test-mutex.sh" in cmd
+        assert "pytest" in cmd
 
     def test_run_spec_writes_log_files(
         self,
@@ -2510,10 +2514,10 @@ class TestSpecCommandExecutor:
             log_dir=tmp_path_with_logs,
         )
 
-        captured_cmd: list[str] = []
+        captured_cmd: list[str | list[str]] = []
 
-        def capture_popen(cmd: list[str], **kwargs: object) -> MagicMock:
-            captured_cmd.extend(cmd)
+        def capture_popen(cmd: str | list[str], **kwargs: object) -> MagicMock:
+            captured_cmd.append(cmd)
             mock_proc = MagicMock()
             mock_proc.communicate.return_value = ("ok", "")
             mock_proc.returncode = 0
@@ -2525,8 +2529,12 @@ class TestSpecCommandExecutor:
         ):
             executor.execute(input)
 
-        assert "test-mutex.sh" in captured_cmd[0]
-        assert "pytest" in captured_cmd
+        # With shell=True (default), command is passed as a string
+        assert len(captured_cmd) == 1
+        cmd = captured_cmd[0]
+        assert isinstance(cmd, str)
+        assert "test-mutex.sh" in cmd
+        assert "pytest" in cmd
 
 
 class TestSpecResultBuilder:
