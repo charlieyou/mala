@@ -371,15 +371,13 @@ class TestExecuteRemediationIssues:
         # active_tasks intentionally empty to verify we don't rely on it
         orchestrator.active_tasks = {}
 
-        task_was_awaited = False
+        tasks_awaited: set[str] = set()
 
         async def mock_spawn(issue_id: str) -> asyncio.Task[IssueResult]:
             """Return a task directly without registering to active_tasks."""
-            nonlocal task_was_awaited
 
             async def dummy_result() -> IssueResult:
-                nonlocal task_was_awaited
-                task_was_awaited = True
+                tasks_awaited.add(issue_id)
                 return IssueResult(
                     issue_id=issue_id, agent_id="test", success=True, summary="done"
                 )
@@ -394,8 +392,11 @@ class TestExecuteRemediationIssues:
             orchestrator, ["rem-1", "rem-2"]
         )
 
-        # Verify task was actually awaited
-        assert task_was_awaited, "Task returned by spawn_agent should be awaited"
+        # Verify all tasks were actually awaited
+        assert tasks_awaited == {
+            "rem-1",
+            "rem-2",
+        }, f"All tasks should be awaited, but only got: {tasks_awaited}"
 
 
 class TestEpicNotEligible:
