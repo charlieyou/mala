@@ -56,6 +56,7 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | `MALA_RUNS_DIR` | `~/.config/mala/runs` | Directory for run metadata |
 | `MALA_LOCK_DIR` | `/tmp/mala-locks` | Directory for filesystem locks |
 | `MALA_REVIEW_TIMEOUT` | `1200` | Review-gate wait timeout in seconds |
+| `MALA_DISABLE_DEBUG_LOG` | - | Set to `1` to disable debug file logging (for performance or disk space) |
 
 ### Epic Verification
 
