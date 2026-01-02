@@ -396,7 +396,7 @@ class MalaOrchestrator:
         )
 
     async def _check_epic_closure(
-        self, issue_id: str, run_metadata: RunMetadata | None = None
+        self, issue_id: str, run_metadata: RunMetadata
     ) -> None:
         """Check if closing this issue should also close its parent epic.
 
@@ -408,7 +408,7 @@ class MalaOrchestrator:
 
         Args:
             issue_id: The issue that was just closed.
-            run_metadata: Optional run metadata for recording remediation issue results.
+            run_metadata: Run metadata for recording remediation issue results.
         """
         parent_epic = await self.beads.get_parent_epic_async(issue_id)
         if parent_epic is None or parent_epic in self.verified_epics:
@@ -481,7 +481,7 @@ class MalaOrchestrator:
             self.event_sink.on_epic_closed(issue_id)
 
     async def _execute_remediation_issues(
-        self, issue_ids: list[str], run_metadata: RunMetadata | None = None
+        self, issue_ids: list[str], run_metadata: RunMetadata
     ) -> None:
         """Execute remediation issues and wait for their completion.
 
@@ -491,7 +491,7 @@ class MalaOrchestrator:
 
         Args:
             issue_ids: List of remediation issue IDs to execute.
-            run_metadata: Optional run metadata for recording issue results.
+            run_metadata: Run metadata for recording issue results.
         """
         if not issue_ids:
             return
@@ -537,8 +537,7 @@ class MalaOrchestrator:
                 )
 
             # Finalize (closes issue, records to run_metadata, emits events)
-            if run_metadata is not None:
-                await self._finalize_issue_result(issue_id, result, run_metadata)
+            await self._finalize_issue_result(issue_id, result, run_metadata)
 
             # Mark as completed in the coordinator
             self.issue_coordinator.mark_completed(issue_id)

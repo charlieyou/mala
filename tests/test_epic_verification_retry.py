@@ -77,6 +77,12 @@ def mock_mala_config() -> MalaConfig:
     )
 
 
+@pytest.fixture
+def mock_run_metadata() -> MagicMock:
+    """Create a mock RunMetadata."""
+    return MagicMock()
+
+
 class TestEpicVerificationRetryLoop:
     """Tests for the epic verification retry loop."""
 
@@ -87,6 +93,7 @@ class TestEpicVerificationRetryLoop:
         mock_event_sink: MagicMock,
         mock_epic_verifier: MagicMock,
         mock_mala_config: MalaConfig,
+        mock_run_metadata: MagicMock,
     ) -> None:
         """Should close epic without retry when verification passes first time."""
         # Create a minimal orchestrator mock with required attributes
@@ -105,7 +112,9 @@ class TestEpicVerificationRetryLoop:
         from src.orchestration.orchestrator import MalaOrchestrator
 
         # Call the method directly
-        await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+        await MalaOrchestrator._check_epic_closure(
+            orchestrator, "child-1", mock_run_metadata
+        )
 
         # Should have called verify_and_close_epic once
         mock_epic_verifier.verify_and_close_epic.assert_called_once_with(
@@ -121,6 +130,7 @@ class TestEpicVerificationRetryLoop:
         mock_event_sink: MagicMock,
         mock_epic_verifier: MagicMock,
         mock_mala_config: MalaConfig,
+        mock_run_metadata: MagicMock,
     ) -> None:
         """Should retry verification after executing remediation issues."""
         # First call fails with remediation issues, second call passes
@@ -161,7 +171,9 @@ class TestEpicVerificationRetryLoop:
 
         from src.orchestration.orchestrator import MalaOrchestrator
 
-        await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+        await MalaOrchestrator._check_epic_closure(
+            orchestrator, "child-1", mock_run_metadata
+        )
 
         # Should have called verify_and_close_epic twice
         assert mock_epic_verifier.verify_and_close_epic.call_count == 2
@@ -177,6 +189,7 @@ class TestEpicVerificationRetryLoop:
         mock_event_sink: MagicMock,
         mock_epic_verifier: MagicMock,
         mock_mala_config: MalaConfig,
+        mock_run_metadata: MagicMock,
     ) -> None:
         """Should stop retrying after max_epic_verification_retries."""
         # All calls fail with remediation issues
@@ -207,7 +220,9 @@ class TestEpicVerificationRetryLoop:
 
         from src.orchestration.orchestrator import MalaOrchestrator
 
-        await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+        await MalaOrchestrator._check_epic_closure(
+            orchestrator, "child-1", mock_run_metadata
+        )
 
         # Should have called verify exactly max_attempts times (1 + 3 retries = 4)
         assert mock_epic_verifier.verify_and_close_epic.call_count == 4
@@ -226,6 +241,7 @@ class TestEpicVerificationRetryLoop:
         mock_event_sink: MagicMock,
         mock_epic_verifier: MagicMock,
         mock_mala_config: MalaConfig,
+        mock_run_metadata: MagicMock,
     ) -> None:
         """Should stop if verification fails but no remediation issues created."""
         # Fail without creating remediation issues
@@ -253,7 +269,9 @@ class TestEpicVerificationRetryLoop:
 
         from src.orchestration.orchestrator import MalaOrchestrator
 
-        await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+        await MalaOrchestrator._check_epic_closure(
+            orchestrator, "child-1", mock_run_metadata
+        )
 
         # Should only call verify once (no retry since no remediation issues)
         assert mock_epic_verifier.verify_and_close_epic.call_count == 1
@@ -267,6 +285,7 @@ class TestEpicVerificationRetryLoop:
         mock_event_sink: MagicMock,
         mock_epic_verifier: MagicMock,
         mock_mala_config: MalaConfig,
+        mock_run_metadata: MagicMock,
     ) -> None:
         """Should skip verification for already verified epics."""
         orchestrator = MagicMock()
@@ -282,7 +301,9 @@ class TestEpicVerificationRetryLoop:
 
         from src.orchestration.orchestrator import MalaOrchestrator
 
-        await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+        await MalaOrchestrator._check_epic_closure(
+            orchestrator, "child-1", mock_run_metadata
+        )
 
         # Should not call verify_and_close_epic
         mock_epic_verifier.verify_and_close_epic.assert_not_called()
@@ -294,6 +315,7 @@ class TestEpicVerificationRetryLoop:
         mock_event_sink: MagicMock,
         mock_epic_verifier: MagicMock,
         mock_mala_config: MalaConfig,
+        mock_run_metadata: MagicMock,
     ) -> None:
         """Should skip verification when issue has no parent epic."""
         mock_beads.get_parent_epic_async = AsyncMock(return_value=None)
@@ -311,7 +333,9 @@ class TestEpicVerificationRetryLoop:
 
         from src.orchestration.orchestrator import MalaOrchestrator
 
-        await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+        await MalaOrchestrator._check_epic_closure(
+            orchestrator, "child-1", mock_run_metadata
+        )
 
         # Should not call verify_and_close_epic
         mock_epic_verifier.verify_and_close_epic.assert_not_called()
@@ -373,6 +397,8 @@ class TestExecuteRemediationIssues:
         orchestrator.active_tasks = {}
         # Mock issue_coordinator for mark_completed calls
         orchestrator.issue_coordinator = MagicMock()
+        # Mock _finalize_issue_result since run_metadata is required
+        orchestrator._finalize_issue_result = AsyncMock()
 
         tasks_awaited: set[str] = set()
 
@@ -391,9 +417,9 @@ class TestExecuteRemediationIssues:
 
         from src.orchestration.orchestrator import MalaOrchestrator
 
-        # Call without run_metadata (optional parameter)
+        mock_run_metadata = MagicMock()
         await MalaOrchestrator._execute_remediation_issues(
-            orchestrator, ["rem-1", "rem-2"]
+            orchestrator, ["rem-1", "rem-2"], mock_run_metadata
         )
 
         # Verify all tasks were actually awaited
@@ -497,6 +523,7 @@ class TestEpicNotEligible:
         mock_event_sink: MagicMock,
         mock_epic_verifier: MagicMock,
         mock_mala_config: MalaConfig,
+        mock_run_metadata: MagicMock,
     ) -> None:
         """Should NOT mark epic as verified when it isn't eligible (verified_count=0)."""
         # Return result indicating epic wasn't eligible (children still open)
@@ -524,7 +551,9 @@ class TestEpicNotEligible:
 
         from src.orchestration.orchestrator import MalaOrchestrator
 
-        await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+        await MalaOrchestrator._check_epic_closure(
+            orchestrator, "child-1", mock_run_metadata
+        )
 
         # Should NOT mark epic as verified (so it can be re-checked later)
         assert "epic-1" not in orchestrator.verified_epics
@@ -542,6 +571,7 @@ class TestReentryGuard:
         mock_event_sink: MagicMock,
         mock_epic_verifier: MagicMock,
         mock_mala_config: MalaConfig,
+        mock_run_metadata: MagicMock,
     ) -> None:
         """Should skip verification for epics already being verified."""
         orchestrator = MagicMock()
@@ -557,7 +587,9 @@ class TestReentryGuard:
 
         from src.orchestration.orchestrator import MalaOrchestrator
 
-        await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+        await MalaOrchestrator._check_epic_closure(
+            orchestrator, "child-1", mock_run_metadata
+        )
 
         # Should NOT call verify_and_close_epic due to re-entry guard
         mock_epic_verifier.verify_and_close_epic.assert_not_called()
@@ -569,6 +601,7 @@ class TestReentryGuard:
         mock_event_sink: MagicMock,
         mock_epic_verifier: MagicMock,
         mock_mala_config: MalaConfig,
+        mock_run_metadata: MagicMock,
     ) -> None:
         """Should remove epic from epics_being_verified when done."""
         orchestrator = MagicMock()
@@ -584,7 +617,9 @@ class TestReentryGuard:
 
         from src.orchestration.orchestrator import MalaOrchestrator
 
-        await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+        await MalaOrchestrator._check_epic_closure(
+            orchestrator, "child-1", mock_run_metadata
+        )
 
         # Should have removed from epics_being_verified
         assert "epic-1" not in orchestrator.epics_being_verified
@@ -596,6 +631,7 @@ class TestReentryGuard:
         mock_event_sink: MagicMock,
         mock_epic_verifier: MagicMock,
         mock_mala_config: MalaConfig,
+        mock_run_metadata: MagicMock,
     ) -> None:
         """Should remove epic from epics_being_verified even on error."""
         # Make verify_and_close_epic raise an exception
@@ -617,7 +653,9 @@ class TestReentryGuard:
         from src.orchestration.orchestrator import MalaOrchestrator
 
         with pytest.raises(RuntimeError, match="Test error"):
-            await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+            await MalaOrchestrator._check_epic_closure(
+                orchestrator, "child-1", mock_run_metadata
+            )
 
         # Should have removed from epics_being_verified even on error
         assert "epic-1" not in orchestrator.epics_being_verified
