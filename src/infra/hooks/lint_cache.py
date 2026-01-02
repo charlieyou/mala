@@ -7,13 +7,14 @@ lint commands when the git state hasn't changed since the last successful run.
 from __future__ import annotations
 
 import hashlib
-import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Set as AbstractSet
+
     from claude_agent_sdk.types import (
         HookContext,
         PreToolUseHookInput,
@@ -22,21 +23,16 @@ if TYPE_CHECKING:
 
     from .dangerous_commands import PreToolUseHook
 
+from src.domain.validation.tool_name_extractor import extract_tool_name
+
 from ..tools.command_runner import run_command
 from .dangerous_commands import BASH_TOOL_NAMES
 from .file_cache import FILE_WRITE_TOOLS
 
-# Lint command patterns for detecting lint/format/typecheck commands
-# Using regex patterns for precise matching to avoid false positives
-LINT_COMMAND_PATTERNS: dict[str, re.Pattern[str]] = {
-    # Match "ruff check" but not "ruff format"
-    "ruff_check": re.compile(r"\bruff\s+check\b", re.IGNORECASE),
-    # Match "ruff format"
-    "ruff_format": re.compile(r"\bruff\s+format\b", re.IGNORECASE),
-    # Match "ty check" as a standalone command (ty must be a word boundary)
-    # This avoids matching "pytest --check" or similar
-    "ty_check": re.compile(r"\bty\s+check\b", re.IGNORECASE),
-}
+# Default lint tool names for fallback when no ValidationSpec is provided
+DEFAULT_LINT_TOOLS: frozenset[str] = frozenset(
+    {"ruff", "ty", "eslint", "golangci-lint"}
+)
 
 
 def _get_git_state(repo_path: Path | None = None) -> str | None:
@@ -94,20 +90,35 @@ def _get_git_state(repo_path: Path | None = None) -> str | None:
         return None
 
 
-def _detect_lint_command(command: str) -> str | None:
+def _detect_lint_command(command: str, lint_tools: AbstractSet[str]) -> str | None:
     """Detect which lint command type is being run.
 
-    Uses regex patterns with word boundaries to avoid false positives.
+    Uses extract_tool_name to dynamically identify the tool from any command,
+    supporting any language's lint tools (eslint, golangci-lint, cargo clippy, etc.).
 
     Args:
         command: The bash command string.
+        lint_tools: Set of known lint tool names to match against.
 
     Returns:
-        The lint command key (e.g., "ruff_check") or None if not a lint command.
+        The extracted tool name if it matches a known lint tool, or None.
     """
-    for lint_key, pattern in LINT_COMMAND_PATTERNS.items():
-        if pattern.search(command):
-            return lint_key
+    tool_name = extract_tool_name(command)
+    if not tool_name:
+        return None
+
+    # Check if the extracted tool (or its base name) matches any lint tool
+    # Handle compound commands like "cargo clippy" or "npm run:lint"
+    base_tool = tool_name.split()[0]
+
+    # Check full tool name first (e.g., "cargo clippy", "go vet")
+    if tool_name in lint_tools:
+        return tool_name
+
+    # Check base tool name (e.g., "ruff", "eslint", "golangci-lint")
+    if base_tool in lint_tools:
+        return base_tool
+
     return None
 
 
@@ -133,6 +144,10 @@ class LintCache:
     cached after an explicit success via `mark_success()`. The cache uses
     commit SHA + working tree diff hash to detect any file changes.
 
+    The cache supports any lint tool (eslint, golangci-lint, cargo clippy, etc.)
+    by using extract_tool_name() for dynamic detection. Tool names can be
+    configured via the lint_tools parameter or loaded from ValidationSpec.
+
     Note:
         This is an IN-MEMORY cache designed for use with Claude agent hooks
         (see make_lint_cache_hook). For a disk-persisted cache used in batch
@@ -143,17 +158,27 @@ class LintCache:
         _cache: Mapping of lint command type to cached entry.
         _skipped_count: Total count of lints skipped due to cache hits.
         _repo_path: Path to the repository for git operations.
+        _lint_tools: Set of lint tool names to recognize.
     """
 
-    def __init__(self, repo_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        repo_path: Path | None = None,
+        lint_tools: AbstractSet[str] | None = None,
+    ) -> None:
         """Initialize an empty lint cache.
 
         Args:
             repo_path: Path to the repository. If None, uses current directory.
+            lint_tools: Set of lint tool names to recognize. If None, uses
+                DEFAULT_LINT_TOOLS (ruff, ty, eslint, golangci-lint).
         """
         self._cache: dict[str, LintCacheEntry] = {}
         self._skipped_count: int = 0
         self._repo_path = repo_path
+        self._lint_tools: frozenset[str] = (
+            frozenset(lint_tools) if lint_tools else DEFAULT_LINT_TOOLS
+        )
 
     def _make_cache_key(self, lint_type: str, command: str) -> str:
         """Create a cache key combining lint type and command.
@@ -258,21 +283,45 @@ class LintCache:
         """Return the number of lint types currently cached."""
         return len(self._cache)
 
+    @property
+    def lint_tools(self) -> frozenset[str]:
+        """Return the set of recognized lint tool names."""
+        return self._lint_tools
+
+    def detect_lint_command(self, command: str) -> str | None:
+        """Detect if a command is a lint command.
+
+        Uses extract_tool_name to parse the command and checks against
+        configured lint tools.
+
+        Args:
+            command: The bash command string.
+
+        Returns:
+            The lint tool name if detected, or None.
+        """
+        return _detect_lint_command(command, self._lint_tools)
+
 
 def make_lint_cache_hook(
     cache: LintCache,
 ) -> PreToolUseHook:
     """Create a PreToolUse hook that blocks redundant lint commands.
 
-    This hook checks Bash tool invocations for lint commands (ruff check,
-    ruff format, ty check). If the working tree hasn't changed since the
-    last run of that lint type, the hook blocks the command.
+    This hook checks Bash tool invocations for lint commands using dynamic
+    tool detection via extract_tool_name(). Supports any language's lint tools
+    (eslint, golangci-lint, cargo clippy, etc.) based on the cache's
+    configured lint_tools.
+
+    If the working tree hasn't changed since the last run of that lint type,
+    the hook blocks the command.
 
     The hook also invalidates cache entries when files are written to,
     ensuring subsequent lints see the updated state.
 
     Args:
         cache: The LintCache instance to use for tracking lint runs.
+            The cache's lint_tools set determines which commands are cached.
 
     Returns:
         An async hook function for ClaudeAgentOptions.hooks["PreToolUse"].
@@ -290,7 +339,7 @@ def make_lint_cache_hook(
         # Check for Bash tool with lint command
         if tool_name.lower() in BASH_TOOL_NAMES:
             command = tool_input.get("command", "")
-            lint_type = _detect_lint_command(command)
+            lint_type = cache.detect_lint_command(command)
             if lint_type:
                 # Don't block compound commands - only block simple lint commands
                 # This ensures "ruff check . && pytest" runs the test portion

@@ -30,7 +30,7 @@ from .file_cache import (
     make_file_read_cache_hook,
 )
 from .lint_cache import (
-    LINT_COMMAND_PATTERNS,
+    DEFAULT_LINT_TOOLS,
     LintCache,
     LintCacheEntry,
     _detect_lint_command,
@@ -51,10 +51,10 @@ from src.infra.mcp import MORPH_DISALLOWED_TOOLS
 __all__ = [
     "BASH_TOOL_NAMES",
     "DANGEROUS_PATTERNS",
+    "DEFAULT_LINT_TOOLS",
     "DESTRUCTIVE_GIT_PATTERNS",
     "FILE_PATH_KEYS",
     "FILE_WRITE_TOOLS",
-    "LINT_COMMAND_PATTERNS",
     "MORPH_DISALLOWED_TOOLS",
     "SAFE_GIT_ALTERNATIVES",
     "CachedFileInfo",

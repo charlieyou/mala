@@ -793,60 +793,92 @@ class TestMakeFileReadCacheHook:
 
 
 class TestDetectLintCommand:
-    """Tests for the _detect_lint_command function."""
+    """Tests for the _detect_lint_command function and LintCache.detect_lint_command.
 
-    def test_detects_ruff_check(self) -> None:
-        """Should detect ruff check commands."""
+    The detection uses extract_tool_name to dynamically extract tool names
+    from commands, making it language-agnostic (supports eslint, golangci-lint, etc.).
+    """
+
+    def test_detects_ruff(self) -> None:
+        """Should detect ruff commands."""
+        from src.infra.hooks import DEFAULT_LINT_TOOLS, _detect_lint_command
+
+        assert _detect_lint_command("uvx ruff check .", DEFAULT_LINT_TOOLS) == "ruff"
+        assert _detect_lint_command("ruff check src/", DEFAULT_LINT_TOOLS) == "ruff"
+        assert _detect_lint_command("uvx ruff format .", DEFAULT_LINT_TOOLS) == "ruff"
+        assert (
+            _detect_lint_command("ruff format --check .", DEFAULT_LINT_TOOLS) == "ruff"
+        )
+
+    def test_detects_ty(self) -> None:
+        """Should detect ty commands."""
+        from src.infra.hooks import DEFAULT_LINT_TOOLS, _detect_lint_command
+
+        assert _detect_lint_command("uvx ty check", DEFAULT_LINT_TOOLS) == "ty"
+        assert _detect_lint_command("ty check src/", DEFAULT_LINT_TOOLS) == "ty"
+
+    def test_detects_eslint(self) -> None:
+        """Should detect eslint commands."""
+        from src.infra.hooks import DEFAULT_LINT_TOOLS, _detect_lint_command
+
+        assert _detect_lint_command("npx eslint .", DEFAULT_LINT_TOOLS) == "eslint"
+        assert _detect_lint_command("eslint src/", DEFAULT_LINT_TOOLS) == "eslint"
+        assert (
+            _detect_lint_command("npx eslint --fix .", DEFAULT_LINT_TOOLS) == "eslint"
+        )
+
+    def test_detects_golangci_lint(self) -> None:
+        """Should detect golangci-lint commands."""
+        from src.infra.hooks import DEFAULT_LINT_TOOLS, _detect_lint_command
+
+        assert (
+            _detect_lint_command("golangci-lint run", DEFAULT_LINT_TOOLS)
+            == "golangci-lint"
+        )
+        assert (
+            _detect_lint_command("golangci-lint run ./...", DEFAULT_LINT_TOOLS)
+            == "golangci-lint"
+        )
+
+    def test_detects_custom_lint_tools(self) -> None:
+        """Should detect custom lint tools when configured."""
         from src.infra.hooks import _detect_lint_command
 
-        assert _detect_lint_command("uvx ruff check .") == "ruff_check"
-        assert _detect_lint_command("ruff check src/") == "ruff_check"
-        assert _detect_lint_command("uvx ruff check $CHANGED_FILES") == "ruff_check"
-
-    def test_detects_ruff_format(self) -> None:
-        """Should detect ruff format commands."""
-        from src.infra.hooks import _detect_lint_command
-
-        assert _detect_lint_command("uvx ruff format .") == "ruff_format"
-        assert _detect_lint_command("ruff format --check .") == "ruff_format"
-        assert _detect_lint_command("uvx ruff format $CHANGED_FILES") == "ruff_format"
-
-    def test_detects_ty_check(self) -> None:
-        """Should detect ty check commands."""
-        from src.infra.hooks import _detect_lint_command
-
-        assert _detect_lint_command("uvx ty check") == "ty_check"
-        assert _detect_lint_command("ty check src/") == "ty_check"
-        assert _detect_lint_command("uvx ty check $CHANGED_FILES") == "ty_check"
+        custom_tools = frozenset({"mypy", "flake8", "cargo clippy"})
+        assert _detect_lint_command("mypy src/", custom_tools) == "mypy"
+        assert _detect_lint_command("flake8 .", custom_tools) == "flake8"
+        assert (
+            _detect_lint_command("cargo clippy -- -D warnings", custom_tools)
+            == "cargo clippy"
+        )
 
     def test_returns_none_for_non_lint_commands(self) -> None:
         """Should return None for non-lint commands."""
-        from src.infra.hooks import _detect_lint_command
+        from src.infra.hooks import DEFAULT_LINT_TOOLS, _detect_lint_command
 
-        assert _detect_lint_command("git status") is None
-        assert _detect_lint_command("uv run pytest") is None
-        assert _detect_lint_command("ls -la") is None
-        assert _detect_lint_command("echo hello") is None
+        assert _detect_lint_command("git status", DEFAULT_LINT_TOOLS) is None
+        assert _detect_lint_command("uv run pytest", DEFAULT_LINT_TOOLS) is None
+        assert _detect_lint_command("ls -la", DEFAULT_LINT_TOOLS) is None
+        assert _detect_lint_command("echo hello", DEFAULT_LINT_TOOLS) is None
 
-    def test_case_insensitive(self) -> None:
-        """Should be case insensitive."""
-        from src.infra.hooks import _detect_lint_command
+    def test_lint_cache_detect_method(self, tmp_path: Path) -> None:
+        """LintCache.detect_lint_command should use configured lint tools."""
+        from src.infra.hooks import LintCache
 
-        assert _detect_lint_command("RUFF CHECK .") == "ruff_check"
-        assert _detect_lint_command("Ruff Format .") == "ruff_format"
-        assert _detect_lint_command("TY CHECK") == "ty_check"
+        # Test with default lint tools
+        cache = LintCache(repo_path=tmp_path)
+        assert cache.detect_lint_command("uvx ruff check .") == "ruff"
+        assert cache.detect_lint_command("npx eslint .") == "eslint"
+        assert cache.detect_lint_command("git status") is None
 
-    def test_distinguishes_ruff_check_from_format(self) -> None:
-        """Should correctly distinguish ruff check from ruff format."""
-        from src.infra.hooks import _detect_lint_command
-
-        # format should not be detected as check
-        assert _detect_lint_command("ruff format .") == "ruff_format"
-        assert _detect_lint_command("ruff format .") != "ruff_check"
-
-        # check should not be detected as format
-        assert _detect_lint_command("ruff check .") == "ruff_check"
-        assert _detect_lint_command("ruff check .") != "ruff_format"
+        # Test with custom lint tools
+        custom_cache = LintCache(
+            repo_path=tmp_path, lint_tools={"mypy", "cargo clippy"}
+        )
+        assert custom_cache.detect_lint_command("mypy src/") == "mypy"
+        assert custom_cache.detect_lint_command("cargo clippy") == "cargo clippy"
+        # ruff not in custom tools, should return None
+        assert custom_cache.detect_lint_command("uvx ruff check .") is None
 
 
 class TestLintCache:
@@ -883,7 +915,7 @@ class TestLintCache:
         )
 
         cache = LintCache(repo_path=tmp_path)
-        is_redundant, message = cache.check_and_update("ruff_check")
+        is_redundant, message = cache.check_and_update("ruff")
 
         assert is_redundant is False
         assert message == ""
@@ -923,15 +955,15 @@ class TestLintCache:
         cache = LintCache(repo_path=tmp_path)
 
         # First lint - allowed
-        is_redundant_first, _ = cache.check_and_update("ruff_check")
+        is_redundant_first, _ = cache.check_and_update("ruff")
         assert is_redundant_first is False
 
         # Mark success after lint passes
-        cache.mark_success("ruff_check")
+        cache.mark_success("ruff")
         assert cache.cache_size == 1
 
         # Second lint - blocked (cached success)
-        is_redundant, message = cache.check_and_update("ruff_check")
+        is_redundant, message = cache.check_and_update("ruff")
 
         assert is_redundant is True
         assert "no changes" in message.lower()
@@ -971,13 +1003,13 @@ class TestLintCache:
         cache = LintCache(repo_path=tmp_path)
 
         # First lint
-        cache.check_and_update("ruff_check")
+        cache.check_and_update("ruff")
 
         # Modify file (creates uncommitted change)
         test_file.write_text("print('world')")
 
         # Second lint after modification - should be allowed
-        is_redundant, message = cache.check_and_update("ruff_check")
+        is_redundant, message = cache.check_and_update("ruff")
 
         assert is_redundant is False
         assert message == ""
@@ -1015,20 +1047,20 @@ class TestLintCache:
         cache = LintCache(repo_path=tmp_path)
 
         # Run different lint types and mark each as successful
-        cache.check_and_update("ruff_check")
-        cache.mark_success("ruff_check")
-        cache.check_and_update("ruff_format")
-        cache.mark_success("ruff_format")
-        cache.check_and_update("ty_check")
-        cache.mark_success("ty_check")
+        cache.check_and_update("ruff")
+        cache.mark_success("ruff")
+        cache.check_and_update("eslint")
+        cache.mark_success("eslint")
+        cache.check_and_update("ty")
+        cache.mark_success("ty")
 
         # All 3 are cached after mark_success
         assert cache.cache_size == 3
 
         # Second run of each - blocked due to cached success
-        is_redundant_1, _ = cache.check_and_update("ruff_check")
-        is_redundant_2, _ = cache.check_and_update("ruff_format")
-        is_redundant_3, _ = cache.check_and_update("ty_check")
+        is_redundant_1, _ = cache.check_and_update("ruff")
+        is_redundant_2, _ = cache.check_and_update("eslint")
+        is_redundant_3, _ = cache.check_and_update("ty")
 
         assert is_redundant_1 is True
         assert is_redundant_2 is True
@@ -1066,19 +1098,19 @@ class TestLintCache:
 
         cache = LintCache(repo_path=tmp_path)
         # Mark each lint type as successful
-        cache.check_and_update("ruff_check")
-        cache.mark_success("ruff_check")
-        cache.check_and_update("ruff_format")
-        cache.mark_success("ruff_format")
-        cache.check_and_update("ty_check")
-        cache.mark_success("ty_check")
+        cache.check_and_update("ruff")
+        cache.mark_success("ruff")
+        cache.check_and_update("eslint")
+        cache.mark_success("eslint")
+        cache.check_and_update("ty")
+        cache.mark_success("ty")
         assert cache.cache_size == 3
 
-        cache.invalidate("ruff_check")
+        cache.invalidate("ruff")
         assert cache.cache_size == 2
 
-        # ruff_check should be allowed again (cache cleared)
-        is_redundant, _ = cache.check_and_update("ruff_check")
+        # ruff should be allowed again (cache cleared)
+        is_redundant, _ = cache.check_and_update("ruff")
         assert is_redundant is False
 
     def test_invalidate_all_clears_cache(self, tmp_path: Path) -> None:
@@ -1112,12 +1144,12 @@ class TestLintCache:
 
         cache = LintCache(repo_path=tmp_path)
         # Mark each lint type as successful
-        cache.check_and_update("ruff_check")
-        cache.mark_success("ruff_check")
-        cache.check_and_update("ruff_format")
-        cache.mark_success("ruff_format")
-        cache.check_and_update("ty_check")
-        cache.mark_success("ty_check")
+        cache.check_and_update("ruff")
+        cache.mark_success("ruff")
+        cache.check_and_update("eslint")
+        cache.mark_success("eslint")
+        cache.check_and_update("ty")
+        cache.mark_success("ty")
         assert cache.cache_size == 3
 
         cache.invalidate()
@@ -1131,9 +1163,9 @@ class TestLintCache:
         cache = LintCache(repo_path=tmp_path)
 
         # First lint
-        is_redundant_1, _ = cache.check_and_update("ruff_check")
+        is_redundant_1, _ = cache.check_and_update("ruff")
         # Second lint (would normally be blocked)
-        is_redundant_2, _ = cache.check_and_update("ruff_check")
+        is_redundant_2, _ = cache.check_and_update("ruff")
 
         # Both should be allowed since we can't determine git state
         assert is_redundant_1 is False
@@ -1223,8 +1255,8 @@ class TestMakeLintCacheHook:
         result = await hook(hook_input, None, context)
         assert result == {}  # Allow
 
-        # Simulate successful lint completion
-        cache.mark_success("ruff_check", "uvx ruff check .")
+        # Simulate successful lint completion (lint_type is now "ruff" via extract_tool_name)
+        cache.mark_success("ruff", "uvx ruff check .")
 
         # Second lint - blocked due to cached success
         result = await hook(hook_input, None, context)
@@ -1306,8 +1338,8 @@ class TestMakeLintCacheHook:
         result = await hook(simple_lint, None, context)
         assert result == {}  # Allow
 
-        # Simulate successful lint completion
-        cache.mark_success("ruff_check", "uvx ruff check .")
+        # Simulate successful lint completion (lint_type is now "ruff" via extract_tool_name)
+        cache.mark_success("ruff", "uvx ruff check .")
 
         # Second simple lint - blocked due to cached success
         result = await hook(simple_lint, None, context)
@@ -1370,7 +1402,7 @@ class TestMakeLintCacheHook:
         lint_input = make_hook_input("Bash", {"command": "uvx ruff check ."})
         await hook(lint_input, None, context)
         # Simulate successful lint completion
-        cache.mark_success("ruff_check", "uvx ruff check .")
+        cache.mark_success("ruff", "uvx ruff check .")
         assert cache.cache_size == 1
 
         # Write tool - should invalidate cache
@@ -1416,7 +1448,7 @@ class TestMakeLintCacheHook:
         lint_input = make_hook_input("Bash", {"command": "uvx ruff check ."})
         await hook(lint_input, None, context)
         # Simulate successful lint completion
-        cache.mark_success("ruff_check", "uvx ruff check .")
+        cache.mark_success("ruff", "uvx ruff check .")
         assert cache.cache_size == 1
 
         # Edit file - should invalidate

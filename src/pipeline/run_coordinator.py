@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING
 from src.infra.hooks import (
     FileReadCache,
     LintCache,
-    _detect_lint_command,
     block_dangerous_commands,
     block_morph_replaced_tools,
     make_file_read_cache_hook,
@@ -464,7 +463,7 @@ class RunCoordinator:
                                         )
                                     if block.name.lower() == "bash":
                                         cmd = block.input.get("command", "")
-                                        lint_type = _detect_lint_command(cmd)
+                                        lint_type = lint_cache.detect_lint_command(cmd)
                                         if lint_type:
                                             pending_lint_commands[block.id] = (
                                                 lint_type,
