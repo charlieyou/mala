@@ -763,3 +763,213 @@ class TestExplicitCommandsNullOrEmptyClearsPreset:
         # Coverage still inherited
         assert result.coverage is not None
         assert result.coverage.threshold == 85.0
+
+
+class TestProgrammaticConfigOverrides:
+    """Tests for programmatic (non-YAML) config overrides.
+
+    When configs are created programmatically (via constructor instead of from_dict),
+    _fields_set is empty. Non-None values should still override preset values.
+    This ensures programmatic configs behave correctly and don't silently inherit.
+    """
+
+    def test_programmatic_coverage_overrides_preset(self) -> None:
+        """Programmatic coverage config should override preset coverage."""
+        preset = ValidationConfig(
+            coverage=YamlCoverageConfig(
+                format="xml",
+                file="preset-coverage.xml",
+                threshold=85.0,
+            ),
+        )
+        # Programmatic config - _fields_set is empty but coverage is non-None
+        user = ValidationConfig(
+            coverage=YamlCoverageConfig(
+                format="xml",
+                file="user-coverage.xml",
+                threshold=90.0,
+            ),
+        )
+        result = merge_configs(preset, user)
+
+        # User's programmatic coverage should override preset
+        assert result.coverage is not None
+        assert result.coverage.file == "user-coverage.xml"
+        assert result.coverage.threshold == 90.0
+
+    def test_programmatic_commands_override_preset(self) -> None:
+        """Programmatic commands should override preset commands."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+                lint=CommandConfig(command="pylint"),
+            ),
+        )
+        # Programmatic config with different test command
+        user = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest -v"),
+            ),
+        )
+        result = merge_configs(preset, user)
+
+        # User's test command overrides preset
+        assert result.commands.test is not None
+        assert result.commands.test.command == "pytest -v"
+        # lint should inherit from preset (user didn't set it)
+        assert result.commands.lint is not None
+        assert result.commands.lint.command == "pylint"
+
+    def test_programmatic_code_patterns_override_preset(self) -> None:
+        """Programmatic code_patterns should override preset."""
+        preset = ValidationConfig(
+            code_patterns=("**/*.py", "**/*.pyx"),
+        )
+        # Programmatic config with different patterns
+        user = ValidationConfig(
+            code_patterns=("src/**/*.py",),
+        )
+        result = merge_configs(preset, user)
+
+        # User's patterns should override preset
+        assert result.code_patterns == ("src/**/*.py",)
+
+    def test_programmatic_config_with_multiple_fields(self) -> None:
+        """Programmatic config with multiple fields all override preset."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+            ),
+            coverage=YamlCoverageConfig(
+                format="xml",
+                file="coverage.xml",
+                threshold=80.0,
+            ),
+            code_patterns=("**/*.py",),
+        )
+        # Programmatic config overriding multiple fields
+        user = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest -v"),
+                lint=CommandConfig(command="ruff check ."),
+            ),
+            coverage=YamlCoverageConfig(
+                format="xml",
+                file="new-coverage.xml",
+                threshold=90.0,
+            ),
+            code_patterns=("src/**/*.py",),
+        )
+        result = merge_configs(preset, user)
+
+        # All user values override preset
+        assert result.commands.test is not None
+        assert result.commands.test.command == "pytest -v"
+        assert result.commands.lint is not None
+        assert result.commands.lint.command == "ruff check ."
+        assert result.coverage is not None
+        assert result.coverage.file == "new-coverage.xml"
+        assert result.coverage.threshold == 90.0
+        assert result.code_patterns == ("src/**/*.py",)
+
+    def test_docstring_example_works_correctly(self) -> None:
+        """Verify the docstring example in config_merger.py works as documented.
+
+        This matches the example from the merge_configs docstring:
+        >>> preset_cfg = ValidationConfig(
+        ...     commands=CommandsConfig(
+        ...         test=CommandConfig(command="pytest"),
+        ...         lint=CommandConfig(command="ruff check"),
+        ...     ),
+        ...     code_patterns=("**/*.py",),
+        ... )
+        >>> user_cfg = ValidationConfig(
+        ...     commands=CommandsConfig(
+        ...         test=CommandConfig(command="pytest -v"),  # override
+        ...     ),
+        ... )
+        >>> result = merge_configs(preset_cfg, user_cfg)
+        >>> result.commands.test.command
+        'pytest -v'
+        >>> result.commands.lint.command  # inherited
+        'ruff check'
+        """
+        preset_cfg = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+                lint=CommandConfig(command="ruff check"),
+            ),
+            code_patterns=("**/*.py",),
+        )
+        user_cfg = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest -v"),  # override
+            ),
+        )
+        result = merge_configs(preset_cfg, user_cfg)
+
+        assert result.commands.test is not None
+        assert result.commands.test.command == "pytest -v"
+        assert result.commands.lint is not None
+        assert result.commands.lint.command == "ruff check"
+
+    def test_programmatic_empty_commands_inherits_preset(self) -> None:
+        """Empty programmatic CommandsConfig should inherit all preset commands.
+
+        Unlike from_dict({}) which clears commands, an empty constructor
+        means "no fields set" and should inherit.
+        """
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+                lint=CommandConfig(command="ruff check ."),
+            ),
+        )
+        # Empty CommandsConfig - should inherit all commands
+        user = ValidationConfig(
+            commands=CommandsConfig(),  # No commands set
+        )
+        result = merge_configs(preset, user)
+
+        # All commands inherited
+        assert result.commands.test is not None
+        assert result.commands.test.command == "pytest"
+        assert result.commands.lint is not None
+        assert result.commands.lint.command == "ruff check ."
+
+    def test_programmatic_mixed_with_yaml_config(self) -> None:
+        """Programmatic preset with YAML-parsed user config."""
+        # Preset could be loaded programmatically (e.g., built-in presets)
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                setup=CommandConfig(command="uv sync"),
+                test=CommandConfig(command="pytest"),
+                lint=CommandConfig(command="ruff check ."),
+                typecheck=CommandConfig(command="ty check"),
+            ),
+            code_patterns=("**/*.py",),
+        )
+        # User config from YAML
+        user = ValidationConfig.from_dict(
+            {
+                "commands": {"test": "pytest -v"},
+                "coverage": {
+                    "format": "xml",
+                    "file": "coverage.xml",
+                    "threshold": 85.0,
+                },
+            }
+        )
+        result = merge_configs(preset, user)
+
+        # Test overridden
+        assert result.commands.test is not None
+        assert result.commands.test.command == "pytest -v"
+        # Others inherited
+        assert result.commands.setup is not None
+        assert result.commands.setup.command == "uv sync"
+        assert result.commands.lint is not None
+        assert result.commands.lint.command == "ruff check ."
+        # User's coverage
+        assert result.coverage is not None
+        assert result.coverage.threshold == 85.0
