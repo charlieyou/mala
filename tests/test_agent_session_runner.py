@@ -2053,3 +2053,1170 @@ class TestIdleTimeoutRetry:
             f"log_offset should be reset to 0 when session changes, "
             f"but got {gate_log_offsets[1]}"
         )
+
+
+class TestInitializeSession:
+    """Unit tests for _initialize_session helper.
+
+    Tests the session initialization logic that creates lifecycle,
+    hooks, SDK options, and mutable state for a session.
+    """
+
+    @pytest.fixture
+    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=600,
+            max_gate_retries=3,
+            max_review_retries=2,
+            morph_enabled=False,
+            review_enabled=True,
+        )
+
+    @pytest.fixture
+    def runner(self, session_config: AgentSessionConfig) -> AgentSessionRunner:
+        """Create a runner for testing initialization."""
+        return AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),
+        )
+
+    @pytest.mark.unit
+    def test_initialize_session_creates_agent_id(
+        self,
+        runner: AgentSessionRunner,
+    ) -> None:
+        """_initialize_session should create agent_id from issue_id and uuid."""
+        input_data = AgentSessionInput(
+            issue_id="test-issue-123",
+            prompt="Test prompt",
+        )
+
+        session_cfg, _ = runner._initialize_session(input_data)
+
+        # Agent ID should start with issue_id and have a UUID suffix
+        assert session_cfg.agent_id.startswith("test-issue-123-")
+        # UUID suffix is 8 hex chars
+        suffix = session_cfg.agent_id.split("-")[-1]
+        assert len(suffix) == 8
+        assert all(c in "0123456789abcdef" for c in suffix)
+
+    @pytest.mark.unit
+    def test_initialize_session_creates_lifecycle(
+        self,
+        runner: AgentSessionRunner,
+    ) -> None:
+        """_initialize_session should create lifecycle with correct config."""
+        input_data = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        _, state = runner._initialize_session(input_data)
+
+        # Lifecycle should be in INITIAL state
+        from src.domain.lifecycle import LifecycleState
+
+        assert state.lifecycle.state == LifecycleState.INITIAL
+        assert state.lifecycle.config.max_gate_retries == 3
+        assert state.lifecycle.config.max_review_retries == 2
+        assert state.lifecycle.config.review_enabled is True
+
+    @pytest.mark.unit
+    def test_initialize_session_creates_lifecycle_context(
+        self,
+        runner: AgentSessionRunner,
+    ) -> None:
+        """_initialize_session should create lifecycle context with baseline timestamp."""
+        input_data = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        _, state = runner._initialize_session(input_data)
+
+        # Context should have baseline_timestamp set
+        assert state.lifecycle_ctx.retry_state.baseline_timestamp > 0
+        # Other retry state fields should be at defaults
+        assert state.lifecycle_ctx.retry_state.gate_attempt == 1
+        assert state.lifecycle_ctx.retry_state.review_attempt == 0
+        assert state.lifecycle_ctx.retry_state.log_offset == 0
+
+    @pytest.mark.unit
+    def test_initialize_session_creates_lint_cache(
+        self,
+        runner: AgentSessionRunner,
+    ) -> None:
+        """_initialize_session should create lint cache with repo path."""
+        input_data = AgentSessionInput(
+            issue_id="test-123",
+            prompt="Test prompt",
+        )
+
+        session_cfg, _ = runner._initialize_session(input_data)
+
+        # Lint cache should be created
+        assert session_cfg.lint_cache is not None
+        # LintCache stores repo_path as _repo_path (private)
+        assert session_cfg.lint_cache._repo_path == runner.config.repo_path
+
+    @pytest.mark.unit
+    def test_initialize_session_computes_idle_timeout(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """_initialize_session should compute idle timeout from session timeout."""
+        # Test default idle timeout calculation: min(900, max(300, timeout * 0.2))
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=3000,  # 50 min -> derived = 600
+            idle_timeout_seconds=None,  # Let it be computed
+        )
+        runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
+
+        input_data = AgentSessionInput(issue_id="test-123", prompt="Test")
+        session_cfg, _ = runner._initialize_session(input_data)
+
+        # 3000 * 0.2 = 600, clamped to [300, 900] = 600
+        assert session_cfg.idle_timeout_seconds == 600.0
+
+    @pytest.mark.unit
+    def test_initialize_session_respects_idle_timeout_minimum(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """_initialize_session should clamp idle timeout to minimum 300s."""
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=600,  # 10 min -> derived = 120 < 300
+            idle_timeout_seconds=None,
+        )
+        runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
+
+        input_data = AgentSessionInput(issue_id="test-123", prompt="Test")
+        session_cfg, _ = runner._initialize_session(input_data)
+
+        # 600 * 0.2 = 120, clamped to min 300
+        assert session_cfg.idle_timeout_seconds == 300.0
+
+    @pytest.mark.unit
+    def test_initialize_session_respects_idle_timeout_maximum(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """_initialize_session should clamp idle timeout to maximum 900s."""
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=6000,  # 100 min -> derived = 1200 > 900
+            idle_timeout_seconds=None,
+        )
+        runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
+
+        input_data = AgentSessionInput(issue_id="test-123", prompt="Test")
+        session_cfg, _ = runner._initialize_session(input_data)
+
+        # 6000 * 0.2 = 1200, clamped to max 900
+        assert session_cfg.idle_timeout_seconds == 900.0
+
+    @pytest.mark.unit
+    def test_initialize_session_disables_idle_timeout_with_zero(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """_initialize_session should disable idle timeout when set to 0."""
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=600,
+            idle_timeout_seconds=0,  # Explicitly disabled
+        )
+        runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
+
+        input_data = AgentSessionInput(issue_id="test-123", prompt="Test")
+        session_cfg, _ = runner._initialize_session(input_data)
+
+        # 0 means disabled -> None
+        assert session_cfg.idle_timeout_seconds is None
+
+    @pytest.mark.unit
+    def test_initialize_session_uses_explicit_idle_timeout(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """_initialize_session should use explicit idle timeout if provided."""
+        session_config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=600,
+            idle_timeout_seconds=42.5,  # Explicit value
+        )
+        runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
+
+        input_data = AgentSessionInput(issue_id="test-123", prompt="Test")
+        session_cfg, _ = runner._initialize_session(input_data)
+
+        assert session_cfg.idle_timeout_seconds == 42.5
+
+
+class TestBuildSessionOutput:
+    """Unit tests for _build_session_output helper.
+
+    Tests the output building logic that constructs AgentSessionOutput
+    from session configuration and execution state.
+    """
+
+    @pytest.fixture
+    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=600,
+            max_gate_retries=3,
+            max_review_retries=2,
+        )
+
+    @pytest.fixture
+    def runner(self, session_config: AgentSessionConfig) -> AgentSessionRunner:
+        """Create a runner for testing output building."""
+        return AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),
+        )
+
+    @pytest.mark.unit
+    def test_build_session_output_success(
+        self,
+        runner: AgentSessionRunner,
+        tmp_path: Path,
+    ) -> None:
+        """_build_session_output should build output for successful session."""
+        from src.pipeline.agent_session_runner import (
+            SessionConfig,
+            SessionExecutionState,
+        )
+        from src.infra.hooks import LintCache
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+        )
+
+        session_cfg = SessionConfig(
+            agent_id="test-123-abc12345",
+            options={},
+            lint_cache=LintCache(repo_path=tmp_path),
+            log_file_wait_timeout=60.0,
+            log_file_poll_interval=0.5,
+            idle_timeout_seconds=300.0,
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig())
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.success = True
+        lifecycle_ctx.retry_state.gate_attempt = 1
+        lifecycle_ctx.retry_state.review_attempt = 1
+
+        log_path = tmp_path / "session.jsonl"
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            session_id="session-xyz",
+            log_path=log_path,
+            final_result="Done successfully",
+            cerberus_review_log_path="/path/to/review.log",
+        )
+
+        output = runner._build_session_output(session_cfg, state, duration=123.45)
+
+        assert output.success is True
+        assert output.summary == "Done successfully"
+        assert output.session_id == "session-xyz"
+        assert output.log_path == log_path
+        assert output.gate_attempts == 1
+        assert output.review_attempts == 1
+        assert output.duration_seconds == 123.45
+        assert output.agent_id == "test-123-abc12345"
+        assert output.review_log_path == "/path/to/review.log"
+
+    @pytest.mark.unit
+    def test_build_session_output_failure(
+        self,
+        runner: AgentSessionRunner,
+        tmp_path: Path,
+    ) -> None:
+        """_build_session_output should build output for failed session."""
+        from src.pipeline.agent_session_runner import (
+            SessionConfig,
+            SessionExecutionState,
+        )
+        from src.infra.hooks import LintCache
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+        )
+
+        session_cfg = SessionConfig(
+            agent_id="test-fail-abc",
+            options={},
+            lint_cache=LintCache(repo_path=tmp_path),
+            log_file_wait_timeout=60.0,
+            log_file_poll_interval=0.5,
+            idle_timeout_seconds=None,
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig())
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.success = False
+        lifecycle_ctx.retry_state.gate_attempt = 3
+        lifecycle_ctx.retry_state.review_attempt = 0
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            session_id=None,  # No session ID received
+            log_path=None,
+            final_result="Quality gate failed: Missing commit",
+        )
+
+        output = runner._build_session_output(session_cfg, state, duration=45.0)
+
+        assert output.success is False
+        assert output.summary == "Quality gate failed: Missing commit"
+        assert output.session_id is None
+        assert output.log_path is None
+        assert output.gate_attempts == 3
+        assert output.review_attempts == 0
+        assert output.duration_seconds == 45.0
+        assert output.agent_id == "test-fail-abc"
+
+    @pytest.mark.unit
+    def test_build_session_output_with_resolution(
+        self,
+        runner: AgentSessionRunner,
+        tmp_path: Path,
+    ) -> None:
+        """_build_session_output should include resolution if present."""
+        from src.pipeline.agent_session_runner import (
+            SessionConfig,
+            SessionExecutionState,
+        )
+        from src.infra.hooks import LintCache
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+        )
+        from src.domain.validation.spec import IssueResolution, ResolutionOutcome
+
+        session_cfg = SessionConfig(
+            agent_id="test-res-abc",
+            options={},
+            lint_cache=LintCache(repo_path=tmp_path),
+            log_file_wait_timeout=60.0,
+            log_file_poll_interval=0.5,
+            idle_timeout_seconds=None,
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig())
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.success = True
+        lifecycle_ctx.resolution = IssueResolution(
+            outcome=ResolutionOutcome.NO_CHANGE,
+            rationale="Already fixed",
+        )
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            session_id="session-res",
+            final_result="ISSUE_NO_CHANGE: Already fixed",
+        )
+
+        output = runner._build_session_output(session_cfg, state, duration=10.0)
+
+        assert output.success is True
+        assert output.resolution is not None
+        assert output.resolution.outcome == ResolutionOutcome.NO_CHANGE
+        assert output.resolution.rationale == "Already fixed"
+
+    @pytest.mark.unit
+    def test_build_session_output_with_low_priority_issues(
+        self,
+        runner: AgentSessionRunner,
+        tmp_path: Path,
+    ) -> None:
+        """_build_session_output should include low priority review issues."""
+        from src.pipeline.agent_session_runner import (
+            SessionConfig,
+            SessionExecutionState,
+        )
+        from src.infra.hooks import LintCache
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+        )
+        from src.infra.clients.cerberus_review import ReviewIssue
+
+        session_cfg = SessionConfig(
+            agent_id="test-low-abc",
+            options={},
+            lint_cache=LintCache(repo_path=tmp_path),
+            log_file_wait_timeout=60.0,
+            log_file_poll_interval=0.5,
+            idle_timeout_seconds=None,
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig())
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.success = True
+        lifecycle_ctx.low_priority_review_issues = [
+            ReviewIssue(
+                title="Minor style issue",
+                body="Consider improving style",
+                priority=2,
+                file="test.py",
+                line_start=10,
+                line_end=15,
+                reviewer="gemini",
+            ),
+        ]
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            session_id="session-low",
+            final_result="Review passed",
+        )
+
+        output = runner._build_session_output(session_cfg, state, duration=20.0)
+
+        assert output.success is True
+        assert output.low_priority_review_issues is not None
+        assert len(output.low_priority_review_issues) == 1
+        assert output.low_priority_review_issues[0].title == "Minor style issue"
+
+
+class TestHandleGateCheck:
+    """Unit tests for _handle_gate_check helper.
+
+    Tests the gate check handling logic including event emission
+    and retry prompt generation.
+    """
+
+    @pytest.fixture
+    def tmp_log_path(self, tmp_path: Path) -> Path:
+        """Create a temporary log file path."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+        return log_path
+
+    @pytest.fixture
+    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=600,
+            max_gate_retries=3,
+            max_review_retries=2,
+            review_enabled=False,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_handle_gate_check_passed(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_handle_gate_check should emit events and return no retry on pass."""
+        from src.pipeline.agent_session_runner import (
+            SessionExecutionState,
+        )
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+
+        fake_sink = FakeEventSink()
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(on_gate_check=on_gate_check)
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=False))
+        lifecycle.start()
+        lifecycle._state = LifecycleState.RUNNING_GATE
+        lifecycle_ctx = LifecycleContext()
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            session_id="session-abc",
+            log_path=tmp_log_path,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-gate", prompt="Test")
+
+        pending_query, _ = await runner._handle_gate_check(
+            input_data, state, lifecycle, lifecycle_ctx
+        )
+
+        # No retry needed
+        assert pending_query is None
+        # Gate passed events emitted
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_validation_started" in event_names
+        assert "on_gate_started" in event_names
+        assert "on_gate_passed" in event_names
+        assert "on_validation_result" in event_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_handle_gate_check_failed_with_retry(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_handle_gate_check should return retry query on failure with retries left."""
+        from src.pipeline.agent_session_runner import (
+            SessionExecutionState,
+        )
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+
+        fake_sink = FakeEventSink()
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(
+                    passed=False,
+                    failure_reasons=["Tests failed"],
+                    commit_hash=None,
+                ),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(on_gate_check=on_gate_check)
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig(max_gate_retries=3))
+        lifecycle.start()
+        lifecycle._state = LifecycleState.RUNNING_GATE
+        lifecycle_ctx = LifecycleContext()
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            session_id="session-retry",
+            log_path=tmp_log_path,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-retry", prompt="Test")
+
+        pending_query, _ = await runner._handle_gate_check(
+            input_data, state, lifecycle, lifecycle_ctx
+        )
+
+        # Retry query should be generated
+        assert pending_query is not None
+        assert "Tests failed" in pending_query
+        # Retry event emitted
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_gate_retry" in event_names
+        assert "on_validation_result" in event_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_handle_gate_check_raises_without_callback(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_handle_gate_check should raise ValueError if callback not set."""
+        from src.pipeline.agent_session_runner import (
+            SessionExecutionState,
+        )
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),  # No on_gate_check
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig())
+        lifecycle_ctx = LifecycleContext()
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            log_path=tmp_log_path,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-err", prompt="Test")
+
+        with pytest.raises(ValueError, match="on_gate_check callback must be set"):
+            await runner._handle_gate_check(input_data, state, lifecycle, lifecycle_ctx)
+
+
+class TestHandleReviewCheck:
+    """Unit tests for _handle_review_check helper.
+
+    Tests the review check handling logic including event emission
+    and retry prompt generation.
+    """
+
+    @pytest.fixture
+    def tmp_log_path(self, tmp_path: Path) -> Path:
+        """Create a temporary log file path."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+        return log_path
+
+    @pytest.fixture
+    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=600,
+            max_gate_retries=3,
+            max_review_retries=3,
+            review_enabled=True,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_handle_review_check_passed(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_handle_review_check should emit events and return no retry on pass."""
+        from src.pipeline.agent_session_runner import (
+            SessionExecutionState,
+        )
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+        from src.infra.clients.cerberus_review import ReviewResult
+
+        fake_sink = FakeEventSink()
+
+        async def on_review_check(
+            issue_id: str,
+            description: str | None,
+            baseline: str | None,
+            session_id: str | None,
+            retry_state: RetryState,
+        ) -> ReviewResult:
+            return ReviewResult(passed=True, issues=[], parse_error=None)
+
+        callbacks = SessionCallbacks(on_review_check=on_review_check)
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        lifecycle = ImplementerLifecycle(
+            LifecycleConfig(review_enabled=True, max_review_retries=3)
+        )
+        lifecycle.start()
+        lifecycle._state = LifecycleState.RUNNING_REVIEW
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.retry_state.review_attempt = 1
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            session_id="session-review",
+            log_path=tmp_log_path,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-review", prompt="Test")
+
+        pending_query, _ = await runner._handle_review_check(
+            input_data, state, lifecycle, lifecycle_ctx
+        )
+
+        # No retry needed
+        assert pending_query is None
+        # Review passed events emitted
+        event_names = [e[0] for e in fake_sink.events]
+        # First review attempt emits gate_passed
+        assert "on_gate_passed" in event_names
+        assert "on_review_started" in event_names
+        assert "on_review_passed" in event_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_handle_review_check_failed_with_retry(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_handle_review_check should return retry query on failure with retries left."""
+        from src.pipeline.agent_session_runner import (
+            SessionExecutionState,
+        )
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+        from src.infra.clients.cerberus_review import ReviewIssue, ReviewResult
+
+        fake_sink = FakeEventSink()
+
+        async def on_review_check(
+            issue_id: str,
+            description: str | None,
+            baseline: str | None,
+            session_id: str | None,
+            retry_state: RetryState,
+        ) -> ReviewResult:
+            return ReviewResult(
+                passed=False,
+                issues=[
+                    ReviewIssue(
+                        title="Bug found",
+                        body="A bug was found",
+                        priority=1,  # P1 = blocking
+                        file="test.py",
+                        line_start=10,
+                        line_end=15,
+                        reviewer="gemini",
+                    ),
+                ],
+                parse_error=None,
+            )
+
+        callbacks = SessionCallbacks(on_review_check=on_review_check)
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        lifecycle = ImplementerLifecycle(
+            LifecycleConfig(review_enabled=True, max_review_retries=3)
+        )
+        lifecycle.start()
+        lifecycle._state = LifecycleState.RUNNING_REVIEW
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.retry_state.review_attempt = 1
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            session_id="session-rev-retry",
+            log_path=tmp_log_path,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-rev-retry", prompt="Test")
+
+        pending_query, _ = await runner._handle_review_check(
+            input_data, state, lifecycle, lifecycle_ctx
+        )
+
+        # Retry query should be generated
+        assert pending_query is not None
+        assert "Bug found" in pending_query or "test.py" in pending_query
+        # Retry event emitted
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_review_retry" in event_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_handle_review_check_skips_on_no_progress(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_handle_review_check should skip review on no-progress detection."""
+        from src.pipeline.agent_session_runner import (
+            SessionExecutionState,
+        )
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+        from src.domain.quality_gate import GateResult
+
+        fake_sink = FakeEventSink()
+
+        # on_review_check should NOT be called due to no-progress
+        review_check_called = False
+
+        async def on_review_check(
+            issue_id: str,
+            description: str | None,
+            baseline: str | None,
+            session_id: str | None,
+            retry_state: RetryState,
+        ) -> None:
+            nonlocal review_check_called
+            review_check_called = True
+            raise AssertionError("Should not be called")
+
+        def on_review_no_progress(
+            log_path: Path,
+            log_offset: int,
+            prev_commit: str | None,
+            curr_commit: str | None,
+        ) -> bool:
+            return True  # No progress detected
+
+        callbacks = SessionCallbacks(
+            on_review_check=on_review_check,  # type: ignore[arg-type]
+            on_review_no_progress=on_review_no_progress,
+        )
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        lifecycle = ImplementerLifecycle(
+            LifecycleConfig(review_enabled=True, max_review_retries=3)
+        )
+        lifecycle.start()
+        lifecycle._state = LifecycleState.RUNNING_REVIEW
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.retry_state.review_attempt = 2  # Not first attempt
+        lifecycle_ctx.last_gate_result = GateResult(
+            passed=True, failure_reasons=[], commit_hash="same-commit"
+        )
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            session_id="session-no-progress",
+            log_path=tmp_log_path,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-no-progress", prompt="Test")
+
+        pending_query, _ = await runner._handle_review_check(
+            input_data, state, lifecycle, lifecycle_ctx
+        )
+
+        # on_review_check should not have been called
+        assert not review_check_called
+        # No retry
+        assert pending_query is None
+        # Skip event emitted
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_review_skipped_no_progress" in event_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_handle_review_check_raises_without_callback(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_handle_review_check should raise ValueError if callback not set."""
+        from src.pipeline.agent_session_runner import (
+            SessionExecutionState,
+        )
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),  # No on_review_check
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig())
+        lifecycle.start()
+        lifecycle._state = LifecycleState.RUNNING_REVIEW
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.retry_state.review_attempt = 1
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+            log_path=tmp_log_path,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-err", prompt="Test")
+
+        with pytest.raises(ValueError, match="on_review_check callback must be set"):
+            await runner._handle_review_check(
+                input_data, state, lifecycle, lifecycle_ctx
+            )
+
+
+class TestRunLifecycleLoop:
+    """Unit tests for _run_lifecycle_loop helper.
+
+    Tests the main lifecycle loop that drives message iteration,
+    gate checks, and review checks.
+    """
+
+    @pytest.fixture
+    def tmp_log_path(self, tmp_path: Path) -> Path:
+        """Create a temporary log file path."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+        return log_path
+
+    @pytest.fixture
+    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            max_gate_retries=3,
+            max_review_retries=2,
+            review_enabled=False,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_run_lifecycle_loop_completes_on_gate_pass(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_run_lifecycle_loop should complete when gate passes."""
+        from src.pipeline.agent_session_runner import (
+            SessionConfig,
+            SessionExecutionState,
+        )
+        from src.infra.hooks import LintCache
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+
+        fake_client = FakeSDKClient()
+        fake_factory = FakeSDKClientFactory(fake_client)
+        fake_sink = FakeEventSink()
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        session_cfg = SessionConfig(
+            agent_id="test-loop-abc",
+            options=runner._build_sdk_options([], [], {}),
+            lint_cache=LintCache(repo_path=session_config.repo_path),
+            log_file_wait_timeout=60.0,
+            log_file_poll_interval=0.5,
+            idle_timeout_seconds=None,
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=False))
+        lifecycle_ctx = LifecycleContext()
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-loop", prompt="Test prompt")
+
+        await runner._run_lifecycle_loop(input_data, session_cfg, state)
+
+        # Should complete successfully
+        assert lifecycle.state == LifecycleState.SUCCESS
+        assert lifecycle_ctx.success is True
+        assert state.session_id == "test-session-123"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_run_lifecycle_loop_fails_without_session_id(
+        self,
+        session_config: AgentSessionConfig,
+    ) -> None:
+        """_run_lifecycle_loop should fail if no session_id received."""
+        from src.pipeline.agent_session_runner import (
+            SessionConfig,
+            SessionExecutionState,
+        )
+        from src.infra.hooks import LintCache
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+
+        # Client that returns no session_id
+        no_session_result = ResultMessage(
+            subtype="result",
+            duration_ms=100,
+            duration_api_ms=50,
+            is_error=False,
+            num_turns=1,
+            session_id=None,  # type: ignore[arg-type]  # No session ID!
+            result="Done",
+        )
+        fake_client = FakeSDKClient(result_message=no_session_result)
+        fake_factory = FakeSDKClientFactory(fake_client)
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),
+            sdk_client_factory=fake_factory,
+        )
+
+        session_cfg = SessionConfig(
+            agent_id="test-no-session",
+            options=runner._build_sdk_options([], [], {}),
+            lint_cache=LintCache(repo_path=session_config.repo_path),
+            log_file_wait_timeout=60.0,
+            log_file_poll_interval=0.5,
+            idle_timeout_seconds=None,
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig())
+        lifecycle_ctx = LifecycleContext()
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-no-session", prompt="Test")
+
+        await runner._run_lifecycle_loop(input_data, session_cfg, state)
+
+        # Should fail due to missing session ID
+        assert lifecycle.state == LifecycleState.FAILED
+        assert lifecycle_ctx.success is False
+        assert "No session ID" in state.final_result
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_run_lifecycle_loop_emits_lifecycle_state_events(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_run_lifecycle_loop should emit lifecycle state change events."""
+        from src.pipeline.agent_session_runner import (
+            SessionConfig,
+            SessionExecutionState,
+        )
+        from src.infra.hooks import LintCache
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+        )
+
+        fake_client = FakeSDKClient()
+        fake_factory = FakeSDKClientFactory(fake_client)
+        fake_sink = FakeEventSink()
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=fake_factory,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        session_cfg = SessionConfig(
+            agent_id="test-events-abc",
+            options=runner._build_sdk_options([], [], {}),
+            lint_cache=LintCache(repo_path=session_config.repo_path),
+            log_file_wait_timeout=60.0,
+            log_file_poll_interval=0.5,
+            idle_timeout_seconds=None,
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=False))
+        lifecycle_ctx = LifecycleContext()
+
+        state = SessionExecutionState(
+            lifecycle=lifecycle,
+            lifecycle_ctx=lifecycle_ctx,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-events", prompt="Test")
+
+        await runner._run_lifecycle_loop(input_data, session_cfg, state)
+
+        # Verify lifecycle state events were emitted
+        lifecycle_events = [e for e in fake_sink.events if e[0] == "on_lifecycle_state"]
+        # Should have at least: PROCESSING, AWAITING_LOG
+        states_emitted = [e[1][1] for e in lifecycle_events]
+        assert "PROCESSING" in states_emitted
+        assert "AWAITING_LOG" in states_emitted
