@@ -9,9 +9,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.infra.tools.command_runner import CommandResult
+from src.domain.validation.config import YamlCoverageConfig
 from src.domain.validation.coverage import (
     CoverageResult,
     CoverageStatus,
+    check_coverage_from_config,
     check_coverage_threshold,
     get_baseline_coverage,
     is_baseline_stale,
@@ -869,3 +871,142 @@ class TestNoDecreaseMode:
         with pytest.raises(ValueError) as exc_info:
             get_baseline_coverage(report)
         assert "Invalid coverage XML" in str(exc_info.value)
+
+
+class TestCheckCoverageFromConfig:
+    """Test check_coverage_from_config function."""
+
+    def test_none_config_returns_none(self, tmp_path: Path) -> None:
+        """When config is None, should return None (skip coverage)."""
+        result = check_coverage_from_config(None, tmp_path)
+        assert result is None
+
+    def test_valid_config_passes_at_threshold(self, tmp_path: Path) -> None:
+        """Coverage exactly at threshold should pass."""
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+
+        config = YamlCoverageConfig(format="xml", file="coverage.xml", threshold=90.0)
+        result = check_coverage_from_config(config, tmp_path)
+
+        assert result is not None
+        assert result.passed is True
+        assert result.status == CoverageStatus.PASSED
+        assert result.percent == 90.0
+
+    def test_valid_config_passes_above_threshold(self, tmp_path: Path) -> None:
+        """Coverage above threshold should pass."""
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+
+        config = YamlCoverageConfig(format="xml", file="coverage.xml", threshold=85.0)
+        result = check_coverage_from_config(config, tmp_path)
+
+        assert result is not None
+        assert result.passed is True
+        assert result.status == CoverageStatus.PASSED
+        assert result.percent == 90.0
+
+    def test_valid_config_fails_below_threshold(self, tmp_path: Path) -> None:
+        """Coverage below threshold should fail."""
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_50_PERCENT)
+
+        config = YamlCoverageConfig(format="xml", file="coverage.xml", threshold=85.0)
+        result = check_coverage_from_config(config, tmp_path)
+
+        assert result is not None
+        assert result.passed is False
+        assert result.status == CoverageStatus.FAILED
+        assert result.percent == 50.0
+        assert result.failure_reason is not None
+        assert "50.0%" in result.failure_reason
+        assert "85.0%" in result.failure_reason
+
+    def test_custom_file_path(self, tmp_path: Path) -> None:
+        """Should use custom file path from config."""
+        subdir = tmp_path / "reports"
+        subdir.mkdir()
+        report = subdir / "custom-coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+
+        config = YamlCoverageConfig(
+            format="xml", file="reports/custom-coverage.xml", threshold=85.0
+        )
+        result = check_coverage_from_config(config, tmp_path)
+
+        assert result is not None
+        assert result.passed is True
+        assert result.percent == 90.0
+
+    def test_absolute_file_path(self, tmp_path: Path) -> None:
+        """Should handle absolute file paths."""
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+
+        config = YamlCoverageConfig(format="xml", file=str(report), threshold=85.0)
+        result = check_coverage_from_config(config, tmp_path)
+
+        assert result is not None
+        assert result.passed is True
+        assert result.percent == 90.0
+
+    def test_missing_coverage_file_error(self, tmp_path: Path) -> None:
+        """Missing coverage file should return error result."""
+        config = YamlCoverageConfig(
+            format="xml", file="nonexistent.xml", threshold=85.0
+        )
+        result = check_coverage_from_config(config, tmp_path)
+
+        assert result is not None
+        assert result.passed is False
+        assert result.status == CoverageStatus.ERROR
+        assert result.failure_reason is not None
+        assert "not found" in result.failure_reason
+
+    def test_invalid_xml_error(self, tmp_path: Path) -> None:
+        """Invalid XML should return error result."""
+        report = tmp_path / "coverage.xml"
+        report.write_text(INVALID_XML_SYNTAX)
+
+        config = YamlCoverageConfig(format="xml", file="coverage.xml", threshold=85.0)
+        result = check_coverage_from_config(config, tmp_path)
+
+        assert result is not None
+        assert result.passed is False
+        assert result.status == CoverageStatus.ERROR
+        assert result.failure_reason is not None
+        assert "Invalid coverage XML" in result.failure_reason
+
+    def test_threshold_zero_passes_any_coverage(self, tmp_path: Path) -> None:
+        """Threshold of 0 should pass any coverage."""
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_50_PERCENT)
+
+        config = YamlCoverageConfig(format="xml", file="coverage.xml", threshold=0.0)
+        result = check_coverage_from_config(config, tmp_path)
+
+        assert result is not None
+        assert result.passed is True
+        assert result.percent == 50.0
+
+    def test_threshold_100_requires_full_coverage(self, tmp_path: Path) -> None:
+        """Threshold of 100 should only pass 100% coverage."""
+        # Test failing case
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+
+        config = YamlCoverageConfig(format="xml", file="coverage.xml", threshold=100.0)
+        result = check_coverage_from_config(config, tmp_path)
+
+        assert result is not None
+        assert result.passed is False
+        assert result.status == CoverageStatus.FAILED
+
+        # Test passing case
+        report.write_text(VALID_COVERAGE_XML_100_PERCENT)
+        result = check_coverage_from_config(config, tmp_path)
+
+        assert result is not None
+        assert result.passed is True
+        assert result.percent == 100.0

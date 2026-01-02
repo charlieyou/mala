@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from .coverage import (
     CoverageResult,
     CoverageStatus,
+    check_coverage_from_config,
     parse_and_check_coverage,
 )
 from .e2e import E2EConfig as E2ERunnerConfig
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+    from .config import YamlCoverageConfig
     from .e2e import E2EResult
     from .result import ValidationStepResult
     from .spec import (
@@ -52,6 +54,8 @@ class ResultBuilderInput:
         log_dir: Directory for logs.
         env: Environment variables for E2E.
         baseline_percent: Baseline coverage for "no decrease" mode.
+        yaml_coverage_config: Coverage configuration from mala.yaml, or None to
+            use spec-based coverage checking (legacy mode).
     """
 
     spec: ValidationSpec
@@ -62,6 +66,7 @@ class ResultBuilderInput:
     log_dir: Path
     env: Mapping[str, str]
     baseline_percent: float | None
+    yaml_coverage_config: YamlCoverageConfig | None = None
 
 
 class SpecResultBuilder:
@@ -93,6 +98,7 @@ class SpecResultBuilder:
             log_dir=input.log_dir,
             artifacts=input.artifacts,
             baseline_percent=input.baseline_percent,
+            yaml_coverage_config=input.yaml_coverage_config,
         )
         if cov is not None and not cov.passed:
             reason = cov.failure_reason or "Coverage check failed"
@@ -137,6 +143,7 @@ class SpecResultBuilder:
         log_dir: Path,
         artifacts: ValidationArtifacts,
         baseline_percent: float | None,
+        yaml_coverage_config: YamlCoverageConfig | None = None,
     ) -> CoverageResult | None:
         """Run coverage check if enabled.
 
@@ -146,10 +153,20 @@ class SpecResultBuilder:
             log_dir: Directory for logs.
             artifacts: Artifacts to update with coverage report path.
             baseline_percent: Baseline coverage for "no decrease" mode.
+            yaml_coverage_config: Coverage configuration from mala.yaml, or None
+                to use spec-based coverage checking (legacy mode).
 
         Returns:
             CoverageResult if coverage is enabled, None otherwise.
         """
+        # If yaml_coverage_config is provided, use config-driven coverage checking
+        if yaml_coverage_config is not None:
+            coverage_result = check_coverage_from_config(yaml_coverage_config, cwd)
+            if coverage_result is not None and coverage_result.report_path:
+                artifacts.coverage_report = coverage_result.report_path
+            return coverage_result
+
+        # Legacy mode: use spec.coverage
         if not spec.coverage.enabled:
             return None
 

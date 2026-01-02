@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from src.infra.tools.command_runner import run_command
 
+from .config import YamlCoverageConfig  # noqa: TC001 - used at runtime
 from .spec import CommandKind
 
 if TYPE_CHECKING:
@@ -245,6 +246,44 @@ def parse_and_check_coverage(
     """
     result = parse_coverage_xml(report_path)
     return check_coverage_threshold(result, min_percent)
+
+
+def check_coverage_from_config(
+    coverage_config: YamlCoverageConfig | None,
+    cwd: Path,
+) -> CoverageResult | None:
+    """Check coverage using YamlCoverageConfig settings.
+
+    This is the primary entry point for config-driven coverage checking.
+    It uses the config's file path and threshold to perform the check.
+
+    Args:
+        coverage_config: Coverage configuration from mala.yaml, or None to skip.
+        cwd: Working directory to resolve relative paths against.
+
+    Returns:
+        CoverageResult if coverage_config is provided, None if coverage is disabled.
+        When the coverage file is missing, returns CoverageResult with ERROR status.
+    """
+    if coverage_config is None:
+        return None
+
+    # Resolve file path against cwd
+    report_path = Path(coverage_config.file)
+    if not report_path.is_absolute():
+        report_path = cwd / report_path
+
+    # Check for missing coverage file
+    if not report_path.exists():
+        return CoverageResult(
+            percent=None,
+            passed=False,
+            status=CoverageStatus.ERROR,
+            report_path=report_path,
+            failure_reason=f"Coverage report not found: {report_path}",
+        )
+
+    return parse_and_check_coverage(report_path, coverage_config.threshold)
 
 
 def get_baseline_coverage(report_path: Path) -> float | None:
