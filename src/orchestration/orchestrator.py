@@ -488,7 +488,7 @@ class MalaOrchestrator:
         tasks: list[asyncio.Task[IssueResult]] = []
 
         for issue_id in issue_ids:
-            # Skip if already completed or failed
+            # Skip if already failed (remediation issues are freshly created, so won't be completed)
             if issue_id in self.failed_issues:
                 continue
 
