@@ -1,0 +1,15 @@
+# Config with custom timeout values
+commands:
+  setup:
+    command: "uv sync --all-extras"
+    timeout: 300
+  test:
+    command: "uv run pytest -v"
+    timeout: 600
+  lint: "ruff check ."
+
+coverage:
+  format: xml
+  file: coverage.xml
+  threshold: 85
+  timeout: 180

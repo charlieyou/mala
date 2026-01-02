@@ -8,15 +8,14 @@ This module provides:
 - IssueResolution: how an issue was resolved (re-exported from models)
 - Code vs docs classification helper
 - Disable list handling for spec omissions
-- Repo type detection for conditional validation
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-import re
 from typing import TYPE_CHECKING, Literal
 
 # Re-export shared types from models for backward compatibility
@@ -30,12 +29,7 @@ from src.core.models import (
 if TYPE_CHECKING:
     from re import Pattern
 
-
-class RepoType(Enum):
-    """Type of repository for validation purposes."""
-
-    PYTHON = "python"  # Python project with uv/pyproject.toml
-    GENERIC = "generic"  # Non-Python or unknown project type
+    from src.domain.validation.config import ValidationConfig
 
 
 class ValidationScope(Enum):
@@ -56,14 +50,20 @@ class CommandKind(Enum):
     E2E = "e2e"
 
 
+# Default timeout for validation commands in seconds
+DEFAULT_COMMAND_TIMEOUT = 120
+
+
 @dataclass(frozen=True)
 class ValidationCommand:
     """A single command in the validation pipeline.
 
     Attributes:
         name: Human-readable name (e.g., "pytest", "ruff check").
-        command: The command as a list of strings.
+        command: The command as a shell string.
         kind: Classification of the command type.
+        shell: Whether to run command in shell mode. Defaults to True.
+        timeout: Command timeout in seconds. Defaults to 120.
         detection_pattern: Compiled regex to detect this command in log evidence.
             If None, falls back to hardcoded patterns in QualityGate.
         use_test_mutex: Whether to wrap with test mutex.
@@ -71,8 +71,10 @@ class ValidationCommand:
     """
 
     name: str
-    command: list[str]
+    command: str
     kind: CommandKind
+    shell: bool = True
+    timeout: int = DEFAULT_COMMAND_TIMEOUT
     detection_pattern: Pattern[str] | None = None
     use_test_mutex: bool = False
     allow_fail: bool = False
@@ -146,6 +148,9 @@ class ValidationSpec:
         coverage: Coverage configuration.
         e2e: E2E configuration.
         scope: The validation scope.
+        code_patterns: Glob patterns for code files that trigger validation.
+        config_files: Tool config files that invalidate lint/format cache.
+        setup_files: Lock/dependency files that invalidate setup cache.
     """
 
     commands: list[ValidationCommand]
@@ -154,6 +159,9 @@ class ValidationSpec:
     require_pytest_for_code_changes: bool = True
     coverage: CoverageConfig = field(default_factory=CoverageConfig)
     e2e: E2EConfig = field(default_factory=E2EConfig)
+    code_patterns: list[str] = field(default_factory=list)
+    config_files: list[str] = field(default_factory=list)
+    setup_files: list[str] = field(default_factory=list)
 
     def commands_by_kind(self, kind: CommandKind) -> list[ValidationCommand]:
         """Return commands matching the given kind."""
@@ -172,40 +180,6 @@ CODE_EXTENSIONS = frozenset({".py", ".sh", ".toml", ".yml", ".yaml", ".json"})
 
 # Extensions that are considered documentation
 DOC_EXTENSIONS = frozenset({".md", ".rst", ".txt"})
-
-
-def detect_repo_type(repo_path: Path) -> RepoType:
-    """Detect the type of repository for validation purposes.
-
-    Checks for Python project markers to determine if Python-specific
-    validation commands (uv sync, ruff, ty, pytest) should be required.
-
-    Detection rules:
-    - pyproject.toml exists => Python
-    - uv.lock exists => Python
-    - requirements.txt exists => Python (pip-based)
-    - Otherwise => Generic
-
-    Args:
-        repo_path: Path to the repository root.
-
-    Returns:
-        RepoType indicating the detected project type.
-    """
-    # Check for uv/modern Python project
-    if (repo_path / "pyproject.toml").exists():
-        return RepoType.PYTHON
-
-    # Check for uv lock file
-    if (repo_path / "uv.lock").exists():
-        return RepoType.PYTHON
-
-    # Check for pip-based Python project
-    if (repo_path / "requirements.txt").exists():
-        return RepoType.PYTHON
-
-    # Default to generic (no Python validation required)
-    return RepoType.GENERIC
 
 
 def classify_change(file_path: str) -> Literal["code", "docs"]:
@@ -254,162 +228,104 @@ def classify_change(file_path: str) -> Literal["code", "docs"]:
 
 
 def build_validation_spec(
-    scope: ValidationScope,
+    repo_path: Path,
+    scope: ValidationScope | None = None,
     disable_validations: set[str] | None = None,
-    coverage_threshold: float | None = None,
-    repo_path: Path | None = None,
 ) -> ValidationSpec:
-    """Build a ValidationSpec from CLI inputs.
+    """Build a ValidationSpec from config files.
 
-    This implements the strict-by-default policy from quality-hardening-plan.md:
-    - All validations are ON by default
-    - Disable flags explicitly turn off validations
+    This function loads the mala.yaml configuration from the repository,
+    merges it with any preset configuration, and builds a ValidationSpec.
 
-    Repo-type aware: Python-specific commands (ruff, ty, pytest) are
-    only included when the target repo is detected as a Python project.
+    If no mala.yaml is found, returns an empty spec with no commands.
 
     Disable values:
     - "post-validate": Skip test commands entirely
     - "run-level-validate": (handled elsewhere, not here)
-    - "integration-tests": Exclude integration tests from pytest
+    - "integration-tests": (handled by config, not here)
     - "coverage": Disable coverage checking
     - "e2e": Disable E2E fixture repo test
-    - "review": (handled elsewhere, not here)
-    - "followup-on-run-validate-fail": (handled elsewhere, not here)
 
     Args:
-        scope: Whether this is per-issue or run-level validation.
+        repo_path: Path to the repository root directory.
+        scope: The validation scope. Defaults to PER_ISSUE.
         disable_validations: Set of validation types to disable.
-        coverage_threshold: Minimum coverage percentage. If None, uses "no
-            decrease" mode (baseline comparison) and passes --cov-fail-under=0
-            to override any pyproject.toml threshold.
-        repo_path: Path to the target repository. If provided, enables
-            repo-type detection to conditionally include Python commands.
 
     Returns:
-        A ValidationSpec configured according to the inputs.
+        A ValidationSpec configured according to the config files.
     """
-    disable = disable_validations or set()
+    from src.domain.validation.config import ConfigError
+    from src.domain.validation.config_loader import load_config
+    from src.domain.validation.config_merger import merge_configs
+    from src.domain.validation.preset_registry import PresetRegistry
 
-    # Detect repo type if path provided
-    is_python_repo = True  # Default to Python for backward compatibility
-    if repo_path is not None:
-        repo_type = detect_repo_type(repo_path)
-        is_python_repo = repo_type == RepoType.PYTHON
+    # Use default scope if not specified
+    if scope is None:
+        scope = ValidationScope.PER_ISSUE
+
+    disable = disable_validations or set()
 
     # Determine if we should skip tests
     skip_tests = "post-validate" in disable
 
-    # Determine if coverage is enabled early so we can use it for pytest flags
-    coverage_enabled = "coverage" not in disable and not skip_tests
+    # Try to load config from repo
+    try:
+        user_config = load_config(repo_path)
+    except ConfigError:
+        # No config file found or invalid - return empty spec
+        return ValidationSpec(
+            commands=[],
+            scope=scope,
+            require_clean_git=True,
+            require_pytest_for_code_changes=True,
+            coverage=CoverageConfig(enabled=False),
+            e2e=E2EConfig(enabled=False),
+            code_patterns=[],
+            config_files=[],
+            setup_files=[],
+        )
 
-    # Build commands list
+    # Load and merge preset if specified
+    if user_config.preset is not None:
+        registry = PresetRegistry()
+        preset_config = registry.get(user_config.preset)
+        merged_config = merge_configs(preset_config, user_config)
+    else:
+        merged_config = user_config
+
+    # Build commands list from config
     commands: list[ValidationCommand] = []
 
-    # Include setup for Python repos (unless skip_tests)
-    # uv sync --all-extras is required to install dependencies in worktree
-    if is_python_repo and not skip_tests:
-        commands.append(
-            ValidationCommand(
-                name="uv sync",
-                command=["uv", "sync", "--all-extras"],
-                kind=CommandKind.SETUP,
-                detection_pattern=re.compile(r"\buv\s+sync\b"),
-            )
-        )
+    if not skip_tests:
+        commands = _build_commands_from_config(merged_config)
 
-    # Include format/lint/typecheck for Python repos (unless skip_tests)
-    if is_python_repo and not skip_tests:
-        commands.append(
-            ValidationCommand(
-                name="ruff format",
-                command=["uvx", "ruff", "format", "--check", "."],
-                kind=CommandKind.FORMAT,
-                detection_pattern=re.compile(r"\b(uvx\s+)?ruff\s+format\b"),
-            )
-        )
+    # Determine if coverage is enabled
+    coverage_enabled = (
+        merged_config.coverage is not None
+        and "coverage" not in disable
+        and not skip_tests
+    )
 
-        commands.append(
-            ValidationCommand(
-                name="ruff check",
-                command=["uvx", "ruff", "check", "."],
-                kind=CommandKind.LINT,
-                detection_pattern=re.compile(r"\b(uvx\s+)?ruff\s+check\b"),
-            )
-        )
-
-        commands.append(
-            ValidationCommand(
-                name="ty check",
-                command=["uvx", "ty", "check"],
-                kind=CommandKind.TYPECHECK,
-                detection_pattern=re.compile(r"\b(uvx\s+)?ty\s+check\b"),
-            )
-        )
-
-    # Add pytest for Python repos (unless skipping tests)
-    if is_python_repo and not skip_tests:
-        # Start with minimal output flags to reduce token usage
-        # -q: quiet mode (only failures + summary), --tb=short: shorter tracebacks
-        # --no-header: skip header, --disable-warnings: hide warnings
-        pytest_cmd = [
-            "uv",
-            "run",
-            "pytest",
-            "-q",
-            "--tb=short",
-            "--no-header",
-            "--disable-warnings",
-            "-n",
-            "auto",
-        ]
-
-        # Add coverage flags when coverage is enabled
-        if coverage_enabled:
-            pytest_cmd.extend(
-                [
-                    "--cov=src",
-                    "--cov-report=xml",
-                    "--cov-branch",
-                ]
-            )
-            # When threshold is None (no-decrease mode), use --cov-fail-under=0
-            # to override pyproject.toml's threshold. Baseline comparison is
-            # handled by spec_runner.py.
-            if coverage_threshold is None:
-                pytest_cmd.append("--cov-fail-under=0")
-            else:
-                pytest_cmd.append(f"--cov-fail-under={coverage_threshold}")
-
-        # Select test categories (unit by default, add integration unless disabled)
-        marker_expr = "unit"
-        if "integration-tests" not in disable:
-            marker_expr = "unit or integration"
-        pytest_cmd.extend(["-m", marker_expr])
-
-        commands.append(
-            ValidationCommand(
-                name="pytest",
-                command=pytest_cmd,
-                kind=CommandKind.TEST,
-                detection_pattern=re.compile(r"\b(uv\s+run\s+)?pytest\b"),
-            )
-        )
-
-    # Configure coverage
+    # Build coverage config
     coverage_config = CoverageConfig(
         enabled=coverage_enabled,
-        min_percent=coverage_threshold,
+        min_percent=merged_config.coverage.threshold
+        if merged_config.coverage
+        else None,
         branch=True,
+        report_path=(
+            Path(merged_config.coverage.file) if merged_config.coverage else None
+        ),
     )
 
     # Configure E2E
-    # E2E is only for run-level, and only if not disabled
-    e2e_enabled = scope == ValidationScope.RUN_LEVEL and "e2e" not in disable
+    e2e_enabled = (
+        scope == ValidationScope.RUN_LEVEL
+        and "e2e" not in disable
+        and merged_config.commands.e2e is not None
+    )
     e2e_config = E2EConfig(
         enabled=e2e_enabled,
-        # Note: MORPH_API_KEY is not required here since MorphLLM is optional.
-        # The e2e runner handles missing Morph gracefully.
         required_env=[],
     )
 
@@ -420,4 +336,113 @@ def build_validation_spec(
         require_pytest_for_code_changes=True,
         coverage=coverage_config,
         e2e=e2e_config,
+        code_patterns=list(merged_config.code_patterns),
+        config_files=list(merged_config.config_files),
+        setup_files=list(merged_config.setup_files),
     )
+
+
+def _build_commands_from_config(config: ValidationConfig) -> list[ValidationCommand]:
+    """Build ValidationCommand list from a merged ValidationConfig.
+
+    Args:
+        config: The merged configuration.
+
+    Returns:
+        List of ValidationCommand instances.
+    """
+    from src.domain.validation.tool_name_extractor import extract_tool_name
+
+    commands: list[ValidationCommand] = []
+    cmds = config.commands
+
+    # Setup command
+    if cmds.setup is not None:
+        commands.append(
+            ValidationCommand(
+                name="setup",
+                command=cmds.setup.command,
+                kind=CommandKind.SETUP,
+                timeout=cmds.setup.timeout or DEFAULT_COMMAND_TIMEOUT,
+                detection_pattern=re.compile(
+                    _tool_name_to_pattern(extract_tool_name(cmds.setup.command))
+                ),
+            )
+        )
+
+    # Format command
+    if cmds.format is not None:
+        commands.append(
+            ValidationCommand(
+                name="format",
+                command=cmds.format.command,
+                kind=CommandKind.FORMAT,
+                timeout=cmds.format.timeout or DEFAULT_COMMAND_TIMEOUT,
+                detection_pattern=re.compile(
+                    _tool_name_to_pattern(extract_tool_name(cmds.format.command))
+                ),
+            )
+        )
+
+    # Lint command
+    if cmds.lint is not None:
+        commands.append(
+            ValidationCommand(
+                name="lint",
+                command=cmds.lint.command,
+                kind=CommandKind.LINT,
+                timeout=cmds.lint.timeout or DEFAULT_COMMAND_TIMEOUT,
+                detection_pattern=re.compile(
+                    _tool_name_to_pattern(extract_tool_name(cmds.lint.command))
+                ),
+            )
+        )
+
+    # Typecheck command
+    if cmds.typecheck is not None:
+        commands.append(
+            ValidationCommand(
+                name="typecheck",
+                command=cmds.typecheck.command,
+                kind=CommandKind.TYPECHECK,
+                timeout=cmds.typecheck.timeout or DEFAULT_COMMAND_TIMEOUT,
+                detection_pattern=re.compile(
+                    _tool_name_to_pattern(extract_tool_name(cmds.typecheck.command))
+                ),
+            )
+        )
+
+    # Test command
+    if cmds.test is not None:
+        commands.append(
+            ValidationCommand(
+                name="test",
+                command=cmds.test.command,
+                kind=CommandKind.TEST,
+                timeout=cmds.test.timeout or DEFAULT_COMMAND_TIMEOUT,
+                detection_pattern=re.compile(
+                    _tool_name_to_pattern(extract_tool_name(cmds.test.command))
+                ),
+            )
+        )
+
+    # E2E command (not added to regular command list, handled separately)
+    # E2E is controlled by E2EConfig.enabled, not by command presence
+
+    return commands
+
+
+def _tool_name_to_pattern(tool_name: str) -> str:
+    """Convert a tool name to a regex pattern.
+
+    Args:
+        tool_name: The tool name to convert.
+
+    Returns:
+        Regex pattern string to match the tool name.
+    """
+    if not tool_name:
+        return r"$^"  # Matches nothing
+    # Escape special regex characters in the tool name
+    escaped = re.escape(tool_name)
+    return rf"\b{escaped}\b"

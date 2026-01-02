@@ -78,7 +78,9 @@ class TestSpecDrivenParsing:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert isinstance(evidence, ValidationEvidence)
@@ -121,7 +123,9 @@ class TestSpecDrivenParsing:
         log_path.write_text(first_entry + "\n" + second_entry + "\n")
 
         gate = QualityGate(tmp_path)
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         # Offset set to after the first line
         offset = len(first_entry) + 1  # +1 for newline
@@ -154,7 +158,9 @@ class TestSpecDrivenParsing:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         assert evidence.pytest_ran is True
@@ -179,7 +185,9 @@ class TestSpecDrivenParsing:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         # Set offset to end of file
         file_size = log_path.stat().st_size
         evidence = gate.parse_validation_evidence_with_spec(
@@ -217,7 +225,9 @@ class TestSpecDrivenParsing:
     def test_handles_missing_file(self, tmp_path: Path) -> None:
         """Should handle missing log file gracefully."""
         gate = QualityGate(tmp_path)
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         nonexistent = tmp_path / "nonexistent.jsonl"
 
         evidence = gate.parse_validation_evidence_with_spec(nonexistent, spec)
@@ -256,7 +266,9 @@ class TestSpecDrivenParsing:
         log_path.write_text("\n".join(entries) + "\n")
 
         gate = QualityGate(tmp_path)
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         assert evidence.pytest_ran is True
@@ -715,7 +727,9 @@ class TestCommitBaselineCheck:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             # Return a commit that is older than the baseline
@@ -771,7 +785,9 @@ class TestCommitBaselineCheck:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             # Return a commit that is newer than the baseline
@@ -956,7 +972,9 @@ class TestScopeAwareEvidence:
     def test_per_issue_scope_does_not_require_e2e(self, tmp_path: Path) -> None:
         """Per-issue EvidenceGate should never require E2E evidence."""
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         # E2E should be disabled for per-issue scope
         assert spec.e2e.enabled is False
@@ -964,7 +982,9 @@ class TestScopeAwareEvidence:
     def test_run_level_scope_can_require_e2e(self, tmp_path: Path) -> None:
         """Run-level scope can require E2E evidence when enabled."""
 
-        spec = build_validation_spec(scope=ValidationScope.RUN_LEVEL)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.RUN_LEVEL)
 
         # E2E can be enabled for run-level scope
         assert spec.e2e.enabled is True
@@ -994,7 +1014,9 @@ class TestScopeAwareEvidence:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         # Mock git status to return clean working tree
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -1039,7 +1061,9 @@ class TestScopeAwareEvidence:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -1082,7 +1106,9 @@ class TestScopeAwareEvidence:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         result = gate.check_with_resolution(
             issue_id="test-123",
@@ -1142,7 +1168,9 @@ class TestEvidenceGateSkipsValidation:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             result = gate.check_with_resolution(
@@ -1176,7 +1204,9 @@ class TestEvidenceGateSkipsValidation:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -1214,7 +1244,9 @@ class TestEvidenceGateSkipsValidation:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             result = gate.check_with_resolution(
@@ -1264,7 +1296,9 @@ class TestClearFailureMessages:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -1303,7 +1337,9 @@ class TestClearFailureMessages:
         )
         log_path.write_text(log_content + "\n")
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -1335,7 +1371,9 @@ class TestClearFailureMessages:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -1355,7 +1393,9 @@ class TestGetRequiredEvidenceKinds:
         """Should return set of gate-required command kinds."""
         from src.domain.quality_gate import get_required_evidence_kinds
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         kinds = get_required_evidence_kinds(spec)
 
         # Per-issue spec should require TEST, LINT, FORMAT, TYPECHECK
@@ -1382,7 +1422,9 @@ class TestCheckEvidenceAgainstSpec:
             ruff_format_ran=True,
             ty_check_ran=True,
         )
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         passed, missing = check_evidence_against_spec(evidence, spec)
 
@@ -1397,7 +1439,9 @@ class TestCheckEvidenceAgainstSpec:
             ruff_format_ran=True,
             ty_check_ran=True,
         )
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         passed, missing = check_evidence_against_spec(evidence, spec)
 
@@ -1413,7 +1457,9 @@ class TestCheckEvidenceAgainstSpec:
             ty_check_ran=True,
             # No E2E evidence - should still pass for per-issue
         )
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         passed, missing = check_evidence_against_spec(evidence, spec)
 
@@ -1659,7 +1705,9 @@ class TestGitFailureHandling:
         log_path.write_text(log_content + "\n")
 
         gate = QualityGate(tmp_path)
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         result = gate.check_with_resolution("test-123", log_path, spec=spec)
 
@@ -1729,7 +1777,9 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         offset = len(first_content.encode("utf-8"))
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
@@ -1803,7 +1853,9 @@ class TestByteOffsetConsistency:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         # Calculate byte offset after first entry (including newline)
         byte_offset = len((entry_with_emoji + "\n").encode("utf-8"))
@@ -1892,7 +1944,9 @@ class TestByteOffsetConsistency:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         # Should still parse valid entries
@@ -1944,7 +1998,9 @@ class TestByteOffsetConsistency:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         # Offset way beyond file size
         evidence = gate.parse_validation_evidence_with_spec(
             log_path, spec, offset=10000
@@ -1967,7 +2023,9 @@ class TestSpecDrivenEvidencePatterns:
         ensuring evidence parsing will work for all spec commands.
         """
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         for cmd in spec.commands:
             assert cmd.detection_pattern is not None, (
@@ -1985,7 +2043,9 @@ class TestSpecDrivenEvidencePatterns:
         we must also update the pattern to match.
         """
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         for cmd in spec.commands:
             if cmd.detection_pattern is None:
@@ -2001,7 +2061,9 @@ class TestSpecDrivenEvidencePatterns:
         This ensures evidence parsing is driven from spec command definitions.
         """
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         # Create log with all commands from the spec
         log_path = tmp_path / "session.jsonl"
@@ -2047,7 +2109,7 @@ class TestSpecDrivenEvidencePatterns:
         # Create a command without detection_pattern
         cmd_without_pattern = ValidationCommand(
             name="pytest",
-            command=["uv", "run", "pytest"],
+            command="uv run pytest",
             kind=CommandKind.TEST,
             # detection_pattern=None (default)
         )
@@ -2100,7 +2162,7 @@ class TestSpecDrivenEvidencePatterns:
         # Create a spec with a custom pattern that matches "custom_test" but NOT "pytest"
         custom_test_cmd = ValidationCommand(
             name="custom_test",
-            command=["custom_test", "run"],
+            command="custom_test run",
             kind=CommandKind.TEST,
             detection_pattern=re.compile(
                 r"\bcustom_test\b"
@@ -2112,19 +2174,19 @@ class TestSpecDrivenEvidencePatterns:
                 custom_test_cmd,
                 ValidationCommand(
                     name="ruff check",
-                    command=["uvx", "ruff", "check"],
+                    command="uvx ruff check",
                     kind=CommandKind.LINT,
                     detection_pattern=re.compile(r"\bruff\s+check\b"),
                 ),
                 ValidationCommand(
                     name="ruff format",
-                    command=["uvx", "ruff", "format"],
+                    command="uvx ruff format",
                     kind=CommandKind.FORMAT,
                     detection_pattern=re.compile(r"\bruff\s+format\b"),
                 ),
                 ValidationCommand(
                     name="ty check",
-                    command=["uvx", "ty", "check"],
+                    command="uvx ty check",
                     kind=CommandKind.TYPECHECK,
                     detection_pattern=re.compile(r"\bty\s+check\b"),
                 ),
@@ -2276,7 +2338,9 @@ class TestValidationExitCodeParsing:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2356,7 +2420,9 @@ class TestValidationExitCodeParsing:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2431,7 +2497,9 @@ class TestValidationExitCodeParsing:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2506,7 +2574,9 @@ class TestValidationExitCodeParsing:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2656,7 +2726,9 @@ class TestValidationExitCodeParsing:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2704,7 +2776,9 @@ class TestAlreadyCompleteResolution:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             # Return a commit that exists (even if before baseline)
@@ -2747,7 +2821,9 @@ class TestAlreadyCompleteResolution:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             # No matching commit found
@@ -2787,7 +2863,9 @@ class TestAlreadyCompleteResolution:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         result = gate.check_with_resolution(
             issue_id="test-123",
@@ -2822,7 +2900,9 @@ class TestAlreadyCompleteResolution:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = CommandResult(
@@ -2871,7 +2951,9 @@ class TestAlreadyCompleteResolution:
 
         gate = QualityGate(tmp_path)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             # Return a commit that exists under the REFERENCED issue ID (mala-xyz)
@@ -2916,7 +2998,9 @@ class TestAlreadyCompleteResolution:
 
         gate = QualityGate(tmp_path)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             # No matching commit found
@@ -3000,7 +3084,7 @@ class TestSpecCommandChangesPropagation:
         # (stricter than the original pattern which accepts bare "pytest")
         strict_pytest_cmd = ValidationCommand(
             name="pytest",
-            command=["uv", "run", "pytest"],
+            command="uv run pytest",
             kind=CommandKind.TEST,
             detection_pattern=re.compile(
                 r"\buv\s+run\s+pytest\b"
@@ -3011,19 +3095,19 @@ class TestSpecCommandChangesPropagation:
                 strict_pytest_cmd,
                 ValidationCommand(
                     name="ruff check",
-                    command=["uvx", "ruff", "check"],
+                    command="uvx ruff check",
                     kind=CommandKind.LINT,
                     detection_pattern=re.compile(r"\bruff\s+check\b"),
                 ),
                 ValidationCommand(
                     name="ruff format",
-                    command=["uvx", "ruff", "format"],
+                    command="uvx ruff format",
                     kind=CommandKind.FORMAT,
                     detection_pattern=re.compile(r"\bruff\s+format\b"),
                 ),
                 ValidationCommand(
                     name="ty check",
-                    command=["uvx", "ty", "check"],
+                    command="uvx ty check",
                     kind=CommandKind.TYPECHECK,
                     detection_pattern=re.compile(r"\bty\s+check\b"),
                 ),
@@ -3177,7 +3261,9 @@ class TestLogProviderInjection:
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
         # Verify LogProvider is used
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         # Create a fake log file so parse_validation_evidence_with_spec doesn't exit early
         fake_log = tmp_path / "fake.jsonl"
         fake_log.touch()

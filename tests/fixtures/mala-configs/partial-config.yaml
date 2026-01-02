@@ -1,0 +1,4 @@
+# Minimal config with only some commands
+commands:
+  test: "pytest"
+  lint: "ruff check ."

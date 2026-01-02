@@ -135,10 +135,9 @@ class GateRunner:
         # Build and cache per-issue spec if not already cached
         if self.per_issue_spec is None:
             self.per_issue_spec = build_validation_spec(
+                self.repo_path,
                 scope=ValidationScope.PER_ISSUE,
                 disable_validations=self.config.disable_validations,
-                coverage_threshold=self.config.coverage_threshold,
-                repo_path=self.repo_path,
             )
         return self.per_issue_spec
 

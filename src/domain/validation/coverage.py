@@ -12,6 +12,7 @@ This module provides:
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import tempfile
 import uuid
@@ -531,7 +532,8 @@ class BaselineCoverageService:
                 )
 
             # Get pytest command and modify for baseline (override threshold to 0)
-            pytest_cmd = list(pytest_commands[0].command)
+            # Convert shell string command to list for manipulation
+            pytest_cmd = shlex.split(pytest_commands[0].command)
 
             # Replace any existing --cov-fail-under with 0
             # This ensures we capture baseline even if it's below pyproject.toml threshold

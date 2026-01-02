@@ -1,0 +1,12 @@
+# Test preset override behavior
+preset: python-uv
+
+# Override test command from preset
+commands:
+  test: "uv run pytest -v --slow"
+
+# Override coverage threshold
+coverage:
+  format: xml
+  file: coverage.xml
+  threshold: 95

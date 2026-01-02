@@ -1012,10 +1012,9 @@ class MalaOrchestrator:
             version=__version__,
         )
         self.per_issue_spec = build_validation_spec(
+            self.repo_path,
             scope=ValidationScope.PER_ISSUE,
             disable_validations=self._disabled_validations,
-            coverage_threshold=self.coverage_threshold,
-            repo_path=self.repo_path,
         )
         write_run_marker(
             run_id=run_metadata.run_id,

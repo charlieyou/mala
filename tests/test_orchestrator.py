@@ -1013,7 +1013,9 @@ class TestQualityGateValidationEvidence:
         gate = QualityGate(tmp_path)
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.pytest_ran is True
@@ -1042,7 +1044,9 @@ class TestQualityGateValidationEvidence:
         gate = QualityGate(tmp_path)
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.ruff_check_ran is True
@@ -1071,7 +1075,9 @@ class TestQualityGateValidationEvidence:
         gate = QualityGate(tmp_path)
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.ruff_format_ran is True
@@ -1100,7 +1106,9 @@ class TestQualityGateValidationEvidence:
         gate = QualityGate(tmp_path)
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
 
         assert evidence.ty_check_ran is True
@@ -1113,7 +1121,9 @@ class TestQualityGateValidationEvidence:
         nonexistent = tmp_path / "nonexistent.jsonl"
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(nonexistent, spec)
 
         assert evidence.pytest_ran is False
@@ -1227,7 +1237,9 @@ class TestQualityGateFullCheck:
 
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = make_command_result(
@@ -1266,7 +1278,9 @@ class TestQualityGateFullCheck:
 
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = make_command_result(stdout="")
@@ -1303,7 +1317,9 @@ class TestQualityGateFullCheck:
 
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = make_command_result(stdout="")
@@ -1324,7 +1340,9 @@ class TestQualityGateFullCheck:
 
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
-        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
         with patch("src.domain.quality_gate.run_command") as mock_run:
             mock_run.return_value = make_command_result(
@@ -3765,6 +3783,9 @@ class TestBaselineCommitSelection:
         log_file = log_dir / "test-session.jsonl"
         log_file.write_text('{"type": "result"}\n')
 
+        # Create mala.yaml for build_validation_spec
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
@@ -4036,6 +4057,9 @@ class TestReviewUsesIssueCommits:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / "test-session.jsonl"
         log_file.write_text('{"type": "result"}\n')
+
+        # Create mala.yaml for build_validation_spec
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
 
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -4706,7 +4730,7 @@ class TestBuildGateMetadataFromLogs:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     kind=CommandKind.TEST,
                     detection_pattern=re.compile(r"pytest"),
                 ),

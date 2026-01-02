@@ -1,0 +1,17 @@
+# Go project configuration for testing
+commands:
+  setup: "go mod download"
+  test: "go test ./..."
+  lint: "golangci-lint run"
+  format: "gofmt -l ."
+
+code_patterns:
+  - "**/*.go"
+  - "**/go.mod"
+
+config_files:
+  - ".golangci.yml"
+
+setup_files:
+  - "go.mod"
+  - "go.sum"

@@ -19,7 +19,7 @@ class ValidationStepResult:
     """Result of a single validation step."""
 
     name: str
-    command: list[str]
+    command: str
     ok: bool
     returncode: int
     stdout_tail: str = ""

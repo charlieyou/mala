@@ -68,12 +68,12 @@ class TestValidationStepResult:
     def test_basic_result(self) -> None:
         result = ValidationStepResult(
             name="test",
-            command=["pytest"],
+            command="pytest",
             ok=True,
             returncode=0,
         )
         assert result.name == "test"
-        assert result.command == ["pytest"]
+        assert result.command == "pytest"
         assert result.ok is True
         assert result.returncode == 0
         assert result.stdout_tail == ""
@@ -83,7 +83,7 @@ class TestValidationStepResult:
     def test_failed_result_with_output(self) -> None:
         result = ValidationStepResult(
             name="ruff",
-            command=["ruff", "check", "."],
+            command="ruff check .",
             ok=False,
             returncode=1,
             stdout_tail="error.py:10:1: E501 line too long",
@@ -247,7 +247,7 @@ class TestSpecValidationRunner:
             commands=[
                 ValidationCommand(
                     name="echo test",
-                    command=["echo", "hello"],
+                    command="echo hello",
                     kind=CommandKind.TEST,
                     use_test_mutex=False,
                 ),
@@ -313,17 +313,17 @@ class TestSpecValidationRunner:
             commands=[
                 ValidationCommand(
                     name="step1",
-                    command=["echo", "1"],
+                    command="echo 1",
                     kind=CommandKind.FORMAT,
                 ),
                 ValidationCommand(
                     name="step2",
-                    command=["echo", "2"],
+                    command="echo 2",
                     kind=CommandKind.LINT,
                 ),
                 ValidationCommand(
                     name="step3",
-                    command=["echo", "3"],
+                    command="echo 3",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -348,17 +348,17 @@ class TestSpecValidationRunner:
             commands=[
                 ValidationCommand(
                     name="pass1",
-                    command=["echo", "1"],
+                    command="echo 1",
                     kind=CommandKind.FORMAT,
                 ),
                 ValidationCommand(
                     name="fail2",
-                    command=["false"],
+                    command="false",
                     kind=CommandKind.LINT,
                 ),
                 ValidationCommand(
                     name="pass3",
-                    command=["echo", "3"],
+                    command="echo 3",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -404,12 +404,12 @@ class TestSpecValidationRunner:
             commands=[
                 ValidationCommand(
                     name="pass1",
-                    command=["echo", "1"],
+                    command="echo 1",
                     kind=CommandKind.FORMAT,
                 ),
                 ValidationCommand(
                     name="fail2",
-                    command=["false"],
+                    command="false",
                     kind=CommandKind.LINT,
                 ),
             ],
@@ -455,18 +455,18 @@ class TestSpecValidationRunner:
             commands=[
                 ValidationCommand(
                     name="pass1",
-                    command=["echo", "1"],
+                    command="echo 1",
                     kind=CommandKind.FORMAT,
                 ),
                 ValidationCommand(
                     name="fail2",
-                    command=["false"],
+                    command="false",
                     kind=CommandKind.LINT,
                     allow_fail=True,  # Allow this to fail
                 ),
                 ValidationCommand(
                     name="pass3",
-                    command=["echo", "3"],
+                    command="echo 3",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -506,7 +506,7 @@ class TestSpecValidationRunner:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["pytest", "-v"],
+                    command="pytest -v",
                     kind=CommandKind.TEST,
                     use_test_mutex=True,
                 ),
@@ -573,7 +573,7 @@ class TestSpecValidationRunner:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -610,7 +610,7 @@ class TestSpecValidationRunner:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -642,7 +642,7 @@ class TestSpecValidationRunner:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -799,7 +799,7 @@ class TestSpecValidationRunner:
             commands=[
                 ValidationCommand(
                     name="test",
-                    command=["echo", "test"],
+                    command="echo test",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -914,7 +914,7 @@ class TestSpecValidationRunner:
             commands=[
                 ValidationCommand(
                     name="test",
-                    command=["echo", "test"],
+                    command="echo test",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -982,7 +982,7 @@ class TestSpecValidationRunner:
             commands=[
                 ValidationCommand(
                     name="test",
-                    command=["echo", "test"],
+                    command="echo test",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -1056,7 +1056,7 @@ class TestSpecRunnerNoDecreaseMode:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["echo", "test"],
+                    command="echo test",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -1138,7 +1138,7 @@ class TestSpecRunnerNoDecreaseMode:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["echo", "test"],
+                    command="echo test",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -1218,7 +1218,7 @@ class TestSpecRunnerNoDecreaseMode:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["echo", "test"],
+                    command="echo test",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -1300,7 +1300,7 @@ class TestSpecRunnerNoDecreaseMode:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["echo", "test"],
+                    command="echo test",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -1355,7 +1355,7 @@ class TestSpecRunnerNoDecreaseMode:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["echo", "test"],
+                    command="echo test",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -1418,7 +1418,7 @@ class TestSpecRunnerBaselineRefresh:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["uv", "run", "pytest"],
+                    command="uv run pytest",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -1489,7 +1489,7 @@ class TestSpecRunnerBaselineRefresh:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["uv", "run", "pytest", "--cov=src", "--cov-report=xml"],
+                    command="uv run pytest --cov=src --cov-report=xml",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -1575,7 +1575,7 @@ class TestSpecRunnerBaselineRefresh:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["uv", "run", "pytest"],
+                    command="uv run pytest",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -1624,7 +1624,7 @@ class TestSpecRunnerBaselineRefresh:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["uv", "run", "pytest"],
+                    command="uv run pytest",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -1712,7 +1712,7 @@ class TestSpecRunnerBaselineRefresh:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["uv", "run", "pytest"],
+                    command="uv run pytest",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -1794,15 +1794,7 @@ class TestSpecRunnerBaselineRefresh:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=[
-                        "uv",
-                        "run",
-                        "pytest",
-                        "--cov=src",
-                        "-m",
-                        "e2e",
-                        "--cov-fail-under=85",
-                    ],
+                    command="uv run pytest --cov=src -m e2e --cov-fail-under=85",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -1937,7 +1929,7 @@ class TestBaselineCaptureOrder:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["echo", "test"],
+                    command="echo test",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -2050,7 +2042,7 @@ class TestBaselineCaptureOrder:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["echo", "test"],
+                    command="echo test",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -2176,7 +2168,7 @@ class TestSpecCommandExecutor:
 
         cmd = ValidationCommand(
             name="echo test",
-            command=["echo", "hello"],
+            command="echo hello",
             kind=CommandKind.TEST,
         )
 
@@ -2211,7 +2203,7 @@ class TestSpecCommandExecutor:
 
         cmd = ValidationCommand(
             name="failing cmd",
-            command=["false"],
+            command="false",
             kind=CommandKind.LINT,
         )
 
@@ -2248,18 +2240,18 @@ class TestSpecCommandExecutor:
         commands = [
             ValidationCommand(
                 name="pass1",
-                command=["echo", "1"],
+                command="echo 1",
                 kind=CommandKind.FORMAT,
             ),
             ValidationCommand(
                 name="fail2",
-                command=["false"],
+                command="false",
                 kind=CommandKind.LINT,
                 allow_fail=True,  # Allow this to fail
             ),
             ValidationCommand(
                 name="pass3",
-                command=["echo", "3"],
+                command="echo 3",
                 kind=CommandKind.TEST,
             ),
         ]
@@ -2311,18 +2303,18 @@ class TestSpecCommandExecutor:
         commands = [
             ValidationCommand(
                 name="pass1",
-                command=["echo", "1"],
+                command="echo 1",
                 kind=CommandKind.FORMAT,
             ),
             ValidationCommand(
                 name="fail2",
-                command=["false"],
+                command="false",
                 kind=CommandKind.LINT,
                 allow_fail=False,
             ),
             ValidationCommand(
                 name="pass3",
-                command=["echo", "3"],
+                command="echo 3",
                 kind=CommandKind.TEST,
             ),
         ]
@@ -2373,7 +2365,7 @@ class TestSpecCommandExecutor:
 
         cmd = ValidationCommand(
             name="test cmd",
-            command=["echo", "test"],
+            command="echo test",
             kind=CommandKind.TEST,
         )
 
@@ -2429,7 +2421,7 @@ class TestSpecCommandExecutor:
 
         cmd = ValidationCommand(
             name="ruff check",
-            command=["ruff", "check", "."],
+            command="ruff check .",
             kind=CommandKind.LINT,
         )
 
@@ -2480,7 +2472,7 @@ class TestSpecCommandExecutor:
 
         cmd = ValidationCommand(
             name="pytest",
-            command=["pytest", "-v"],
+            command="pytest -v",
             kind=CommandKind.TEST,
             use_test_mutex=True,
         )
@@ -2550,7 +2542,7 @@ class TestSpecResultBuilder:
         return [
             ValidationStepResult(
                 name="test",
-                command=["echo", "test"],
+                command="echo test",
                 ok=True,
                 returncode=0,
             )

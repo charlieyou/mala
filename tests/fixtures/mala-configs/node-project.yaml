@@ -1,0 +1,24 @@
+# Node.js project configuration for testing
+commands:
+  setup: "npm install"
+  test: "npm test"
+  lint: "npm run lint"
+  format: "npm run format:check"
+  typecheck: "npm run typecheck"
+
+coverage:
+  format: xml
+  file: coverage/coverage.xml
+  threshold: 80
+
+code_patterns:
+  - "src/**/*.ts"
+  - "src/**/*.tsx"
+
+config_files:
+  - ".eslintrc.js"
+  - "tsconfig.json"
+
+setup_files:
+  - "package.json"
+  - "package-lock.json"

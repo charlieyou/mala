@@ -47,7 +47,7 @@ def basic_spec() -> ValidationSpec:
         commands=[
             ValidationCommand(
                 name="pytest",
-                command=["pytest"],
+                command="pytest",
                 kind=CommandKind.TEST,
             ),
         ],
@@ -269,7 +269,7 @@ class TestSetupWorkspaceBaseline:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -321,7 +321,7 @@ class TestSetupWorkspaceBaseline:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     kind=CommandKind.TEST,
                 ),
             ],
@@ -378,7 +378,7 @@ class TestSetupWorkspaceErrors:
             commands=[
                 ValidationCommand(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     kind=CommandKind.TEST,
                 ),
             ],

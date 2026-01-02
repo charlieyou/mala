@@ -342,7 +342,7 @@ class TestSpecCaching:
             commands=[
                 ValidationCommand(
                     name="custom-test",
-                    command=["echo", "test"],
+                    command="echo test",
                     kind=CommandKind.TEST,
                 )
             ],

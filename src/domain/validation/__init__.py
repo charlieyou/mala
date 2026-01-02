@@ -10,7 +10,7 @@ For new code, use SpecValidationRunner with ValidationSpec:
     from src.domain.validation import SpecValidationRunner, build_validation_spec
 
     runner = SpecValidationRunner(repo_path)
-    spec = build_validation_spec(scope=ValidationScope.PER_ISSUE, ...)
+    spec = build_validation_spec(repo_path, scope=ValidationScope.PER_ISSUE, ...)
     result = await runner.run_spec(spec, context)
 """
 
@@ -47,7 +47,6 @@ from .spec import (
     CoverageConfig,
     E2EConfig,
     IssueResolution,
-    RepoType,
     ResolutionOutcome,
     ValidationArtifacts,
     ValidationCommand,
@@ -56,7 +55,6 @@ from .spec import (
     ValidationSpec,
     build_validation_spec,
     classify_change,
-    detect_repo_type,
 )
 from .worktree import (
     WorktreeConfig,
@@ -83,8 +81,6 @@ __all__ = [
     "E2ERunnerConfig",
     "E2EStatus",
     "IssueResolution",
-    # Repo type detection
-    "RepoType",
     "ResolutionOutcome",
     # Runners
     "SpecValidationRunner",
@@ -110,7 +106,6 @@ __all__ = [
     "cleanup_stale_worktrees",
     "create_worktree",
     "decode_timeout_output",
-    "detect_repo_type",
     "format_step_output",
     "get_ready_issue_id",
     "init_fixture_repo",

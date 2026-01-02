@@ -14,12 +14,14 @@ validation pipeline.
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from src.infra.io.log_output.console import Colors, log
 from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.env import SCRIPTS_DIR, get_cache_dir
-from src.infra.io.log_output.console import Colors, log
+
 from .helpers import format_step_output
 from .lint_cache import LintCache
 from .result import ValidationStepResult
@@ -265,10 +267,12 @@ class SpecCommandExecutor:
         Returns:
             ValidationStepResult with execution details.
         """
+        # Convert shell string to list for CommandRunner
+        # TODO: Task 12 will update CommandRunner to support shell strings directly
+        cmd_list = shlex.split(cmd.command)
+
         # Wrap with mutex if requested
-        full_cmd = (
-            self._wrap_with_mutex(cmd.command) if cmd.use_test_mutex else cmd.command
-        )
+        full_cmd = self._wrap_with_mutex(cmd_list) if cmd.use_test_mutex else cmd_list
 
         runner = CommandRunner(
             cwd=cwd, timeout_seconds=self.config.step_timeout_seconds
@@ -289,7 +293,7 @@ class SpecCommandExecutor:
         """Wrap a command with the test mutex script.
 
         Args:
-            cmd: The command to wrap.
+            cmd: The command to wrap as a list.
 
         Returns:
             Command prefixed with test-mutex.sh.
