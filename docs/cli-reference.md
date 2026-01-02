@@ -1,4 +1,6 @@
-# Configuration
+# CLI Reference
+
+> For project-level validation configuration (`mala.yaml`), see [Project Configuration](project-config.md).
 
 ## CLI Options
 
