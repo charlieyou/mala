@@ -80,8 +80,9 @@ class TestBuildGateMetadata:
 
         assert metadata.validation_result is not None
         assert metadata.validation_result.passed is True
-        assert "pytest" in metadata.validation_result.commands_run
-        assert "ruff check" in metadata.validation_result.commands_run
+        # Commands run uses kind.value (e.g., "test", "lint")
+        assert "test" in metadata.validation_result.commands_run
+        assert "lint" in metadata.validation_result.commands_run
         assert metadata.validation_result.commands_failed == []
 
     def test_failed_gate_result(self) -> None:
@@ -204,7 +205,8 @@ class TestBuildGateMetadataFromLogs:
         assert metadata.quality_gate_result is not None
         assert metadata.quality_gate_result.passed is True
         assert metadata.validation_result is not None
-        assert "pytest" in metadata.validation_result.commands_run
+        # Commands run uses kind.value (e.g., "test")
+        assert "test" in metadata.validation_result.commands_run
 
     def test_failure_reason_extraction(self, tmp_path: Path) -> None:
         """Should extract failure reasons from result summary."""

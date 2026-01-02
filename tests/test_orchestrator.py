@@ -2759,12 +2759,12 @@ class TestValidationResultMetadata:
         # Validation field should be populated from gate evidence
         assert issue_run.validation is not None
         assert issue_run.validation.passed is True
-        # Commands run should match what was in evidence (using command names, not kind values)
+        # Commands run should match what was in evidence (using kind.value)
         assert set(issue_run.validation.commands_run) == {
-            "pytest",
-            "ruff check",
-            "ruff format",
-            "ty check",
+            "test",
+            "lint",
+            "format",
+            "typecheck",
         }
         assert issue_run.validation.commands_failed == []
 
@@ -2876,11 +2876,12 @@ class TestValidationResultMetadata:
         # Validation metadata should derive from same evidence
         assert issue_run.validation is not None
         assert issue_run.validation.passed is False
+        # Commands run uses kind.value
         assert set(issue_run.validation.commands_run) == {
-            "pytest",
-            "ruff check",
-            "ruff format",
-            "ty check",
+            "test",
+            "lint",
+            "format",
+            "typecheck",
         }
         # Failed commands should match gate evidence
         assert issue_run.validation.commands_failed == ["ruff check"]
@@ -4589,8 +4590,9 @@ class TestBuildGateMetadata:
         assert result.quality_gate_result.evidence["commit_found"] is True
         assert result.validation_result is not None
         assert result.validation_result.passed is True
-        assert "pytest" in result.validation_result.commands_run
-        assert "ruff check" in result.validation_result.commands_run
+        # Commands run uses kind.value (e.g., "test", "lint")
+        assert "test" in result.validation_result.commands_run
+        assert "lint" in result.validation_result.commands_run
         assert result.validation_result.commands_failed == []
 
     def test_failed_gate_with_partial_evidence(self) -> None:
@@ -4623,7 +4625,9 @@ class TestBuildGateMetadata:
         assert result.quality_gate_result.evidence["commit_found"] is False
         assert result.validation_result is not None
         assert result.validation_result.passed is False
-        assert "pytest" in result.validation_result.commands_run
+        # Commands run uses kind.value (e.g., "test")
+        assert "test" in result.validation_result.commands_run
+        # Failed commands still uses extracted tool name from log parsing
         assert "pytest" in result.validation_result.commands_failed
 
     def test_empty_failure_reasons_and_missing_commit(self) -> None:

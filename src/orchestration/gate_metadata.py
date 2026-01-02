@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from src.domain.quality_gate import QUALITY_GATE_IGNORED_COMMANDS, QualityGate
+from src.domain.quality_gate import QUALITY_GATE_IGNORED_COMMANDS
 from src.infra.io.log_output.run_metadata import (
     QualityGateResult,
     ValidationResult as MetaValidationResult,
@@ -76,11 +76,9 @@ def build_gate_metadata(
 
     validation_result: MetaValidationResult | None = None
     if evidence is not None:
-        # Use KIND_TO_NAME for consistent command names with commands_failed
+        # Use kind.value for human-readable command names
         commands_run = [
-            QualityGate.KIND_TO_NAME.get(kind, kind.value)
-            for kind, ran in evidence.commands_ran.items()
-            if ran
+            kind.value for kind, ran in evidence.commands_ran.items() if ran
         ]
         # Filter to only show commands that affected the gate decision
         # (exclude ignored commands like 'uv sync')
@@ -151,11 +149,7 @@ def build_gate_metadata_from_logs(
     )
 
     # Build validation result from evidence (matches build_gate_metadata behavior)
-    commands_run = [
-        QualityGate.KIND_TO_NAME.get(kind, kind.value)
-        for kind, ran in evidence.commands_ran.items()
-        if ran
-    ]
+    commands_run = [kind.value for kind, ran in evidence.commands_ran.items() if ran]
     gate_failed_commands = [
         cmd
         for cmd in evidence.failed_commands

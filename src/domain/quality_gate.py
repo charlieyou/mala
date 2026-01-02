@@ -352,6 +352,35 @@ class QualityGate:
         # Use extract_tool_name for human-readable display (e.g., "pytest" not "uv run pytest")
         return extract_tool_name(command) if matched else None
 
+    def _match_spec_pattern_with_kinds(
+        self,
+        command: str,
+        evidence: ValidationEvidence,
+        kind_patterns: dict[CommandKind, list[re.Pattern[str]]],
+    ) -> list[CommandKind]:
+        """Check command against spec-defined patterns and return all matched kinds.
+
+        A command may match multiple kinds (e.g., "ruff" matches both LINT and FORMAT
+        patterns). This method returns all matching kinds for proper evidence tracking.
+
+        Args:
+            command: The bash command string.
+            evidence: ValidationEvidence to update.
+            kind_patterns: Mapping of CommandKind to detection patterns.
+
+        Returns:
+            List of matched CommandKinds (may be empty if no match).
+        """
+        matched_kinds: list[CommandKind] = []
+        for kind, patterns in kind_patterns.items():
+            for pattern in patterns:
+                if pattern.search(command):
+                    # Spec-driven: record any CommandKind directly
+                    evidence.commands_ran[kind] = True
+                    matched_kinds.append(kind)
+                    break  # Found match for this kind, try next kind
+        return matched_kinds
+
     def _build_spec_patterns(
         self, spec: ValidationSpec
     ) -> dict[CommandKind, list[re.Pattern[str]]]:
@@ -463,19 +492,32 @@ class QualityGate:
             return evidence
 
         kind_patterns = self._build_spec_patterns(spec)
-        tool_id_to_command: dict[str, str] = {}
-        command_failed: dict[str, bool] = {}
+        # Track tool_id → list of (CommandKind, display_name) for proper failure tracking
+        # A command may match multiple kinds (e.g., "ruff" matches LINT and FORMAT)
+        tool_id_to_info: dict[str, list[tuple[CommandKind, str]]] = {}
+        # Track failures per CommandKind (latest status wins for retries of same command)
+        kind_failed: dict[CommandKind, tuple[bool, str]] = {}
 
         for entry in self._iter_jsonl_entries(log_path, offset):
             for tool_id, command in self._parser.extract_bash_commands(entry):
-                cmd_name = self._match_spec_pattern(command, evidence, kind_patterns)
-                if cmd_name:
-                    tool_id_to_command[tool_id] = cmd_name
+                matched_kinds = self._match_spec_pattern_with_kinds(
+                    command, evidence, kind_patterns
+                )
+                if matched_kinds:
+                    cmd_name = extract_tool_name(command)
+                    tool_id_to_info[tool_id] = [
+                        (kind, cmd_name) for kind in matched_kinds
+                    ]
             for tool_use_id, is_error in self._parser.extract_tool_results(entry):
-                if tool_use_id in tool_id_to_command:
-                    command_failed[tool_id_to_command[tool_use_id]] = is_error
+                if tool_use_id in tool_id_to_info:
+                    for kind, cmd_name in tool_id_to_info[tool_use_id]:
+                        # Latest status for this CommandKind wins (allows retries to succeed)
+                        kind_failed[kind] = (is_error, cmd_name)
 
-        evidence.failed_commands = [c for c, f in command_failed.items() if f]
+        # Build failed_commands from kinds that failed, using display names
+        evidence.failed_commands = [
+            cmd_name for is_failed, cmd_name in kind_failed.values() if is_failed
+        ]
         return evidence
 
     def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
