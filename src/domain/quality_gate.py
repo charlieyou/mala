@@ -321,39 +321,6 @@ class QualityGate:
                 )
         return None
 
-    def _match_spec_pattern(
-        self,
-        command: str,
-        evidence: ValidationEvidence,
-        kind_patterns: dict[CommandKind, list[re.Pattern[str]]],
-    ) -> str | None:
-        """Check command against spec-defined patterns and update evidence.
-
-        Checks ALL patterns independently (a command may match multiple).
-        Returns the extracted tool name for failure tracking.
-
-        This method is spec-driven: any CommandKind from the spec will be
-        recorded in evidence.commands_ran without requiring code changes.
-
-        Args:
-            command: The bash command string.
-            evidence: ValidationEvidence to update.
-            kind_patterns: Mapping of CommandKind to detection patterns.
-
-        Returns:
-            Extracted tool name (for failure tracking), None if no match.
-        """
-        matched = False
-        for kind, patterns in kind_patterns.items():
-            for pattern in patterns:
-                if pattern.search(command):
-                    # Spec-driven: record any CommandKind directly
-                    evidence.commands_ran[kind] = True
-                    matched = True
-                    break  # Found match for this kind, try next kind
-        # Use extract_tool_name for human-readable display (e.g., "pytest" not "uv run pytest")
-        return extract_tool_name(command) if matched else None
-
     def _match_spec_pattern_with_kinds(
         self,
         command: str,
