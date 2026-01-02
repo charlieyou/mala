@@ -61,6 +61,13 @@ class TestCommandConfig:
         with pytest.raises(ConfigError, match="timeout must be an integer"):
             CommandConfig.from_value({"command": "pytest", "timeout": "60"})
 
+    def test_from_dict_boolean_timeout_rejected(self) -> None:
+        """Boolean timeout is rejected (bool is subclass of int)."""
+        with pytest.raises(ConfigError, match="timeout must be an integer"):
+            CommandConfig.from_value({"command": "pytest", "timeout": True})
+        with pytest.raises(ConfigError, match="timeout must be an integer"):
+            CommandConfig.from_value({"command": "pytest", "timeout": False})
+
     def test_from_invalid_type(self) -> None:
         """Non-string, non-dict value raises ConfigError."""
         with pytest.raises(ConfigError, match="must be a string or object"):
@@ -147,6 +154,17 @@ class TestYamlCoverageConfig:
         )
         assert config.threshold == 85.5
 
+    def test_boolean_threshold_rejected(self) -> None:
+        """Boolean threshold is rejected (bool is subclass of int)."""
+        with pytest.raises(ConfigError, match="threshold must be a number"):
+            YamlCoverageConfig.from_dict(
+                {"format": "xml", "file": "coverage.xml", "threshold": True}
+            )
+        with pytest.raises(ConfigError, match="threshold must be a number"):
+            YamlCoverageConfig.from_dict(
+                {"format": "xml", "file": "coverage.xml", "threshold": False}
+            )
+
     def test_empty_command_string(self) -> None:
         """Empty command string raises ConfigError."""
         with pytest.raises(ConfigError, match="command cannot be empty string"):
@@ -173,6 +191,27 @@ class TestYamlCoverageConfig:
                     "file": "coverage.xml",
                     "threshold": 80,
                     "timeout": "300",
+                }
+            )
+
+    def test_boolean_timeout_rejected(self) -> None:
+        """Boolean timeout is rejected (bool is subclass of int)."""
+        with pytest.raises(ConfigError, match="timeout must be an integer"):
+            YamlCoverageConfig.from_dict(
+                {
+                    "format": "xml",
+                    "file": "coverage.xml",
+                    "threshold": 80,
+                    "timeout": True,
+                }
+            )
+        with pytest.raises(ConfigError, match="timeout must be an integer"):
+            YamlCoverageConfig.from_dict(
+                {
+                    "format": "xml",
+                    "file": "coverage.xml",
+                    "threshold": 80,
+                    "timeout": False,
                 }
             )
 
