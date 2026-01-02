@@ -632,3 +632,134 @@ class TestMergeConfigsFieldsSetPreservation:
         # Merged commands has user's _fields_set
         assert "lint" in result.commands._fields_set
         assert "test" not in result.commands._fields_set
+
+
+class TestExplicitCommandsNullOrEmptyClearsPreset:
+    """Tests for explicit commands: null or commands: {} clearing all preset commands.
+
+    This addresses the behavior where setting `commands: null` or `commands: {}`
+    should clear all inherited preset commands, not inherit them.
+    """
+
+    def test_explicit_commands_null_clears_all_preset_commands(self) -> None:
+        """Setting commands: null clears all preset commands."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                setup=CommandConfig(command="uv sync"),
+                test=CommandConfig(command="pytest"),
+                lint=CommandConfig(command="ruff check ."),
+                format=CommandConfig(command="ruff format --check"),
+                typecheck=CommandConfig(command="ty check"),
+                e2e=CommandConfig(command="pytest -m e2e"),
+            ),
+        )
+        # User explicitly sets commands to null (simulates `commands: null` in YAML)
+        user = ValidationConfig.from_dict({"commands": None})
+        result = merge_configs(preset, user)
+
+        # All commands should be None (cleared)
+        assert result.commands.setup is None
+        assert result.commands.test is None
+        assert result.commands.lint is None
+        assert result.commands.format is None
+        assert result.commands.typecheck is None
+        assert result.commands.e2e is None
+
+    def test_explicit_commands_empty_object_clears_all_preset_commands(self) -> None:
+        """Setting commands: {} clears all preset commands."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                setup=CommandConfig(command="npm install"),
+                test=CommandConfig(command="npm test"),
+                lint=CommandConfig(command="npm run lint"),
+            ),
+        )
+        # User explicitly sets commands to empty object (simulates `commands: {}`)
+        user = ValidationConfig.from_dict({"commands": {}})
+        result = merge_configs(preset, user)
+
+        # All commands should be None (cleared)
+        assert result.commands.setup is None
+        assert result.commands.test is None
+        assert result.commands.lint is None
+        assert result.commands.format is None
+        assert result.commands.typecheck is None
+        assert result.commands.e2e is None
+
+    def test_explicit_commands_empty_with_other_fields_still_works(self) -> None:
+        """commands: {} with other fields still clears commands while preserving others."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+                lint=CommandConfig(command="ruff check ."),
+            ),
+            code_patterns=("**/*.py",),
+            coverage=YamlCoverageConfig(
+                format="xml",
+                file="coverage.xml",
+                threshold=80.0,
+            ),
+        )
+        # User explicitly sets commands to empty but provides other overrides
+        user = ValidationConfig.from_dict(
+            {
+                "commands": {},  # Clear all commands
+                "code_patterns": ["src/**/*.py"],  # Override patterns
+            }
+        )
+        result = merge_configs(preset, user)
+
+        # All commands should be None (cleared)
+        assert result.commands.setup is None
+        assert result.commands.test is None
+        assert result.commands.lint is None
+
+        # Other fields work normally
+        assert result.code_patterns == ("src/**/*.py",)  # User override
+        assert result.coverage is not None  # Inherited from preset
+        assert result.coverage.threshold == 80.0
+
+    def test_commands_with_only_one_field_still_inherits_others(self) -> None:
+        """commands with at least one field still inherits unspecified commands.
+
+        This verifies the short-circuit only applies when NO command fields are set.
+        """
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                setup=CommandConfig(command="uv sync"),
+                test=CommandConfig(command="pytest"),
+                lint=CommandConfig(command="ruff check ."),
+            ),
+        )
+        # User sets only test - other commands should still inherit
+        user = ValidationConfig.from_dict({"commands": {"test": "pytest -v"}})
+        result = merge_configs(preset, user)
+
+        # Only test is overridden; others inherit
+        assert result.commands.setup is not None
+        assert result.commands.setup.command == "uv sync"
+        assert result.commands.test is not None
+        assert result.commands.test.command == "pytest -v"
+        assert result.commands.lint is not None
+        assert result.commands.lint.command == "ruff check ."
+
+    def test_commands_null_does_not_affect_preset_coverage(self) -> None:
+        """Setting commands: null does not affect preset coverage inheritance."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+            ),
+            coverage=YamlCoverageConfig(
+                format="xml",
+                file="coverage.xml",
+                threshold=85.0,
+            ),
+        )
+        user = ValidationConfig.from_dict({"commands": None})
+        result = merge_configs(preset, user)
+
+        # Commands cleared
+        assert result.commands.test is None
+        # Coverage still inherited
+        assert result.coverage is not None
+        assert result.coverage.threshold == 85.0

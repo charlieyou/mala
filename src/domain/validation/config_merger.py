@@ -73,8 +73,11 @@ def merge_configs(
     if preset is None:
         return user
 
-    # Merge commands
-    merged_commands = _merge_commands(preset.commands, user.commands)
+    # Merge commands - check if user explicitly set commands (even to null/empty)
+    user_commands_explicitly_set = "commands" in user._fields_set
+    merged_commands = _merge_commands(
+        preset.commands, user.commands, user_commands_explicitly_set
+    )
 
     # Coverage: user replaces if explicitly set, otherwise inherit
     merged_coverage = _merge_coverage(
@@ -108,13 +111,23 @@ def merge_configs(
 def _merge_commands(
     preset: CommandsConfig,
     user: CommandsConfig,
+    user_commands_explicitly_set: bool,
 ) -> CommandsConfig:
     """Merge preset and user command configurations.
 
     For each command field:
     - If field is in user._fields_set: use user value (even if None)
     - If field is not in user._fields_set: inherit from preset
+
+    Special case: If the user explicitly set the commands field to null or
+    an empty object (i.e., user_commands_explicitly_set is True but
+    user._fields_set is empty), this clears all preset commands.
     """
+    # Short-circuit: If user explicitly set commands to null/empty (no individual
+    # command fields set), this clears all preset commands
+    if user_commands_explicitly_set and not user._fields_set:
+        return user
+
     return CommandsConfig(
         setup=_merge_command_field(preset.setup, user.setup, "setup", user._fields_set),
         test=_merge_command_field(preset.test, user.test, "test", user._fields_set),
