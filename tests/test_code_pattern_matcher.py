@@ -1,5 +1,7 @@
 """Tests for code_pattern_matcher module."""
 
+import re
+from unittest.mock import patch
 
 import pytest
 
@@ -51,15 +53,32 @@ class TestGlobToRegex:
     def test_invalid_pattern_treated_as_literal(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Test that invalid patterns are treated as literal strings with warning."""
-        # This pattern might cause regex issues after our transformation,
-        # but our implementation handles special chars properly.
-        # Let's test with a pattern that explicitly causes issues
-        # Actually, our implementation escapes all special chars, so we need
-        # to test the re.error path differently.
-        # For now, verify that normal patterns work and the function is robust.
-        regex = glob_to_regex("foo.py")
-        assert regex.match("foo.py")
+        """Test that re.error during compilation falls back to literal matching."""
+        # Mock re.compile to raise re.error on first call, simulating an invalid regex
+        original_compile = re.compile
+        call_count = 0
+
+        def mock_compile(
+            pattern: str, *args: object, **kwargs: object
+        ) -> re.Pattern[str]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First call (the constructed regex) raises error
+                raise re.error("mock regex error")
+            # Second call (the escaped fallback) succeeds
+            return original_compile(pattern)
+
+        with patch("re.compile", side_effect=mock_compile):
+            regex = glob_to_regex("test_pattern")
+
+        # Should have logged a warning
+        assert "Invalid glob pattern" in caplog.text
+        assert "mock regex error" in caplog.text
+
+        # The fallback regex should match the literal pattern
+        assert regex.match("test_pattern")
+        assert not regex.match("other_pattern")
 
 
 class TestMatchesPattern:
