@@ -445,3 +445,126 @@ class TestConvenienceFunctions:
         result = await run_command_async(["echo", "async"], cwd=tmp_path)
         assert result.ok is True
         assert "async" in result.stdout
+
+
+class TestShellMode:
+    """Test shell mode execution."""
+
+    def test_shell_mode_simple_command(self, tmp_path: Path) -> None:
+        """Test basic shell string execution."""
+        runner = CommandRunner(cwd=tmp_path)
+        result = runner.run("echo hello", shell=True)
+        assert result.ok is True
+        assert "hello" in result.stdout
+        assert result.command == "echo hello"
+
+    def test_shell_mode_with_pipe(self, tmp_path: Path) -> None:
+        """Test shell command with pipe."""
+        runner = CommandRunner(cwd=tmp_path)
+        result = runner.run("echo 'hello world' | grep hello", shell=True)
+        assert result.ok is True
+        assert "hello" in result.stdout
+
+    def test_shell_mode_with_redirect(self, tmp_path: Path) -> None:
+        """Test shell command with redirect."""
+        runner = CommandRunner(cwd=tmp_path)
+        output_file = tmp_path / "output.txt"
+        result = runner.run(f"echo 'test content' > {output_file}", shell=True)
+        assert result.ok is True
+        assert output_file.exists()
+        assert "test content" in output_file.read_text()
+
+    def test_shell_mode_exit_code_capture(self, tmp_path: Path) -> None:
+        """Test that exit codes are captured correctly in shell mode."""
+        runner = CommandRunner(cwd=tmp_path)
+        result = runner.run("exit 42", shell=True)
+        assert result.ok is False
+        assert result.returncode == 42
+
+    def test_shell_mode_stderr_capture(self, tmp_path: Path) -> None:
+        """Test stderr capture in shell mode."""
+        runner = CommandRunner(cwd=tmp_path)
+        result = runner.run("echo error >&2; exit 1", shell=True)
+        assert result.ok is False
+        assert "error" in result.stderr
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    def test_shell_mode_with_timeout(self, tmp_path: Path) -> None:
+        """Test timeout enforcement with shell commands."""
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
+        result = runner.run("sleep 10", shell=True)
+        assert result.ok is False
+        assert result.timed_out is True
+        assert result.returncode == 124
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    def test_shell_mode_kills_process_group(self, tmp_path: Path) -> None:
+        """Verify shell mode timeout kills entire process group."""
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.1)
+        # Shell spawns child that tries to write after timeout
+        result = runner.run(
+            f"(sleep 0.3; echo survived > {tmp_path}/child.txt) & sleep 10",
+            shell=True,
+        )
+        assert result.timed_out is True
+        time.sleep(0.5)
+        assert not (tmp_path / "child.txt").exists(), "Child should have been killed"
+
+    def test_shell_mode_with_env(self, tmp_path: Path) -> None:
+        """Test environment variable passing in shell mode."""
+        runner = CommandRunner(cwd=tmp_path)
+        result = runner.run("echo $MY_VAR", shell=True, env={"MY_VAR": "test_value"})
+        assert result.ok is True
+        assert "test_value" in result.stdout
+
+    def test_convenience_function_shell_mode(self, tmp_path: Path) -> None:
+        """Test run_command convenience function with shell=True."""
+        result = run_command("echo 'hello world' | wc -w", cwd=tmp_path, shell=True)
+        assert result.ok is True
+        assert "2" in result.stdout
+
+
+class TestAsyncShellMode:
+    """Test async shell mode execution."""
+
+    @pytest.mark.asyncio
+    async def test_async_shell_mode_simple(self, tmp_path: Path) -> None:
+        """Test basic async shell string execution."""
+        runner = CommandRunner(cwd=tmp_path)
+        result = await runner.run_async("echo hello", shell=True)
+        assert result.ok is True
+        assert "hello" in result.stdout
+
+    @pytest.mark.asyncio
+    async def test_async_shell_mode_with_pipe(self, tmp_path: Path) -> None:
+        """Test async shell command with pipe."""
+        runner = CommandRunner(cwd=tmp_path)
+        result = await runner.run_async("echo 'hello world' | grep hello", shell=True)
+        assert result.ok is True
+        assert "hello" in result.stdout
+
+    @pytest.mark.asyncio
+    async def test_async_shell_mode_exit_code(self, tmp_path: Path) -> None:
+        """Test exit code capture in async shell mode."""
+        runner = CommandRunner(cwd=tmp_path)
+        result = await runner.run_async("exit 42", shell=True)
+        assert result.ok is False
+        assert result.returncode == 42
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    async def test_async_shell_mode_timeout(self, tmp_path: Path) -> None:
+        """Test timeout with async shell mode."""
+        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.5)
+        result = await runner.run_async("sleep 10", shell=True)
+        assert result.ok is False
+        assert result.timed_out is True
+
+    @pytest.mark.asyncio
+    async def test_async_convenience_function_shell_mode(self, tmp_path: Path) -> None:
+        """Test run_command_async convenience function with shell=True."""
+        result = await run_command_async(
+            "echo 'hello world' | wc -w", cwd=tmp_path, shell=True
+        )
+        assert result.ok is True
+        assert "2" in result.stdout

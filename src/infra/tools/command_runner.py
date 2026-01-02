@@ -67,7 +67,7 @@ class CommandResult:
     for truncating long output.
 
     Attributes:
-        command: The command that was executed.
+        command: The command that was executed (list or shell string).
         returncode: Exit code of the command.
         stdout: Full stdout output.
         stderr: Full stderr output.
@@ -75,7 +75,7 @@ class CommandResult:
         timed_out: Whether the command was killed due to timeout.
     """
 
-    command: list[str]
+    command: list[str] | str
     returncode: int
     stdout: str = ""
     stderr: str = ""
@@ -147,10 +147,11 @@ class CommandRunner:
 
     def run(
         self,
-        cmd: list[str],
+        cmd: list[str] | str,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
         use_process_group: bool | None = None,
+        shell: bool = False,
     ) -> CommandResult:
         """Run a command synchronously.
 
@@ -159,7 +160,8 @@ class CommandRunner:
         then sends SIGKILL if still running.
 
         Args:
-            cmd: Command and arguments to run.
+            cmd: Command to run. Can be a list of strings (for non-shell mode)
+                or a shell string when shell=True.
             env: Environment variables (merged with os.environ).
             timeout: Override default timeout for this command.
             use_process_group: Whether to use process group for termination.
@@ -168,6 +170,8 @@ class CommandRunner:
                 on timeout using os.killpg(). When False, only terminates the
                 main process. Note: On Windows, process groups are not supported
                 and this parameter is ignored (always treated as False).
+            shell: If True, run command through shell (cmd should be a string).
+                Defaults to False for backwards compatibility.
 
         Returns:
             CommandResult with execution details.
@@ -192,6 +196,7 @@ class CommandRunner:
             stderr=subprocess.PIPE,
             text=True,
             start_new_session=effective_use_process_group,
+            shell=shell,
         )
 
         try:
@@ -281,10 +286,11 @@ class CommandRunner:
 
     async def run_async(
         self,
-        cmd: list[str],
+        cmd: list[str] | str,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
         use_process_group: bool | None = None,
+        shell: bool = False,
     ) -> CommandResult:
         """Run a command asynchronously.
 
@@ -293,7 +299,8 @@ class CommandRunner:
         group, waits kill_grace_seconds, then sends SIGKILL if still running.
 
         Args:
-            cmd: Command and arguments to run.
+            cmd: Command to run. Can be a list of strings (for non-shell mode)
+                or a shell string when shell=True.
             env: Environment variables (merged with os.environ).
             timeout: Override default timeout for this command.
             use_process_group: Whether to use process group for termination.
@@ -303,6 +310,8 @@ class CommandRunner:
                 terminates the main process. Note: On Windows, process groups
                 are not supported and this parameter is ignored (always treated
                 as False).
+            shell: If True, run command through shell (cmd should be a string).
+                Defaults to False for backwards compatibility.
 
         Returns:
             CommandResult with execution details.
@@ -320,14 +329,30 @@ class CommandRunner:
 
         start = time.monotonic()
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self.cwd,
-                env=merged_env,
-                start_new_session=effective_use_process_group,
-            )
+            if shell:
+                # For shell mode, use create_subprocess_shell with command as string
+                if isinstance(cmd, list):
+                    cmd = " ".join(cmd)
+                proc = await asyncio.create_subprocess_shell(
+                    cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.cwd,
+                    env=merged_env,
+                    start_new_session=effective_use_process_group,
+                )
+            else:
+                # For non-shell mode, use create_subprocess_exec
+                if isinstance(cmd, str):
+                    raise ValueError("cmd must be a list when shell=False")
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.cwd,
+                    env=merged_env,
+                    start_new_session=effective_use_process_group,
+                )
 
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -445,42 +470,50 @@ class CommandRunner:
 
 
 def run_command(
-    cmd: list[str],
+    cmd: list[str] | str,
     cwd: Path,
     env: Mapping[str, str] | None = None,
     timeout_seconds: float | None = None,
+    shell: bool = False,
 ) -> CommandResult:
     """Convenience function for running a single command.
 
     Args:
-        cmd: Command and arguments to run.
+        cmd: Command to run. Can be a list of strings (for non-shell mode)
+            or a shell string when shell=True.
         cwd: Working directory.
         env: Environment variables (merged with os.environ).
         timeout_seconds: Timeout for the command.
+        shell: If True, run command through shell (cmd should be a string).
+            Defaults to False for backwards compatibility.
 
     Returns:
         CommandResult with execution details.
     """
     runner = CommandRunner(cwd=cwd, timeout_seconds=timeout_seconds)
-    return runner.run(cmd, env=env)
+    return runner.run(cmd, env=env, shell=shell)
 
 
 async def run_command_async(
-    cmd: list[str],
+    cmd: list[str] | str,
     cwd: Path,
     env: Mapping[str, str] | None = None,
     timeout_seconds: float | None = None,
+    shell: bool = False,
 ) -> CommandResult:
     """Convenience function for running a single command asynchronously.
 
     Args:
-        cmd: Command and arguments to run.
+        cmd: Command to run. Can be a list of strings (for non-shell mode)
+            or a shell string when shell=True.
         cwd: Working directory.
         env: Environment variables (merged with os.environ).
         timeout_seconds: Timeout for the command.
+        shell: If True, run command through shell (cmd should be a string).
+            Defaults to False for backwards compatibility.
 
     Returns:
         CommandResult with execution details.
     """
     runner = CommandRunner(cwd=cwd, timeout_seconds=timeout_seconds)
-    return await runner.run_async(cmd, env=env)
+    return await runner.run_async(cmd, env=env, shell=shell)

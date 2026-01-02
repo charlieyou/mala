@@ -267,17 +267,25 @@ class SpecCommandExecutor:
         Returns:
             ValidationStepResult with execution details.
         """
-        # Convert shell string to list for CommandRunner
-        # TODO: Task 12 will update CommandRunner to support shell strings directly
-        cmd_list = shlex.split(cmd.command)
+        # Use command's timeout if specified, else fall back to config timeout
+        timeout = cmd.timeout or self.config.step_timeout_seconds
+        runner = CommandRunner(cwd=cwd, timeout_seconds=timeout)
 
-        # Wrap with mutex if requested
-        full_cmd = self._wrap_with_mutex(cmd_list) if cmd.use_test_mutex else cmd_list
-
-        runner = CommandRunner(
-            cwd=cwd, timeout_seconds=self.config.step_timeout_seconds
-        )
-        result = runner.run(full_cmd, env=env)
+        if cmd.shell:
+            # Shell mode: pass command string directly with shell=True
+            # For mutex wrapping in shell mode, prepend the script path
+            if cmd.use_test_mutex:
+                full_cmd = f"{SCRIPTS_DIR / 'test-mutex.sh'} {cmd.command}"
+            else:
+                full_cmd = cmd.command
+            result = runner.run(full_cmd, env=env, shell=True)
+        else:
+            # Non-shell mode: split command and run as list (legacy behavior)
+            cmd_list = shlex.split(cmd.command)
+            full_cmd = (
+                self._wrap_with_mutex(cmd_list) if cmd.use_test_mutex else cmd_list
+            )
+            result = runner.run(full_cmd, env=env)
 
         return ValidationStepResult(
             name=cmd.name,
