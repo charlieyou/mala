@@ -200,6 +200,8 @@ class YamlCoverageConfig:
             raise ConfigError(
                 f"Coverage file must be a string, got {type(file_val).__name__}"
             )
+        if not file_val:
+            raise ConfigError("Coverage file path cannot be empty")
 
         threshold_val = data["threshold"]
         # Reject booleans explicitly (bool is subclass of int)
