@@ -192,7 +192,7 @@ def _is_meaningful_tool(tool_name: str) -> bool:
     if not tool_name:
         return False
     # Get the base command (first word)
-    base = tool_name.split()[0] if tool_name else ""
+    base = tool_name.split()[0]
     # Skip common setup commands
     if base in _SETUP_COMMANDS:
         return False
