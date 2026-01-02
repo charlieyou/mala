@@ -332,13 +332,12 @@ class MalaOrchestrator:
     def _init_runtime_state(self) -> None:
         """Initialize runtime state that's common to both init paths.
 
-        Note: active_tasks and failed_issues are delegated to issue_coordinator
-        to maintain a single source of truth. See the corresponding properties.
+        Note: active_tasks, failed_issues, abort_run, and abort_reason are
+        delegated to issue_coordinator to maintain a single source of truth.
+        See the corresponding properties.
         """
         self.agent_ids: dict[str, str] = {}
         self.completed: list[IssueResult] = []
-        self.abort_run: bool = False
-        self.abort_reason: str | None = None
         self.session_log_paths: dict[str, Path] = {}
         self.review_log_paths: dict[str, str] = {}
         self.last_gate_results: dict[str, GateResult | GateResultProtocol] = {}
@@ -444,6 +443,20 @@ class MalaOrchestrator:
         if hasattr(self, "issue_coordinator"):
             self.issue_coordinator.config.max_issues = value
 
+    @property
+    def abort_run(self) -> bool:
+        """Whether run should abort, delegated to issue_coordinator."""
+        if not hasattr(self, "issue_coordinator"):
+            return False
+        return self.issue_coordinator.abort_run
+
+    @property
+    def abort_reason(self) -> str | None:
+        """Abort reason, delegated to issue_coordinator."""
+        if not hasattr(self, "issue_coordinator"):
+            return None
+        return self.issue_coordinator.abort_reason
+
     def _cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup)."""
         cleaned = cleanup_agent_locks(agent_id)
@@ -452,11 +465,6 @@ class MalaOrchestrator:
 
     def _request_abort(self, reason: str) -> None:
         """Signal that the current run should stop due to a fatal error."""
-        if self.abort_run:
-            return
-        self.abort_run = True
-        self.abort_reason = reason
-        # Sync with coordinator
         self.issue_coordinator.request_abort(reason)
 
     def _is_review_enabled(self) -> bool:
