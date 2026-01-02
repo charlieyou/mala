@@ -11,7 +11,8 @@ import json
 import os
 from typing import TYPE_CHECKING
 
-from src.infra.tools.env import get_lock_dir
+from src.infra.tools.env import get_cache_dir, get_lock_dir
+from .lint_cache import LintCache
 from .spec import ValidationArtifacts
 from .spec_executor import (
     ExecutorConfig,
@@ -23,6 +24,10 @@ from .spec_workspace import (
     SetupError,
     cleanup_workspace,
     setup_workspace,
+)
+from .validation_gating import (
+    should_invalidate_lint_cache,
+    should_trigger_validation,
 )
 
 if TYPE_CHECKING:
@@ -106,9 +111,36 @@ class SpecValidationRunner:
     ) -> ValidationResult:
         """Synchronous implementation of run_spec.
 
-        Uses a pipeline pattern: setup_workspace -> run_commands -> check_coverage -> run_e2e -> build_result.
+        Uses a pipeline pattern:
+        1. Check validation gating (skip if no code changes match patterns)
+        2. Invalidate caches if config/setup files changed
+        3. setup_workspace -> run_commands -> check_coverage -> run_e2e -> build_result
+
         Delegates workspace/baseline/worktree setup to spec_workspace module.
         """
+        # Step 0: Check validation gating based on changed_files and code_patterns
+        # Skip validation if no files match code_patterns (unless patterns empty)
+        if context.changed_files and not should_trigger_validation(
+            context.changed_files, spec
+        ):
+            # No matching code changes - skip validation (pass without running)
+            artifacts = ValidationArtifacts(log_dir=log_dir) if log_dir else None
+            return ValidationResult(
+                passed=True,
+                steps=[],
+                failure_reasons=[],
+                artifacts=artifacts,
+            )
+
+        # Step 0b: Invalidate lint cache if config_files changed
+        if context.changed_files and should_invalidate_lint_cache(
+            context.changed_files, spec
+        ):
+            self._invalidate_lint_cache_for_config_change()
+
+        # Note: setup_files invalidation is handled by the lint cache's git state
+        # tracking - if lock files change, the git hash will differ and cache misses
+
         # Delegate workspace setup to spec_workspace module
         try:
             workspace = setup_workspace(
@@ -145,6 +177,26 @@ class SpecValidationRunner:
             # On exception, result is None so we treat as failed (validation_passed=False)
             validation_passed = result.passed if result is not None else False
             cleanup_workspace(workspace, validation_passed)
+
+    def _invalidate_lint_cache_for_config_change(self) -> None:
+        """Invalidate lint cache when config files change.
+
+        Called when files matching config_files patterns are detected in
+        the changed files. This ensures lint/format/typecheck commands
+        run fresh when their configuration changes.
+        """
+        if not self.enable_lint_cache:
+            return
+        try:
+            cache = LintCache(
+                cache_dir=get_cache_dir(),
+                repo_path=self.repo_path,
+            )
+            cache.invalidate_all()
+        except Exception:
+            # If cache invalidation fails, continue anyway
+            # The commands will just run without cache benefit
+            pass
 
     def _run_validation_pipeline(
         self,

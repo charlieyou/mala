@@ -56,6 +56,14 @@ from .spec import (
     build_validation_spec,
     classify_change,
 )
+from .validation_gating import (
+    get_config_files_changed,
+    get_matching_code_files,
+    get_setup_files_changed,
+    should_invalidate_lint_cache,
+    should_invalidate_setup_cache,
+    should_trigger_validation,
+)
 from .worktree import (
     WorktreeConfig,
     WorktreeContext,
@@ -107,11 +115,18 @@ __all__ = [
     "create_worktree",
     "decode_timeout_output",
     "format_step_output",
+    # Validation gating
+    "get_config_files_changed",
+    "get_matching_code_files",
     "get_ready_issue_id",
+    "get_setup_files_changed",
     "init_fixture_repo",
     "parse_and_check_coverage",
     "parse_coverage_xml",
     "remove_worktree",
+    "should_invalidate_lint_cache",
+    "should_invalidate_setup_cache",
+    "should_trigger_validation",
     "tail",
     "write_fixture_repo",
 ]

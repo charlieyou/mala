@@ -321,6 +321,21 @@ class LintCache:
             del self._entries[key_str]
             self._save()
 
+    def invalidate_all(self) -> int:
+        """Invalidate all cache entries.
+
+        Unlike clear(), this removes entries but keeps the cache file,
+        ensuring consistent behavior with per-command invalidate().
+
+        Returns:
+            Number of entries invalidated.
+        """
+        count = len(self._entries)
+        if count > 0:
+            self._entries = {}
+            self._save()
+        return count
+
     def clear(self) -> None:
         """Clear the entire cache."""
         self._entries = {}
