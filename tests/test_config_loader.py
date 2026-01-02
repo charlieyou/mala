@@ -10,6 +10,7 @@ Tests the YAML configuration loading functionality including:
 """
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -286,6 +287,20 @@ class TestValidateSchema:
 
         # Should report 'alpha' first (sorted alphabetically)
         assert "Unknown field 'alpha' in mala.yaml" == str(exc_info.value)
+
+    def test_non_string_keys_do_not_cause_type_error(self) -> None:
+        """Non-string top-level keys (e.g., null, integers) raise ConfigError, not TypeError."""
+        # YAML allows non-string keys like null and integers
+        # Cast to dict[str, Any] to match function signature - this simulates
+        # what yaml.safe_load returns for malformed YAML with non-string keys
+        data: dict[str, Any] = {None: "foo", 1: "bar", "commands": {"test": "pytest"}}  # type: ignore[dict-item]
+
+        with pytest.raises(ConfigError) as exc_info:
+            _validate_schema(data)
+
+        # Should raise ConfigError (not TypeError) with consistent message
+        assert "Unknown field" in str(exc_info.value)
+        assert "in mala.yaml" in str(exc_info.value)
 
 
 class TestBuildConfig:
@@ -581,3 +596,17 @@ class TestEdgeCases:
             load_config(tmp_path)
 
         assert "code_patterns must be a list" in str(exc_info.value)
+
+    def test_non_string_top_level_keys(self, tmp_path: Path) -> None:
+        """Non-string top-level keys (null, integers) raise ConfigError, not TypeError."""
+        # YAML allows non-string keys; this tests the fix for TypeError in sorted()
+        config_file = tmp_path / "mala.yaml"
+        # null: and 1: are valid YAML keys that become None and int in Python
+        config_file.write_text("null: foo\n1: bar\ncommands:\n  test: pytest\n")
+
+        with pytest.raises(ConfigError) as exc_info:
+            load_config(tmp_path)
+
+        # Should raise ConfigError about unknown field, not TypeError
+        assert "Unknown field" in str(exc_info.value)
+        assert "in mala.yaml" in str(exc_info.value)

@@ -120,8 +120,10 @@ def _validate_schema(data: dict[str, Any]) -> None:
     """
     unknown_fields = set(data.keys()) - _ALLOWED_TOP_LEVEL_FIELDS
     if unknown_fields:
-        # Sort for consistent error messages
-        first_unknown = sorted(unknown_fields)[0]
+        # Sort for consistent error messages; convert to str to handle
+        # non-string YAML keys (e.g., null, integers) without TypeError
+        unknown_as_strs = sorted(str(k) for k in unknown_fields)
+        first_unknown = unknown_as_strs[0]
         raise ConfigError(f"Unknown field '{first_unknown}' in mala.yaml")
 
 
