@@ -106,6 +106,12 @@ setup_files:
         assert isinstance(exc_info.value, ConfigError)
         assert exc_info.value.repo_path == tmp_path
 
+    def test_missing_file_catchable_as_config_error(self, tmp_path: Path) -> None:
+        """ConfigMissingError is catchable as ConfigError for backward compatibility."""
+        # This test ensures that callers catching ConfigError will still work
+        with pytest.raises(ConfigError):
+            load_config(tmp_path)
+
     def test_invalid_yaml_syntax_error(self, tmp_path: Path) -> None:
         """Invalid YAML syntax raises ConfigError with details."""
         config_file = tmp_path / "mala.yaml"

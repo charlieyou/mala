@@ -19,6 +19,9 @@ import yaml
 
 from src.domain.validation.config import ConfigError, ValidationConfig
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 class ConfigMissingError(ConfigError):
     """Raised when the mala.yaml configuration file is not found.
@@ -32,14 +35,12 @@ class ConfigMissingError(ConfigError):
         ConfigMissingError: mala.yaml not found in /path/to/repo.
     """
 
-    def __init__(self, repo_path: "Path") -> None:
+    repo_path: Path  # Explicit class-level annotation for type checkers
+
+    def __init__(self, repo_path: Path) -> None:
         self.repo_path = repo_path
         message = f"mala.yaml not found in {repo_path}. Mala requires a configuration file to run."
         super().__init__(message)
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 # Fields allowed at the top level of mala.yaml
