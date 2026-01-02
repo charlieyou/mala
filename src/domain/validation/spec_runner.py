@@ -138,8 +138,8 @@ class SpecValidationRunner:
         ):
             self._invalidate_lint_cache_for_config_change()
 
-        # Note: setup_files invalidation is handled by the lint cache's git state
-        # tracking - if lock files change, the git hash will differ and cache misses
+        # Note: setup commands always run (not cached), so setup_files changes
+        # automatically trigger setup re-run. No explicit invalidation needed.
 
         # Delegate workspace setup to spec_workspace module
         try:
