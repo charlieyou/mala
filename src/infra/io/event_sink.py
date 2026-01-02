@@ -1545,12 +1545,12 @@ class ConsoleEventSink(BaseEventSink):
         log_verbose("->", f"State: {state}", agent_id=agent_id)
 
     def on_log_waiting(self, agent_id: str) -> None:
-        """Log waiting for session log."""
-        log("o", "Waiting for session log...", Colors.MUTED, agent_id=agent_id)
+        """Log waiting for session log (verbose only)."""
+        log_verbose("o", "Waiting for session log...", Colors.MUTED, agent_id=agent_id)
 
     def on_log_ready(self, agent_id: str) -> None:
-        """Log session log ready."""
-        log("v", "Log file ready", Colors.GREEN, agent_id=agent_id)
+        """Log session log ready (verbose only)."""
+        log_verbose("v", "Log file ready", Colors.GREEN, agent_id=agent_id)
 
     def on_review_skipped_no_progress(self, agent_id: str) -> None:
         """Log review skipped due to no progress."""
