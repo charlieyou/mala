@@ -536,6 +536,12 @@ class MalaOrchestrator:
     async def _check_epic_closure(self, issue_id: str) -> None:
         """Check if closing this issue should also close its parent epic.
 
+        Implements a retry loop for epic verification:
+        1. Run verification
+        2. If verification fails and creates remediation issues, execute them
+        3. Re-verify the epic
+        4. Repeat until verification passes OR max retries reached
+
         Args:
             issue_id: The issue that was just closed.
         """
@@ -544,17 +550,72 @@ class MalaOrchestrator:
             return
 
         if self.epic_verifier is not None:
-            # Verify and close only the affected epic
+            max_retries = self._mala_config.max_epic_verification_retries
             human_override = parent_epic in self.epic_override_ids
-            verification_result = await self.epic_verifier.verify_and_close_epic(
-                parent_epic, human_override=human_override
-            )
-            # Mark as verified to prevent duplicate verifications
-            if verification_result.verified_count > 0:
-                self.verified_epics.add(parent_epic)
+
+            for attempt in range(1, max_retries + 1):
+                # Log attempt if retrying (attempt > 1)
+                if attempt > 1:
+                    self.event_sink.on_warning(
+                        f"Epic verification retry {attempt}/{max_retries} for {parent_epic}"
+                    )
+
+                verification_result = await self.epic_verifier.verify_and_close_epic(
+                    parent_epic, human_override=human_override
+                )
+
+                # If epic passed verification, mark as verified and return
+                if verification_result.passed_count > 0:
+                    self.verified_epics.add(parent_epic)
+                    return
+
+                # If no remediation issues were created, or max retries reached,
+                # mark as verified (to prevent infinite loops) and return
+                if (
+                    not verification_result.remediation_issues_created
+                    or attempt >= max_retries
+                ):
+                    if attempt >= max_retries and verification_result.failed_count > 0:
+                        self.event_sink.on_warning(
+                            f"Epic verification failed after {max_retries} retries for {parent_epic}"
+                        )
+                    self.verified_epics.add(parent_epic)
+                    return
+
+                # Execute remediation issues before next verification attempt
+                await self._execute_remediation_issues(
+                    verification_result.remediation_issues_created
+                )
+
         elif await self.beads.close_eligible_epics_async():
             # Fallback for mock providers without EpicVerifier
             self.event_sink.on_epic_closed(issue_id)
+
+    async def _execute_remediation_issues(self, issue_ids: list[str]) -> None:
+        """Execute remediation issues and wait for their completion.
+
+        Args:
+            issue_ids: List of remediation issue IDs to execute.
+        """
+        if not issue_ids:
+            return
+
+        tasks: list[asyncio.Task[IssueResult]] = []
+
+        for issue_id in issue_ids:
+            # Skip if already completed or failed
+            if issue_id in self.failed_issues:
+                continue
+
+            # Spawn agent for this issue
+            if await self.spawn_agent(issue_id):
+                task = self.active_tasks.get(issue_id)
+                if task:
+                    tasks.append(task)
+
+        # Wait for all remediation tasks to complete
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _record_issue_run(
         self,

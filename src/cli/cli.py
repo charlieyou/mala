@@ -390,6 +390,13 @@ def run(
             help="Only process issues with no parent epic (standalone/orphan issues)",
         ),
     ] = False,
+    max_epic_verification_retries: Annotated[
+        int | None,
+        typer.Option(
+            "--max-epic-verification-retries",
+            help="Maximum retries for epic verification loop (default: 3)",
+        ),
+    ] = None,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -503,6 +510,7 @@ def run(
         "cerberus_wait_args": None,
         "cerberus_env": None,
         "epic_override": epic_override,
+        "max_epic_verification_retries": max_epic_verification_retries,
     }
 
     # Construct config from environment (orchestrator uses this for API keys and feature flags)
@@ -550,11 +558,18 @@ def run(
             log("✗", str(exc), Colors.RED)
             raise typer.Exit(1)
 
+    # Apply max_epic_verification_retries override if set
+    if max_epic_verification_retries is not None:
+        config = replace(
+            config, max_epic_verification_retries=max_epic_verification_retries
+        )
+
     # Record effective values for logging/metadata
     cli_args["review_timeout"] = config.review_timeout
     cli_args["cerberus_spawn_args"] = list(config.cerberus_spawn_args)
     cli_args["cerberus_wait_args"] = list(config.cerberus_wait_args)
     cli_args["cerberus_env"] = dict(config.cerberus_env)
+    cli_args["max_epic_verification_retries"] = config.max_epic_verification_retries
 
     # Determine morph_enabled: disabled if --no-morph flag set, otherwise use config default
     morph_enabled = (

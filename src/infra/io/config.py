@@ -15,6 +15,7 @@ Environment Variables:
     MALA_CERBERUS_WAIT_ARGS: Extra args for `review-gate wait`
     MALA_CERBERUS_ENV: Extra env for review-gate (JSON dict or comma KEY=VALUE list)
     MALA_MAX_DIFF_SIZE_KB: Max diff size for epic verification (KB)
+    MALA_MAX_EPIC_VERIFICATION_RETRIES: Max retries for epic verification loop
     LLM_API_KEY: API key for LLM calls (fallback to ANTHROPIC_API_KEY)
     LLM_BASE_URL: Base URL for LLM API
 """
@@ -188,6 +189,8 @@ class MalaConfig:
             Env: LLM_API_KEY (falls back to ANTHROPIC_API_KEY if not set)
         llm_base_url: Base URL for LLM API requests.
             Env: LLM_BASE_URL (for proxy/routing, e.g., MorphLLM)
+        max_epic_verification_retries: Maximum retries for epic verification loop.
+            Env: MALA_MAX_EPIC_VERIFICATION_RETRIES (default: 3)
 
     Example:
         # Programmatic construction (no env vars needed):
@@ -231,6 +234,9 @@ class MalaConfig:
         None  # API key for LLM calls (falls back to ANTHROPIC_API_KEY)
     )
     llm_base_url: str | None = None  # Base URL for LLM API (for proxy/routing)
+
+    # Epic verification retry configuration
+    max_epic_verification_retries: int = field(default=3)
 
     def __post_init__(self) -> None:
         """Derive feature flags from API key presence.
@@ -277,6 +283,7 @@ class MalaConfig:
             - MALA_CERBERUS_WAIT_ARGS: Extra args for review-gate wait (optional)
             - MALA_CERBERUS_ENV: Extra env for review-gate (optional)
             - MALA_MAX_DIFF_SIZE_KB: Max diff size for epic verification (optional)
+            - MALA_MAX_EPIC_VERIFICATION_RETRIES: Max epic verification retries (optional)
             - LLM_API_KEY: API key for LLM calls (optional)
             - LLM_BASE_URL: Base URL for LLM API (optional)
 
@@ -370,6 +377,11 @@ class MalaConfig:
         )
         llm_base_url = os.environ.get("LLM_BASE_URL") or None
 
+        # Parse max_epic_verification_retries
+        max_epic_verification_retries = _safe_int(
+            os.environ.get("MALA_MAX_EPIC_VERIFICATION_RETRIES"), 3
+        )
+
         config = cls(
             runs_dir=runs_dir,
             lock_dir=lock_dir,
@@ -384,6 +396,7 @@ class MalaConfig:
             track_review_issues=track_review_issues,
             llm_api_key=llm_api_key,
             llm_base_url=llm_base_url,
+            max_epic_verification_retries=max_epic_verification_retries,
         )
 
         if validate:

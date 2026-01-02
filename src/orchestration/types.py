@@ -50,6 +50,7 @@ class OrchestratorConfig:
         cli_args: CLI arguments for logging and metadata.
         epic_override_ids: Epic IDs to close without verification.
         orphans_only: Only process issues with no parent epic.
+        max_epic_verification_retries: Maximum retries for epic verification loop.
     """
 
     repo_path: Path
@@ -69,6 +70,7 @@ class OrchestratorConfig:
     cli_args: dict[str, object] | None = None
     epic_override_ids: set[str] | None = None
     orphans_only: bool = False
+    max_epic_verification_retries: int | None = None
 
 
 @dataclass
