@@ -272,20 +272,3 @@ class IssueExecutionCoordinator:
         """
         self.completed_ids.add(issue_id)
         self.active_tasks.pop(issue_id, None)
-
-    async def abort_active_tasks(self, reason: str) -> None:
-        """Cancel active tasks and prepare for abort.
-
-        This is a utility method that can be used by abort_callback.
-        Does NOT finalize tasks - that's the callback's responsibility.
-
-        Args:
-            reason: The abort reason for logging.
-        """
-        if not self.active_tasks:
-            return
-        abort_reason = reason or "Unrecoverable error"
-        self.event_sink.on_tasks_aborting(len(self.active_tasks), abort_reason)
-        for task in self.active_tasks.values():
-            if not task.done():
-                task.cancel()
