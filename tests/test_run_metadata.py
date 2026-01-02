@@ -1046,34 +1046,55 @@ class TestDebugLogging:
 
     def test_cleanup_is_idempotent(self) -> None:
         """Test that RunMetadata.cleanup() is idempotent (safe to call multiple times)."""
+        import logging
+
         with tempfile.TemporaryDirectory() as tmpdir:
 
             def mock_get_repo_runs_dir(repo_path: Path) -> Path:
                 return Path(tmpdir)
 
-            with patch(
-                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
-                mock_get_repo_runs_dir,
-            ):
-                config = RunConfig(
-                    max_agents=1,
-                    timeout_minutes=10,
-                    max_issues=None,
-                    epic_id=None,
-                    only_ids=None,
-                    braintrust_enabled=False,
-                )
-                metadata = RunMetadata(
-                    repo_path=Path("/tmp/test-repo"),
-                    config=config,
-                    version="1.0.0",
-                )
+            # Temporarily enable debug logging for this test
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("MALA_DISABLE_DEBUG_LOG", None)
 
-                # Cleanup can be called multiple times without error
-                metadata.cleanup()
-                metadata.cleanup()
-                metadata.cleanup()
+                with patch(
+                    "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                    mock_get_repo_runs_dir,
+                ):
+                    config = RunConfig(
+                        max_agents=1,
+                        timeout_minutes=10,
+                        max_issues=None,
+                        epic_id=None,
+                        only_ids=None,
+                        braintrust_enabled=False,
+                    )
+                    metadata = RunMetadata(
+                        repo_path=Path("/tmp/test-repo"),
+                        config=config,
+                        version="1.0.0",
+                    )
 
-                # And save still works after cleanup
-                path = metadata.save()
-                assert path.exists()
+                    # Verify debug logging was configured
+                    assert metadata.debug_log_path is not None
+                    src_logger = logging.getLogger("src")
+                    handler_name = f"mala_debug_{metadata.run_id}"
+                    handler_names = [
+                        getattr(h, "name", "") for h in src_logger.handlers
+                    ]
+                    assert handler_name in handler_names
+
+                    # First cleanup removes the handler
+                    metadata.cleanup()
+                    handler_names_after = [
+                        getattr(h, "name", "") for h in src_logger.handlers
+                    ]
+                    assert handler_name not in handler_names_after
+
+                    # Subsequent cleanups are safe (no-op, no errors)
+                    metadata.cleanup()
+                    metadata.cleanup()
+
+                    # And save still works after cleanup
+                    path = metadata.save()
+                    assert path.exists()
