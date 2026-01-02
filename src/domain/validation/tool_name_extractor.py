@@ -43,6 +43,9 @@ _COMPOUND_COMMANDS: dict[str, frozenset[str]] = {
 # Shell built-ins to skip (these appear before a real command)
 _SHELL_BUILTINS: frozenset[str] = frozenset({"export", "set", "source", "."})
 
+# Built-ins that take path/file arguments (source, .)
+_PATH_BUILTINS: frozenset[str] = frozenset({"source", "."})
+
 # Commands that are typically setup/shell commands, not actual tools
 # When these appear in a multi-segment command (with && or ;), prefer later segments
 _SETUP_COMMANDS: frozenset[str] = frozenset({"cd", "echo", "install"})
@@ -104,6 +107,44 @@ def _parse_command(command: str) -> list[str]:
         return command.split()
 
 
+def _skip_builtin_arguments(tokens: list[str], idx: int, builtin: str) -> int:
+    """Skip arguments to a shell built-in.
+
+    Different built-ins have different argument patterns:
+    - export: VAR=value assignments
+    - set: flags like -e, -x, -o pipefail
+    - source/.: a single path argument
+
+    Args:
+        tokens: Parsed command tokens.
+        idx: Current index (pointing to first token after built-in).
+        builtin: The built-in command name.
+
+    Returns:
+        New index after skipping all built-in arguments.
+    """
+    if builtin == "export":
+        # export takes VAR=value assignments
+        while idx < len(tokens) and _is_env_assignment(tokens[idx]):
+            idx += 1
+    elif builtin == "set":
+        # set takes flags like -e, -x, -o pipefail, +e, etc.
+        while idx < len(tokens):
+            token = tokens[idx]
+            if token.startswith("-") or token.startswith("+"):
+                idx += 1
+                # -o takes an additional argument (e.g., -o pipefail)
+                if token in ("-o", "+o") and idx < len(tokens):
+                    idx += 1
+            else:
+                break
+    elif builtin in _PATH_BUILTINS:
+        # source/. take a single path argument
+        if idx < len(tokens):
+            idx += 1
+    return idx
+
+
 def _extract_from_tokens(tokens: list[str]) -> str:
     """Extract tool name from a list of parsed tokens.
 
@@ -129,10 +170,10 @@ def _extract_from_tokens(tokens: list[str]) -> str:
 
     # Skip shell built-ins and their arguments
     while first in _SHELL_BUILTINS:
+        builtin = first
         idx += 1
-        # Skip any arguments to the built-in (e.g., FOO=bar after export)
-        while idx < len(tokens) and _is_env_assignment(tokens[idx]):
-            idx += 1
+        # Skip arguments specific to each built-in
+        idx = _skip_builtin_arguments(tokens, idx, builtin)
         if idx >= len(tokens):
             return ""  # Only built-ins, return empty
         first = _strip_path_prefix(tokens[idx])
