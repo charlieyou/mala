@@ -595,6 +595,10 @@ class TestRunOrchestrationLoop:
                 orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
             ),
             patch.object(orchestrator, "spawn_agent", side_effect=mock_spawn),
+            patch.object(orchestrator.beads, "close_async", return_value=True),
+            patch.object(
+                orchestrator.beads, "close_eligible_epics_async", return_value=False
+            ),
             patch(
                 "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
             ),
@@ -604,8 +608,6 @@ class TestRunOrchestrationLoop:
             patch("src.orchestration.orchestrator.release_run_locks"),
             patch("subprocess.run", return_value=make_subprocess_result()),
         ):
-            # Orchestrator needs active_tasks to be empty to exit
-            # but we don't actually spawn tasks in this mock
             await orchestrator.run()
 
         # Should have only spawned 2 issues (max_issues limit)
