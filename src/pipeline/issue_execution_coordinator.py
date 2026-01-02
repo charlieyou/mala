@@ -23,10 +23,11 @@ if TYPE_CHECKING:
 class SpawnCallback(Protocol):
     """Callback for spawning an agent for an issue.
 
-    Returns True if agent was successfully spawned, False otherwise.
+    Returns the spawned Task on success, or None if spawn failed.
+    The coordinator automatically registers the returned task.
     """
 
-    async def __call__(self, issue_id: str) -> bool:
+    async def __call__(self, issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
         """Spawn an agent for the given issue."""
         ...
 
@@ -145,7 +146,8 @@ class IssueExecutionCoordinator:
 
         Args:
             spawn_callback: Called to spawn an agent for an issue.
-                Should return True if spawned successfully.
+                Returns the spawned Task on success, or None if spawn failed.
+                The coordinator automatically registers the returned task.
             finalize_callback: Called when a task completes.
                 Receives issue_id and the completed task.
             abort_callback: Called when abort is triggered.
@@ -202,7 +204,9 @@ class IssueExecutionCoordinator:
             ) and ready:
                 issue_id = ready.pop(0)
                 if issue_id not in self.active_tasks:
-                    if await spawn_callback(issue_id):
+                    task = await spawn_callback(issue_id)
+                    if task is not None:
+                        self.register_task(issue_id, task)
                         issues_spawned += 1
                         if (
                             self.config.max_issues is not None

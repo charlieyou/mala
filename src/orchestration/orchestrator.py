@@ -888,17 +888,16 @@ class MalaOrchestrator:
             low_priority_review_issues=output.low_priority_review_issues,
         )
 
-    async def spawn_agent(self, issue_id: str) -> bool:
-        """Spawn a new agent task for an issue. Returns True if spawned."""
+    async def spawn_agent(self, issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+        """Spawn a new agent task for an issue. Returns the Task if spawned, None otherwise."""
         if not await self.beads.claim_async(issue_id):
             self.issue_coordinator.mark_failed(issue_id)
             self.event_sink.on_claim_failed(issue_id, issue_id)
-            return False
+            return None
 
         task = asyncio.create_task(self.run_implementer(issue_id))
-        self.issue_coordinator.register_task(issue_id, task)
         self.event_sink.on_agent_started(issue_id, issue_id)
-        return True
+        return task
 
     async def _run_main_loop(self, run_metadata: RunMetadata) -> int:
         """Run the main agent spawning and completion loop.

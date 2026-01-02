@@ -188,7 +188,7 @@ class TestRunLoop:
             config=CoordinatorConfig(),
         )
 
-        spawn_callback = AsyncMock(return_value=True)
+        spawn_callback = AsyncMock(return_value=None)
         finalize_callback = AsyncMock()
         abort_callback = AsyncMock()
 
@@ -210,14 +210,13 @@ class TestRunLoop:
 
         spawned_tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
 
-        async def spawn_callback(issue_id: str) -> bool:
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
             async def work() -> None:
                 pass
 
             task = asyncio.create_task(work())
             spawned_tasks[issue_id] = task
-            coord.register_task(issue_id, task)
-            return True
+            return task
 
         async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
             coord.mark_completed(issue_id)
@@ -247,7 +246,7 @@ class TestRunLoop:
         spawned_order: list[str] = []
         pending_events: dict[str, asyncio.Event] = {}
 
-        async def spawn_callback(issue_id: str) -> bool:
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
             spawned_order.append(issue_id)
             event = asyncio.Event()
             pending_events[issue_id] = event
@@ -256,8 +255,7 @@ class TestRunLoop:
                 await event.wait()
 
             task = asyncio.create_task(work())
-            coord.register_task(issue_id, task)
-            return True
+            return task
 
         async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
             coord.mark_completed(issue_id)
@@ -300,13 +298,12 @@ class TestRunLoop:
             config=CoordinatorConfig(max_issues=2),
         )
 
-        async def spawn_callback(issue_id: str) -> bool:
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
             async def work() -> None:
                 pass
 
             task = asyncio.create_task(work())
-            coord.register_task(issue_id, task)
-            return True
+            return task
 
         async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
             coord.mark_completed(issue_id)
@@ -326,9 +323,9 @@ class TestRunLoop:
             config=CoordinatorConfig(),
         )
 
-        async def spawn_callback(issue_id: str) -> bool:
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
             coord.mark_failed(issue_id)
-            return False
+            return None
 
         count = await coord.run_loop(spawn_callback, AsyncMock(), AsyncMock())
 
@@ -348,15 +345,14 @@ class TestRunLoop:
         abort_called = False
         tasks_to_cancel: list[asyncio.Task] = []  # type: ignore[type-arg]
 
-        async def spawn_callback(issue_id: str) -> bool:
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
             async def work() -> None:
                 # Short-lived work that will complete quickly
                 await asyncio.sleep(0.001)
 
             task = asyncio.create_task(work())
             tasks_to_cancel.append(task)
-            coord.register_task(issue_id, task)
-            return True
+            return task
 
         async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
             coord.mark_completed(issue_id)
