@@ -112,7 +112,8 @@ def _skip_builtin_arguments(tokens: list[str], idx: int, builtin: str) -> int:
 
     Different built-ins have different argument patterns:
     - export: VAR=value assignments
-    - set: flags like -e, -x, -o pipefail
+    - set: flags like -e, -x, -o pipefail; -- marks end of options and all
+           remaining tokens are positional parameters (not commands)
     - source/.: a single path argument
 
     Args:
@@ -129,8 +130,14 @@ def _skip_builtin_arguments(tokens: list[str], idx: int, builtin: str) -> int:
             idx += 1
     elif builtin == "set":
         # set takes flags like -e, -x, -o pipefail, +e, etc.
+        # IMPORTANT: -- marks end of options; all remaining tokens are positional
+        # parameters to set (not commands to execute), so skip them all.
         while idx < len(tokens):
             token = tokens[idx]
+            if token == "--":
+                # End of options marker - skip ALL remaining tokens
+                # (they're positional parameters, not commands)
+                return len(tokens)
             if token.startswith("-") or token.startswith("+"):
                 idx += 1
                 # -o takes an additional argument (e.g., -o pipefail)

@@ -202,3 +202,35 @@ class TestExtractToolName:
             "CI=true NODE_ENV=test npx --yes eslint --ext .ts,.tsx src/"
         )
         assert result == "eslint"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            # set with flags only, followed by real command via &&
+            ("set -e && pytest", "pytest"),
+            ("set -ex && ruff check .", "ruff"),
+            ("set -o pipefail && npm test", "npm test"),
+            # set -- skips ALL remaining tokens (they're positional params)
+            # The real command comes after &&
+            ("set -- pytest -q && echo done", "echo"),
+            ("set -- foo bar baz && ruff check", "ruff"),
+            # set -- with no following command segment returns empty
+            ("set -- pytest -q", ""),
+            ("set -- foo bar", ""),
+            # Combined: set flags then set -- in same segment
+            ("set -e && set -- foo && pytest", "pytest"),
+            # set +e (unset errexit) followed by command
+            ("set +e && eslint .", "eslint"),
+            ("set +o pipefail && pytest", "pytest"),
+        ],
+    )
+    def test_set_builtin_handling(self, command: str, expected: str) -> None:
+        """Test that set builtin and its arguments are handled correctly.
+
+        The set builtin has special argument patterns:
+        - Flags like -e, -x, +e, -o pipefail
+        - -- marks end of options; all remaining tokens are positional
+          parameters (not commands to execute)
+        """
+        assert extract_tool_name(command) == expected
