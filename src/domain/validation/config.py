@@ -103,12 +103,14 @@ class CommandConfig:
                 )
 
             timeout = value.get("timeout")
-            if timeout is not None and not isinstance(timeout, int):
-                raise ConfigError(
-                    f"Command timeout must be an integer, got {type(timeout).__name__}"
-                )
+            if timeout is not None:
+                # Reject booleans explicitly (bool is subclass of int)
+                if isinstance(timeout, bool) or not isinstance(timeout, int):
+                    raise ConfigError(
+                        f"Command timeout must be an integer, got {type(timeout).__name__}"
+                    )
 
-            return cls(command=command, timeout=timeout)
+            return cls(command=command, timeout=cast("int | None", timeout))
 
         raise ConfigError(
             f"Command must be a string or object, got {type(value).__name__}"
@@ -196,7 +198,10 @@ class YamlCoverageConfig:
             )
 
         threshold_val = data["threshold"]
-        if not isinstance(threshold_val, int | float):
+        # Reject booleans explicitly (bool is subclass of int)
+        if isinstance(threshold_val, bool) or not isinstance(
+            threshold_val, int | float
+        ):
             raise ConfigError(
                 f"Coverage threshold must be a number, got {type(threshold_val).__name__}"
             )
@@ -213,17 +218,19 @@ class YamlCoverageConfig:
             )
 
         timeout_val = data.get("timeout")
-        if timeout_val is not None and not isinstance(timeout_val, int):
-            raise ConfigError(
-                f"Coverage timeout must be an integer, got {type(timeout_val).__name__}"
-            )
+        if timeout_val is not None:
+            # Reject booleans explicitly (bool is subclass of int)
+            if isinstance(timeout_val, bool) or not isinstance(timeout_val, int):
+                raise ConfigError(
+                    f"Coverage timeout must be an integer, got {type(timeout_val).__name__}"
+                )
 
         return cls(
             format=format_val,
             file=file_val,
             threshold=float(threshold_val),
             command=command_val,
-            timeout=timeout_val,
+            timeout=cast("int | None", timeout_val),
         )
 
 
