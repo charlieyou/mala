@@ -537,7 +537,14 @@ class MalaOrchestrator:
                 )
 
             # Finalize (closes issue, records to run_metadata, emits events)
-            await self._finalize_issue_result(issue_id, result, run_metadata)
+            # Wrap in try/except to ensure all issues are finalized even if one fails
+            try:
+                await self._finalize_issue_result(issue_id, result, run_metadata)
+            except Exception:
+                self.event_sink.on_warning(
+                    f"Failed to finalize remediation result for {issue_id}",
+                    agent_id=issue_id,
+                )
 
             # Mark as completed in the coordinator
             self.issue_coordinator.mark_completed(issue_id)
