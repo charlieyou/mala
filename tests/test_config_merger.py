@@ -872,27 +872,11 @@ class TestProgrammaticConfigOverrides:
         assert result.coverage.threshold == 90.0
         assert result.code_patterns == ("src/**/*.py",)
 
-    def test_docstring_example_works_correctly(self) -> None:
-        """Verify the docstring example in config_merger.py works as documented.
+    def test_programmatic_config_merge_works(self) -> None:
+        """Verify programmatic configs (direct constructor) merge correctly.
 
-        This matches the example from the merge_configs docstring:
-        >>> preset_cfg = ValidationConfig(
-        ...     commands=CommandsConfig(
-        ...         test=CommandConfig(command="pytest"),
-        ...         lint=CommandConfig(command="ruff check"),
-        ...     ),
-        ...     code_patterns=("**/*.py",),
-        ... )
-        >>> user_cfg = ValidationConfig(
-        ...     commands=CommandsConfig(
-        ...         test=CommandConfig(command="pytest -v"),  # override
-        ...     ),
-        ... )
-        >>> result = merge_configs(preset_cfg, user_cfg)
-        >>> result.commands.test.command
-        'pytest -v'
-        >>> result.commands.lint.command  # inherited
-        'ruff check'
+        When configs are created programmatically rather than from_dict,
+        non-default values are treated as explicit overrides.
         """
         preset_cfg = ValidationConfig(
             commands=CommandsConfig(
