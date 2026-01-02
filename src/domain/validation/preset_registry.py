@@ -11,11 +11,15 @@ Key types:
 from __future__ import annotations
 
 from importlib import resources
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import yaml
 
-from src.domain.validation.config import PresetNotFoundError, ValidationConfig
+from src.domain.validation.config import PresetNotFoundError
+from src.domain.validation.config_loader import _build_config
+
+if TYPE_CHECKING:
+    from src.domain.validation.config import ValidationConfig
 
 
 class PresetRegistry:
@@ -100,21 +104,3 @@ class PresetRegistry:
             return data if data is not None else {}
         except (ModuleNotFoundError, FileNotFoundError, TypeError) as e:
             raise PresetNotFoundError(name, self.list_presets()) from e
-
-
-def _build_config(data: dict[str, Any]) -> ValidationConfig:
-    """Convert a validated YAML dict to a ValidationConfig dataclass.
-
-    This function delegates to ValidationConfig.from_dict which handles
-    parsing of nested structures (commands, coverage, etc.).
-
-    Args:
-        data: Validated YAML dictionary.
-
-    Returns:
-        ValidationConfig instance.
-
-    Raises:
-        ConfigError: If any field has an invalid type or value.
-    """
-    return ValidationConfig.from_dict(data)
