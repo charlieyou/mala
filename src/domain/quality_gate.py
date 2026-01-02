@@ -562,6 +562,7 @@ class QualityGate:
         # ensures consistency with the production evidence parsing patterns.
         if spec is None:
             spec = build_validation_spec(
+                self.repo_path,
                 scope=ValidationScope.PER_ISSUE,
             )
 

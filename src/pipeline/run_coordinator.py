@@ -230,10 +230,9 @@ class RunCoordinator:
 
         # Build run-level validation spec
         spec = build_validation_spec(
+            self.config.repo_path,
             scope=ValidationScope.RUN_LEVEL,
             disable_validations=self.config.disable_validations,
-            coverage_threshold=self.config.coverage_threshold,
-            repo_path=self.config.repo_path,
         )
 
         # Build validation context

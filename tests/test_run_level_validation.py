@@ -95,7 +95,7 @@ class TestRunLevelValidation:
             steps=[
                 ValidationStepResult(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     ok=True,
                     returncode=0,
                     stdout_tail="",
@@ -163,7 +163,7 @@ class TestRunLevelValidation:
             steps=[
                 ValidationStepResult(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     ok=False,
                     returncode=1,
                     stdout_tail="FAILED test_foo.py",
@@ -230,7 +230,7 @@ class TestRunLevelValidation:
             steps=[
                 ValidationStepResult(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     ok=True,
                     returncode=0,
                     stdout_tail="",
@@ -238,7 +238,7 @@ class TestRunLevelValidation:
                 ),
                 ValidationStepResult(
                     name="coverage",
-                    command=["coverage"],
+                    command="coverage",
                     ok=False,
                     returncode=1,
                     stdout_tail="80%",
@@ -281,7 +281,7 @@ class TestRunLevelValidation:
             steps=[
                 ValidationStepResult(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     ok=False,
                     returncode=1,
                     stderr_tail="AssertionError: expected True",
@@ -341,7 +341,7 @@ class TestRunLevelValidation:
             steps=[
                 ValidationStepResult(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     ok=True,
                     returncode=0,
                     stdout_tail="",
@@ -400,7 +400,7 @@ class TestRunLevelValidation:
             steps=[
                 ValidationStepResult(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     ok=True,
                     returncode=0,
                     stdout_tail="",
@@ -465,7 +465,7 @@ class TestRunLevelValidation:
             steps=[
                 ValidationStepResult(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     ok=True,
                     returncode=0,
                     stdout_tail="",
@@ -536,7 +536,7 @@ class TestRunLevelValidation:
             steps=[
                 ValidationStepResult(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     ok=True,
                     returncode=0,
                     stdout_tail="",
@@ -607,7 +607,7 @@ class TestRunLevelValidation:
             steps=[
                 ValidationStepResult(
                     name="pytest",
-                    command=["pytest"],
+                    command="pytest",
                     ok=False,
                     returncode=1,
                     stdout_tail="FAILED",

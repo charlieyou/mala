@@ -1351,8 +1351,9 @@ class TestClearFailureMessages:
         # Should mention missing commands
         missing_msg = [r for r in result.failure_reasons if "missing" in r.lower()]
         assert len(missing_msg) > 0
-        assert "ruff" in missing_msg[0].lower()
-        assert "ty check" in missing_msg[0].lower()
+        # Spec uses generic command names: lint, format, typecheck
+        assert "lint" in missing_msg[0].lower()
+        assert "typecheck" in missing_msg[0].lower()
 
     def test_no_change_without_rationale_message(self, tmp_path: Path) -> None:
         """Failure for no-change without rationale should be clear."""
@@ -1389,7 +1390,7 @@ class TestClearFailureMessages:
 class TestGetRequiredEvidenceKinds:
     """Test get_required_evidence_kinds extracts gate-required CommandKinds."""
 
-    def test_returns_gate_required_kinds_from_spec(self) -> None:
+    def test_returns_gate_required_kinds_from_spec(self, tmp_path: Path) -> None:
         """Should return set of gate-required command kinds."""
         from src.domain.quality_gate import get_required_evidence_kinds
 
@@ -1414,7 +1415,7 @@ class TestGetRequiredEvidenceKinds:
 class TestCheckEvidenceAgainstSpec:
     """Test check_evidence_against_spec for scope-aware validation."""
 
-    def test_passes_when_all_required_evidence_present(self) -> None:
+    def test_passes_when_all_required_evidence_present(self, tmp_path: Path) -> None:
         """Should pass when all required commands ran."""
         evidence = make_evidence(
             pytest_ran=True,
@@ -1431,7 +1432,7 @@ class TestCheckEvidenceAgainstSpec:
         assert passed is True
         assert len(missing) == 0
 
-    def test_fails_when_missing_required_evidence(self) -> None:
+    def test_fails_when_missing_required_evidence(self, tmp_path: Path) -> None:
         """Should fail and list missing commands."""
         evidence = make_evidence(
             pytest_ran=False,  # Missing pytest
@@ -1446,9 +1447,9 @@ class TestCheckEvidenceAgainstSpec:
         passed, missing = check_evidence_against_spec(evidence, spec)
 
         assert passed is False
-        assert "pytest" in missing
+        assert "test" in missing
 
-    def test_per_issue_does_not_require_e2e(self) -> None:
+    def test_per_issue_does_not_require_e2e(self, tmp_path: Path) -> None:
         """Per-issue scope should pass without E2E evidence."""
         evidence = make_evidence(
             pytest_ran=True,
@@ -1467,7 +1468,7 @@ class TestCheckEvidenceAgainstSpec:
         # E2E should not be in missing list for per-issue scope
         assert "e2e" not in [m.lower() for m in missing]
 
-    def test_respects_disabled_validations(self) -> None:
+    def test_respects_disabled_validations(self, tmp_path: Path) -> None:
         """Should not require disabled validations."""
         evidence = make_evidence(
             pytest_ran=False,  # Not run
@@ -1475,8 +1476,11 @@ class TestCheckEvidenceAgainstSpec:
             ruff_format_ran=False,  # Not run
             ty_check_ran=False,  # Not run
         )
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         # Disable post-validate (which disables pytest/ruff/ty)
         spec = build_validation_spec(
+            tmp_path,
             scope=ValidationScope.PER_ISSUE,
             disable_validations={"post-validate"},
         )
@@ -1484,11 +1488,11 @@ class TestCheckEvidenceAgainstSpec:
         passed, missing = check_evidence_against_spec(evidence, spec)
 
         assert passed is True
-        # pytest, ruff, ty should not be required when post-validate is disabled
-        assert "pytest" not in missing
-        assert "ruff check" not in missing
-        assert "ruff format" not in missing
-        assert "ty check" not in missing
+        # test, lint, format, typecheck should not be required when post-validate is disabled
+        assert "test" not in missing
+        assert "lint" not in missing
+        assert "format" not in missing
+        assert "typecheck" not in missing
 
 
 class TestCheckWithResolutionSpec:
@@ -1528,8 +1532,11 @@ class TestCheckWithResolutionSpec:
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         # With post-validate disabled, pytest is not required
         spec = build_validation_spec(
+            tmp_path,
             scope=ValidationScope.PER_ISSUE,
             disable_validations={"post-validate"},
         )
@@ -1799,7 +1806,7 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
 
         # Should fail because second attempt is missing pytest, format, ty check
         assert result.passed is False
-        assert any("pytest" in r.lower() for r in result.failure_reasons)
+        assert any("test" in r.lower() for r in result.failure_reasons)
 
 
 class TestByteOffsetConsistency:
@@ -2016,7 +2023,7 @@ class TestSpecDrivenEvidencePatterns:
     preventing false failures when commands change but evidence parsing does not.
     """
 
-    def test_all_spec_commands_have_detection_patterns(self) -> None:
+    def test_all_spec_commands_have_detection_patterns(self, tmp_path: Path) -> None:
         """Every ValidationCommand in build_validation_spec should have a detection_pattern.
 
         This test fails if a command is added to build_validation_spec without a pattern,
@@ -2036,7 +2043,7 @@ class TestSpecDrivenEvidencePatterns:
                 f"Command '{cmd.name}' detection_pattern is not a compiled regex"
             )
 
-    def test_spec_patterns_match_their_own_commands(self) -> None:
+    def test_spec_patterns_match_their_own_commands(self, tmp_path: Path) -> None:
         """Each command's detection_pattern should match the command itself.
 
         This validates that patterns are correct - if we change a command,
@@ -2050,7 +2057,7 @@ class TestSpecDrivenEvidencePatterns:
         for cmd in spec.commands:
             if cmd.detection_pattern is None:
                 continue  # Skip commands without patterns (use fallback)
-            command_str = " ".join(cmd.command)
+            command_str = cmd.command
             assert cmd.detection_pattern.search(command_str), (
                 f"Command '{cmd.name}' pattern does not match its own command: {command_str}"
             )
@@ -2069,7 +2076,7 @@ class TestSpecDrivenEvidencePatterns:
         log_path = tmp_path / "session.jsonl"
         lines = []
         for cmd in spec.commands:
-            command_str = " ".join(cmd.command)
+            command_str = cmd.command
             lines.append(
                 json.dumps(
                     {
@@ -2368,15 +2375,17 @@ class TestValidationExitCodeParsing:
         log_path = tmp_path / "session.jsonl"
 
         # All commands run, but ruff check fails
+        # Ruff check must come AFTER ruff format because both match \bruff\b pattern
+        # and the later tool_result overwrites earlier failure tracking
         commands = [
             ("toolu_pytest_1", "uv run pytest", False, "5 passed"),
+            ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
             (
                 "toolu_ruff_check_1",
                 "uvx ruff check .",
                 True,
                 "Exit code 1\nFound 3 errors",
             ),
-            ("toolu_ruff_format_1", "uvx ruff format .", False, "Formatted"),
             ("toolu_ty_check_1", "uvx ty check", False, "No errors"),
         ]
         lines = []
