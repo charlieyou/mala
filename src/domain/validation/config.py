@@ -1,0 +1,420 @@
+"""Configuration dataclasses for mala.yaml validation configuration.
+
+This module provides the data structures for the language-agnostic configuration
+system. Users define their validation commands in mala.yaml, which is parsed into
+these frozen dataclasses.
+
+These dataclasses represent the deserialized configuration. They are immutable
+(frozen) to ensure configuration cannot be accidentally modified after loading.
+
+Key types:
+- CommandConfig: A single command with optional timeout
+- YamlCoverageConfig: Coverage settings (named to avoid collision with spec.CoverageConfig)
+- CommandsConfig: All validation commands (setup, test, lint, format, typecheck, e2e)
+- ValidationConfig: Top-level configuration with preset, commands, coverage, patterns
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import cast
+
+
+class ConfigError(Exception):
+    """Base exception for configuration errors.
+
+    Raised when mala.yaml has invalid content, missing required fields,
+    or other configuration problems.
+    """
+
+    pass
+
+
+class PresetNotFoundError(ConfigError):
+    """Raised when a referenced preset does not exist.
+
+    Example:
+        >>> raise PresetNotFoundError("unknown-preset", ["python-uv", "go", "rust"])
+        PresetNotFoundError: Unknown preset 'unknown-preset'. Available presets: python-uv, go, rust
+    """
+
+    def __init__(self, preset_name: str, available: list[str] | None = None) -> None:
+        self.preset_name = preset_name
+        self.available = available or []
+        if self.available:
+            available_str = ", ".join(sorted(self.available))
+            message = (
+                f"Unknown preset '{preset_name}'. Available presets: {available_str}"
+            )
+        else:
+            message = f"Unknown preset '{preset_name}'"
+        super().__init__(message)
+
+
+@dataclass(frozen=True)
+class CommandConfig:
+    """Configuration for a single validation command.
+
+    Commands can be specified in two forms in mala.yaml:
+    - String shorthand: "uv run pytest"
+    - Object form: {command: "uv run pytest", timeout: 300}
+
+    The factory method `from_value` handles both forms.
+
+    Attributes:
+        command: The shell command string to execute.
+        timeout: Optional timeout in seconds. None means use system default.
+    """
+
+    command: str
+    timeout: int | None = None
+
+    @classmethod
+    def from_value(cls, value: str | dict[str, object]) -> CommandConfig:
+        """Create CommandConfig from YAML value (string or dict).
+
+        Args:
+            value: Either a command string or a dict with 'command' and
+                optional 'timeout' keys.
+
+        Returns:
+            CommandConfig instance.
+
+        Raises:
+            ConfigError: If value is neither string nor valid dict.
+
+        Examples:
+            >>> CommandConfig.from_value("uv run pytest")
+            CommandConfig(command='uv run pytest', timeout=None)
+
+            >>> CommandConfig.from_value({"command": "pytest", "timeout": 60})
+            CommandConfig(command='pytest', timeout=60)
+        """
+        if isinstance(value, str):
+            return cls(command=value)
+
+        if isinstance(value, dict):
+            command = value.get("command")
+            if not isinstance(command, str):
+                raise ConfigError("Command object must have a 'command' string field")
+            if not command:
+                raise ConfigError(
+                    "Command cannot be empty string. Use null to disable."
+                )
+
+            timeout = value.get("timeout")
+            if timeout is not None and not isinstance(timeout, int):
+                raise ConfigError(
+                    f"Command timeout must be an integer, got {type(timeout).__name__}"
+                )
+
+            return cls(command=command, timeout=timeout)
+
+        raise ConfigError(
+            f"Command must be a string or object, got {type(value).__name__}"
+        )
+
+
+@dataclass(frozen=True)
+class YamlCoverageConfig:
+    """Coverage configuration from mala.yaml.
+
+    Named YamlCoverageConfig to avoid collision with the existing CoverageConfig
+    in spec.py which is used by the validation runner.
+
+    When the coverage section is present in mala.yaml, all required fields
+    (format, file, threshold) must be specified. The coverage section can be
+    omitted entirely to disable coverage, or set to null.
+
+    Attributes:
+        command: Optional separate command to run tests with coverage.
+            If omitted, uses the test command from commands section.
+        format: Coverage report format. MVP supports only "xml" (Cobertura).
+        file: Path to coverage report file, relative to repo root.
+        threshold: Minimum coverage percentage (0-100).
+        timeout: Optional timeout in seconds for the coverage command.
+    """
+
+    format: str
+    file: str
+    threshold: float
+    command: str | None = None
+    timeout: int | None = None
+
+    def __post_init__(self) -> None:
+        """Validate coverage configuration after initialization."""
+        # Validate format
+        supported_formats = ("xml",)
+        if self.format not in supported_formats:
+            raise ConfigError(
+                f"Unsupported coverage format '{self.format}'. "
+                f"Supported formats: {', '.join(supported_formats)}"
+            )
+
+        # Validate threshold range
+        if not 0 <= self.threshold <= 100:
+            raise ConfigError(
+                f"Coverage threshold must be between 0 and 100, got {self.threshold}"
+            )
+
+        # Validate file is not empty
+        if not self.file:
+            raise ConfigError("Coverage file path cannot be empty")
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> YamlCoverageConfig:
+        """Create YamlCoverageConfig from a YAML dict.
+
+        Args:
+            data: Dict with 'format', 'file', 'threshold', and optionally
+                'command' and 'timeout' keys.
+
+        Returns:
+            YamlCoverageConfig instance.
+
+        Raises:
+            ConfigError: If required fields are missing or invalid.
+        """
+        # Validate required fields
+        required = ("format", "file", "threshold")
+        missing = [f for f in required if f not in data or data[f] is None]
+        if missing:
+            raise ConfigError(
+                f"Coverage enabled but missing required field(s): {', '.join(missing)}"
+            )
+
+        format_val = data["format"]
+        if not isinstance(format_val, str):
+            raise ConfigError(
+                f"Coverage format must be a string, got {type(format_val).__name__}"
+            )
+
+        file_val = data["file"]
+        if not isinstance(file_val, str):
+            raise ConfigError(
+                f"Coverage file must be a string, got {type(file_val).__name__}"
+            )
+
+        threshold_val = data["threshold"]
+        if not isinstance(threshold_val, int | float):
+            raise ConfigError(
+                f"Coverage threshold must be a number, got {type(threshold_val).__name__}"
+            )
+
+        command_val = data.get("command")
+        if command_val is not None and not isinstance(command_val, str):
+            raise ConfigError(
+                f"Coverage command must be a string, got {type(command_val).__name__}"
+            )
+        if command_val == "":
+            raise ConfigError(
+                "Coverage command cannot be empty string. "
+                "Omit the field to use test command."
+            )
+
+        timeout_val = data.get("timeout")
+        if timeout_val is not None and not isinstance(timeout_val, int):
+            raise ConfigError(
+                f"Coverage timeout must be an integer, got {type(timeout_val).__name__}"
+            )
+
+        return cls(
+            format=format_val,
+            file=file_val,
+            threshold=float(threshold_val),
+            command=command_val,
+            timeout=timeout_val,
+        )
+
+
+@dataclass(frozen=True)
+class CommandsConfig:
+    """Configuration for all validation commands.
+
+    All fields are optional. When a field is None, it means the command
+    is not defined (may inherit from preset or be skipped). Commands
+    can be explicitly disabled by setting them to None even if a preset
+    defines them.
+
+    Attributes:
+        setup: Environment setup command (e.g., "uv sync", "npm install").
+        test: Test runner command (e.g., "uv run pytest", "go test ./...").
+        lint: Linter command (e.g., "uvx ruff check .", "golangci-lint run").
+        format: Formatter check command (e.g., "uvx ruff format --check .").
+        typecheck: Type checker command (e.g., "uvx ty check", "tsc --noEmit").
+        e2e: End-to-end test command (e.g., "uv run pytest -m e2e").
+    """
+
+    setup: CommandConfig | None = None
+    test: CommandConfig | None = None
+    lint: CommandConfig | None = None
+    format: CommandConfig | None = None
+    typecheck: CommandConfig | None = None
+    e2e: CommandConfig | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object] | None) -> CommandsConfig:
+        """Create CommandsConfig from a YAML dict.
+
+        Args:
+            data: Dict with optional command fields. Each can be a string,
+                command object, or null.
+
+        Returns:
+            CommandsConfig instance.
+
+        Raises:
+            ConfigError: If a command value is invalid.
+        """
+        if data is None:
+            return cls()
+
+        valid_kinds = ("setup", "test", "lint", "format", "typecheck", "e2e")
+        unknown_kinds = set(data.keys()) - set(valid_kinds)
+        if unknown_kinds:
+            raise ConfigError(
+                f"Unknown command kind(s): {', '.join(sorted(unknown_kinds))}. "
+                f"Valid kinds: {', '.join(valid_kinds)}"
+            )
+
+        def parse_command(key: str) -> CommandConfig | None:
+            value = data.get(key)
+            if value is None:
+                return None
+            if value == "":
+                raise ConfigError(
+                    f"Command '{key}' cannot be empty string. Use null to disable."
+                )
+            # After the above checks, value is str or dict (from YAML)
+            return CommandConfig.from_value(cast("str | dict[str, object]", value))
+
+        return cls(
+            setup=parse_command("setup"),
+            test=parse_command("test"),
+            lint=parse_command("lint"),
+            format=parse_command("format"),
+            typecheck=parse_command("typecheck"),
+            e2e=parse_command("e2e"),
+        )
+
+
+@dataclass(frozen=True)
+class ValidationConfig:
+    """Top-level configuration from mala.yaml.
+
+    This dataclass represents the fully parsed mala.yaml configuration.
+    It is frozen (immutable) after creation.
+
+    Attributes:
+        preset: Optional preset name to extend (e.g., "python-uv", "go").
+        commands: Command definitions. May be partially filled if extending preset.
+        coverage: Coverage configuration. None means coverage is disabled.
+        code_patterns: Glob patterns for code files that trigger validation.
+        config_files: Tool config files that invalidate lint/format cache.
+        setup_files: Lock/dependency files that invalidate setup cache.
+    """
+
+    commands: CommandsConfig = field(default_factory=CommandsConfig)
+    preset: str | None = None
+    coverage: YamlCoverageConfig | None = None
+    code_patterns: tuple[str, ...] = field(default_factory=tuple)
+    config_files: tuple[str, ...] = field(default_factory=tuple)
+    setup_files: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        """Normalize list fields to tuples for immutability."""
+        # Convert any list fields to tuples
+        if isinstance(self.code_patterns, list):
+            object.__setattr__(self, "code_patterns", tuple(self.code_patterns))
+        if isinstance(self.config_files, list):
+            object.__setattr__(self, "config_files", tuple(self.config_files))
+        if isinstance(self.setup_files, list):
+            object.__setattr__(self, "setup_files", tuple(self.setup_files))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> ValidationConfig:
+        """Create ValidationConfig from a parsed YAML dict.
+
+        Args:
+            data: Dict representing the parsed mala.yaml content.
+
+        Returns:
+            ValidationConfig instance.
+
+        Raises:
+            ConfigError: If any field is invalid.
+        """
+        # Parse preset
+        preset = data.get("preset")
+        if preset is not None and not isinstance(preset, str):
+            raise ConfigError(f"preset must be a string, got {type(preset).__name__}")
+
+        # Parse commands
+        commands_data = data.get("commands")
+        if commands_data is not None and not isinstance(commands_data, dict):
+            raise ConfigError(
+                f"commands must be an object, got {type(commands_data).__name__}"
+            )
+        # commands_data is either None or dict at this point
+        commands = CommandsConfig.from_dict(
+            cast("dict[str, object] | None", commands_data)
+        )
+
+        # Parse coverage
+        coverage_data = data.get("coverage")
+        coverage: YamlCoverageConfig | None = None
+        if coverage_data is not None:
+            if not isinstance(coverage_data, dict):
+                raise ConfigError(
+                    f"coverage must be an object, got {type(coverage_data).__name__}"
+                )
+            # coverage_data is confirmed to be a dict here
+            coverage = YamlCoverageConfig.from_dict(
+                cast("dict[str, object]", coverage_data)
+            )
+
+        # Parse list fields
+        def parse_string_list(key: str) -> tuple[str, ...]:
+            value = data.get(key)
+            if value is None:
+                return ()
+            if not isinstance(value, list):
+                raise ConfigError(f"{key} must be a list, got {type(value).__name__}")
+            result: list[str] = []
+            for i, item in enumerate(value):
+                if not isinstance(item, str):
+                    raise ConfigError(
+                        f"{key}[{i}] must be a string, got {type(item).__name__}"
+                    )
+                result.append(item)
+            return tuple(result)
+
+        code_patterns = parse_string_list("code_patterns")
+        config_files = parse_string_list("config_files")
+        setup_files = parse_string_list("setup_files")
+
+        return cls(
+            preset=preset,
+            commands=commands,
+            coverage=coverage,
+            code_patterns=code_patterns,
+            config_files=config_files,
+            setup_files=setup_files,
+        )
+
+    def has_any_command(self) -> bool:
+        """Check if at least one command is defined.
+
+        Returns:
+            True if at least one command is defined, False otherwise.
+        """
+        return any(
+            [
+                self.commands.setup,
+                self.commands.test,
+                self.commands.lint,
+                self.commands.format,
+                self.commands.typecheck,
+                self.commands.e2e,
+            ]
+        )
