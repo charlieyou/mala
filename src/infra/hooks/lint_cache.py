@@ -109,16 +109,18 @@ def _detect_lint_command(command: str, lint_tools: AbstractSet[str]) -> str | No
 
     # Check if the extracted tool (or its base name) matches any lint tool
     # Handle compound commands like "cargo clippy" or "npm run:lint"
-    # Normalize to lowercase for case-insensitive matching (e.g., "RUFF CHECK .")
+    # Normalize both tool_name and lint_tools to lowercase for case-insensitive matching
+    # (e.g., "RUFF CHECK ." should match {"RUFF"} or {"ruff"})
     tool_name_lower = tool_name.lower()
     base_tool = tool_name_lower.split()[0]
+    lint_tools_lower = {t.lower() for t in lint_tools}
 
     # Check full tool name first (e.g., "cargo clippy", "go vet")
-    if tool_name_lower in lint_tools:
+    if tool_name_lower in lint_tools_lower:
         return tool_name_lower
 
     # Check base tool name (e.g., "ruff", "eslint", "golangci-lint")
-    if base_tool in lint_tools:
+    if base_tool in lint_tools_lower:
         return base_tool
 
     return None

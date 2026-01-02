@@ -852,6 +852,30 @@ class TestDetectLintCommand:
             == "cargo clippy"
         )
 
+    def test_case_insensitive_lint_tools(self) -> None:
+        """Should match lint tools case-insensitively."""
+        from src.infra.hooks import _detect_lint_command
+
+        # Uppercase tool names in lint_tools should match lowercase commands
+        uppercase_tools = frozenset({"RUFF", "TY", "ESLINT"})
+        assert _detect_lint_command("ruff check .", uppercase_tools) == "ruff"
+        assert _detect_lint_command("uvx ty check", uppercase_tools) == "ty"
+        assert _detect_lint_command("eslint src/", uppercase_tools) == "eslint"
+
+        # Mixed case lint_tools should work
+        mixed_case_tools = frozenset({"Ruff", "MyPy", "GoLangCI-Lint"})
+        assert _detect_lint_command("ruff check .", mixed_case_tools) == "ruff"
+        assert _detect_lint_command("mypy src/", mixed_case_tools) == "mypy"
+        assert (
+            _detect_lint_command("golangci-lint run", mixed_case_tools)
+            == "golangci-lint"
+        )
+
+        # Uppercase commands should also match (extract_tool_name normalizes)
+        lowercase_tools = frozenset({"ruff", "eslint"})
+        # Note: extract_tool_name returns lowercase, so RUFF CHECK becomes "ruff check"
+        assert _detect_lint_command("RUFF CHECK .", lowercase_tools) == "ruff"
+
     def test_returns_none_for_non_lint_commands(self) -> None:
         """Should return None for non-lint commands."""
         from src.infra.hooks import DEFAULT_LINT_TOOLS, _detect_lint_command
