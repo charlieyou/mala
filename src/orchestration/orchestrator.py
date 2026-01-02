@@ -540,6 +540,8 @@ class MalaOrchestrator:
             # Wrap in try/except to ensure all issues are finalized even if one fails
             try:
                 await self._finalize_issue_result(issue_id, result, run_metadata)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 self.event_sink.on_warning(
                     f"Failed to finalize remediation result for {issue_id}: {e}",
