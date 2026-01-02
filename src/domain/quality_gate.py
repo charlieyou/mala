@@ -60,9 +60,6 @@ __all__ = [
 # SETUP commands like `uv sync` are useful for local setup, but should not
 # block gate passing if omitted or failed.
 QUALITY_GATE_IGNORED_KINDS: set[CommandKind] = {CommandKind.SETUP}
-# Use extracted tool names (e.g., "uv" not "uv sync") since failed_commands
-# stores tool names via extract_tool_name(), not full command strings.
-QUALITY_GATE_IGNORED_COMMANDS: set[str] = {"uv"}
 
 
 @dataclass
@@ -484,10 +481,13 @@ class QualityGate:
                         kind_failed[kind] = (is_error, cmd_name)
 
         # Build failed_commands from kinds that failed, using display names
+        # Filter out ignored kinds (e.g., SETUP) so they don't block the gate
         # Deduplicate: multiple kinds (LINT, FORMAT) may map to the same tool (ruff)
         evidence.failed_commands = list(
             dict.fromkeys(
-                cmd_name for is_failed, cmd_name in kind_failed.values() if is_failed
+                cmd_name
+                for kind, (is_failed, cmd_name) in kind_failed.items()
+                if is_failed and kind not in QUALITY_GATE_IGNORED_KINDS
             )
         )
         return evidence

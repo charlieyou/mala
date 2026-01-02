@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from src.domain.quality_gate import QUALITY_GATE_IGNORED_COMMANDS
 from src.infra.io.log_output.run_metadata import (
     QualityGateResult,
     ValidationResult as MetaValidationResult,
@@ -80,17 +79,12 @@ def build_gate_metadata(
         commands_run = [
             kind.value for kind, ran in evidence.commands_ran.items() if ran
         ]
-        # Filter to only show commands that affected the gate decision
-        # (exclude ignored commands like 'uv sync')
-        gate_failed_commands = [
-            cmd
-            for cmd in evidence.failed_commands
-            if cmd not in QUALITY_GATE_IGNORED_COMMANDS
-        ]
+        # failed_commands is already filtered by QUALITY_GATE_IGNORED_KINDS
+        # at the source in parse_validation_evidence_with_spec
         validation_result = MetaValidationResult(
             passed=passed if passed else gate_result.passed,
             commands_run=commands_run,
-            commands_failed=gate_failed_commands,
+            commands_failed=list(evidence.failed_commands),
         )
 
     return GateMetadata(
@@ -150,15 +144,12 @@ def build_gate_metadata_from_logs(
 
     # Build validation result from evidence (matches build_gate_metadata behavior)
     commands_run = [kind.value for kind, ran in evidence.commands_ran.items() if ran]
-    gate_failed_commands = [
-        cmd
-        for cmd in evidence.failed_commands
-        if cmd not in QUALITY_GATE_IGNORED_COMMANDS
-    ]
+    # failed_commands is already filtered by QUALITY_GATE_IGNORED_KINDS
+    # at the source in parse_validation_evidence_with_spec
     validation_result = MetaValidationResult(
         passed=result_success,
         commands_run=commands_run,
-        commands_failed=gate_failed_commands,
+        commands_failed=list(evidence.failed_commands),
     )
 
     return GateMetadata(
