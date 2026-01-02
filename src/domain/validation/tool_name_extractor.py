@@ -13,8 +13,6 @@ import logging
 import shlex
 from typing import TYPE_CHECKING
 
-from src.domain.validation.spec import CommandKind
-
 if TYPE_CHECKING:
     from src.domain.validation.spec import ValidationSpec
 
@@ -47,10 +45,39 @@ _COMPOUND_COMMANDS: dict[str, frozenset[str]] = {
 }
 
 # Shell built-ins to skip (these appear before a real command)
-_SHELL_BUILTINS: frozenset[str] = frozenset({"export", "set", "source", "."})
+_SHELL_BUILTINS: frozenset[str] = frozenset(
+    {
+        "export",
+        "set",
+        "unset",
+        "source",
+        ".",
+        "eval",
+        "exec",
+        "cd",
+        "pushd",
+        "popd",
+        "alias",
+        "unalias",
+        "declare",
+        "local",
+        "readonly",
+        "typeset",
+    }
+)
 
-# Built-ins that take path/file arguments (source, .)
-_PATH_BUILTINS: frozenset[str] = frozenset({"source", "."})
+# Built-ins that take path/file arguments (source, ., cd, pushd, popd)
+_PATH_BUILTINS: frozenset[str] = frozenset({"source", ".", "cd", "pushd", "popd"})
+
+# Built-ins whose arguments are not commands (skip the rest of the segment)
+_SKIP_REST_BUILTINS: frozenset[str] = frozenset(
+    {"unset", "alias", "unalias", "declare", "local", "readonly", "typeset"}
+)
+
+# Wrapper flags that consume a value (skip flag + value)
+_WRAPPER_VALUE_FLAGS: frozenset[str] = frozenset(
+    {"-p", "--package", "--from", "--extra", "--with"}
+)
 
 # Commands that are typically setup/shell commands, not actual tools
 # When these appear in a multi-segment command (with && or ;), prefer later segments
@@ -155,6 +182,24 @@ def _skip_builtin_arguments(tokens: list[str], idx: int, builtin: str) -> int:
         # source/. take a single path argument
         if idx < len(tokens):
             idx += 1
+    elif builtin in _SKIP_REST_BUILTINS:
+        # These built-ins operate on variables/definitions; remaining tokens
+        # are not commands to execute in this segment.
+        return len(tokens)
+    return idx
+
+
+def _skip_wrapper_flags(tokens: list[str], idx: int) -> int:
+    """Skip wrapper flags (and their values) to find the actual tool token."""
+    while idx < len(tokens):
+        token = tokens[idx]
+        if not token.startswith("-"):
+            return idx
+        token_lower = token.lower()
+        if token_lower in _WRAPPER_VALUE_FLAGS:
+            idx += 2  # Skip flag and its value
+            continue
+        idx += 1
     return idx
 
 
@@ -208,6 +253,10 @@ def _extract_from_tokens(tokens: list[str]) -> str:
                 # Wrapper without command, return wrapper name (lowercase)
                 logger.warning("Wrapper %s %s without following command", first, second)
                 return first_lower
+            idx = _skip_wrapper_flags(tokens, idx)
+            if idx >= len(tokens):
+                logger.warning("Wrapper %s %s without following command", first, second)
+                return first_lower
             first = _strip_path_prefix(tokens[idx])
             first_lower = first.lower()
 
@@ -230,9 +279,8 @@ def _extract_from_tokens(tokens: list[str]) -> str:
     # Check for single-token wrappers (case-insensitive)
     if first_lower in _SINGLE_TOKEN_WRAPPERS:
         idx += 1
-        # After wrapper, skip any leading flags to find the actual tool
-        while idx < len(tokens) and tokens[idx].startswith("-"):
-            idx += 1
+        # After wrapper, skip any leading flags (and their values)
+        idx = _skip_wrapper_flags(tokens, idx)
         if idx >= len(tokens):
             logger.warning("Wrapper %s without following command", first)
             return first_lower
@@ -345,17 +393,14 @@ def extract_tool_name(command: str) -> str:
     return result
 
 
-# Command kinds that represent lint-like tools for LintCache
-LINT_COMMAND_KINDS: frozenset[CommandKind] = frozenset(
-    {CommandKind.LINT, CommandKind.FORMAT, CommandKind.TYPECHECK}
-)
-
-
 def extract_lint_tools_from_spec(spec: ValidationSpec | None) -> frozenset[str] | None:
     """Extract lint tool names from a ValidationSpec.
 
     Extracts tool names from commands with LINT, FORMAT, or TYPECHECK kinds.
     These are the tools that LintCache should recognize and cache.
+
+    This is a convenience wrapper around ValidationSpec.extract_lint_tools()
+    that handles None specs.
 
     Args:
         spec: The ValidationSpec to extract from. If None, returns None.
@@ -367,11 +412,5 @@ def extract_lint_tools_from_spec(spec: ValidationSpec | None) -> frozenset[str] 
     if spec is None:
         return None
 
-    lint_tools: set[str] = set()
-    for cmd in spec.commands:
-        if cmd.kind in LINT_COMMAND_KINDS:
-            tool_name = extract_tool_name(cmd.command)
-            if tool_name:
-                lint_tools.add(tool_name)
-
-    return frozenset(lint_tools) if lint_tools else None
+    lint_tools = spec.extract_lint_tools()
+    return lint_tools if lint_tools else None

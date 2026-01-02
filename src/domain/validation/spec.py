@@ -53,6 +53,11 @@ class CommandKind(Enum):
 # Default timeout for validation commands in seconds
 DEFAULT_COMMAND_TIMEOUT = 120
 
+# Command kinds that represent lint-like tools for LintCache
+LINT_COMMAND_KINDS: frozenset[CommandKind] = frozenset(
+    {CommandKind.LINT, CommandKind.FORMAT, CommandKind.TYPECHECK}
+)
+
 
 @dataclass(frozen=True)
 class ValidationCommand:
@@ -170,6 +175,26 @@ class ValidationSpec:
         """Return commands matching the given kind."""
         return [cmd for cmd in self.commands if cmd.kind == kind]
 
+    def extract_lint_tools(self) -> frozenset[str]:
+        """Extract lint tool names from this ValidationSpec.
+
+        Extracts tool names from commands with LINT, FORMAT, or TYPECHECK kinds.
+        These are the tools that LintCache should recognize and cache.
+
+        Returns:
+            Frozenset of lint tool names. Empty frozenset if no lint commands.
+        """
+        from src.domain.validation.tool_name_extractor import extract_tool_name
+
+        lint_tools: set[str] = set()
+        for cmd in self.commands:
+            if cmd.kind in LINT_COMMAND_KINDS:
+                tool_name = extract_tool_name(cmd.command)
+                if tool_name:
+                    lint_tools.add(tool_name)
+
+        return frozenset(lint_tools)
+
 
 # Code classification constants
 # Paths that are considered code changes
@@ -240,8 +265,6 @@ def build_validation_spec(
     This function loads the mala.yaml configuration from the repository,
     merges it with any preset configuration, and builds a ValidationSpec.
 
-    If no mala.yaml is found, returns an empty spec with no commands.
-
     Disable values:
     - "post-validate": Skip test commands entirely
     - "run-level-validate": (handled elsewhere, not here)
@@ -271,22 +294,8 @@ def build_validation_spec(
     # Determine if we should skip tests
     skip_tests = "post-validate" in disable
 
-    # Try to load config from repo
-    try:
-        user_config = load_config(repo_path)
-    except ConfigError:
-        # No config file found or invalid - return empty spec
-        return ValidationSpec(
-            commands=[],
-            scope=scope,
-            require_clean_git=True,
-            require_pytest_for_code_changes=True,
-            coverage=CoverageConfig(enabled=False),
-            e2e=E2EConfig(enabled=False),
-            code_patterns=[],
-            config_files=[],
-            setup_files=[],
-        )
+    # Load config from repo (fail fast on errors)
+    user_config = load_config(repo_path)
 
     # Load and merge preset if specified
     if user_config.preset is not None:
@@ -295,6 +304,17 @@ def build_validation_spec(
         merged_config = merge_configs(preset_config, user_config)
     else:
         merged_config = user_config
+
+    # Ensure at least one command is defined after merge
+    if not merged_config.has_any_command():
+        raise ConfigError(
+            "At least one command must be defined. "
+            "Specify a preset or define commands directly."
+        )
+
+    # Coverage requires a test command
+    if merged_config.coverage is not None and merged_config.commands.test is None:
+        raise ConfigError("Coverage requires a test command to generate coverage data.")
 
     # Build commands list from config
     commands: list[ValidationCommand] = []
@@ -342,7 +362,7 @@ def build_validation_spec(
         code_patterns=list(merged_config.code_patterns),
         config_files=list(merged_config.config_files),
         setup_files=list(merged_config.setup_files),
-        yaml_coverage_config=merged_config.coverage,
+        yaml_coverage_config=merged_config.coverage if coverage_enabled else None,
     )
 
 
