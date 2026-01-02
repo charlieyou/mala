@@ -80,6 +80,33 @@ class TestGlobToRegex:
         assert regex.match("test_pattern")
         assert not regex.match("other_pattern")
 
+    def test_doublestar_slash_requires_directory_boundary(self) -> None:
+        """Test that **/ only matches at directory boundaries, not within filenames.
+
+        This is a regression test for the bug where **/test_*.py would
+        incorrectly match 'mytest_main.py' because ** was translated to .*
+        which would match the 'my' prefix.
+        """
+        regex = glob_to_regex("**/test_*.py")
+        # Should match: files starting with test_ at any directory depth
+        assert regex.match("test_main.py")
+        assert regex.match("tests/test_utils.py")
+        assert regex.match("src/tests/test_foo.py")
+        # Should NOT match: files where 'test_' is not at start of filename
+        assert not regex.match("mytest_main.py")
+        assert not regex.match("src/mytest_foo.py")
+        assert not regex.match("abctest_bar.py")
+
+    def test_doublestar_slash_regex_pattern(self) -> None:
+        """Test that **/ is translated to the correct regex pattern."""
+        regex = glob_to_regex("**/foo.py")
+        # Pattern should be (?:.*/)?foo\.py
+        # This means: optionally match anything ending with /, then foo.py
+        assert regex.pattern == "^(?:.*/)?foo\\.py$"
+
+        regex2 = glob_to_regex("src/**/bar.py")
+        assert regex2.pattern == "^src/(?:.*/)?bar\\.py$"
+
 
 class TestMatchesPattern:
     """Tests for matches_pattern function."""
@@ -113,6 +140,22 @@ class TestMatchesPattern:
         assert matches_pattern("test_main.py", "**/test_*.py")
         assert matches_pattern("tests/test_utils.py", "**/test_*.py")
         assert matches_pattern("src/tests/test_foo.py", "**/test_*.py")
+
+    def test_doublestar_slash_does_not_match_partial_filename(self) -> None:
+        """Test that **/ does not match within a filename (only at directory boundaries).
+
+        Regression test: **/test_*.py should NOT match 'mytest_main.py' or 'src/abctest.py'
+        because ** should only match complete directory segments, not partial prefixes.
+        """
+        # These should NOT match - 'test_' is not at start of filename
+        assert not matches_pattern("mytest_main.py", "**/test_*.py")
+        assert not matches_pattern("src/abctest_foo.py", "**/test_*.py")
+        assert not matches_pattern("lib/prefix_test_bar.py", "**/test_*.py")
+
+        # These SHOULD match - 'test_' is at start of filename
+        assert matches_pattern("test_main.py", "**/test_*.py")
+        assert matches_pattern("tests/test_utils.py", "**/test_*.py")
+        assert matches_pattern("a/b/c/test_deep.py", "**/test_*.py")
 
     def test_path_separator_normalization(self) -> None:
         """Test that backslashes are normalized to forward slashes."""
@@ -199,6 +242,18 @@ class TestFilterMatchingFiles:
             "tests/test_main.py",
             "tests/test_utils.py",
         }
+
+    def test_doublestar_pattern_excludes_partial_matches(self) -> None:
+        """Test that **/ patterns don't match files with partial name matches."""
+        files = [
+            "test_main.py",
+            "mytest_main.py",  # Should NOT match
+            "tests/test_utils.py",
+            "src/abctest_foo.py",  # Should NOT match
+            "lib/test_helper.py",
+        ]
+        result = filter_matching_files(files, ["**/test_*.py"])
+        assert result == ["test_main.py", "tests/test_utils.py", "lib/test_helper.py"]
 
 
 class TestEdgeCases:

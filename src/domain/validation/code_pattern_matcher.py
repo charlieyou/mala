@@ -42,15 +42,17 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
         while i < n:
             char = pattern[i]
 
-            # Check for ** (matches anything including /)
+            # Check for **/ or ** at end (matches zero or more directory segments)
             if char == "*" and i + 1 < n and pattern[i + 1] == "*":
-                # ** matches zero or more of any character including /
-                regex_parts.append(".*")
                 i += 2
-                # Skip trailing / after ** if present
                 if i < n and pattern[i] == "/":
-                    regex_parts.append("(?:/)?")
+                    # **/ matches zero or more complete directory segments
+                    # Either nothing (zero segments) or anything ending with /
+                    regex_parts.append("(?:.*/)?")
                     i += 1
+                else:
+                    # ** at end or not followed by / - matches anything
+                    regex_parts.append(".*")
             elif char == "*":
                 # Single * matches any character except /
                 regex_parts.append("[^/]*")
