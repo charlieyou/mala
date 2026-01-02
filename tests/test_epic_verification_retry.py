@@ -97,6 +97,7 @@ class TestEpicVerificationRetryLoop:
         orchestrator.epic_verifier = mock_epic_verifier
         orchestrator.epic_override_ids = set()
         orchestrator.verified_epics = set()
+        orchestrator.epics_being_verified = set()
         orchestrator.failed_issues = set()
         orchestrator.active_tasks = {}
 
@@ -151,23 +152,9 @@ class TestEpicVerificationRetryLoop:
         orchestrator.epic_verifier = mock_epic_verifier
         orchestrator.epic_override_ids = set()
         orchestrator.verified_epics = set()
+        orchestrator.epics_being_verified = set()
         orchestrator.failed_issues = set()
         orchestrator.active_tasks = {}
-
-        # Mock spawn_agent to succeed
-        async def mock_spawn(issue_id: str) -> bool:
-            # Create a completed task that returns success
-            async def dummy_result() -> IssueResult:
-                return IssueResult(
-                    issue_id=issue_id, agent_id="test", success=True, summary="done"
-                )
-
-            task = asyncio.create_task(dummy_result())
-            await task  # Let it complete immediately
-            orchestrator.active_tasks[issue_id] = task
-            return True
-
-        orchestrator.spawn_agent = mock_spawn
 
         # Mock _execute_remediation_issues as an async function
         orchestrator._execute_remediation_issues = AsyncMock()
@@ -211,22 +198,9 @@ class TestEpicVerificationRetryLoop:
         orchestrator.epic_verifier = mock_epic_verifier
         orchestrator.epic_override_ids = set()
         orchestrator.verified_epics = set()
+        orchestrator.epics_being_verified = set()
         orchestrator.failed_issues = set()
         orchestrator.active_tasks = {}
-
-        # Mock spawn_agent
-        async def mock_spawn(issue_id: str) -> bool:
-            async def dummy_result() -> IssueResult:
-                return IssueResult(
-                    issue_id=issue_id, agent_id="test", success=True, summary="done"
-                )
-
-            task = asyncio.create_task(dummy_result())
-            await task
-            orchestrator.active_tasks[issue_id] = task
-            return True
-
-        orchestrator.spawn_agent = mock_spawn
 
         # Mock _execute_remediation_issues as an async function
         orchestrator._execute_remediation_issues = AsyncMock()
@@ -235,8 +209,8 @@ class TestEpicVerificationRetryLoop:
 
         await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
 
-        # Should have called verify exactly max_retries times (3)
-        assert mock_epic_verifier.verify_and_close_epic.call_count == 3
+        # Should have called verify exactly max_attempts times (1 + 3 retries = 4)
+        assert mock_epic_verifier.verify_and_close_epic.call_count == 4
         # Should have logged max retries warning
         assert any(
             "failed after" in str(call)
@@ -273,6 +247,7 @@ class TestEpicVerificationRetryLoop:
         orchestrator.epic_verifier = mock_epic_verifier
         orchestrator.epic_override_ids = set()
         orchestrator.verified_epics = set()
+        orchestrator.epics_being_verified = set()
         orchestrator.failed_issues = set()
         orchestrator.active_tasks = {}
 
@@ -301,6 +276,7 @@ class TestEpicVerificationRetryLoop:
         orchestrator.epic_verifier = mock_epic_verifier
         orchestrator.epic_override_ids = set()
         orchestrator.verified_epics = {"epic-1"}  # Already verified
+        orchestrator.epics_being_verified = set()
         orchestrator.failed_issues = set()
         orchestrator.active_tasks = {}
 
@@ -329,6 +305,7 @@ class TestEpicVerificationRetryLoop:
         orchestrator.epic_verifier = mock_epic_verifier
         orchestrator.epic_override_ids = set()
         orchestrator.verified_epics = set()
+        orchestrator.epics_being_verified = set()
         orchestrator.failed_issues = set()
         orchestrator.active_tasks = {}
 
@@ -375,3 +352,183 @@ class TestMalaConfigEpicVerificationRetries:
         monkeypatch.setenv("MALA_MAX_EPIC_VERIFICATION_RETRIES", "not-a-number")
         config = MalaConfig.from_env(validate=False)
         assert config.max_epic_verification_retries == 3
+
+
+class TestExecuteRemediationIssues:
+    """Tests for _execute_remediation_issues method."""
+
+    @pytest.mark.asyncio
+    async def test_uses_task_returned_by_spawn_agent(
+        self,
+        mock_beads: MagicMock,
+        mock_event_sink: MagicMock,
+    ) -> None:
+        """Should use task returned by spawn_agent directly, not from active_tasks."""
+        orchestrator = MagicMock()
+        orchestrator.beads = mock_beads
+        orchestrator.event_sink = mock_event_sink
+        orchestrator.failed_issues = set()
+        # active_tasks intentionally empty to verify we don't rely on it
+        orchestrator.active_tasks = {}
+
+        task_was_awaited = False
+
+        async def mock_spawn(issue_id: str) -> asyncio.Task[IssueResult]:
+            """Return a task directly without registering to active_tasks."""
+            nonlocal task_was_awaited
+
+            async def dummy_result() -> IssueResult:
+                nonlocal task_was_awaited
+                task_was_awaited = True
+                return IssueResult(
+                    issue_id=issue_id, agent_id="test", success=True, summary="done"
+                )
+
+            return asyncio.create_task(dummy_result())
+
+        orchestrator.spawn_agent = mock_spawn
+
+        from src.orchestration.orchestrator import MalaOrchestrator
+
+        await MalaOrchestrator._execute_remediation_issues(
+            orchestrator, ["rem-1", "rem-2"]
+        )
+
+        # Verify task was actually awaited
+        assert task_was_awaited, "Task returned by spawn_agent should be awaited"
+
+
+class TestEpicNotEligible:
+    """Tests for handling epics that aren't eligible yet (children still open)."""
+
+    @pytest.mark.asyncio
+    async def test_does_not_mark_verified_when_not_eligible(
+        self,
+        mock_beads: MagicMock,
+        mock_event_sink: MagicMock,
+        mock_epic_verifier: MagicMock,
+        mock_mala_config: MalaConfig,
+    ) -> None:
+        """Should NOT mark epic as verified when it isn't eligible (verified_count=0)."""
+        # Return result indicating epic wasn't eligible (children still open)
+        mock_epic_verifier.verify_and_close_epic = AsyncMock(
+            return_value=EpicVerificationResult(
+                verified_count=0,  # Epic not eligible - children still open
+                passed_count=0,
+                failed_count=0,
+                human_review_count=0,
+                verdicts={},
+                remediation_issues_created=[],
+            )
+        )
+
+        orchestrator = MagicMock()
+        orchestrator._mala_config = mock_mala_config
+        orchestrator.beads = mock_beads
+        orchestrator.event_sink = mock_event_sink
+        orchestrator.epic_verifier = mock_epic_verifier
+        orchestrator.epic_override_ids = set()
+        orchestrator.verified_epics = set()
+        orchestrator.epics_being_verified = set()
+        orchestrator.failed_issues = set()
+        orchestrator.active_tasks = {}
+
+        from src.orchestration.orchestrator import MalaOrchestrator
+
+        await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+
+        # Should NOT mark epic as verified (so it can be re-checked later)
+        assert "epic-1" not in orchestrator.verified_epics
+        # Should have called verify_and_close_epic exactly once
+        assert mock_epic_verifier.verify_and_close_epic.call_count == 1
+
+
+class TestReentryGuard:
+    """Tests for re-entrant verification guard."""
+
+    @pytest.mark.asyncio
+    async def test_skips_epic_being_verified(
+        self,
+        mock_beads: MagicMock,
+        mock_event_sink: MagicMock,
+        mock_epic_verifier: MagicMock,
+        mock_mala_config: MalaConfig,
+    ) -> None:
+        """Should skip verification for epics already being verified."""
+        orchestrator = MagicMock()
+        orchestrator._mala_config = mock_mala_config
+        orchestrator.beads = mock_beads
+        orchestrator.event_sink = mock_event_sink
+        orchestrator.epic_verifier = mock_epic_verifier
+        orchestrator.epic_override_ids = set()
+        orchestrator.verified_epics = set()
+        orchestrator.epics_being_verified = {"epic-1"}  # Already being verified
+        orchestrator.failed_issues = set()
+        orchestrator.active_tasks = {}
+
+        from src.orchestration.orchestrator import MalaOrchestrator
+
+        await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+
+        # Should NOT call verify_and_close_epic due to re-entry guard
+        mock_epic_verifier.verify_and_close_epic.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_removes_from_being_verified_on_completion(
+        self,
+        mock_beads: MagicMock,
+        mock_event_sink: MagicMock,
+        mock_epic_verifier: MagicMock,
+        mock_mala_config: MalaConfig,
+    ) -> None:
+        """Should remove epic from epics_being_verified when done."""
+        orchestrator = MagicMock()
+        orchestrator._mala_config = mock_mala_config
+        orchestrator.beads = mock_beads
+        orchestrator.event_sink = mock_event_sink
+        orchestrator.epic_verifier = mock_epic_verifier
+        orchestrator.epic_override_ids = set()
+        orchestrator.verified_epics = set()
+        orchestrator.epics_being_verified = set()
+        orchestrator.failed_issues = set()
+        orchestrator.active_tasks = {}
+
+        from src.orchestration.orchestrator import MalaOrchestrator
+
+        await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+
+        # Should have removed from epics_being_verified
+        assert "epic-1" not in orchestrator.epics_being_verified
+
+    @pytest.mark.asyncio
+    async def test_removes_from_being_verified_on_error(
+        self,
+        mock_beads: MagicMock,
+        mock_event_sink: MagicMock,
+        mock_epic_verifier: MagicMock,
+        mock_mala_config: MalaConfig,
+    ) -> None:
+        """Should remove epic from epics_being_verified even on error."""
+        # Make verify_and_close_epic raise an exception
+        mock_epic_verifier.verify_and_close_epic = AsyncMock(
+            side_effect=RuntimeError("Test error")
+        )
+
+        orchestrator = MagicMock()
+        orchestrator._mala_config = mock_mala_config
+        orchestrator.beads = mock_beads
+        orchestrator.event_sink = mock_event_sink
+        orchestrator.epic_verifier = mock_epic_verifier
+        orchestrator.epic_override_ids = set()
+        orchestrator.verified_epics = set()
+        orchestrator.epics_being_verified = set()
+        orchestrator.failed_issues = set()
+        orchestrator.active_tasks = {}
+
+        from src.orchestration.orchestrator import MalaOrchestrator
+
+        with pytest.raises(RuntimeError, match="Test error"):
+            await MalaOrchestrator._check_epic_closure(orchestrator, "child-1")
+
+        # Should have removed from epics_being_verified even on error
+        assert "epic-1" not in orchestrator.epics_being_verified

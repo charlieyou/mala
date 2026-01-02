@@ -201,6 +201,9 @@ class MalaOrchestrator:
         self.review_log_paths: dict[str, str] = {}
         self.last_gate_results: dict[str, GateResult | GateResultProtocol] = {}
         self.verified_epics: set[str] = set()
+        self.epics_being_verified: set[str] = (
+            set()
+        )  # Guard against re-entrant verification
         self.per_issue_spec: ValidationSpec | None = None
 
     def _init_pipeline_runners(self) -> None:
@@ -408,43 +411,66 @@ class MalaOrchestrator:
         if parent_epic is None or parent_epic in self.verified_epics:
             return
 
-        if self.epic_verifier is not None:
-            max_retries = self._mala_config.max_epic_verification_retries
-            human_override = parent_epic in self.epic_override_ids
+        # Guard against re-entrant verification (e.g., when remediation tasks complete)
+        if parent_epic in self.epics_being_verified:
+            return
 
-            for attempt in range(1, max_retries + 1):
-                # Log attempt if retrying (attempt > 1)
-                if attempt > 1:
-                    self.event_sink.on_warning(
-                        f"Epic verification retry {attempt}/{max_retries} for {parent_epic}"
+        if self.epic_verifier is not None:
+            # Mark as being verified to prevent parallel verification loops
+            self.epics_being_verified.add(parent_epic)
+            try:
+                # max_retries is the number of retries AFTER the first attempt
+                # So total attempts = 1 (initial) + max_retries
+                max_retries = self._mala_config.max_epic_verification_retries
+                max_attempts = 1 + max_retries
+                human_override = parent_epic in self.epic_override_ids
+
+                for attempt in range(1, max_attempts + 1):
+                    # Log attempt if retrying (attempt > 1)
+                    if attempt > 1:
+                        self.event_sink.on_warning(
+                            f"Epic verification retry {attempt - 1}/{max_retries} for {parent_epic}"
+                        )
+
+                    verification_result = (
+                        await self.epic_verifier.verify_and_close_epic(
+                            parent_epic, human_override=human_override
+                        )
                     )
 
-                verification_result = await self.epic_verifier.verify_and_close_epic(
-                    parent_epic, human_override=human_override
-                )
+                    # If epic wasn't eligible (children still open), don't mark as verified
+                    # so it can be re-checked when more children close
+                    if verification_result.verified_count == 0:
+                        return
 
-                # If epic passed verification, mark as verified and return
-                if verification_result.passed_count > 0:
-                    self.verified_epics.add(parent_epic)
-                    return
+                    # If epic passed verification, mark as verified and return
+                    if verification_result.passed_count > 0:
+                        self.verified_epics.add(parent_epic)
+                        return
 
-                # If no remediation issues were created, or max retries reached,
-                # mark as verified (to prevent infinite loops) and return
-                if (
-                    not verification_result.remediation_issues_created
-                    or attempt >= max_retries
-                ):
-                    if attempt >= max_retries and verification_result.failed_count > 0:
-                        self.event_sink.on_warning(
-                            f"Epic verification failed after {max_retries} retries for {parent_epic}"
-                        )
-                    self.verified_epics.add(parent_epic)
-                    return
+                    # If no remediation issues were created, or max attempts reached,
+                    # mark as verified (to prevent infinite loops) and return
+                    if (
+                        not verification_result.remediation_issues_created
+                        or attempt >= max_attempts
+                    ):
+                        if (
+                            attempt >= max_attempts
+                            and verification_result.failed_count > 0
+                        ):
+                            self.event_sink.on_warning(
+                                f"Epic verification failed after {max_retries} retries for {parent_epic}"
+                            )
+                        self.verified_epics.add(parent_epic)
+                        return
 
-                # Execute remediation issues before next verification attempt
-                await self._execute_remediation_issues(
-                    verification_result.remediation_issues_created
-                )
+                    # Execute remediation issues before next verification attempt
+                    await self._execute_remediation_issues(
+                        verification_result.remediation_issues_created
+                    )
+            finally:
+                # Always remove from being_verified set when done
+                self.epics_being_verified.discard(parent_epic)
 
         elif await self.beads.close_eligible_epics_async():
             # Fallback for mock providers without EpicVerifier
@@ -466,11 +492,11 @@ class MalaOrchestrator:
             if issue_id in self.failed_issues:
                 continue
 
-            # Spawn agent for this issue
-            if await self.spawn_agent(issue_id):
-                task = self.active_tasks.get(issue_id)
-                if task:
-                    tasks.append(task)
+            # Spawn agent for this issue - use returned task directly
+            # (spawn_agent returns the task but doesn't register it to active_tasks)
+            task = await self.spawn_agent(issue_id)
+            if task:
+                tasks.append(task)
 
         # Wait for all remediation tasks to complete
         if tasks:
