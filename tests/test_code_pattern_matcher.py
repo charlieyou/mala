@@ -67,7 +67,7 @@ class TestGlobToRegex:
                 # First call (the constructed regex) raises error
                 raise re.error("mock regex error")
             # Second call (the escaped fallback) succeeds
-            return original_compile(pattern)
+            return original_compile(pattern, *args, **kwargs)
 
         with patch("re.compile", side_effect=mock_compile):
             regex = glob_to_regex("test_pattern")
