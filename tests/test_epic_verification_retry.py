@@ -368,8 +368,11 @@ class TestExecuteRemediationIssues:
         orchestrator.beads = mock_beads
         orchestrator.event_sink = mock_event_sink
         orchestrator.failed_issues = set()
+        orchestrator.agent_ids = {}
         # active_tasks intentionally empty to verify we don't rely on it
         orchestrator.active_tasks = {}
+        # Mock issue_coordinator for mark_completed calls
+        orchestrator.issue_coordinator = MagicMock()
 
         tasks_awaited: set[str] = set()
 
@@ -388,6 +391,7 @@ class TestExecuteRemediationIssues:
 
         from src.orchestration.orchestrator import MalaOrchestrator
 
+        # Call without run_metadata (optional parameter)
         await MalaOrchestrator._execute_remediation_issues(
             orchestrator, ["rem-1", "rem-2"]
         )
@@ -397,6 +401,90 @@ class TestExecuteRemediationIssues:
             "rem-1",
             "rem-2",
         }, f"All tasks should be awaited, but only got: {tasks_awaited}"
+
+        # Verify mark_completed was called for each issue
+        assert orchestrator.issue_coordinator.mark_completed.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_finalizes_results_with_run_metadata(
+        self,
+        mock_beads: MagicMock,
+        mock_event_sink: MagicMock,
+    ) -> None:
+        """Should finalize results when run_metadata is provided."""
+        orchestrator = MagicMock()
+        orchestrator.beads = mock_beads
+        orchestrator.event_sink = mock_event_sink
+        orchestrator.failed_issues = set()
+        orchestrator.agent_ids = {}
+        orchestrator.active_tasks = {}
+        orchestrator.issue_coordinator = MagicMock()
+        orchestrator._finalize_issue_result = AsyncMock()
+
+        async def mock_spawn(issue_id: str) -> asyncio.Task[IssueResult]:
+            async def dummy_result() -> IssueResult:
+                return IssueResult(
+                    issue_id=issue_id, agent_id="test", success=True, summary="done"
+                )
+
+            return asyncio.create_task(dummy_result())
+
+        orchestrator.spawn_agent = mock_spawn
+
+        from src.orchestration.orchestrator import MalaOrchestrator
+
+        # Create a mock run_metadata
+        mock_run_metadata = MagicMock()
+
+        await MalaOrchestrator._execute_remediation_issues(
+            orchestrator, ["rem-1", "rem-2"], mock_run_metadata
+        )
+
+        # Verify _finalize_issue_result was called for each issue
+        assert orchestrator._finalize_issue_result.call_count == 2
+        # Verify run_metadata was passed
+        for call in orchestrator._finalize_issue_result.call_args_list:
+            assert call[0][2] == mock_run_metadata
+
+    @pytest.mark.asyncio
+    async def test_handles_task_exceptions(
+        self,
+        mock_beads: MagicMock,
+        mock_event_sink: MagicMock,
+    ) -> None:
+        """Should handle task exceptions and still finalize with error result."""
+        orchestrator = MagicMock()
+        orchestrator.beads = mock_beads
+        orchestrator.event_sink = mock_event_sink
+        orchestrator.failed_issues = set()
+        orchestrator.agent_ids = {"rem-1": "agent-1"}
+        orchestrator.active_tasks = {}
+        orchestrator.issue_coordinator = MagicMock()
+        orchestrator._finalize_issue_result = AsyncMock()
+
+        async def mock_spawn(issue_id: str) -> asyncio.Task[IssueResult]:
+            async def failing_result() -> IssueResult:
+                raise RuntimeError("Task failed!")
+
+            return asyncio.create_task(failing_result())
+
+        orchestrator.spawn_agent = mock_spawn
+
+        from src.orchestration.orchestrator import MalaOrchestrator
+
+        mock_run_metadata = MagicMock()
+
+        await MalaOrchestrator._execute_remediation_issues(
+            orchestrator, ["rem-1"], mock_run_metadata
+        )
+
+        # Verify _finalize_issue_result was still called
+        assert orchestrator._finalize_issue_result.call_count == 1
+        # Verify the result indicates failure
+        call_args = orchestrator._finalize_issue_result.call_args[0]
+        result = call_args[1]
+        assert not result.success
+        assert "Task failed!" in result.summary
 
 
 class TestEpicNotEligible:

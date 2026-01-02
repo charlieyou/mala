@@ -395,7 +395,9 @@ class MalaOrchestrator:
             self._run_quality_gate_sync, issue_id, log_path, retry_state
         )
 
-    async def _check_epic_closure(self, issue_id: str) -> None:
+    async def _check_epic_closure(
+        self, issue_id: str, run_metadata: RunMetadata | None = None
+    ) -> None:
         """Check if closing this issue should also close its parent epic.
 
         Implements a retry loop for epic verification:
@@ -406,6 +408,7 @@ class MalaOrchestrator:
 
         Args:
             issue_id: The issue that was just closed.
+            run_metadata: Optional run metadata for recording remediation issue results.
         """
         parent_epic = await self.beads.get_parent_epic_async(issue_id)
         if parent_epic is None or parent_epic in self.verified_epics:
@@ -466,7 +469,8 @@ class MalaOrchestrator:
 
                     # Execute remediation issues before next verification attempt
                     await self._execute_remediation_issues(
-                        verification_result.remediation_issues_created
+                        verification_result.remediation_issues_created,
+                        run_metadata,
                     )
             finally:
                 # Always remove from being_verified set when done
@@ -476,16 +480,24 @@ class MalaOrchestrator:
             # Fallback for mock providers without EpicVerifier
             self.event_sink.on_epic_closed(issue_id)
 
-    async def _execute_remediation_issues(self, issue_ids: list[str]) -> None:
+    async def _execute_remediation_issues(
+        self, issue_ids: list[str], run_metadata: RunMetadata | None = None
+    ) -> None:
         """Execute remediation issues and wait for their completion.
+
+        Spawns agents for remediation issues, waits for completion, and finalizes
+        results (closes issues, records metadata). This ensures remediation issues
+        are properly tracked even though they bypass the main run_loop.
 
         Args:
             issue_ids: List of remediation issue IDs to execute.
+            run_metadata: Optional run metadata for recording issue results.
         """
         if not issue_ids:
             return
 
-        tasks: list[asyncio.Task[IssueResult]] = []
+        # Track (issue_id, task) pairs for finalization
+        task_pairs: list[tuple[str, asyncio.Task[IssueResult]]] = []
 
         for issue_id in issue_ids:
             # Skip if already failed (remediation issues are freshly created, so won't be completed)
@@ -496,11 +508,40 @@ class MalaOrchestrator:
             # (spawn_agent returns the task but doesn't register it to active_tasks)
             task = await self.spawn_agent(issue_id)
             if task:
-                tasks.append(task)
+                task_pairs.append((issue_id, task))
 
         # Wait for all remediation tasks to complete
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        if not task_pairs:
+            return
+
+        tasks = [pair[1] for pair in task_pairs]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Finalize each task result (close issue, record metadata, emit events)
+        for issue_id, task in task_pairs:
+            try:
+                result = task.result()
+            except asyncio.CancelledError:
+                result = IssueResult(
+                    issue_id=issue_id,
+                    agent_id=self.agent_ids.get(issue_id, "unknown"),
+                    success=False,
+                    summary="Remediation task was cancelled",
+                )
+            except Exception as e:
+                result = IssueResult(
+                    issue_id=issue_id,
+                    agent_id=self.agent_ids.get(issue_id, "unknown"),
+                    success=False,
+                    summary=str(e),
+                )
+
+            # Finalize (closes issue, records to run_metadata, emits events)
+            if run_metadata is not None:
+                await self._finalize_issue_result(issue_id, result, run_metadata)
+
+            # Mark as completed in the coordinator
+            self.issue_coordinator.mark_completed(issue_id)
 
     def _record_issue_run(
         self,
@@ -603,7 +644,7 @@ class MalaOrchestrator:
         # Handle successful issue closure and epic verification
         if result.success and await self.beads.close_async(issue_id):
             self.event_sink.on_issue_closed(issue_id, issue_id)
-            await self._check_epic_closure(issue_id)
+            await self._check_epic_closure(issue_id, run_metadata)
 
             # Create tracking issues for P2/P3 review findings (if enabled)
             if self._config.track_review_issues and result.low_priority_review_issues:
