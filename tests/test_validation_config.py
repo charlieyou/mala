@@ -51,6 +51,11 @@ class TestCommandConfig:
         with pytest.raises(ConfigError, match="cannot be empty string"):
             CommandConfig.from_value({"command": ""})
 
+    def test_from_string_empty(self) -> None:
+        """Empty string shorthand raises ConfigError."""
+        with pytest.raises(ConfigError, match="cannot be empty string"):
+            CommandConfig.from_value("")
+
     def test_from_dict_invalid_timeout_type(self) -> None:
         """Dict with non-integer timeout raises ConfigError."""
         with pytest.raises(ConfigError, match="timeout must be an integer"):

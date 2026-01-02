@@ -91,6 +91,10 @@ class CommandConfig:
             CommandConfig(command='pytest', timeout=60)
         """
         if isinstance(value, str):
+            if not value:
+                raise ConfigError(
+                    "Command cannot be empty string. Use null to disable."
+                )
             return cls(command=value)
 
         if isinstance(value, dict):
