@@ -11,6 +11,7 @@ from unittest.mock import patch
 from src.infra.tools.command_runner import CommandResult
 from src.domain.validation.config import YamlCoverageConfig
 from src.domain.validation.coverage import (
+    BaselineCoverageService,
     CoverageResult,
     CoverageStatus,
     check_coverage_from_config,
@@ -1010,3 +1011,130 @@ class TestCheckCoverageFromConfig:
         assert result is not None
         assert result.passed is True
         assert result.percent == 100.0
+
+
+class TestBaselineCoverageService:
+    """Test BaselineCoverageService with YamlCoverageConfig."""
+
+    def test_no_coverage_config_returns_unavailable(self, tmp_path: Path) -> None:
+        """Without coverage config, baseline refresh is unavailable."""
+        from unittest.mock import MagicMock
+
+        # Create service without coverage config
+        service = BaselineCoverageService(repo_path=tmp_path, coverage_config=None)
+
+        # Mock spec - shouldn't matter since we fail early
+        mock_spec = MagicMock()
+
+        result = service.refresh_if_stale(mock_spec)
+
+        assert result.success is False
+        assert result.error is not None
+        assert "no coverage configuration" in result.error
+
+    def test_no_coverage_command_returns_unavailable(self, tmp_path: Path) -> None:
+        """Without coverage command, baseline refresh is unavailable."""
+        from unittest.mock import MagicMock
+
+        # Create config without command
+        config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=85.0,
+            command=None,
+        )
+        service = BaselineCoverageService(repo_path=tmp_path, coverage_config=config)
+
+        # Mock spec - shouldn't matter since we fail early
+        mock_spec = MagicMock()
+
+        result = service.refresh_if_stale(mock_spec)
+
+        assert result.success is False
+        assert result.error is not None
+        assert "no coverage command configured" in result.error
+
+    def test_coverage_config_timeout_is_used(self, tmp_path: Path) -> None:
+        """Coverage config timeout should be used for command execution."""
+        # Create config with custom timeout
+        config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=85.0,
+            command="uv run pytest --cov",
+            timeout=600,
+        )
+        service = BaselineCoverageService(
+            repo_path=tmp_path,
+            coverage_config=config,
+            step_timeout_seconds=120.0,  # This should be ignored
+        )
+
+        # Verify config is stored correctly
+        assert service.coverage_config is not None
+        assert service.coverage_config.timeout == 600
+        assert service.coverage_config.command == "uv run pytest --cov"
+
+    def test_fallback_to_step_timeout(self, tmp_path: Path) -> None:
+        """When coverage config has no timeout, step_timeout_seconds is used."""
+        # Create config without timeout
+        config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=85.0,
+            command="uv run pytest --cov",
+            timeout=None,
+        )
+        service = BaselineCoverageService(
+            repo_path=tmp_path,
+            coverage_config=config,
+            step_timeout_seconds=180.0,
+        )
+
+        # Verify config is stored correctly
+        assert service.coverage_config is not None
+        assert service.coverage_config.timeout is None
+        # step_timeout_seconds should be the fallback
+        assert service.step_timeout_seconds == 180.0
+
+    def test_fresh_baseline_returns_without_refresh(self, tmp_path: Path) -> None:
+        """Fresh baseline should return cached value without running command."""
+        from unittest.mock import MagicMock
+
+        # Create coverage.xml baseline
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+
+        # Set future mtime (simulating fresh baseline)
+        future_time = 4102444800  # Year 2099
+        os.utime(report, (future_time, future_time))
+
+        # Create config with command
+        config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=85.0,
+            command="uv run pytest --cov",
+        )
+        service = BaselineCoverageService(repo_path=tmp_path, coverage_config=config)
+
+        # Mock spec
+        mock_spec = MagicMock()
+
+        # Mock git commands to indicate clean repo
+        def mock_run(args: list[str], **_kwargs: object) -> CommandResult:
+            if "status" in args:
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
+            elif "log" in args:
+                # Old commit time
+                return CommandResult(
+                    command=args, returncode=0, stdout="1700000000\n", stderr=""
+                )
+            return CommandResult(command=args, returncode=0, stdout="", stderr="")
+
+        with patch("src.domain.validation.coverage.run_command", side_effect=mock_run):
+            result = service.refresh_if_stale(mock_spec)
+
+        # Should return existing baseline without refresh
+        assert result.success is True
+        assert result.percent == 90.0

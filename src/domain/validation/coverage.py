@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING
 from src.infra.tools.command_runner import run_command
 
 from .config import YamlCoverageConfig  # noqa: TC001 - used at runtime
-from .spec import CommandKind
 
 if TYPE_CHECKING:
     from .spec import ValidationSpec
@@ -408,28 +407,39 @@ class BaselineCoverageService:
     This service handles:
     - File-based locking to prevent concurrent refreshes
     - Temporary worktree creation at HEAD
-    - Running pytest with coverage to generate baseline
+    - Running coverage command to generate baseline
     - Copying the coverage report back to the main repo
 
     Usage:
-        service = BaselineCoverageService(repo_path)
+        config = YamlCoverageConfig(command="uv run pytest --cov", ...)
+        service = BaselineCoverageService(repo_path, coverage_config=config)
         result = service.refresh_if_stale(spec)
         if result.success:
             baseline_percent = result.percent
+
+    Note:
+        If coverage_config is None or coverage_config.command is None,
+        baseline refresh is unavailable and refresh_if_stale will return
+        a failure result.
     """
 
     def __init__(
         self,
         repo_path: Path,
+        coverage_config: YamlCoverageConfig | None = None,
         step_timeout_seconds: float | None = None,
     ):
         """Initialize the baseline coverage service.
 
         Args:
             repo_path: Path to the repository.
-            step_timeout_seconds: Optional timeout for commands.
+            coverage_config: Coverage configuration from mala.yaml. Required for
+                baseline refresh - if None or if command is None, refresh is unavailable.
+            step_timeout_seconds: Optional fallback timeout for commands (used if
+                coverage_config.timeout is None).
         """
         self.repo_path = repo_path.resolve()
+        self.coverage_config = coverage_config
         self.step_timeout_seconds = step_timeout_seconds
 
     def refresh_if_stale(
@@ -446,8 +456,19 @@ class BaselineCoverageService:
 
         Returns:
             BaselineRefreshResult with the baseline percentage or error.
+            Returns failure if coverage_config is None or has no command.
         """
         from src.infra.tools.locking import lock_path, try_lock, wait_for_lock
+
+        # Check if baseline refresh is available
+        if self.coverage_config is None:
+            return BaselineRefreshResult.fail(
+                "Baseline refresh unavailable: no coverage configuration"
+            )
+        if self.coverage_config.command is None:
+            return BaselineRefreshResult.fail(
+                "Baseline refresh unavailable: no coverage command configured"
+            )
 
         # Determine baseline report path
         baseline_path = self.repo_path / "coverage.xml"
@@ -503,14 +524,19 @@ class BaselineCoverageService:
         spec: ValidationSpec,
         baseline_path: Path,
     ) -> BaselineRefreshResult:
-        """Run pytest in temp worktree to refresh baseline coverage.
+        """Run coverage command in temp worktree to refresh baseline coverage.
 
         Args:
-            spec: Validation spec with pytest command.
+            spec: Validation spec (used for worktree context only).
             baseline_path: Where to write the baseline coverage.xml.
 
         Returns:
             BaselineRefreshResult with the new baseline percentage or error.
+
+        Note:
+            Uses self.coverage_config.command for running coverage. This method
+            assumes coverage_config and coverage_config.command are validated
+            as non-None by the caller (refresh_if_stale).
         """
         from src.infra.tools.command_runner import CommandRunner
         from src.infra.tools.env import get_lock_dir
@@ -521,12 +547,10 @@ class BaselineCoverageService:
             remove_worktree,
         )
 
-        # Find the pytest command from spec
-        pytest_commands = spec.commands_by_kind(CommandKind.TEST)
-        if not pytest_commands:
-            return BaselineRefreshResult.fail(
-                "No pytest command in spec for baseline refresh"
-            )
+        # coverage_config.command is validated non-None in refresh_if_stale
+        assert self.coverage_config is not None
+        assert self.coverage_config.command is not None
+        coverage_command = self.coverage_config.command
 
         # Create temp worktree at HEAD
         run_id = f"baseline-{uuid.uuid4().hex[:8]}"
@@ -561,28 +585,31 @@ class BaselineCoverageService:
                 "AGENT_ID": f"baseline-{run_id}",
             }
 
-            # Run uv sync first to install dependencies
-            timeout = self.step_timeout_seconds or 300.0
+            # Determine timeout: prefer coverage_config.timeout, then step_timeout_seconds, then default
+            timeout = float(
+                self.coverage_config.timeout or self.step_timeout_seconds or 300.0
+            )
             runner = CommandRunner(cwd=worktree_path, timeout_seconds=timeout)
+
+            # Run uv sync first to install dependencies
             sync_result = runner.run(["uv", "sync", "--all-extras"], env=env)
             if sync_result.returncode != 0:
                 return BaselineRefreshResult.fail(
                     f"uv sync failed during baseline refresh: {sync_result.stderr}"
                 )
 
-            # Get pytest command and modify for baseline (override threshold to 0)
-            # Convert shell string command to list for manipulation
-            pytest_cmd = shlex.split(pytest_commands[0].command)
+            # Convert coverage command to list for manipulation
+            coverage_cmd = shlex.split(coverage_command)
 
             # Replace any existing --cov-fail-under with 0
             # This ensures we capture baseline even if it's below pyproject.toml threshold
             # Also replace any existing -m marker with "unit or integration" to
             # avoid end-to-end tests during baseline refresh.
             # Remove xdist flags to avoid coverage merge flakiness in baseline refresh.
-            new_pytest_cmd = []
+            new_coverage_cmd = []
             marker_expr: str | None = None
             skip_next = False
-            for arg in pytest_cmd:
+            for arg in coverage_cmd:
                 if skip_next:
                     skip_next = False
                     continue
@@ -607,7 +634,7 @@ class BaselineCoverageService:
                     skip_next = True
                     marker_expr = None  # will be captured via skip_next branch
                     continue
-                new_pytest_cmd.append(arg)
+                new_coverage_cmd.append(arg)
 
             # If we skipped "-m <expr>", capture the expression from the next arg
             if skip_next:
@@ -616,9 +643,9 @@ class BaselineCoverageService:
 
             # If we stripped a marker via "-m", it was the immediate next arg
             if marker_expr is None:
-                for i, arg in enumerate(pytest_cmd[:-1]):
+                for i, arg in enumerate(coverage_cmd[:-1]):
                     if arg == "-m":
-                        marker_expr = pytest_cmd[i + 1]
+                        marker_expr = coverage_cmd[i + 1]
                         break
 
             # Normalize marker expression: never include e2e in baseline refresh
@@ -629,21 +656,21 @@ class BaselineCoverageService:
             # Ensure XML coverage output is requested (needed for baseline).
             if not any(
                 arg == "--cov-report=xml" or arg.startswith("--cov-report=xml")
-                for arg in new_pytest_cmd
+                for arg in new_coverage_cmd
             ):
-                new_pytest_cmd.append("--cov-report=xml")
+                new_coverage_cmd.append("--cov-report=xml")
 
-            new_pytest_cmd.append("--cov-fail-under=0")
-            new_pytest_cmd.extend(["-m", marker_expr])
+            new_coverage_cmd.append("--cov-fail-under=0")
+            new_coverage_cmd.extend(["-m", marker_expr])
 
-            # Run pytest - we ignore the exit code because tests may fail
+            # Run coverage command - we ignore the exit code because tests may fail
             # but still generate a valid coverage.xml baseline
-            pytest_result = runner.run(new_pytest_cmd, env=env)
+            coverage_result = runner.run(new_coverage_cmd, env=env)
 
             # Check for coverage.xml in worktree
             worktree_coverage = worktree_path / "coverage.xml"
             if not worktree_coverage.exists():
-                # Fallback: combine coverage data if pytest didn't emit XML
+                # Fallback: combine coverage data if coverage command didn't emit XML
                 coverage_data = [
                     path
                     for path in worktree_path.glob(".coverage*")
@@ -654,19 +681,19 @@ class BaselineCoverageService:
                 xml_result = None
 
                 if coverage_data:
-                    # Use the same invocation style as pytest when possible.
+                    # Use the same invocation style as the coverage command when possible.
                     if (
-                        len(pytest_cmd) >= 3
-                        and pytest_cmd[0] == "uv"
-                        and pytest_cmd[1] == "run"
+                        len(coverage_cmd) >= 3
+                        and coverage_cmd[0] == "uv"
+                        and coverage_cmd[1] == "run"
                     ):
                         coverage_base = ["uv", "run", "coverage"]
                     elif (
-                        len(pytest_cmd) >= 3
-                        and pytest_cmd[1] == "-m"
-                        and pytest_cmd[2] == "pytest"
+                        len(coverage_cmd) >= 3
+                        and coverage_cmd[1] == "-m"
+                        and coverage_cmd[2] == "pytest"
                     ):
-                        coverage_base = [pytest_cmd[0], "-m", "coverage"]
+                        coverage_base = [coverage_cmd[0], "-m", "coverage"]
                     else:
                         coverage_base = ["coverage"]
 
@@ -682,15 +709,17 @@ class BaselineCoverageService:
 
                 if not worktree_coverage.exists():
                     details: list[str] = []
-                    if pytest_result.timed_out:
-                        details.append("pytest timed out")
-                    elif pytest_result.returncode != 0:
-                        details.append(f"pytest exited {pytest_result.returncode}")
-                    pytest_tail = (
-                        pytest_result.stderr_tail() or pytest_result.stdout_tail()
+                    if coverage_result.timed_out:
+                        details.append("coverage command timed out")
+                    elif coverage_result.returncode != 0:
+                        details.append(
+                            f"coverage command exited {coverage_result.returncode}"
+                        )
+                    cmd_tail = (
+                        coverage_result.stderr_tail() or coverage_result.stdout_tail()
                     )
-                    if pytest_tail:
-                        details.append(f"pytest output: {pytest_tail}")
+                    if cmd_tail:
+                        details.append(f"command output: {cmd_tail}")
                     if combine_result is not None and combine_result.returncode != 0:
                         combine_tail = (
                             combine_result.stderr_tail() or combine_result.stdout_tail()
