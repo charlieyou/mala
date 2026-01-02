@@ -2896,9 +2896,7 @@ class TestAlreadyCompleteResolution:
         call_args = mock_run.call_args[0][0]
         assert "bd-mala-xyz" in call_args
 
-    def test_already_complete_referenced_issue_not_found(
-        self, tmp_path: Path
-    ) -> None:
+    def test_already_complete_referenced_issue_not_found(self, tmp_path: Path) -> None:
         """ALREADY_COMPLETE should fail with clear error when referenced commit doesn't exist."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(

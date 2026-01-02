@@ -743,7 +743,9 @@ class TestAlreadyActiveGateError:
             spawn_fail_result = MagicMock()
             spawn_fail_result.returncode = 1
             spawn_fail_result.timed_out = False
-            spawn_fail_result.stderr_tail.return_value = "Error: review gate already active"
+            spawn_fail_result.stderr_tail.return_value = (
+                "Error: review gate already active"
+            )
             spawn_fail_result.stdout_tail.return_value = ""
 
             # Resolve succeeds
@@ -769,7 +771,9 @@ class TestAlreadyActiveGateError:
                 mock_runner = AsyncMock()
                 # Sequence: git diff, spawn (fail), resolve, spawn (ok), wait
                 mock_runner.run_async.side_effect = [
-                    MagicMock(returncode=0, stdout=" 1 file changed"),  # git diff (non-empty)
+                    MagicMock(
+                        returncode=0, stdout=" 1 file changed"
+                    ),  # git diff (non-empty)
                     spawn_fail_result,
                     resolve_result,
                     spawn_ok_result,
@@ -802,7 +806,9 @@ class TestAlreadyActiveGateError:
             spawn_fail_result = MagicMock()
             spawn_fail_result.returncode = 1
             spawn_fail_result.timed_out = False
-            spawn_fail_result.stderr_tail.return_value = "Error: review gate already active"
+            spawn_fail_result.stderr_tail.return_value = (
+                "Error: review gate already active"
+            )
             spawn_fail_result.stdout_tail.return_value = ""
 
             # Resolve succeeds
@@ -815,7 +821,9 @@ class TestAlreadyActiveGateError:
             spawn_still_active = MagicMock()
             spawn_still_active.returncode = 1
             spawn_still_active.timed_out = False
-            spawn_still_active.stderr_tail.return_value = "Error: review gate already active"
+            spawn_still_active.stderr_tail.return_value = (
+                "Error: review gate already active"
+            )
             spawn_still_active.stdout_tail.return_value = ""
 
             with patch(
@@ -823,7 +831,9 @@ class TestAlreadyActiveGateError:
             ) as mock_runner_class:
                 mock_runner = AsyncMock()
                 mock_runner.run_async.side_effect = [
-                    MagicMock(returncode=0, stdout=" 1 file changed"),  # git diff (non-empty)
+                    MagicMock(
+                        returncode=0, stdout=" 1 file changed"
+                    ),  # git diff (non-empty)
                     spawn_fail_result,
                     resolve_result,
                     spawn_still_active,
@@ -849,7 +859,9 @@ class TestAlreadyActiveGateError:
             spawn_fail_result = MagicMock()
             spawn_fail_result.returncode = 1
             spawn_fail_result.timed_out = False
-            spawn_fail_result.stderr_tail.return_value = "Error: review gate already active"
+            spawn_fail_result.stderr_tail.return_value = (
+                "Error: review gate already active"
+            )
             spawn_fail_result.stdout_tail.return_value = ""
 
             # Resolve fails
@@ -863,7 +875,9 @@ class TestAlreadyActiveGateError:
             ) as mock_runner_class:
                 mock_runner = AsyncMock()
                 mock_runner.run_async.side_effect = [
-                    MagicMock(returncode=0, stdout=" 1 file changed"),  # git diff (non-empty)
+                    MagicMock(
+                        returncode=0, stdout=" 1 file changed"
+                    ),  # git diff (non-empty)
                     spawn_fail_result,
                     resolve_result,
                 ]
