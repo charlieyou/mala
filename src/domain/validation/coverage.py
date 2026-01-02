@@ -470,8 +470,12 @@ class BaselineCoverageService:
                 "Baseline refresh unavailable: no coverage command configured"
             )
 
-        # Determine baseline report path
-        baseline_path = self.repo_path / "coverage.xml"
+        # Determine baseline report path from config
+        coverage_file = Path(self.coverage_config.file)
+        if coverage_file.is_absolute():
+            baseline_path = coverage_file
+        else:
+            baseline_path = self.repo_path / coverage_file
 
         # Check if baseline is fresh (no refresh needed)
         if not is_baseline_stale(baseline_path, self.repo_path):
@@ -653,12 +657,14 @@ class BaselineCoverageService:
             if "e2e" in marker_expr:
                 marker_expr = "unit or integration"
 
-            # Ensure XML coverage output is requested (needed for baseline).
-            if not any(
-                arg == "--cov-report=xml" or arg.startswith("--cov-report=xml")
+            # Ensure XML coverage output is requested at the configured path.
+            coverage_file = self.coverage_config.file
+            has_xml_report = any(
+                arg == "--cov-report=xml" or arg.startswith("--cov-report=xml:")
                 for arg in new_coverage_cmd
-            ):
-                new_coverage_cmd.append("--cov-report=xml")
+            )
+            if not has_xml_report:
+                new_coverage_cmd.append(f"--cov-report=xml:{coverage_file}")
 
             new_coverage_cmd.append("--cov-fail-under=0")
             new_coverage_cmd.extend(["-m", marker_expr])
@@ -667,8 +673,9 @@ class BaselineCoverageService:
             # but still generate a valid coverage.xml baseline
             coverage_result = runner.run(new_coverage_cmd, env=env)
 
-            # Check for coverage.xml in worktree
-            worktree_coverage = worktree_path / "coverage.xml"
+            # Check for coverage file in worktree (use configured file path)
+            coverage_file = Path(self.coverage_config.file)
+            worktree_coverage = worktree_path / coverage_file
             if not worktree_coverage.exists():
                 # Fallback: combine coverage data if coverage command didn't emit XML
                 coverage_data = [

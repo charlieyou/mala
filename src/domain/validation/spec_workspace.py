@@ -125,6 +125,7 @@ def setup_workspace(
         # "No decrease" mode - need to get baseline via service
         baseline_service = BaselineCoverageService(
             context.repo_path,
+            coverage_config=spec.yaml_coverage_config,
             step_timeout_seconds=step_timeout_seconds,
         )
         result = baseline_service.refresh_if_stale(spec)

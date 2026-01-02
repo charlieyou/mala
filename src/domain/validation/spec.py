@@ -29,7 +29,7 @@ from src.core.models import (
 if TYPE_CHECKING:
     from re import Pattern
 
-    from src.domain.validation.config import ValidationConfig
+    from src.domain.validation.config import ValidationConfig, YamlCoverageConfig
 
 
 class ValidationScope(Enum):
@@ -151,6 +151,8 @@ class ValidationSpec:
         code_patterns: Glob patterns for code files that trigger validation.
         config_files: Tool config files that invalidate lint/format cache.
         setup_files: Lock/dependency files that invalidate setup cache.
+        yaml_coverage_config: Optional YamlCoverageConfig from mala.yaml for
+            baseline refresh (contains command and file path).
     """
 
     commands: list[ValidationCommand]
@@ -162,6 +164,7 @@ class ValidationSpec:
     code_patterns: list[str] = field(default_factory=list)
     config_files: list[str] = field(default_factory=list)
     setup_files: list[str] = field(default_factory=list)
+    yaml_coverage_config: YamlCoverageConfig | None = None
 
     def commands_by_kind(self, kind: CommandKind) -> list[ValidationCommand]:
         """Return commands matching the given kind."""
@@ -339,6 +342,7 @@ def build_validation_spec(
         code_patterns=list(merged_config.code_patterns),
         config_files=list(merged_config.config_files),
         setup_files=list(merged_config.setup_files),
+        yaml_coverage_config=merged_config.coverage,
     )
 
 

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.domain.validation.config import YamlCoverageConfig
 from src.domain.validation.spec import (
     CommandKind,
     CoverageConfig,
@@ -265,6 +266,12 @@ class TestSetupWorkspaceBaseline:
         from src.domain.validation.spec_workspace import setup_workspace
         from src.infra.tools.command_runner import CommandResult
 
+        yaml_coverage_config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=0.0,
+            command="uv run pytest --cov=src --cov-report=xml",
+        )
         spec = ValidationSpec(
             commands=[
                 ValidationCommand(
@@ -276,6 +283,7 @@ class TestSetupWorkspaceBaseline:
             scope=ValidationScope.PER_ISSUE,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
+            yaml_coverage_config=yaml_coverage_config,
         )
 
         # Create baseline file
@@ -374,6 +382,12 @@ class TestSetupWorkspaceErrors:
         )
         from src.infra.tools.command_runner import CommandResult
 
+        yaml_coverage_config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=0.0,
+            command="uv run pytest --cov=src --cov-report=xml",
+        )
         spec = ValidationSpec(
             commands=[
                 ValidationCommand(
@@ -385,6 +399,7 @@ class TestSetupWorkspaceErrors:
             scope=ValidationScope.PER_ISSUE,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
+            yaml_coverage_config=yaml_coverage_config,
         )
 
         # No baseline file, and refresh will fail

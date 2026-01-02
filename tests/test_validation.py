@@ -1040,6 +1040,8 @@ class TestSpecRunnerNoDecreaseMode:
         self, runner: SpecValidationRunner, tmp_path: Path
     ) -> None:
         """When baseline is fresh, use it as threshold."""
+        from src.domain.validation.config import YamlCoverageConfig
+
         # Create fresh baseline at 80%
         baseline_xml = tmp_path / "coverage.xml"
         baseline_xml.write_text(
@@ -1051,6 +1053,12 @@ class TestSpecRunnerNoDecreaseMode:
         future_time = 4102444800
         os.utime(baseline_xml, (future_time, future_time))
 
+        yaml_coverage_config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=0.0,
+            command="uv run pytest --cov=src --cov-report=xml",
+        )
         # Create spec with no-decrease mode (min_percent=None)
         spec = ValidationSpec(
             commands=[
@@ -1066,6 +1074,7 @@ class TestSpecRunnerNoDecreaseMode:
                 min_percent=None,  # No-decrease mode
             ),
             e2e=E2EConfig(enabled=False),
+            yaml_coverage_config=yaml_coverage_config,
         )
 
         context = ValidationContext(
@@ -1408,7 +1417,15 @@ class TestSpecRunnerBaselineRefresh:
     @pytest.fixture
     def service(self, tmp_path: Path) -> BaselineCoverageService:
         """Create a baseline coverage service for tests."""
-        return BaselineCoverageService(tmp_path)
+        from src.domain.validation.config import YamlCoverageConfig
+
+        coverage_config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=0.0,
+            command="uv run pytest --cov=src --cov-report=xml",
+        )
+        return BaselineCoverageService(tmp_path, coverage_config=coverage_config)
 
     def test_baseline_refresh_when_missing(
         self, service: BaselineCoverageService, tmp_path: Path
@@ -1917,6 +1934,8 @@ class TestBaselineCaptureOrder:
         """
         import os
 
+        from src.domain.validation.config import YamlCoverageConfig
+
         # Create fresh baseline at 85% in main repo
         baseline_xml = tmp_path / "coverage.xml"
         baseline_xml.write_text(
@@ -1925,6 +1944,12 @@ class TestBaselineCaptureOrder:
         future_time = 4102444800
         os.utime(baseline_xml, (future_time, future_time))
 
+        yaml_coverage_config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=0.0,
+            command="uv run pytest --cov=src --cov-report=xml",
+        )
         spec = ValidationSpec(
             commands=[
                 ValidationCommand(
@@ -1936,6 +1961,7 @@ class TestBaselineCaptureOrder:
             scope=ValidationScope.PER_ISSUE,
             coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
+            yaml_coverage_config=yaml_coverage_config,
         )
 
         # Create a context WITH commit_hash to trigger worktree creation
