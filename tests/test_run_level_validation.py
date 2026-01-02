@@ -153,7 +153,9 @@ class TestRunLevelValidation:
 
         fixer_calls: list[tuple[str, int]] = []
 
-        async def mock_fixer(failure_output: str, attempt: int) -> bool:
+        async def mock_fixer(
+            failure_output: str, attempt: int, spec: object = None
+        ) -> bool:
             fixer_calls.append((failure_output, attempt))
             return True
 

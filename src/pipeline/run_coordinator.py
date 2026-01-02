@@ -40,10 +40,12 @@ from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.e2e import E2EStatus
 from src.domain.validation.spec import (
+    CommandKind,
     ValidationContext,
     ValidationScope,
     build_validation_spec,
 )
+from src.domain.validation.tool_name_extractor import extract_tool_name
 from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
@@ -54,6 +56,7 @@ if TYPE_CHECKING:
     )
     from src.core.protocols import GateChecker
     from src.domain.validation.result import ValidationResult
+    from src.domain.validation.spec import ValidationSpec
 
 
 # Prompt file paths
@@ -65,6 +68,38 @@ FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
 def _get_fixer_prompt() -> str:
     """Load fixer prompt (cached on first use)."""
     return FIXER_PROMPT_FILE.read_text()
+
+
+# Command kinds that represent lint-like tools for LintCache
+_LINT_COMMAND_KINDS: frozenset[CommandKind] = frozenset(
+    {CommandKind.LINT, CommandKind.FORMAT, CommandKind.TYPECHECK}
+)
+
+
+def _extract_lint_tools_from_spec(spec: ValidationSpec | None) -> frozenset[str] | None:
+    """Extract lint tool names from a ValidationSpec.
+
+    Extracts tool names from commands with LINT, FORMAT, or TYPECHECK kinds.
+    These are the tools that LintCache should recognize and cache.
+
+    Args:
+        spec: The ValidationSpec to extract from. If None, returns None.
+
+    Returns:
+        Frozenset of lint tool names, or None if spec is None or has no
+        lint commands (allowing LintCache to use defaults).
+    """
+    if spec is None:
+        return None
+
+    lint_tools: set[str] = set()
+    for cmd in spec.commands:
+        if cmd.kind in _LINT_COMMAND_KINDS:
+            tool_name = extract_tool_name(cmd.command)
+            if tool_name:
+                lint_tools.add(tool_name)
+
+    return frozenset(lint_tools) if lint_tools else None
 
 
 @dataclass
@@ -299,6 +334,7 @@ class RunCoordinator:
             fixer_success = await self._run_fixer_agent(
                 failure_output=failure_output,
                 attempt=attempt,
+                spec=spec,
             )
 
             if not fixer_success:
@@ -361,12 +397,14 @@ class RunCoordinator:
         self,
         failure_output: str,
         attempt: int,
+        spec: ValidationSpec | None = None,
     ) -> bool:
         """Spawn a fixer agent to address run-level validation failures.
 
         Args:
             failure_output: Human-readable description of what failed.
             attempt: Current attempt number.
+            spec: Optional ValidationSpec for extracting lint tool names.
 
         Returns:
             True if fixer agent completed successfully, False otherwise.
@@ -405,7 +443,8 @@ class RunCoordinator:
 
         # Build hooks
         file_read_cache = FileReadCache()
-        lint_cache = LintCache(repo_path=fixer_cwd)
+        lint_tools = _extract_lint_tools_from_spec(spec)
+        lint_cache = LintCache(repo_path=fixer_cwd, lint_tools=lint_tools)
         pre_tool_hooks: list = [
             block_dangerous_commands,
             make_lock_enforcement_hook(agent_id, str(self.config.repo_path)),

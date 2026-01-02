@@ -7,9 +7,11 @@ import uuid
 from typing import TYPE_CHECKING
 
 from src.domain.validation.spec import (
+    CommandKind,
     ValidationScope,
     build_validation_spec,
 )
+from src.domain.validation.tool_name_extractor import extract_tool_name
 from src.infra.git_utils import (
     get_baseline_for_issue,
     get_git_branch_async,
@@ -105,6 +107,37 @@ __version__ = pkg_version("mala")
 # 60s allows time for Claude SDK to flush logs, especially under load.
 LOG_FILE_WAIT_TIMEOUT = 60
 LOG_FILE_POLL_INTERVAL = 0.5
+
+# Command kinds that represent lint-like tools for LintCache
+_LINT_COMMAND_KINDS: frozenset[CommandKind] = frozenset(
+    {CommandKind.LINT, CommandKind.FORMAT, CommandKind.TYPECHECK}
+)
+
+
+def _extract_lint_tools_from_spec(spec: ValidationSpec | None) -> frozenset[str] | None:
+    """Extract lint tool names from a ValidationSpec.
+
+    Extracts tool names from commands with LINT, FORMAT, or TYPECHECK kinds.
+    These are the tools that LintCache should recognize and cache.
+
+    Args:
+        spec: The ValidationSpec to extract from. If None, returns None.
+
+    Returns:
+        Frozenset of lint tool names, or None if spec is None or has no
+        lint commands (allowing LintCache to use defaults).
+    """
+    if spec is None:
+        return None
+
+    lint_tools: set[str] = set()
+    for cmd in spec.commands:
+        if cmd.kind in _LINT_COMMAND_KINDS:
+            tool_name = extract_tool_name(cmd.command)
+            if tool_name:
+                lint_tools.add(tool_name)
+
+    return frozenset(lint_tools) if lint_tools else None
 
 
 class MalaOrchestrator:
@@ -824,6 +857,7 @@ class MalaOrchestrator:
         )
 
         review_enabled = self._is_review_enabled()
+        lint_tools = _extract_lint_tools_from_spec(self.per_issue_spec)
         session_config = AgentSessionConfig(
             repo_path=self.repo_path,
             timeout_seconds=self.timeout_seconds,
@@ -832,6 +866,7 @@ class MalaOrchestrator:
             morph_enabled=self.morph_enabled,
             morph_api_key=self._config.morph_api_key,
             review_enabled=review_enabled,
+            lint_tools=lint_tools,
         )
         session_input = AgentSessionInput(
             issue_id=issue_id,

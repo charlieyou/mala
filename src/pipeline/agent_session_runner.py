@@ -298,6 +298,8 @@ class AgentSessionConfig:
             which scales with session timeout (300-900s range). During tool execution
             (after ToolUseBlock, before result), timeout is disabled. Set to 0 to
             disable timeout entirely.
+        lint_tools: Set of lint tool names for LintCache. If None, uses default
+            lint tools. Populated from ValidationSpec commands.
     """
 
     repo_path: Path
@@ -311,6 +313,7 @@ class AgentSessionConfig:
     idle_timeout_seconds: float | None = None
     max_idle_retries: int = 2
     idle_retry_backoff: tuple[float, ...] = (0.0, 5.0, 15.0)
+    lint_tools: frozenset[str] | None = None
 
 
 @dataclass
@@ -554,7 +557,10 @@ class AgentSessionRunner:
 
         # Build session components
         file_read_cache = FileReadCache()
-        lint_cache = LintCache(repo_path=self.config.repo_path)
+        lint_cache = LintCache(
+            repo_path=self.config.repo_path,
+            lint_tools=self.config.lint_tools,
+        )
         pre_tool_hooks, stop_hooks = self._build_hooks(
             agent_id, file_read_cache, lint_cache
         )
