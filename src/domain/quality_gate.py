@@ -60,7 +60,9 @@ __all__ = [
 # SETUP commands like `uv sync` are useful for local setup, but should not
 # block gate passing if omitted or failed.
 QUALITY_GATE_IGNORED_KINDS: set[CommandKind] = {CommandKind.SETUP}
-QUALITY_GATE_IGNORED_COMMANDS: set[str] = {"uv sync"}
+# Use extracted tool names (e.g., "uv" not "uv sync") since failed_commands
+# stores tool names via extract_tool_name(), not full command strings.
+QUALITY_GATE_IGNORED_COMMANDS: set[str] = {"uv"}
 
 
 @dataclass
