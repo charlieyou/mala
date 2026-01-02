@@ -369,7 +369,8 @@ def _build_commands_from_config(config: ValidationConfig) -> list[ValidationComm
                 kind=CommandKind.SETUP,
                 timeout=cmds.setup.timeout or DEFAULT_COMMAND_TIMEOUT,
                 detection_pattern=re.compile(
-                    _tool_name_to_pattern(extract_tool_name(cmds.setup.command))
+                    _tool_name_to_pattern(extract_tool_name(cmds.setup.command)),
+                    re.IGNORECASE,
                 ),
             )
         )
@@ -383,7 +384,8 @@ def _build_commands_from_config(config: ValidationConfig) -> list[ValidationComm
                 kind=CommandKind.FORMAT,
                 timeout=cmds.format.timeout or DEFAULT_COMMAND_TIMEOUT,
                 detection_pattern=re.compile(
-                    _tool_name_to_pattern(extract_tool_name(cmds.format.command))
+                    _tool_name_to_pattern(extract_tool_name(cmds.format.command)),
+                    re.IGNORECASE,
                 ),
             )
         )
@@ -397,7 +399,8 @@ def _build_commands_from_config(config: ValidationConfig) -> list[ValidationComm
                 kind=CommandKind.LINT,
                 timeout=cmds.lint.timeout or DEFAULT_COMMAND_TIMEOUT,
                 detection_pattern=re.compile(
-                    _tool_name_to_pattern(extract_tool_name(cmds.lint.command))
+                    _tool_name_to_pattern(extract_tool_name(cmds.lint.command)),
+                    re.IGNORECASE,
                 ),
             )
         )
@@ -411,7 +414,8 @@ def _build_commands_from_config(config: ValidationConfig) -> list[ValidationComm
                 kind=CommandKind.TYPECHECK,
                 timeout=cmds.typecheck.timeout or DEFAULT_COMMAND_TIMEOUT,
                 detection_pattern=re.compile(
-                    _tool_name_to_pattern(extract_tool_name(cmds.typecheck.command))
+                    _tool_name_to_pattern(extract_tool_name(cmds.typecheck.command)),
+                    re.IGNORECASE,
                 ),
             )
         )
@@ -425,7 +429,8 @@ def _build_commands_from_config(config: ValidationConfig) -> list[ValidationComm
                 kind=CommandKind.TEST,
                 timeout=cmds.test.timeout or DEFAULT_COMMAND_TIMEOUT,
                 detection_pattern=re.compile(
-                    _tool_name_to_pattern(extract_tool_name(cmds.test.command))
+                    _tool_name_to_pattern(extract_tool_name(cmds.test.command)),
+                    re.IGNORECASE,
                 ),
             )
         )

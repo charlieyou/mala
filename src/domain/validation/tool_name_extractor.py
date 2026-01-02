@@ -11,6 +11,12 @@ from __future__ import annotations
 
 import logging
 import shlex
+from typing import TYPE_CHECKING
+
+from src.domain.validation.spec import CommandKind
+
+if TYPE_CHECKING:
+    from src.domain.validation.spec import ValidationSpec
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +238,7 @@ def _extract_from_tokens(tokens: list[str]) -> str:
             return first_lower
         first = _strip_path_prefix(tokens[idx])
 
-    return first
+    return first.lower()
 
 
 def _is_meaningful_tool(tool_name: str) -> bool:
@@ -337,3 +343,35 @@ def extract_tool_name(command: str) -> str:
         logger.warning("Could not extract tool name from command: %r", command)
 
     return result
+
+
+# Command kinds that represent lint-like tools for LintCache
+LINT_COMMAND_KINDS: frozenset[CommandKind] = frozenset(
+    {CommandKind.LINT, CommandKind.FORMAT, CommandKind.TYPECHECK}
+)
+
+
+def extract_lint_tools_from_spec(spec: ValidationSpec | None) -> frozenset[str] | None:
+    """Extract lint tool names from a ValidationSpec.
+
+    Extracts tool names from commands with LINT, FORMAT, or TYPECHECK kinds.
+    These are the tools that LintCache should recognize and cache.
+
+    Args:
+        spec: The ValidationSpec to extract from. If None, returns None.
+
+    Returns:
+        Frozenset of lint tool names, or None if spec is None or has no
+        lint commands (allowing LintCache to use defaults).
+    """
+    if spec is None:
+        return None
+
+    lint_tools: set[str] = set()
+    for cmd in spec.commands:
+        if cmd.kind in LINT_COMMAND_KINDS:
+            tool_name = extract_tool_name(cmd.command)
+            if tool_name:
+                lint_tools.add(tool_name)
+
+    return frozenset(lint_tools) if lint_tools else None

@@ -217,7 +217,7 @@ class TestExtractToolName:
             # Mixed case
             ("Cargo Clippy", "cargo clippy"),
             ("Npm Run lint", "npm run:lint"),
-            ("Npx Eslint .", "Eslint"),
+            ("Npx Eslint .", "eslint"),
         ],
     )
     def test_case_insensitive_matching(self, command: str, expected: str) -> None:
