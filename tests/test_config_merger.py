@@ -245,6 +245,76 @@ class TestMergeConfigsExplicitDisable:
         assert result.commands.lint is None
 
 
+class TestMergeConfigsExplicitDisableCoverage:
+    """Tests for explicitly disabling preset coverage with DISABLED sentinel."""
+
+    def test_disabled_sentinel_disables_preset_coverage(self) -> None:
+        """DISABLED sentinel disables coverage even if preset defines it."""
+        preset = ValidationConfig(
+            coverage=YamlCoverageConfig(
+                format="xml",
+                file="coverage.xml",
+                threshold=85.0,
+            ),
+        )
+        # User explicitly disables coverage
+        user = ValidationConfig(
+            coverage=DISABLED,  # type: ignore[arg-type]
+        )
+        result = merge_configs(preset, user)
+
+        assert result.coverage is None
+
+    def test_disabled_coverage_with_no_preset_coverage(self) -> None:
+        """DISABLED on non-existent preset coverage results in None."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+            ),
+            # No coverage defined in preset
+        )
+        user = ValidationConfig(
+            coverage=DISABLED,  # type: ignore[arg-type]
+        )
+        result = merge_configs(preset, user)
+
+        assert result.coverage is None
+
+    def test_disabled_coverage_with_other_overrides(self) -> None:
+        """DISABLED coverage can coexist with other user overrides."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+                lint=CommandConfig(command="ruff check ."),
+            ),
+            coverage=YamlCoverageConfig(
+                format="xml",
+                file="coverage.xml",
+                threshold=85.0,
+            ),
+            code_patterns=("**/*.py",),
+        )
+        user = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest -v"),  # Override test
+            ),
+            coverage=DISABLED,  # type: ignore[arg-type]  # Disable coverage
+            code_patterns=("src/**/*.py",),  # Override patterns
+        )
+        result = merge_configs(preset, user)
+
+        # test overridden
+        assert result.commands.test is not None
+        assert result.commands.test.command == "pytest -v"
+        # lint inherited
+        assert result.commands.lint is not None
+        assert result.commands.lint.command == "ruff check ."
+        # coverage disabled
+        assert result.coverage is None
+        # patterns overridden
+        assert result.code_patterns == ("src/**/*.py",)
+
+
 class TestMergeConfigsOmittedInheritsPreset:
     """Tests for omitted fields inheriting preset values."""
 
