@@ -172,6 +172,47 @@ class DefaultReviewer:
             i += 1
         return None
 
+    async def _resolve_stale_gate(
+        self, runner: CommandRunner, env: dict[str, str]
+    ) -> tuple[bool, str]:
+        """Resolve a stale/pending gate to allow retry.
+
+        Called when spawn-code-review fails with "already active" error.
+        This is safe within a retry cycle because we use the same CLAUDE_SESSION_ID,
+        meaning we're resolving our own session's stale gate (e.g., from a prior
+        attempt that hit a parse error like invalid_verdict).
+
+        Args:
+            runner: CommandRunner instance for executing commands.
+            env: Environment variables for the command (must include CLAUDE_SESSION_ID).
+
+        Returns:
+            Tuple of (success, error_detail). If success is False, error_detail
+            contains the stderr/stdout from the failed resolve command.
+        """
+        from src.infra.io.log_output.console import Colors, log
+
+        log(
+            "→",
+            "Resolving stale gate from previous attempt",
+            color=Colors.YELLOW,
+        )
+        resolve_cmd = [
+            self._review_gate_bin(),
+            "resolve",
+            "--reason",
+            "mala: auto-clearing stale gate for retry",
+        ]
+        try:
+            result = await runner.run_async(resolve_cmd, env=env, timeout=30)
+            if result.returncode == 0:
+                return True, ""
+            stderr = result.stderr.strip() if result.stderr else ""
+            stdout = result.stdout.strip() if result.stdout else ""
+            return False, stderr or stdout or "resolve failed"
+        except Exception as e:
+            return False, str(e)
+
     async def __call__(
         self,
         diff_range: str,
@@ -245,30 +286,55 @@ class DefaultReviewer:
             stdout = spawn_result.stdout_tail()
             detail = stderr or stdout or "spawn failed"
 
-            # Treat "already active" as a hard error to avoid resolving another
-            # session's gate. The review-gate resolve command has no session scoping,
-            # so unconditionally resolving could discard a concurrent run's review.
-            # Check both stderr and stdout independently since the error could be in
-            # either stream, and 'detail' only uses stderr if it's non-empty.
+            # Check for stale gate from a previous attempt in this session.
+            # This happens when a prior review hit a parse error (e.g., invalid_verdict
+            # from one model) and we're retrying. Since we use the same CLAUDE_SESSION_ID,
+            # we're resolving our own session's gate, not interfering with other runs.
             combined = f"{stderr or ''} {stdout or ''}".lower()
             if "already active" in combined:
+                resolved, resolve_error = await self._resolve_stale_gate(runner, env)
+                if resolved:
+                    # Retry spawn after resolving the stale gate
+                    spawn_result = await runner.run_async(
+                        spawn_cmd, env=env, timeout=timeout
+                    )
+                    if spawn_result.returncode != 0:
+                        stderr = spawn_result.stderr_tail()
+                        stdout = spawn_result.stdout_tail()
+                        detail = stderr or stdout or "spawn failed after gate resolve"
+                        # If still "already active", another session owns the gate
+                        if "already active" in f"{stderr or ''} {stdout or ''}".lower():
+                            return ReviewResult(
+                                passed=False,
+                                issues=[],
+                                parse_error=(
+                                    "Another review gate is active (not from this session). "
+                                    "Wait for it to finish or resolve manually with "
+                                    "`review-gate resolve`."
+                                ),
+                                fatal_error=True,
+                            )
+                        return ReviewResult(
+                            passed=False,
+                            issues=[],
+                            parse_error=f"spawn failed: {detail}",
+                            fatal_error=False,
+                        )
+                    # Successfully spawned after clearing gate - continue to wait phase
+                else:
+                    return ReviewResult(
+                        passed=False,
+                        issues=[],
+                        parse_error=f"spawn failed: {detail} (auto-resolve failed: {resolve_error})",
+                        fatal_error=False,
+                    )
+            else:
                 return ReviewResult(
                     passed=False,
                     issues=[],
-                    parse_error=(
-                        "Another review gate is already active. Please wait for the "
-                        "current run to finish, or resolve it manually using "
-                        "`review-gate resolve` if you are certain no other runs are active."
-                    ),
-                    fatal_error=True,
+                    parse_error=f"spawn failed: {detail}",
+                    fatal_error=False,
                 )
-
-            return ReviewResult(
-                passed=False,
-                issues=[],
-                parse_error=f"spawn failed: {detail}",
-                fatal_error=False,
-            )
 
         # spawn-code-review doesn't output JSON to stdout - it just spawns reviewers
         # and writes state to disk. We use --session-id with the Claude session ID

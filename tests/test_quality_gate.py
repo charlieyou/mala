@@ -2842,6 +2842,138 @@ class TestAlreadyCompleteResolution:
         assert result.resolution is not None
         assert result.resolution.outcome == ResolutionOutcome.ALREADY_COMPLETE
 
+    def test_already_complete_with_different_issue_id_in_rationale(
+        self, tmp_path: Path
+    ) -> None:
+        """ALREADY_COMPLETE should pass when rationale references a different issue ID.
+
+        This handles duplicate issues where the work was committed under the
+        original issue's ID (e.g., bd-mala-xyz) but the agent is working on
+        a duplicate (e.g., mala-apsz).
+        """
+        from src.domain.validation.spec import ResolutionOutcome
+
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_ALREADY_COMPLETE: This is a duplicate. Work was done in bd-mala-xyz commit 238e17f",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
+        with patch("src.domain.quality_gate.run_command") as mock_run:
+            # Return a commit that exists under the REFERENCED issue ID (mala-xyz)
+            mock_run.return_value = CommandResult(
+                command=[],
+                returncode=0,
+                stdout="238e17f 1703400000 bd-mala-xyz: Original fix\n",
+                stderr="",
+            )
+            result = gate.check_with_resolution(
+                issue_id="mala-apsz",  # Current issue (the duplicate)
+                log_path=log_path,
+                spec=spec,
+            )
+
+        assert result.passed is True
+        assert result.resolution is not None
+        assert result.resolution.outcome == ResolutionOutcome.ALREADY_COMPLETE
+        assert result.commit_hash == "238e17f"
+        # Verify we searched for the REFERENCED issue, not the current one
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args[0][0]
+        assert "bd-mala-xyz" in call_args
+
+    def test_already_complete_referenced_issue_not_found(
+        self, tmp_path: Path
+    ) -> None:
+        """ALREADY_COMPLETE should fail with clear error when referenced commit doesn't exist."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_ALREADY_COMPLETE: This is a duplicate. Work was done in bd-mala-xyz commit 238e17f",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
+        spec = build_validation_spec(scope=ValidationScope.PER_ISSUE)
+
+        with patch("src.domain.quality_gate.run_command") as mock_run:
+            # No matching commit found
+            mock_run.return_value = CommandResult(
+                command=[],
+                returncode=0,
+                stdout="",
+                stderr="",
+            )
+            result = gate.check_with_resolution(
+                issue_id="mala-apsz",
+                log_path=log_path,
+                spec=spec,
+            )
+
+        assert result.passed is False
+        # Error message should reference the issue ID from rationale
+        assert any("bd-mala-xyz" in r for r in result.failure_reasons)
+
+
+class TestExtractIssueFromRationale:
+    """Test extract_issue_from_rationale helper method."""
+
+    def test_extracts_issue_from_commit_message_format(self, tmp_path: Path) -> None:
+        """Should extract issue ID from 'bd-issue-123: message' format."""
+        gate = QualityGate(tmp_path)
+        result = gate.extract_issue_from_rationale(
+            "Work committed in 238e17f (bd-issue-123: Add feature X)"
+        )
+        assert result == "issue-123"
+
+    def test_extracts_issue_from_prose_format(self, tmp_path: Path) -> None:
+        """Should extract issue ID from prose mentioning bd-<id>."""
+        gate = QualityGate(tmp_path)
+        result = gate.extract_issue_from_rationale(
+            "This is a duplicate. Work was done in bd-mala-xyz commit 238e17f"
+        )
+        assert result == "mala-xyz"
+
+    def test_returns_none_when_no_issue_id(self, tmp_path: Path) -> None:
+        """Should return None when no bd-<id> pattern found."""
+        gate = QualityGate(tmp_path)
+        result = gate.extract_issue_from_rationale(
+            "Work was completed previously in commit 238e17f"
+        )
+        assert result is None
+
+    def test_extracts_first_issue_when_multiple(self, tmp_path: Path) -> None:
+        """Should extract first issue ID when multiple are mentioned."""
+        gate = QualityGate(tmp_path)
+        result = gate.extract_issue_from_rationale(
+            "Duplicate of bd-original-123, see also bd-related-456"
+        )
+        assert result == "original-123"
+
 
 class TestSpecCommandChangesPropagation:
     """Test that spec command changes propagate to evidence detection.

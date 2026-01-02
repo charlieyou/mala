@@ -277,6 +277,12 @@ class QualityGate:
         "already_complete": ResolutionOutcome.ALREADY_COMPLETE,
     }
 
+    # Pattern to extract issue ID from ALREADY_COMPLETE rationale
+    # Matches: "bd-issue-123", "bd-mala-xyz", etc. in rationale text
+    RATIONALE_ISSUE_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"\bbd-([a-zA-Z0-9_-]+)\b"
+    )
+
     def __init__(self, repo_path: Path, log_provider: LogProvider | None = None):
         """Initialize quality gate.
 
@@ -591,6 +597,24 @@ class QualityGate:
         # Any output means there are changes
         return bool(result.stdout.strip())
 
+    def extract_issue_from_rationale(self, rationale: str) -> str | None:
+        """Extract issue ID from ALREADY_COMPLETE rationale.
+
+        For duplicate issues, the agent may reference a different issue ID
+        in the rationale (e.g., "Work committed in 238e17f (bd-mala-xyz: ...)").
+        This extracts that referenced issue ID so we can verify the correct commit.
+
+        Args:
+            rationale: The rationale text from ALREADY_COMPLETE resolution.
+
+        Returns:
+            The extracted issue ID (without bd- prefix), or None if not found.
+        """
+        match = self.RATIONALE_ISSUE_PATTERN.search(rationale)
+        if match:
+            return match.group(1)
+        return None
+
     def check_commit_exists(
         self, issue_id: str, baseline_timestamp: int | None = None
     ) -> CommitResult:
@@ -761,15 +785,27 @@ class QualityGate:
                         resolution=resolution,
                     )
 
+                # For duplicate issues, the rationale may reference a different issue ID
+                # (e.g., "Work committed in 238e17f (bd-mala-xyz: ...)").
+                # Extract and use that ID if present, otherwise fall back to current issue.
+                referenced_id = self.extract_issue_from_rationale(resolution.rationale)
+                check_issue_id = referenced_id or issue_id
+
                 # Verify commit exists WITHOUT baseline check (accepts stale commits)
                 commit_result = self.check_commit_exists(
-                    issue_id, baseline_timestamp=None
+                    check_issue_id, baseline_timestamp=None
                 )
                 if not commit_result.exists:
-                    failure_reasons.append(
-                        f"ALREADY_COMPLETE resolution requires a commit with bd-{issue_id} "
-                        "but none was found"
-                    )
+                    if referenced_id and referenced_id != issue_id:
+                        failure_reasons.append(
+                            f"ALREADY_COMPLETE resolution references bd-{referenced_id} "
+                            "but no matching commit was found"
+                        )
+                    else:
+                        failure_reasons.append(
+                            f"ALREADY_COMPLETE resolution requires a commit with bd-{issue_id} "
+                            "but none was found"
+                        )
                     return GateResult(
                         passed=False,
                         failure_reasons=failure_reasons,

@@ -145,8 +145,9 @@ Sometimes an issue requires no changes (already fixed, duplicate, or obsolete). 
 2. Provide a clear rationale explaining why no changes are needed
 
 **Requirements for ALREADY_COMPLETE:**
-1. A commit with `bd-<issue_id>` prefix must exist (created in a prior run)
-2. Provide a clear rationale including the commit hash
+1. A commit with `bd-<issue_id>` must exist (created in a prior run)
+2. Include the `bd-<issue_id>` tag in your rationale (this is required for validation)
+3. For duplicate issues: reference the original issue's commit tag (e.g., `bd-original-issue`)
 
 **Example output:**
 ```
@@ -157,6 +158,11 @@ ISSUE_OBSOLETE: The legacy API endpoint was removed in commit abc123
 ```
 ```
 ISSUE_ALREADY_COMPLETE: Work committed in 238e17f (bd-issue-123: Add feature X)
+```
+
+**Duplicate issue example** (when this issue duplicates another):
+```
+ISSUE_ALREADY_COMPLETE: This is a duplicate. Work was done in bd-mala-xyz commit 238e17f
 ```
 
 After outputting the marker, proceed to release locks (step 7).

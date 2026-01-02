@@ -722,52 +722,158 @@ class TestExtractWaitTimeout:
 class TestAlreadyActiveGateError:
     """Tests for 'already active' gate error handling.
 
-    When spawn fails with 'already active', the error is now treated as fatal
-    instead of auto-resolving. This prevents concurrent runs from interfering
-    and losing review results, since the resolve command has no session scoping.
+    When spawn fails with 'already active', the adapter now auto-resolves
+    the stale gate and retries spawn once. This handles the case where a
+    prior review attempt hit a parse error (e.g., invalid_verdict from one
+    model) and left a gate pending. Since we use the same CLAUDE_SESSION_ID,
+    we're resolving our own session's gate, not interfering with other runs.
+
+    If spawn still fails with 'already active' after resolve, that means
+    another session owns the gate, so we return a fatal error.
     """
 
-    async def test_already_active_returns_fatal_error(self) -> None:
-        """Returns fatal error instead of auto-resolving on 'already active'."""
+    async def test_already_active_auto_resolves_and_retries(self) -> None:
+        """Auto-resolves stale gate and retries spawn successfully."""
         from unittest.mock import AsyncMock, MagicMock, patch
 
         reviewer = DefaultReviewer(repo_path=Path("/tmp"))
 
-        # Mock successful binary validation
         with patch.object(reviewer, "_validate_review_gate_bin", return_value=None):
-            # Mock spawn failure with "already active" error
-            # Use MagicMock for sync methods (returncode, timed_out, stderr_tail, stdout_tail)
-            mock_result = MagicMock()
-            mock_result.returncode = 1
-            mock_result.timed_out = False
-            mock_result.stderr_tail.return_value = "Error: review gate already active"
-            mock_result.stdout_tail.return_value = ""
+            # First spawn fails with "already active"
+            spawn_fail_result = MagicMock()
+            spawn_fail_result.returncode = 1
+            spawn_fail_result.timed_out = False
+            spawn_fail_result.stderr_tail.return_value = "Error: review gate already active"
+            spawn_fail_result.stdout_tail.return_value = ""
+
+            # Resolve succeeds
+            resolve_result = MagicMock()
+            resolve_result.returncode = 0
+            resolve_result.stderr = ""
+            resolve_result.stdout = ""
+
+            # Retry spawn succeeds
+            spawn_ok_result = MagicMock()
+            spawn_ok_result.returncode = 0
+            spawn_ok_result.timed_out = False
+
+            # Wait returns PASS
+            wait_result = MagicMock()
+            wait_result.returncode = 0
+            wait_result.timed_out = False
+            wait_result.stdout = '{"status":"complete","consensus_verdict":"PASS","reviewers":{},"aggregated_findings":[],"parse_errors":[]}'
 
             with patch(
                 "src.infra.clients.cerberus_review.CommandRunner"
             ) as mock_runner_class:
                 mock_runner = AsyncMock()
-                mock_runner.run_async.return_value = mock_result
+                # Sequence: git diff, spawn (fail), resolve, spawn (ok), wait
+                mock_runner.run_async.side_effect = [
+                    MagicMock(returncode=0, stdout=" 1 file changed"),  # git diff (non-empty)
+                    spawn_fail_result,
+                    resolve_result,
+                    spawn_ok_result,
+                    wait_result,
+                ]
                 mock_runner_class.return_value = mock_runner
 
-                # Must provide session ID or it fails validation
                 with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
                     result = await reviewer("baseline..HEAD")
 
-        # Should be fatal error (not retryable)
+        assert result.passed is True
+        assert result.fatal_error is False
+        assert result.parse_error is None
+
+        # Verify call sequence
+        calls = [call[0][0] for call in mock_runner.run_async.call_args_list]
+        assert any("diff" in str(c) for c in calls)
+        assert any("spawn-code-review" in str(c) for c in calls)
+        assert any("resolve" in str(c) for c in calls)
+        assert any("wait" in str(c) for c in calls)
+
+    async def test_already_active_after_resolve_is_fatal(self) -> None:
+        """Returns fatal error if still 'already active' after resolve (another session)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        reviewer = DefaultReviewer(repo_path=Path("/tmp"))
+
+        with patch.object(reviewer, "_validate_review_gate_bin", return_value=None):
+            # First spawn fails with "already active"
+            spawn_fail_result = MagicMock()
+            spawn_fail_result.returncode = 1
+            spawn_fail_result.timed_out = False
+            spawn_fail_result.stderr_tail.return_value = "Error: review gate already active"
+            spawn_fail_result.stdout_tail.return_value = ""
+
+            # Resolve succeeds
+            resolve_result = MagicMock()
+            resolve_result.returncode = 0
+            resolve_result.stderr = ""
+            resolve_result.stdout = ""
+
+            # Retry spawn STILL fails with "already active" (another session)
+            spawn_still_active = MagicMock()
+            spawn_still_active.returncode = 1
+            spawn_still_active.timed_out = False
+            spawn_still_active.stderr_tail.return_value = "Error: review gate already active"
+            spawn_still_active.stdout_tail.return_value = ""
+
+            with patch(
+                "src.infra.clients.cerberus_review.CommandRunner"
+            ) as mock_runner_class:
+                mock_runner = AsyncMock()
+                mock_runner.run_async.side_effect = [
+                    MagicMock(returncode=0, stdout=" 1 file changed"),  # git diff (non-empty)
+                    spawn_fail_result,
+                    resolve_result,
+                    spawn_still_active,
+                ]
+                mock_runner_class.return_value = mock_runner
+
+                with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
+                    result = await reviewer("baseline..HEAD")
+
+        # Should be fatal error (another session owns the gate)
         assert result.passed is False
         assert result.fatal_error is True
         assert result.parse_error is not None
-        assert "already active" in result.parse_error.lower()
+        assert "not from this session" in result.parse_error
 
-        # Should have called: 1) git diff (empty check), 2) spawn
-        # Critically, should NOT have called resolve
-        assert mock_runner.run_async.call_count == 2
-        # Last call should be spawn-code-review, not resolve
-        last_call_cmd = mock_runner.run_async.call_args[0][0]
-        assert "spawn-code-review" in last_call_cmd
-        # Verify no resolve command was called
-        all_calls = mock_runner.run_async.call_args_list
-        for call in all_calls:
-            cmd = call[0][0]
-            assert "resolve" not in cmd, f"Unexpected resolve call: {cmd}"
+    async def test_resolve_failure_is_retryable(self) -> None:
+        """If resolve fails, returns retryable error (not fatal)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        reviewer = DefaultReviewer(repo_path=Path("/tmp"))
+
+        with patch.object(reviewer, "_validate_review_gate_bin", return_value=None):
+            spawn_fail_result = MagicMock()
+            spawn_fail_result.returncode = 1
+            spawn_fail_result.timed_out = False
+            spawn_fail_result.stderr_tail.return_value = "Error: review gate already active"
+            spawn_fail_result.stdout_tail.return_value = ""
+
+            # Resolve fails
+            resolve_result = MagicMock()
+            resolve_result.returncode = 1
+            resolve_result.stderr = "Permission denied"
+            resolve_result.stdout = ""
+
+            with patch(
+                "src.infra.clients.cerberus_review.CommandRunner"
+            ) as mock_runner_class:
+                mock_runner = AsyncMock()
+                mock_runner.run_async.side_effect = [
+                    MagicMock(returncode=0, stdout=" 1 file changed"),  # git diff (non-empty)
+                    spawn_fail_result,
+                    resolve_result,
+                ]
+                mock_runner_class.return_value = mock_runner
+
+                with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
+                    result = await reviewer("baseline..HEAD")
+
+        # Retryable error (not fatal)
+        assert result.passed is False
+        assert result.fatal_error is False
+        assert result.parse_error is not None
+        assert "auto-resolve failed" in result.parse_error
