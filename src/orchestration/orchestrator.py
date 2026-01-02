@@ -949,18 +949,18 @@ class MalaOrchestrator:
         )
 
         try:
-            await self._run_main_loop(run_metadata)
-        finally:
-            released = release_run_locks(list(self.agent_ids.values()))
-            # Only emit event if released is a positive integer
-            # (release_run_locks returns int, but tests may mock it)
-            if isinstance(released, int) and released > 0:
-                self.event_sink.on_locks_released(released)
-            remove_run_marker(run_metadata.run_id)
+            try:
+                await self._run_main_loop(run_metadata)
+            finally:
+                released = release_run_locks(list(self.agent_ids.values()))
+                # Only emit event if released is a positive integer
+                # (release_run_locks returns int, but tests may mock it)
+                if isinstance(released, int) and released > 0:
+                    self.event_sink.on_locks_released(released)
+                remove_run_marker(run_metadata.run_id)
 
-        # Run-level validation and finalization happen after lock cleanup
-        # but before debug log cleanup (so they're captured in the debug log)
-        try:
+            # Run-level validation and finalization happen after lock cleanup
+            # but before debug log cleanup (so they're captured in the debug log)
             success_count = sum(1 for r in self.completed if r.success)
             run_validation_passed = True
             if success_count > 0 and not self.abort_run:
