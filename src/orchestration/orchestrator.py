@@ -1098,20 +1098,24 @@ class MalaOrchestrator:
             if isinstance(released, int) and released > 0:
                 self.event_sink.on_locks_released(released)
             remove_run_marker(run_metadata.run_id)
-            # Clean up debug logging handler to prevent file handle leaks
+
+        # Run-level validation and finalization happen after lock cleanup
+        # but before debug log cleanup (so they're captured in the debug log)
+        try:
+            success_count = sum(1 for r in self.completed if r.success)
+            run_validation_passed = True
+            if success_count > 0 and not self.abort_run:
+                validation_input = RunLevelValidationInput(run_metadata=run_metadata)
+                validation_output = await self.run_coordinator.run_validation(
+                    validation_input
+                )
+                run_validation_passed = validation_output.passed
+
+            return await self._finalize_run(run_metadata, run_validation_passed)
+        finally:
+            # Clean up debug logging handler after all finalization is complete
             # (idempotent - safe to call even if save() is called later)
             run_metadata.cleanup()
-
-        success_count = sum(1 for r in self.completed if r.success)
-        run_validation_passed = True
-        if success_count > 0 and not self.abort_run:
-            validation_input = RunLevelValidationInput(run_metadata=run_metadata)
-            validation_output = await self.run_coordinator.run_validation(
-                validation_input
-            )
-            run_validation_passed = validation_output.passed
-
-        return await self._finalize_run(run_metadata, run_validation_passed)
 
     def run_sync(self) -> tuple[int, int]:
         """Synchronous wrapper for run(). Returns (success_count, total_count).
