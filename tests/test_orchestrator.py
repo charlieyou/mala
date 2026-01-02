@@ -4487,68 +4487,6 @@ class TestOrchestratorFactory:
         # 0 is falsy, so default is used
         assert orchestrator.timeout_seconds == DEFAULT_AGENT_TIMEOUT_MINUTES * 60
 
-    def test_factory_path_requires_all_dependencies(self, tmp_path: Path) -> None:
-        """Factory path raises ValueError if required deps are missing."""
-        from src.orchestration.types import OrchestratorConfig, _DerivedConfig
-
-        config = OrchestratorConfig(repo_path=tmp_path)
-        derived = _DerivedConfig(
-            timeout_seconds=3600,
-            braintrust_enabled=False,
-            morph_enabled=False,
-            disabled_validations=set(),
-        )
-
-        # Using factory path with missing deps should raise
-        with pytest.raises(ValueError, match="_mala_config is required"):
-            MalaOrchestrator(
-                _config=config,
-                _mala_config=None,  # type: ignore[arg-type]  # Intentionally passing None to test error handling
-                _derived=derived,
-                _issue_provider=MagicMock(),
-                _code_reviewer=MagicMock(),
-                _gate_checker=MagicMock(),
-                _log_provider=MagicMock(),
-                _telemetry_provider=MagicMock(),
-                _event_sink=MagicMock(),
-                _epic_verifier=None,
-            )
-
-    def test_legacy_path_requires_repo_path(self) -> None:
-        """Legacy path raises ValueError if repo_path is None."""
-        with pytest.raises(ValueError, match="repo_path is required"):
-            MalaOrchestrator(repo_path=None)  # type: ignore[arg-type]  # Intentionally passing None to test error handling
-
-    def test_legacy_and_factory_produce_equivalent_orchestrators(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """Legacy and factory paths produce equivalent orchestrators."""
-        from src.orchestration.factory import create_orchestrator
-        from src.orchestration.types import OrchestratorConfig
-
-        # Create via legacy path
-        legacy = make_orchestrator(
-            repo_path=tmp_path,
-            max_agents=2,
-            timeout_minutes=45,
-            max_issues=10,
-        )
-
-        # Create via factory path
-        config = OrchestratorConfig(
-            repo_path=tmp_path,
-            max_agents=2,
-            timeout_minutes=45,
-            max_issues=10,
-        )
-        factory = create_orchestrator(config)
-
-        # Key attributes should match
-        assert legacy.repo_path == factory.repo_path
-        assert legacy.max_agents == factory.max_agents
-        assert legacy.timeout_seconds == factory.timeout_seconds
-        assert legacy.max_issues == factory.max_issues
-
     def test_orchestrator_config_defaults(self) -> None:
         """OrchestratorConfig has sensible defaults."""
         from src.orchestration.types import OrchestratorConfig

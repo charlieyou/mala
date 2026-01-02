@@ -945,8 +945,11 @@ class NullEventSink(BaseEventSink):
     you explicitly want no side effects (e.g., in tests).
 
     Example:
+        from src.orchestration.factory import create_orchestrator, OrchestratorDependencies
+
         sink = NullEventSink()
-        orchestrator = MalaOrchestrator(..., event_sink=sink)
+        deps = OrchestratorDependencies(event_sink=sink)
+        orchestrator = create_orchestrator(config, deps=deps)
         await orchestrator.run()  # No console output
     """
 
@@ -960,8 +963,11 @@ class ConsoleEventSink(BaseEventSink):
     and log_agent_text() from src/infra/io/log_output/console.py.
 
     Example:
+        from src.orchestration.factory import create_orchestrator, OrchestratorDependencies
+
         sink = ConsoleEventSink()
-        orchestrator = MalaOrchestrator(..., event_sink=sink)
+        deps = OrchestratorDependencies(event_sink=sink)
+        orchestrator = create_orchestrator(config, deps=deps)
         await orchestrator.run()  # Produces console output
     """
 

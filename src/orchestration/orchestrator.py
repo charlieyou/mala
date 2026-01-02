@@ -61,7 +61,6 @@ from src.pipeline.run_coordinator import (
     RunCoordinatorConfig,
     RunLevelValidationInput,
 )
-from src.infra.io.config import MalaConfig
 from src.orchestration.gate_metadata import (
     GateMetadata,
     build_gate_metadata,
@@ -88,6 +87,7 @@ if TYPE_CHECKING:
     from src.domain.validation.spec import ValidationSpec
     from src.infra.clients.cerberus_review import ReviewResult
     from src.infra.epic_verifier import EpicVerifier
+    from src.infra.io.config import MalaConfig
     from src.infra.io.event_sink import MalaEventSink
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.infra.telemetry import TelemetryProvider
@@ -110,12 +110,8 @@ LOG_FILE_POLL_INTERVAL = 0.5
 class MalaOrchestrator:
     """Orchestrates parallel issue processing using Claude Agent SDK.
 
-    This class can be instantiated in two ways:
-    1. Legacy: Direct constructor with individual parameters (backward compatible)
-    2. Factory: Via create_orchestrator() with OrchestratorConfig and deps
-
-    The factory pattern is preferred for new code as it provides cleaner
-    separation of concerns and easier testing.
+    Use create_orchestrator() factory function to instantiate this class.
+    The factory provides clean separation of concerns and easier testing.
     """
 
     # Type annotations for attributes set during initialization
@@ -123,182 +119,45 @@ class MalaOrchestrator:
 
     def __init__(
         self,
-        repo_path: Path | None = None,
-        max_agents: int | None = None,
-        timeout_minutes: int | None = None,
-        max_issues: int | None = None,
-        epic_id: str | None = None,
-        only_ids: set[str] | None = None,
-        braintrust_enabled: bool | None = None,
-        max_gate_retries: int = 3,
-        max_review_retries: int = 3,
-        disable_validations: set[str] | None = None,
-        coverage_threshold: float | None = None,
-        morph_enabled: bool | None = None,
-        prioritize_wip: bool = False,
-        focus: bool = True,
-        orphans_only: bool = False,
-        cli_args: dict[str, object] | None = None,
-        # Protocol-based dependency injection for testability
-        issue_provider: IssueProvider | None = None,
-        code_reviewer: CodeReviewer | None = None,
-        gate_checker: GateChecker | None = None,
-        log_provider: LogProvider | None = None,
-        telemetry_provider: TelemetryProvider | None = None,
-        event_sink: MalaEventSink | None = None,
-        # Centralized configuration (optional, uses from_env() if not provided)
-        config: MalaConfig | None = None,
-        # Epic verification override (bypasses verification for listed epic IDs)
-        epic_override_ids: set[str] | None = None,
-        # Internal parameters used by create_orchestrator() - prefixed with underscore
-        _config: OrchestratorConfig | None = None,
-        _mala_config: MalaConfig | None = None,
-        _derived: _DerivedConfig | None = None,
-        _issue_provider: IssueProvider | None = None,
-        _code_reviewer: CodeReviewer | None = None,
-        _gate_checker: GateChecker | None = None,
-        _log_provider: LogProvider | None = None,
-        _telemetry_provider: TelemetryProvider | None = None,
-        _event_sink: MalaEventSink | None = None,
+        *,
+        _config: OrchestratorConfig,
+        _mala_config: MalaConfig,
+        _derived: _DerivedConfig,
+        _issue_provider: IssueProvider,
+        _code_reviewer: CodeReviewer,
+        _gate_checker: GateChecker,
+        _log_provider: LogProvider,
+        _telemetry_provider: TelemetryProvider,
+        _event_sink: MalaEventSink,
         _epic_verifier: EpicVerifier | None = None,
     ):
-        # Factory path: use pre-computed config and dependencies
-        if _config is not None:
-            self._init_from_factory(
-                _config,
-                _mala_config,
-                _derived,
-                _issue_provider,
-                _code_reviewer,
-                _gate_checker,
-                _log_provider,
-                _telemetry_provider,
-                _event_sink,
-                _epic_verifier,
-            )
-            return
-
-        # Legacy path: delegate to factory
-        # This maintains backward compatibility while using the factory internally
-        if repo_path is None:
-            raise ValueError("repo_path is required for legacy initialization")
-
-        from src.orchestration.factory import (
-            OrchestratorConfig,
-            OrchestratorDependencies,
-            _build_dependencies,
-            _check_review_availability,
-            _derive_config,
-        )
-
-        orch_config = OrchestratorConfig(
-            repo_path=repo_path,
-            max_agents=max_agents,
-            timeout_minutes=timeout_minutes,
-            max_issues=max_issues,
-            epic_id=epic_id,
-            only_ids=only_ids,
-            braintrust_enabled=braintrust_enabled,
-            max_gate_retries=max_gate_retries,
-            max_review_retries=max_review_retries,
-            disable_validations=disable_validations,
-            coverage_threshold=coverage_threshold,
-            morph_enabled=morph_enabled,
-            prioritize_wip=prioritize_wip,
-            focus=focus,
-            orphans_only=orphans_only,
-            cli_args=cli_args,
-            epic_override_ids=epic_override_ids,
-        )
-
-        deps = OrchestratorDependencies(
-            issue_provider=issue_provider,
-            code_reviewer=code_reviewer,
-            gate_checker=gate_checker,
-            log_provider=log_provider,
-            telemetry_provider=telemetry_provider,
-            event_sink=event_sink,
-        )
-
-        # Load MalaConfig if not provided
-        mala_config = (
-            config if config is not None else MalaConfig.from_env(validate=False)
-        )
-
-        # Derive computed configuration
-        derived = _derive_config(orch_config, mala_config)
-
-        # Check review availability and update disabled_validations
-        review_disabled_reason = _check_review_availability(
-            mala_config, derived.disabled_validations
-        )
-        if review_disabled_reason:
-            derived.disabled_validations.add("review")
-            derived.review_disabled_reason = review_disabled_reason
-
-        # Build dependencies
-        (
-            issue_prov,
-            code_rev,
-            gate_check,
-            log_prov,
-            telemetry_prov,
-            evt_sink,
-            epic_ver,
-        ) = _build_dependencies(orch_config, mala_config, derived, deps)
-
-        # Initialize via the proper method instead of __dict__.update
         self._init_from_factory(
-            orch_config,
-            mala_config,
-            derived,
-            issue_prov,
-            code_rev,
-            gate_check,
-            log_prov,
-            telemetry_prov,
-            evt_sink,
-            epic_ver,
+            _config,
+            _mala_config,
+            _derived,
+            _issue_provider,
+            _code_reviewer,
+            _gate_checker,
+            _log_provider,
+            _telemetry_provider,
+            _event_sink,
+            _epic_verifier,
         )
 
     def _init_from_factory(
         self,
         orch_config: OrchestratorConfig,
-        mala_config: MalaConfig | None,
-        derived: _DerivedConfig | None,
-        issue_provider: IssueProvider | None,
-        code_reviewer: CodeReviewer | None,
-        gate_checker: GateChecker | None,
-        log_provider: LogProvider | None,
-        telemetry_provider: TelemetryProvider | None,
-        event_sink: MalaEventSink | None,
+        mala_config: MalaConfig,
+        derived: _DerivedConfig,
+        issue_provider: IssueProvider,
+        code_reviewer: CodeReviewer,
+        gate_checker: GateChecker,
+        log_provider: LogProvider,
+        telemetry_provider: TelemetryProvider,
+        event_sink: MalaEventSink,
         epic_verifier: EpicVerifier | None,
     ) -> None:
         """Initialize from factory-provided config and dependencies."""
-        required = [
-            ("_mala_config", mala_config),
-            ("_derived", derived),
-            ("_issue_provider", issue_provider),
-            ("_code_reviewer", code_reviewer),
-            ("_gate_checker", gate_checker),
-            ("_log_provider", log_provider),
-            ("_telemetry_provider", telemetry_provider),
-            ("_event_sink", event_sink),
-        ]
-        for name, value in required:
-            if value is None:
-                raise ValueError(f"{name} is required when using factory path")
-
-        # Type narrowing assertions - the loop above ensures these are not None
-        assert mala_config is not None
-        assert derived is not None
-        assert issue_provider is not None
-        assert code_reviewer is not None
-        assert gate_checker is not None
-        assert log_provider is not None
-        assert telemetry_provider is not None
-        assert event_sink is not None
-
         self._mala_config = mala_config
         self.repo_path = orch_config.repo_path.resolve()
         self.max_agents = orch_config.max_agents
@@ -330,7 +189,7 @@ class MalaOrchestrator:
         self._init_pipeline_runners()
 
     def _init_runtime_state(self) -> None:
-        """Initialize runtime state that's common to both init paths.
+        """Initialize runtime state.
 
         Note: active_tasks, failed_issues, abort_run, and abort_reason are
         delegated to issue_coordinator to maintain a single source of truth.
@@ -1130,13 +989,17 @@ class MalaOrchestrator:
 
         Example usage::
 
+            from src.orchestration.factory import create_orchestrator, OrchestratorConfig
+
             # From sync code (scripts, CLI, tests)
-            orchestrator = MalaOrchestrator(repo_path=Path("."))
+            config = OrchestratorConfig(repo_path=Path("."))
+            orchestrator = create_orchestrator(config)
             success_count, total = orchestrator.run_sync()
 
             # From async code
             async def main():
-                orchestrator = MalaOrchestrator(repo_path=Path("."))
+                config = OrchestratorConfig(repo_path=Path("."))
+                orchestrator = create_orchestrator(config)
                 success_count, total = await orchestrator.run()
 
         Returns:
