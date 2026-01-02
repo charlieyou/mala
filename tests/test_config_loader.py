@@ -16,6 +16,7 @@ import pytest
 
 from src.domain.validation.config import ConfigError
 from src.domain.validation.config_loader import (
+    ConfigMissingError,
     _build_config,
     _parse_yaml,
     _validate_config,
@@ -94,13 +95,16 @@ setup_files:
         assert config.preset == "python-uv"
         assert config.commands.test is None
 
-    def test_missing_file_error(self, tmp_path: Path) -> None:
-        """Missing mala.yaml raises ConfigError with exact message."""
-        with pytest.raises(ConfigError) as exc_info:
+    def test_missing_file_raises_config_missing_error(self, tmp_path: Path) -> None:
+        """Missing mala.yaml raises ConfigMissingError with exact message."""
+        with pytest.raises(ConfigMissingError) as exc_info:
             load_config(tmp_path)
 
         expected = f"mala.yaml not found in {tmp_path}. Mala requires a configuration file to run."
         assert str(exc_info.value) == expected
+        # Also verify it's a subclass of ConfigError for callers catching broader errors
+        assert isinstance(exc_info.value, ConfigError)
+        assert exc_info.value.repo_path == tmp_path
 
     def test_invalid_yaml_syntax_error(self, tmp_path: Path) -> None:
         """Invalid YAML syntax raises ConfigError with details."""

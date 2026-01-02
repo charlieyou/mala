@@ -131,6 +131,14 @@ class TestPerIssueGate:
         return FakeGateChecker()
 
     @pytest.fixture
+    def minimal_spec(self) -> ValidationSpec:
+        """Create a minimal ValidationSpec for tests."""
+        return ValidationSpec(
+            commands=[],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+    @pytest.fixture
     def runner(self, fake_checker: FakeGateChecker, tmp_path: Path) -> GateRunner:
         """Create a GateRunner with fake dependencies."""
         return GateRunner(
@@ -144,6 +152,7 @@ class TestPerIssueGate:
         runner: GateRunner,
         fake_checker: FakeGateChecker,
         tmp_log_path: Path,
+        minimal_spec: ValidationSpec,
     ) -> None:
         """Gate runner should return the gate result from checker."""
         fake_checker.gate_result = GateResult(
@@ -156,6 +165,7 @@ class TestPerIssueGate:
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=RetryState(),
+            spec=minimal_spec,
         )
         output = runner.run_per_issue_gate(input)
 
@@ -167,6 +177,7 @@ class TestPerIssueGate:
         runner: GateRunner,
         fake_checker: FakeGateChecker,
         tmp_log_path: Path,
+        minimal_spec: ValidationSpec,
     ) -> None:
         """Gate runner should return the new log offset."""
         fake_checker.log_end_offset = 5000
@@ -175,6 +186,7 @@ class TestPerIssueGate:
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=RetryState(),
+            spec=minimal_spec,
         )
         output = runner.run_per_issue_gate(input)
 
@@ -185,6 +197,7 @@ class TestPerIssueGate:
         runner: GateRunner,
         fake_checker: FakeGateChecker,
         tmp_log_path: Path,
+        minimal_spec: ValidationSpec,
     ) -> None:
         """Gate runner should pass retry state to checker."""
         retry_state = RetryState(
@@ -197,6 +210,7 @@ class TestPerIssueGate:
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=retry_state,
+            spec=minimal_spec,
         )
         runner.run_per_issue_gate(input)
 
@@ -211,6 +225,7 @@ class TestPerIssueGate:
         runner: GateRunner,
         fake_checker: FakeGateChecker,
         tmp_log_path: Path,
+        minimal_spec: ValidationSpec,
     ) -> None:
         """Gate runner should check no_progress on retry attempts."""
         fake_checker.gate_result = GateResult(
@@ -225,6 +240,7 @@ class TestPerIssueGate:
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=RetryState(gate_attempt=1),
+            spec=minimal_spec,
         )
         runner.run_per_issue_gate(input)
         assert len(fake_checker.check_no_progress_calls) == 0
@@ -234,6 +250,7 @@ class TestPerIssueGate:
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=RetryState(gate_attempt=2),
+            spec=minimal_spec,
         )
         runner.run_per_issue_gate(input)
         assert len(fake_checker.check_no_progress_calls) == 1
@@ -243,6 +260,7 @@ class TestPerIssueGate:
         runner: GateRunner,
         fake_checker: FakeGateChecker,
         tmp_log_path: Path,
+        minimal_spec: ValidationSpec,
     ) -> None:
         """Gate runner should add no_progress to failure reasons when detected."""
         fake_checker.gate_result = GateResult(
@@ -256,6 +274,7 @@ class TestPerIssueGate:
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=RetryState(gate_attempt=2),
+            spec=minimal_spec,
         )
         output = runner.run_per_issue_gate(input)
 
@@ -269,6 +288,7 @@ class TestPerIssueGate:
         runner: GateRunner,
         fake_checker: FakeGateChecker,
         tmp_log_path: Path,
+        minimal_spec: ValidationSpec,
     ) -> None:
         """Gate runner should not check no_progress when gate passes."""
         fake_checker.gate_result = GateResult(
@@ -281,6 +301,7 @@ class TestPerIssueGate:
             issue_id="test-123",
             log_path=tmp_log_path,
             retry_state=RetryState(gate_attempt=2),
+            spec=minimal_spec,
         )
         runner.run_per_issue_gate(input)
 
@@ -314,6 +335,9 @@ class TestSpecCaching:
         """Gate runner should build spec when not provided in input."""
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")
+
+        # Create mala.yaml so build_validation_spec works
+        (tmp_path / "mala.yaml").write_text("commands:\n  test: echo test\n")
 
         input = PerIssueGateInput(
             issue_id="test-123",

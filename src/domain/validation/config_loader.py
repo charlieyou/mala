@@ -19,6 +19,25 @@ import yaml
 
 from src.domain.validation.config import ConfigError, ValidationConfig
 
+
+class ConfigMissingError(ConfigError):
+    """Raised when the mala.yaml configuration file is not found.
+
+    This is a subclass of ConfigError to allow callers to catch either:
+    - ConfigMissingError: Only handle missing file case
+    - ConfigError: Handle all config errors (missing, invalid syntax, etc.)
+
+    Example:
+        >>> raise ConfigMissingError(Path("/path/to/repo"))
+        ConfigMissingError: mala.yaml not found in /path/to/repo.
+    """
+
+    def __init__(self, repo_path: "Path") -> None:
+        self.repo_path = repo_path
+        message = f"mala.yaml not found in {repo_path}. Mala requires a configuration file to run."
+        super().__init__(message)
+
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -61,10 +80,7 @@ def load_config(repo_path: Path) -> ValidationConfig:
     config_file = repo_path / "mala.yaml"
 
     if not config_file.exists():
-        raise ConfigError(
-            f"mala.yaml not found in {repo_path}. "
-            "Mala requires a configuration file to run."
-        )
+        raise ConfigMissingError(repo_path)
 
     content = config_file.read_text(encoding="utf-8")
     data = _parse_yaml(content)

@@ -634,15 +634,11 @@ class TestMergeConfigsFieldsSetPreservation:
         assert "test" not in result.commands._fields_set
 
 
-class TestExplicitCommandsNullOrEmptyClearsPreset:
-    """Tests for explicit commands: null or commands: {} clearing all preset commands.
+class TestExplicitCommandsNullOrEmptyInheritsPreset:
+    """Tests for commands: null or commands: {} inheriting preset commands."""
 
-    This addresses the behavior where setting `commands: null` or `commands: {}`
-    should clear all inherited preset commands, not inherit them.
-    """
-
-    def test_explicit_commands_null_clears_all_preset_commands(self) -> None:
-        """Setting commands: null clears all preset commands."""
+    def test_explicit_commands_null_inherits_all_preset_commands(self) -> None:
+        """Setting commands: null inherits preset commands."""
         preset = ValidationConfig(
             commands=CommandsConfig(
                 setup=CommandConfig(command="uv sync"),
@@ -657,16 +653,22 @@ class TestExplicitCommandsNullOrEmptyClearsPreset:
         user = ValidationConfig.from_dict({"commands": None})
         result = merge_configs(preset, user)
 
-        # All commands should be None (cleared)
-        assert result.commands.setup is None
-        assert result.commands.test is None
-        assert result.commands.lint is None
-        assert result.commands.format is None
-        assert result.commands.typecheck is None
-        assert result.commands.e2e is None
+        # All commands should be inherited
+        assert result.commands.setup is not None
+        assert result.commands.setup.command == "uv sync"
+        assert result.commands.test is not None
+        assert result.commands.test.command == "pytest"
+        assert result.commands.lint is not None
+        assert result.commands.lint.command == "ruff check ."
+        assert result.commands.format is not None
+        assert result.commands.format.command == "ruff format --check"
+        assert result.commands.typecheck is not None
+        assert result.commands.typecheck.command == "ty check"
+        assert result.commands.e2e is not None
+        assert result.commands.e2e.command == "pytest -m e2e"
 
-    def test_explicit_commands_empty_object_clears_all_preset_commands(self) -> None:
-        """Setting commands: {} clears all preset commands."""
+    def test_explicit_commands_empty_object_inherits_all_preset_commands(self) -> None:
+        """Setting commands: {} inherits preset commands."""
         preset = ValidationConfig(
             commands=CommandsConfig(
                 setup=CommandConfig(command="npm install"),
@@ -678,16 +680,19 @@ class TestExplicitCommandsNullOrEmptyClearsPreset:
         user = ValidationConfig.from_dict({"commands": {}})
         result = merge_configs(preset, user)
 
-        # All commands should be None (cleared)
-        assert result.commands.setup is None
-        assert result.commands.test is None
-        assert result.commands.lint is None
+        # All commands should be inherited
+        assert result.commands.setup is not None
+        assert result.commands.setup.command == "npm install"
+        assert result.commands.test is not None
+        assert result.commands.test.command == "npm test"
+        assert result.commands.lint is not None
+        assert result.commands.lint.command == "npm run lint"
         assert result.commands.format is None
         assert result.commands.typecheck is None
         assert result.commands.e2e is None
 
     def test_explicit_commands_empty_with_other_fields_still_works(self) -> None:
-        """commands: {} with other fields still clears commands while preserving others."""
+        """commands: {} with other fields still inherits commands while preserving others."""
         preset = ValidationConfig(
             commands=CommandsConfig(
                 test=CommandConfig(command="pytest"),
@@ -709,10 +714,12 @@ class TestExplicitCommandsNullOrEmptyClearsPreset:
         )
         result = merge_configs(preset, user)
 
-        # All commands should be None (cleared)
+        # Commands should be inherited
         assert result.commands.setup is None
-        assert result.commands.test is None
-        assert result.commands.lint is None
+        assert result.commands.test is not None
+        assert result.commands.test.command == "pytest"
+        assert result.commands.lint is not None
+        assert result.commands.lint.command == "ruff check ."
 
         # Other fields work normally
         assert result.code_patterns == ("src/**/*.py",)  # User override
@@ -758,8 +765,9 @@ class TestExplicitCommandsNullOrEmptyClearsPreset:
         user = ValidationConfig.from_dict({"commands": None})
         result = merge_configs(preset, user)
 
-        # Commands cleared
-        assert result.commands.test is None
+        # Commands inherited
+        assert result.commands.test is not None
+        assert result.commands.test.command == "pytest"
         # Coverage still inherited
         assert result.coverage is not None
         assert result.coverage.threshold == 85.0

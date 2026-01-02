@@ -1,0 +1,7 @@
+preset: python-uv
+
+coverage:
+  command: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0"
+  format: xml
+  file: coverage.xml
+  threshold: 72

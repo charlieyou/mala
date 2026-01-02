@@ -1,10 +1,12 @@
 """Validation gating: determines whether validation should trigger based on changed files.
 
-This module provides logic to filter validation triggers based on code patterns
+This module provides logic to filter validation triggers based on patterns
 from mala.yaml configuration:
 - `code_patterns`: patterns for files that trigger validation
-- `config_files`: patterns for files that invalidate lint/format/typecheck cache
-- `setup_files`: patterns for files that invalidate setup cache (uv.lock, etc.)
+- `config_files`: patterns for files that trigger validation and invalidate
+  lint/format/typecheck cache
+- `setup_files`: patterns for files that trigger validation and invalidate
+  setup cache (uv.lock, etc.)
 
 Special cases:
 - Empty `code_patterns` matches all files (validation always triggers)
@@ -44,7 +46,8 @@ def should_trigger_validation(
     Validation should trigger when:
     1. `mala.yaml` is in the changed files (always triggers)
     2. `code_patterns` is empty (matches all files)
-    3. Any changed file matches a pattern in `code_patterns`
+    3. Any changed file matches a pattern in `code_patterns`, `config_files`,
+       or `setup_files`
 
     Args:
         changed_files: List of file paths that were modified.
@@ -65,8 +68,11 @@ def should_trigger_validation(
     if not spec.code_patterns:
         return True
 
-    # Check if any changed file matches code patterns
-    matching_files = filter_matching_files(changed_files, spec.code_patterns)
+    # Check if any changed file matches code/config/setup patterns
+    patterns = [*spec.code_patterns, *spec.config_files, *spec.setup_files]
+    if not patterns:
+        return True
+    matching_files = filter_matching_files(changed_files, patterns)
     return len(matching_files) > 0
 
 

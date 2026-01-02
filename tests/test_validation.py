@@ -3005,6 +3005,64 @@ class TestSpecResultBuilder:
         assert result.coverage_result is not None
         assert "not found" in (result.coverage_result.failure_reason or "")
 
+    def test_build_coverage_command_failure(
+        self,
+        builder: "SpecResultBuilder",
+        basic_artifacts: ValidationArtifacts,
+        basic_context: ValidationContext,
+        basic_steps: list[ValidationStepResult],
+        tmp_path: Path,
+    ) -> None:
+        """Coverage command failure should fail validation with clear reason."""
+        from src.domain.validation.config import YamlCoverageConfig
+        from src.domain.validation.spec_result_builder import ResultBuilderInput
+        from src.infra.tools.command_runner import CommandResult
+
+        yaml_coverage_config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=80.0,
+            command="pytest --cov=src --cov-report=xml",
+        )
+
+        spec = ValidationSpec(
+            commands=[],
+            scope=ValidationScope.PER_ISSUE,
+            coverage=CoverageConfig(enabled=True, min_percent=80.0),
+            e2e=E2EConfig(enabled=False),
+            yaml_coverage_config=yaml_coverage_config,
+        )
+
+        input = ResultBuilderInput(
+            spec=spec,
+            context=basic_context,
+            steps=basic_steps,
+            artifacts=basic_artifacts,
+            cwd=tmp_path,
+            log_dir=tmp_path,
+            env={},
+            baseline_percent=None,
+            yaml_coverage_config=yaml_coverage_config,
+        )
+
+        with patch(
+            "src.infra.tools.command_runner.CommandRunner.run",
+            return_value=CommandResult(
+                command="pytest --cov=src --cov-report=xml",
+                returncode=1,
+                stdout="",
+                stderr="boom",
+            ),
+        ):
+            result = builder.build(input)
+
+        assert result.passed is False
+        assert result.coverage_result is not None
+        assert result.coverage_result.passed is False
+        assert "Coverage command failed" in (
+            result.coverage_result.failure_reason or ""
+        )
+
     def test_build_e2e_skipped_for_per_issue(
         self,
         builder: "SpecResultBuilder",

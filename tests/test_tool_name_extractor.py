@@ -100,6 +100,7 @@ class TestExtractToolName:
             # Shell built-ins skipped
             ("export FOO=bar && eslint .", "eslint"),
             ("cd /tmp && pytest", "pytest"),
+            ("unset FOO && pytest", "pytest"),
         ],
     )
     def test_shell_builtins(self, command: str, expected: str) -> None:
@@ -183,6 +184,9 @@ class TestExtractToolName:
             # Edge cases with flags
             ("npx -y eslint .", "eslint"),
             ("uvx --quiet ruff check", "ruff"),
+            ("npx -p eslint eslint .", "eslint"),
+            ("uvx --from ruff ruff check", "ruff"),
+            ("uv run --extra dev pytest", "pytest"),
         ],
     )
     def test_wrapper_with_flags(self, command: str, expected: str) -> None:

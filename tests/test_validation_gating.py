@@ -99,6 +99,20 @@ class TestShouldTriggerValidation:
         assert should_trigger_validation(["tests/test_main.py"], spec) is True
         assert should_trigger_validation(["README.md"], spec) is False
 
+    def test_config_files_trigger_validation(self) -> None:
+        """Config file changes trigger validation even if code_patterns don't match."""
+        spec = MockValidationSpec(
+            code_patterns=["*.py"],
+            config_files=["pyproject.toml", ".ruff.toml"],
+        )
+        assert should_trigger_validation(["pyproject.toml"], spec) is True
+        assert should_trigger_validation([".ruff.toml"], spec) is True
+
+    def test_setup_files_trigger_validation(self) -> None:
+        """Setup file changes trigger validation even if code_patterns don't match."""
+        spec = MockValidationSpec(code_patterns=["*.py"], setup_files=["uv.lock"])
+        assert should_trigger_validation(["uv.lock"], spec) is True
+
 
 class TestGetMatchingCodeFiles:
     """Tests for get_matching_code_files function."""
@@ -251,9 +265,8 @@ class TestIntegrationScenarios:
         assert should_trigger_validation(["README.md"], spec) is False
         assert should_trigger_validation(["docs/guide.md"], spec) is False
 
-        # Config changes invalidate lint cache but don't trigger by themselves
-        # (unless code_patterns is empty or mala.yaml changed)
-        assert should_trigger_validation(["pyproject.toml"], spec) is False
+        # Config changes trigger validation and invalidate lint cache
+        assert should_trigger_validation(["pyproject.toml"], spec) is True
         assert should_invalidate_lint_cache(["pyproject.toml"], spec) is True
 
     def test_full_stack_project_multiple_patterns(self) -> None:

@@ -188,28 +188,7 @@ def _merge_commands(
     - If field is explicitly set by user: use user value (even if None)
     - If field is not explicitly set: inherit from preset
 
-    Special case: If the user explicitly set the commands field to null or
-    an empty object (i.e., user_commands_explicitly_set is True but
-    user._fields_set is empty and all command values are None), this clears
-    all preset commands.
     """
-    # Short-circuit: If user explicitly set commands to null/empty (no individual
-    # command fields set, and we're using YAML-style tracking), this clears all
-    # preset commands
-    if user_commands_explicitly_set and not user._fields_set:
-        # Check if this is a "clear all" case - user explicitly set commands
-        # but all values are None (from YAML: commands: null or commands: {})
-        all_none = (
-            user.setup is None
-            and user.test is None
-            and user.lint is None
-            and user.format is None
-            and user.typecheck is None
-            and user.e2e is None
-        )
-        if all_none:
-            return user
-
     return CommandsConfig(
         setup=_merge_command_field(preset.setup, user.setup, "setup", user._fields_set),
         test=_merge_command_field(preset.test, user.test, "test", user._fields_set),

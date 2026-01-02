@@ -281,7 +281,7 @@ def build_validation_spec(
         A ValidationSpec configured according to the config files.
     """
     from src.domain.validation.config import ConfigError
-    from src.domain.validation.config_loader import load_config
+    from src.domain.validation.config_loader import ConfigMissingError, load_config
     from src.domain.validation.config_merger import merge_configs
     from src.domain.validation.preset_registry import PresetRegistry
 
@@ -294,8 +294,24 @@ def build_validation_spec(
     # Determine if we should skip tests
     skip_tests = "post-validate" in disable
 
-    # Load config from repo (fail fast on errors)
-    user_config = load_config(repo_path)
+    # Load config from repo
+    # - ConfigMissingError: gracefully return empty spec (optional config)
+    # - ConfigError: fail fast (invalid syntax, unknown fields, etc.)
+    try:
+        user_config = load_config(repo_path)
+    except ConfigMissingError:
+        # No config file - return empty spec with all validations disabled
+        return ValidationSpec(
+            commands=[],
+            scope=scope,
+            require_clean_git=True,
+            require_pytest_for_code_changes=True,
+            coverage=CoverageConfig(enabled=False),
+            e2e=E2EConfig(enabled=False),
+            code_patterns=[],
+            config_files=[],
+            setup_files=[],
+        )
 
     # Load and merge preset if specified
     if user_config.preset is not None:

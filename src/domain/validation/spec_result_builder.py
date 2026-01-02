@@ -98,6 +98,7 @@ class SpecResultBuilder:
             log_dir=input.log_dir,
             artifacts=input.artifacts,
             baseline_percent=input.baseline_percent,
+            env=input.env,
             yaml_coverage_config=input.yaml_coverage_config,
         )
         if cov is not None and not cov.passed:
@@ -143,6 +144,7 @@ class SpecResultBuilder:
         log_dir: Path,
         artifacts: ValidationArtifacts,
         baseline_percent: float | None,
+        env: Mapping[str, str],
         yaml_coverage_config: YamlCoverageConfig | None = None,
     ) -> CoverageResult | None:
         """Run coverage check if enabled.
@@ -159,17 +161,22 @@ class SpecResultBuilder:
         Returns:
             CoverageResult if coverage is enabled, None otherwise.
         """
+        if not spec.coverage.enabled:
+            return None
+
         # If yaml_coverage_config is provided, use config-driven coverage checking
         if yaml_coverage_config is not None:
+            coverage_command_result = self._run_coverage_command_if_configured(
+                yaml_coverage_config, cwd, env
+            )
+            if coverage_command_result is not None:
+                return coverage_command_result
             coverage_result = check_coverage_from_config(yaml_coverage_config, cwd)
             if coverage_result is not None and coverage_result.report_path:
                 artifacts.coverage_report = coverage_result.report_path
             return coverage_result
 
         # Legacy mode: use spec.coverage
-        if not spec.coverage.enabled:
-            return None
-
         coverage_result = self._check_coverage(
             spec.coverage, cwd, log_dir, baseline_percent
         )
@@ -177,6 +184,57 @@ class SpecResultBuilder:
             artifacts.coverage_report = coverage_result.report_path
 
         return coverage_result
+
+    def _run_coverage_command_if_configured(
+        self,
+        coverage_config: YamlCoverageConfig,
+        cwd: Path,
+        env: Mapping[str, str],
+    ) -> CoverageResult | None:
+        """Run coverage command if configured.
+
+        Args:
+            coverage_config: Coverage configuration from mala.yaml.
+            cwd: Working directory for the command.
+            env: Environment variables for the command.
+
+        Returns:
+            CoverageResult on failure, None if command not configured or succeeded.
+        """
+        from src.infra.tools.command_runner import CommandRunner
+        from pathlib import Path
+
+        if coverage_config.command is None:
+            return None
+
+        timeout_seconds = coverage_config.timeout or 120
+        runner = CommandRunner(cwd=cwd, timeout_seconds=timeout_seconds)
+        result = runner.run(coverage_config.command, env=env, shell=True)
+
+        if result.ok:
+            return None
+
+        details: list[str] = []
+        if result.timed_out:
+            details.append("coverage command timed out")
+        else:
+            details.append(f"coverage command exited {result.returncode}")
+
+        tail = result.stderr_tail() or result.stdout_tail()
+        if tail:
+            details.append(tail)
+
+        report_path = Path(coverage_config.file)
+        if not report_path.is_absolute():
+            report_path = cwd / report_path
+
+        return CoverageResult(
+            percent=None,
+            passed=False,
+            status=CoverageStatus.ERROR,
+            report_path=report_path,
+            failure_reason="Coverage command failed: " + "; ".join(details),
+        )
 
     def _check_coverage(
         self,
