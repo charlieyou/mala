@@ -50,19 +50,20 @@ def merge_configs(
         Merged ValidationConfig with user values taking precedence.
 
     Examples:
-        >>> from src.domain.validation.config import CommandConfig, CommandsConfig
-        >>> preset_cfg = ValidationConfig(
-        ...     commands=CommandsConfig(
-        ...         test=CommandConfig(command="pytest"),
-        ...         lint=CommandConfig(command="ruff check"),
-        ...     ),
-        ...     code_patterns=("**/*.py",),
-        ... )
-        >>> user_cfg = ValidationConfig(
-        ...     commands=CommandsConfig(
-        ...         test=CommandConfig(command="pytest -v"),  # override
-        ...     ),
-        ... )
+        >>> # Use from_dict to create configs - this populates _fields_set
+        >>> # which is required for overrides to work correctly
+        >>> preset_cfg = ValidationConfig.from_dict({
+        ...     "commands": {
+        ...         "test": "pytest",
+        ...         "lint": "ruff check",
+        ...     },
+        ...     "code_patterns": ["**/*.py"],
+        ... })
+        >>> user_cfg = ValidationConfig.from_dict({
+        ...     "commands": {
+        ...         "test": "pytest -v",  # override
+        ...     },
+        ... })
         >>> result = merge_configs(preset_cfg, user_cfg)
         >>> result.commands.test.command
         'pytest -v'
