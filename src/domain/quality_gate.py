@@ -515,9 +515,12 @@ class QualityGate:
                         kind_failed[kind] = (is_error, cmd_name)
 
         # Build failed_commands from kinds that failed, using display names
-        evidence.failed_commands = [
-            cmd_name for is_failed, cmd_name in kind_failed.values() if is_failed
-        ]
+        # Deduplicate: multiple kinds (LINT, FORMAT) may map to the same tool (ruff)
+        evidence.failed_commands = list(
+            dict.fromkeys(
+                cmd_name for is_failed, cmd_name in kind_failed.values() if is_failed
+            )
+        )
         return evidence
 
     def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:

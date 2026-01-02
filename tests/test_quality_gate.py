@@ -3500,3 +3500,56 @@ class TestExtractedToolNames:
         failed_msg = next(r for r in result.failure_reasons if "failed" in r.lower())
         assert "pytest" in failed_msg
         assert "uv run pytest" not in failed_msg
+
+    def test_failed_commands_deduplicates_same_tool_multiple_kinds(
+        self, tmp_path: Path
+    ) -> None:
+        """Failed commands should dedupe when same tool matches multiple kinds.
+
+        When ruff fails and matches both LINT and FORMAT kinds, the
+        failed_commands list should contain 'ruff' only once, not twice.
+        """
+        log_path = tmp_path / "session.jsonl"
+
+        # Tool use for ruff (matches both lint and format kinds)
+        tool_use_entry = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_ruff_both",
+                            "name": "Bash",
+                            "input": {"command": "uvx ruff check ."},
+                        }
+                    ]
+                },
+            }
+        )
+        # Tool result showing ruff FAILED
+        tool_result_entry = json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_ruff_both",
+                            "content": "Exit code 1\nFound 3 errors",
+                            "is_error": True,
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
+
+        gate = QualityGate(tmp_path)
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        # Should have "ruff" exactly once, not duplicated
+        assert evidence.failed_commands.count("ruff") == 1
+        assert evidence.failed_commands == ["ruff"]
