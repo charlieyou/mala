@@ -743,7 +743,8 @@ class BaselineCoverageService:
 
                     detail_msg = f" ({'; '.join(details)})" if details else ""
                     return BaselineRefreshResult.fail(
-                        "No coverage.xml generated during baseline refresh" + detail_msg
+                        f"No {coverage_file} generated during baseline refresh"
+                        + detail_msg
                     )
 
             # Atomic rename to main repo
@@ -756,7 +757,7 @@ class BaselineCoverageService:
                 baseline = get_baseline_coverage(baseline_path)
                 if baseline is None:
                     return BaselineRefreshResult.fail(
-                        "Baseline coverage.xml exists but has no coverage data"
+                        f"Baseline {coverage_file} exists but has no coverage data"
                     )
                 return BaselineRefreshResult.ok(baseline)
             except ValueError as e:
