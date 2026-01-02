@@ -90,7 +90,9 @@ def _get_git_state(repo_path: Path | None = None) -> str | None:
         return None
 
 
-def _detect_lint_command(command: str, lint_tools: AbstractSet[str]) -> str | None:
+def _detect_lint_command(
+    command: str, lint_tools_lower: AbstractSet[str]
+) -> str | None:
     """Detect which lint command type is being run.
 
     Uses extract_tool_name to dynamically identify the tool from any command,
@@ -98,7 +100,7 @@ def _detect_lint_command(command: str, lint_tools: AbstractSet[str]) -> str | No
 
     Args:
         command: The bash command string.
-        lint_tools: Set of known lint tool names to match against.
+        lint_tools_lower: Set of known lint tool names (pre-normalized to lowercase).
 
     Returns:
         The extracted tool name if it matches a known lint tool, or None.
@@ -109,11 +111,10 @@ def _detect_lint_command(command: str, lint_tools: AbstractSet[str]) -> str | No
 
     # Check if the extracted tool (or its base name) matches any lint tool
     # Handle compound commands like "cargo clippy" or "npm run:lint"
-    # Normalize both tool_name and lint_tools to lowercase for case-insensitive matching
-    # (e.g., "RUFF CHECK ." should match {"RUFF"} or {"ruff"})
+    # tool_name is already lowercase from extract_tool_name
+    # lint_tools_lower is pre-computed lowercase set for efficiency
     tool_name_lower = tool_name.lower()
     base_tool = tool_name_lower.split()[0]
-    lint_tools_lower = {t.lower() for t in lint_tools}
 
     # Check full tool name first (e.g., "cargo clippy", "go vet")
     if tool_name_lower in lint_tools_lower:
@@ -182,6 +183,10 @@ class LintCache:
         self._repo_path = repo_path
         self._lint_tools: frozenset[str] = (
             frozenset(lint_tools) if lint_tools else DEFAULT_LINT_TOOLS
+        )
+        # Pre-compute lowercase version for case-insensitive matching
+        self._lint_tools_lower: frozenset[str] = frozenset(
+            t.lower() for t in self._lint_tools
         )
 
     def _make_cache_key(self, lint_type: str, command: str) -> str:
@@ -304,7 +309,7 @@ class LintCache:
         Returns:
             The lint tool name if detected, or None.
         """
-        return _detect_lint_command(command, self._lint_tools)
+        return _detect_lint_command(command, self._lint_tools_lower)
 
 
 def make_lint_cache_hook(

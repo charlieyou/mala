@@ -269,7 +269,7 @@ def _extract_from_tokens(tokens: list[str]) -> str:
             # npm/pnpm/yarn run has special handling: npm run lint → npm run:lint
             if first_lower in ("npm", "pnpm", "yarn") and next_token_lower == "run":
                 if idx + 2 < len(tokens):
-                    script_name = tokens[idx + 2]
+                    script_name = tokens[idx + 2].lower()
                     return f"{first_lower} run:{script_name}"
                 return f"{first_lower} run"
             # Other compound commands: go test → go test (lowercase)
