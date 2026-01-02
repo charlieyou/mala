@@ -155,11 +155,16 @@ def _skip_builtin_arguments(tokens: list[str], idx: int, builtin: str) -> int:
 def _extract_from_tokens(tokens: list[str]) -> str:
     """Extract tool name from a list of parsed tokens.
 
+    All matching against internal token sets is case-insensitive, allowing
+    commands like "CARGO clippy" or "NPX eslint" to be recognized correctly.
+    The returned tool name is normalized to lowercase for known wrappers and
+    compound commands to ensure consistent lint_type identification.
+
     Args:
         tokens: Parsed command tokens.
 
     Returns:
-        Extracted tool name.
+        Extracted tool name (lowercase for known patterns, original case otherwise).
     """
     if not tokens:
         return ""
@@ -174,52 +179,57 @@ def _extract_from_tokens(tokens: list[str]) -> str:
         return ""
 
     first = _strip_path_prefix(tokens[idx])
+    first_lower = first.lower()
 
-    # Skip shell built-ins and their arguments
-    while first in _SHELL_BUILTINS:
-        builtin = first
+    # Skip shell built-ins and their arguments (case-insensitive check)
+    while first_lower in _SHELL_BUILTINS:
+        builtin = first_lower
         idx += 1
         # Skip arguments specific to each built-in
         idx = _skip_builtin_arguments(tokens, idx, builtin)
         if idx >= len(tokens):
             return ""  # Only built-ins, return empty
         first = _strip_path_prefix(tokens[idx])
+        first_lower = first.lower()
 
-    # Check for multi-token wrapper sequences
+    # Check for multi-token wrapper sequences (case-insensitive)
     if idx + 1 < len(tokens):
         second = tokens[idx + 1]
-        if (first, second) in _MULTI_TOKEN_WRAPPERS:
+        second_lower = second.lower()
+        if (first_lower, second_lower) in _MULTI_TOKEN_WRAPPERS:
             idx += 2
             if idx >= len(tokens):
-                # Wrapper without command, return wrapper name
+                # Wrapper without command, return wrapper name (lowercase)
                 logger.warning("Wrapper %s %s without following command", first, second)
-                return first
+                return first_lower
             first = _strip_path_prefix(tokens[idx])
+            first_lower = first.lower()
 
-    # Check for compound commands BEFORE single-token wrappers
+    # Check for compound commands BEFORE single-token wrappers (case-insensitive)
     # This allows npm, pnpm, yarn to be recognized as compound commands
-    if first in _COMPOUND_COMMANDS:
+    if first_lower in _COMPOUND_COMMANDS:
         if idx + 1 < len(tokens):
             next_token = tokens[idx + 1]
+            next_token_lower = next_token.lower()
             # npm/pnpm/yarn run has special handling: npm run lint → npm run:lint
-            if first in ("npm", "pnpm", "yarn") and next_token == "run":
+            if first_lower in ("npm", "pnpm", "yarn") and next_token_lower == "run":
                 if idx + 2 < len(tokens):
                     script_name = tokens[idx + 2]
-                    return f"{first} run:{script_name}"
-                return f"{first} run"
-            # Other compound commands: go test → go test
-            if next_token in _COMPOUND_COMMANDS[first]:
-                return f"{first} {next_token}"
+                    return f"{first_lower} run:{script_name}"
+                return f"{first_lower} run"
+            # Other compound commands: go test → go test (lowercase)
+            if next_token_lower in _COMPOUND_COMMANDS[first_lower]:
+                return f"{first_lower} {next_token_lower}"
 
-    # Check for single-token wrappers
-    if first in _SINGLE_TOKEN_WRAPPERS:
+    # Check for single-token wrappers (case-insensitive)
+    if first_lower in _SINGLE_TOKEN_WRAPPERS:
         idx += 1
         # After wrapper, skip any leading flags to find the actual tool
         while idx < len(tokens) and tokens[idx].startswith("-"):
             idx += 1
         if idx >= len(tokens):
             logger.warning("Wrapper %s without following command", first)
-            return first
+            return first_lower
         first = _strip_path_prefix(tokens[idx])
 
     return first
@@ -229,7 +239,7 @@ def _is_meaningful_tool(tool_name: str) -> bool:
     """Check if a tool name is meaningful for reporting.
 
     Some commands like 'cd', 'echo', 'npm install' are setup commands
-    rather than the actual tool being run.
+    rather than the actual tool being run. Checks are case-insensitive.
 
     Args:
         tool_name: Extracted tool name.
@@ -239,14 +249,15 @@ def _is_meaningful_tool(tool_name: str) -> bool:
     """
     if not tool_name:
         return False
-    # Get the base command (first word)
-    base = tool_name.split()[0]
+    # Get the base command (first word), normalize to lowercase for comparison
+    base = tool_name.split()[0].lower()
+    tool_name_lower = tool_name.lower()
     # Skip common setup commands
     if base in _SETUP_COMMANDS:
         return False
     # npm without compound (i.e., just "npm") or "npm install" is setup
     if base == "npm":
-        if tool_name == "npm" or "install" in tool_name:
+        if tool_name_lower == "npm" or "install" in tool_name_lower:
             return False
     return True
 

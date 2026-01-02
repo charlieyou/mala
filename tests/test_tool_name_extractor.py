@@ -196,6 +196,40 @@ class TestExtractToolName:
         assert result == "npm run"
 
     @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            # Uppercase compound commands (issue mala-tqi4)
+            ("CARGO clippy", "cargo clippy"),
+            ("CARGO CLIPPY", "cargo clippy"),
+            ("GO test ./...", "go test"),
+            ("GO TEST ./...", "go test"),
+            ("NPM test", "npm test"),
+            ("NPM TEST", "npm test"),
+            # Uppercase wrappers
+            ("NPX eslint .", "eslint"),
+            ("UVX ruff check .", "ruff"),
+            ("BUNX eslint .", "eslint"),
+            # Uppercase multi-token wrappers
+            ("UV RUN pytest", "pytest"),
+            ("PYTHON -M pytest", "pytest"),
+            ("POETRY RUN pytest", "pytest"),
+            # Mixed case
+            ("Cargo Clippy", "cargo clippy"),
+            ("Npm Run lint", "npm run:lint"),
+            ("Npx Eslint .", "Eslint"),
+        ],
+    )
+    def test_case_insensitive_matching(self, command: str, expected: str) -> None:
+        """Test case-insensitive matching for wrappers and compound commands.
+
+        Uppercase versions of commands like CARGO clippy, NPX eslint should be
+        recognized correctly and return lowercase normalized tool names for
+        consistent lint_type identification.
+        """
+        assert extract_tool_name(command) == expected
+
+    @pytest.mark.unit
     def test_complex_real_world_command(self) -> None:
         """Test a complex real-world command."""
         result = extract_tool_name(
