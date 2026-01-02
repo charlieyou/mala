@@ -1075,26 +1075,30 @@ class TestDebugLogging:
                         version="1.0.0",
                     )
 
-                    # Verify debug logging was configured
-                    assert metadata.debug_log_path is not None
-                    src_logger = logging.getLogger("src")
-                    handler_name = f"mala_debug_{metadata.run_id}"
-                    handler_names = [
-                        getattr(h, "name", "") for h in src_logger.handlers
-                    ]
-                    assert handler_name in handler_names
+                    try:
+                        # Verify debug logging was configured
+                        assert metadata.debug_log_path is not None
+                        src_logger = logging.getLogger("src")
+                        handler_name = f"mala_debug_{metadata.run_id}"
+                        handler_names = [
+                            getattr(h, "name", "") for h in src_logger.handlers
+                        ]
+                        assert handler_name in handler_names
 
-                    # First cleanup removes the handler
-                    metadata.cleanup()
-                    handler_names_after = [
-                        getattr(h, "name", "") for h in src_logger.handlers
-                    ]
-                    assert handler_name not in handler_names_after
+                        # First cleanup removes the handler
+                        metadata.cleanup()
+                        handler_names_after = [
+                            getattr(h, "name", "") for h in src_logger.handlers
+                        ]
+                        assert handler_name not in handler_names_after
 
-                    # Subsequent cleanups are safe (no-op, no errors)
-                    metadata.cleanup()
-                    metadata.cleanup()
+                        # Subsequent cleanups are safe (no-op, no errors)
+                        metadata.cleanup()
+                        metadata.cleanup()
 
-                    # And save still works after cleanup
-                    path = metadata.save()
-                    assert path.exists()
+                        # And save still works after cleanup
+                        path = metadata.save()
+                        assert path.exists()
+                    finally:
+                        # Ensure handler is always cleaned up, even if assertions fail
+                        metadata.cleanup()
