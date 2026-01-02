@@ -24,6 +24,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 artifacts = ["src/scripts/*.sh"]
+include = ["src/domain/validation/presets/*.yaml"]
 
 [tool.ty.environment]
 root = ["."]

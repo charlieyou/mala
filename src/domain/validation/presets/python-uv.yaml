@@ -1,0 +1,22 @@
+# Python project using uv package manager
+# Commands: uv sync, pytest, ruff check, ruff format --check, ty check
+commands:
+  setup: "uv sync"
+  test: "uv run pytest"
+  lint: "uvx ruff check ."
+  format: "uvx ruff format --check ."
+  typecheck: "uvx ty check"
+  e2e: "uv run pytest -m e2e"
+
+code_patterns:
+  - "**/*.py"
+  - "pyproject.toml"
+
+config_files:
+  - "pyproject.toml"
+  - "ruff.toml"
+  - ".ruff.toml"
+
+setup_files:
+  - "uv.lock"
+  - "pyproject.toml"

@@ -1,0 +1,23 @@
+# Node.js project using npm
+commands:
+  setup: "npm install"
+  test: "npm test"
+  lint: "npx eslint ."
+  format: "npx prettier --check ."
+  typecheck: "npx tsc --noEmit"
+
+code_patterns:
+  - "**/*.js"
+  - "**/*.ts"
+  - "**/*.jsx"
+  - "**/*.tsx"
+
+config_files:
+  - "package.json"
+  - "tsconfig.json"
+  - ".eslintrc*"
+  - ".prettierrc*"
+
+setup_files:
+  - "package-lock.json"
+  - "package.json"

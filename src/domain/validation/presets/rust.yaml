@@ -1,0 +1,18 @@
+# Rust project using cargo
+commands:
+  setup: "cargo fetch"
+  test: "cargo test"
+  lint: "cargo clippy -- -D warnings"
+  format: "cargo fmt --check"
+
+code_patterns:
+  - "**/*.rs"
+
+config_files:
+  - "Cargo.toml"
+  - "Cargo.lock"
+  - "clippy.toml"
+
+setup_files:
+  - "Cargo.toml"
+  - "Cargo.lock"

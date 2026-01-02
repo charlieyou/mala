@@ -1,0 +1,18 @@
+# Go project using go modules
+commands:
+  setup: "go mod download"
+  test: "go test ./..."
+  lint: "golangci-lint run"
+  format: 'test -z "$(gofmt -l .)"'
+
+code_patterns:
+  - "**/*.go"
+
+config_files:
+  - "go.mod"
+  - "go.sum"
+  - ".golangci.yml"
+
+setup_files:
+  - "go.mod"
+  - "go.sum"
