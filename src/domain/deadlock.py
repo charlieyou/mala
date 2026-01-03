@@ -157,6 +157,17 @@ class WaitForGraph:
         """
         return self._holds.get(lock_path)
 
+    def get_waited_lock(self, agent_id: str) -> str | None:
+        """Get the lock an agent is waiting for.
+
+        Args:
+            agent_id: The agent ID.
+
+        Returns:
+            Lock path if the agent is waiting, None otherwise.
+        """
+        return self._waits.get(agent_id)
+
     def detect_cycle(self) -> list[str] | None:
         """Detect a deadlock cycle in the wait-for graph.
 
@@ -298,16 +309,18 @@ class DeadlockMonitor:
             # No registered agents in cycle (shouldn't happen)
             return None
 
-        # Find what the victim is blocked on
+        # Find what the victim is blocked on (use victim's wait, not triggering lock)
         victim_info = self._agents.get(victim.agent_id)
-        blocker_id = self._graph.get_holder(lock_path)
+        victim_waited_lock = self._graph.get_waited_lock(victim.agent_id)
+        blocked_on = victim_waited_lock or lock_path
+        blocker_id = self._graph.get_holder(blocked_on)
         blocker_info = self._agents.get(blocker_id) if blocker_id else None
 
         return DeadlockInfo(
             cycle=cycle,
             victim_id=victim.agent_id,
             victim_issue_id=victim_info.issue_id if victim_info else None,
-            blocked_on=lock_path,
+            blocked_on=blocked_on,
             blocker_id=blocker_id or "",
             blocker_issue_id=blocker_info.issue_id if blocker_info else None,
         )
