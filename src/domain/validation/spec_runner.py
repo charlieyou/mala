@@ -32,7 +32,7 @@ from .validation_gating import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols import EnvConfigPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort
 
     from .result import ValidationStepResult
     from .spec import (
@@ -74,6 +74,7 @@ class SpecValidationRunner:
         step_timeout_seconds: float | None = None,
         enable_lint_cache: bool = True,
         env_config: EnvConfigPort | None = None,
+        command_runner: CommandRunnerPort | None = None,
     ):
         """Initialize the spec validation runner.
 
@@ -82,11 +83,14 @@ class SpecValidationRunner:
             step_timeout_seconds: Optional timeout for individual steps.
             enable_lint_cache: Whether to enable lint caching. Set to False
                 in tests or when caching is not desired.
+            env_config: Environment configuration for paths.
+            command_runner: Command runner for executing commands.
         """
         self.repo_path = repo_path.resolve()
         self.step_timeout_seconds = step_timeout_seconds
         self.enable_lint_cache = enable_lint_cache
         self.env_config = env_config
+        self.command_runner = command_runner
 
     async def run_spec(
         self,
@@ -148,11 +152,20 @@ class SpecValidationRunner:
 
         # Delegate workspace setup to spec_workspace module
         try:
+            # Get command runner, creating fallback if not injected
+            if self.command_runner is not None:
+                runner = self.command_runner
+            else:
+                from src.infra.tools.command_runner import CommandRunner
+
+                runner = CommandRunner(cwd=context.repo_path)
+
             workspace = setup_workspace(
                 spec=spec,
                 context=context,
                 log_dir=log_dir,
                 step_timeout_seconds=self.step_timeout_seconds,
+                command_runner=runner,
                 env_config=self.env_config,
             )
         except SetupError as e:
@@ -182,7 +195,7 @@ class SpecValidationRunner:
             # Clean up workspace with correct pass/fail status
             # On exception, result is None so we treat as failed (validation_passed=False)
             validation_passed = result.passed if result is not None else False
-            cleanup_workspace(workspace, validation_passed)
+            cleanup_workspace(workspace, validation_passed, runner)
 
     def _invalidate_lint_cache_for_config_change(self) -> None:
         """Invalidate lint cache when config files change.
@@ -192,6 +205,8 @@ class SpecValidationRunner:
         run fresh when their configuration changes.
         """
         if not self.enable_lint_cache:
+            return
+        if self.command_runner is None:
             return
         try:
             if self.env_config is not None:
@@ -204,6 +219,7 @@ class SpecValidationRunner:
             cache = LintCache(
                 cache_dir=cache_dir,
                 repo_path=self.repo_path,
+                command_runner=self.command_runner,
             )
             cache.invalidate_all()
         except Exception:

@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.log_events import LogEntry
+    from src.core.protocols import JsonlEntryProtocol
 
 
 @dataclass
@@ -332,7 +333,9 @@ class FileSystemLogProvider:
         encoded = encode_repo_path(repo_path)
         return get_claude_config_dir() / "projects" / encoded / f"{session_id}.jsonl"
 
-    def iter_events(self, log_path: Path, offset: int = 0) -> Iterator[JsonlEntry]:
+    def iter_events(
+        self, log_path: Path, offset: int = 0
+    ) -> Iterator[JsonlEntryProtocol]:
         """Iterate over parsed JSONL entries from a log file.
 
         Delegates to SessionLogParser.iter_jsonl_entries().
@@ -342,7 +345,7 @@ class FileSystemLogProvider:
             offset: Byte offset to start reading from (default 0).
 
         Yields:
-            JsonlEntry objects for each successfully parsed JSON line.
+            JsonlEntryProtocol objects for each successfully parsed JSON line.
         """
         return self._parser.iter_jsonl_entries(log_path, offset)
 
@@ -360,3 +363,42 @@ class FileSystemLogProvider:
             doesn't exist or can't be read.
         """
         return self._parser.get_log_end_offset(log_path, start_offset)
+
+    def extract_bash_commands(self, entry: JsonlEntryProtocol) -> list[tuple[str, str]]:
+        """Extract Bash tool_use commands from an entry.
+
+        Delegates to SessionLogParser.extract_bash_commands().
+
+        Args:
+            entry: A JsonlEntryProtocol from iter_events.
+
+        Returns:
+            List of (tool_id, command) tuples for Bash tool_use blocks.
+        """
+        return self._parser.extract_bash_commands(entry)  # type: ignore[arg-type]
+
+    def extract_tool_results(self, entry: JsonlEntryProtocol) -> list[tuple[str, bool]]:
+        """Extract tool_result entries from an entry.
+
+        Delegates to SessionLogParser.extract_tool_results().
+
+        Args:
+            entry: A JsonlEntryProtocol from iter_events.
+
+        Returns:
+            List of (tool_use_id, is_error) tuples for tool_result blocks.
+        """
+        return self._parser.extract_tool_results(entry)  # type: ignore[arg-type]
+
+    def extract_assistant_text_blocks(self, entry: JsonlEntryProtocol) -> list[str]:
+        """Extract text content from assistant message blocks.
+
+        Delegates to SessionLogParser.extract_assistant_text_blocks().
+
+        Args:
+            entry: A JsonlEntryProtocol from iter_events.
+
+        Returns:
+            List of text strings from text blocks in assistant messages.
+        """
+        return self._parser.extract_assistant_text_blocks(entry)  # type: ignore[arg-type]
