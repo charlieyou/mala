@@ -421,16 +421,16 @@ Some content here.
         result = _extract_existing_fingerprints("No fingerprints here")
         assert result == set()
 
-    def test_ignores_non_hex_content(self) -> None:
-        """Should not match non-hex content in comments."""
+    def test_extracts_legacy_fingerprints(self) -> None:
+        """Should extract legacy format fingerprints for backwards compatibility."""
         description = """
 <!-- fp:abc123def456789a -->
 <!-- fp:file.py:10:20:title -->
 <!-- not a fingerprint -->
 """
         result = _extract_existing_fingerprints(description)
-        # Only the hex fingerprint should match
-        assert result == {"abc123def456789a"}
+        # Both hex and legacy fingerprints should match
+        assert result == {"abc123def456789a", "file.py:10:20:title"}
 
     def test_ignores_arrow_in_content(self) -> None:
         """Should not be confused by --> appearing in content."""
@@ -603,7 +603,8 @@ class TestCreateReviewTrackingIssues:
         # Content-based dedup tag - fingerprints are now hex hashes
         content = "src/foo.py:10:10:Consider refactoring"
         individual_fp = hashlib.sha256(content.encode()).hexdigest()[:16]
-        # Batch dedup uses sorted individual fingerprints
+        # For a single finding, pipe-join of one element equals the element itself.
+        # The production code uses "|".join(sorted([fp])) which equals just fp.
         content_hash = hashlib.sha256(individual_fp.encode()).hexdigest()[:12]
         dedup_tag = f"review_finding:{content_hash}"
 

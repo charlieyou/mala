@@ -81,10 +81,20 @@ def _extract_existing_fingerprints(description: str) -> set[str]:
 
     Fingerprints are stored as HTML comments: <!-- fp:hex_hash -->
     We use a hex hash to avoid issues with special characters in titles.
+
+    Also supports legacy format <!-- fp:file:line:line:title --> for backwards
+    compatibility with existing tracking issues.
     """
-    # Match hex hashes only (safe pattern that won't be confused by content)
-    pattern = r"<!-- fp:([a-f0-9]+) -->"
-    return set(re.findall(pattern, description))
+    # Match new hex-only format (16 hex chars)
+    hex_pattern = r"<!-- fp:([a-f0-9]{16}) -->"
+    hex_matches = set(re.findall(hex_pattern, description))
+
+    # Match legacy format (file:line:line:title) for backwards compatibility
+    # Legacy fingerprints contain colons and non-hex characters
+    legacy_pattern = r"<!-- fp:([^>]+:[^>]+) -->"
+    legacy_matches = set(re.findall(legacy_pattern, description))
+
+    return hex_matches | legacy_matches
 
 
 def _update_header_count(description: str, new_count: int) -> str:
