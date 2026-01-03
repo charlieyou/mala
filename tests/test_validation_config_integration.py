@@ -187,12 +187,12 @@ commands:
         assert config.commands.lint is not None
         assert (
             config.commands.lint.command
-            == "uvx ruff check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+            == "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff check ."
         )
         assert config.commands.format is not None
         assert (
             config.commands.format.command
-            == "uvx ruff format --check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+            == "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format --check ."
         )
         assert config.commands.typecheck is not None
         assert config.commands.typecheck.command == "uvx ty check"

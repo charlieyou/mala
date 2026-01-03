@@ -96,17 +96,18 @@ commands:
         result = build_prompt_validation_commands(tmp_path)
 
         # Default commands include isolation flags for parallel agent runs
+        # Note: RUFF_CACHE_DIR env var for ruff, -o cache_dir for pytest
         assert (
-            result.lint == "uvx ruff check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+            result.lint
+            == "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff check ."
         )
         assert (
             result.format
-            == "uvx ruff format . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+            == "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format ."
         )
         assert result.typecheck == "uvx ty check"
         assert (
-            result.test
-            == "uv run pytest --cache-dir=/tmp/pytest-${AGENT_ID:-default} --cov-fail-under=0"
+            result.test == "uv run pytest -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
         )
 
     def test_partial_commands_use_fallbacks(self, tmp_path: Path) -> None:

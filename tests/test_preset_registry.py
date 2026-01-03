@@ -117,24 +117,24 @@ class TestPresetRegistryIntegration:
         assert config.commands.test is not None
         assert (
             config.commands.test.command
-            == "uv run pytest --cache-dir=/tmp/pytest-${AGENT_ID:-default} --cov-fail-under=0"
+            == "uv run pytest -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
         )
         assert config.commands.lint is not None
         assert (
             config.commands.lint.command
-            == "uvx ruff check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+            == "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff check ."
         )
         assert config.commands.format is not None
         assert (
             config.commands.format.command
-            == "uvx ruff format --check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+            == "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format --check ."
         )
         assert config.commands.typecheck is not None
         assert config.commands.typecheck.command == "uvx ty check"
         assert config.commands.e2e is not None
         assert (
             config.commands.e2e.command
-            == "uv run pytest -m e2e --cache-dir=/tmp/pytest-${AGENT_ID:-default}"
+            == "uv run pytest -m e2e -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
         )
         assert "**/*.py" in config.code_patterns
         assert "pyproject.toml" in config.code_patterns
