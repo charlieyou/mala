@@ -1900,8 +1900,17 @@ class AgentSessionRunner:
         start_time = asyncio.get_event_loop().time()
         continuation_count = 0
         current_prompt = input.prompt
+        # Timeout for checkpoint fetch operations (30 seconds)
+        checkpoint_timeout_seconds = 30
 
         while True:
+            # Calculate remaining time to enforce overall session timeout
+            loop = asyncio.get_event_loop()
+            elapsed = loop.time() - start_time
+            remaining = self.config.timeout_seconds - elapsed
+            if remaining <= 0:
+                raise TimeoutError("Session timeout exceeded across restarts")
+
             # Create fresh lifecycle for each iteration
             session_input = AgentSessionInput(
                 issue_id=input.issue_id,
@@ -1912,7 +1921,7 @@ class AgentSessionRunner:
             session_cfg, state = self._initialize_session(session_input)
 
             try:
-                async with asyncio.timeout(self.config.timeout_seconds):
+                async with asyncio.timeout(remaining):
                     await self._run_lifecycle_loop(
                         session_input, session_cfg, state, tracer
                     )
@@ -1920,11 +1929,21 @@ class AgentSessionRunner:
                 break
             except ContextPressureError as e:
                 # Get checkpoint from current session before it's gone
-                checkpoint = await self._get_checkpoint_from_agent(
-                    e.session_id,
-                    input.issue_id,
-                    session_cfg.options,
-                )
+                # Use dedicated timeout to prevent indefinite blocking
+                try:
+                    async with asyncio.timeout(checkpoint_timeout_seconds):
+                        checkpoint = await self._get_checkpoint_from_agent(
+                            e.session_id,
+                            input.issue_id,
+                            session_cfg.options,
+                        )
+                except TimeoutError:
+                    logger.warning(
+                        "Session %s: checkpoint fetch timed out after %ds, using empty checkpoint",
+                        input.issue_id,
+                        checkpoint_timeout_seconds,
+                    )
+                    checkpoint = ""
                 continuation_count += 1
                 logger.info(
                     "Session %s: context restart #%d at %.1f%%",
