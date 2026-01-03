@@ -11,8 +11,7 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.core.protocols import IssueProvider, ReviewIssueProtocol
-    from src.infra.io.event_protocol import MalaEventSink
+    from src.core.protocols import IssueProvider, MalaEventSink, ReviewIssueProtocol
 
 
 def _get_finding_fingerprint(issue: ReviewIssueProtocol) -> str:

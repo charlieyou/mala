@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from src.infra.io.base_sink import BaseEventSink, NullEventSink
 from src.infra.io.console_sink import ConsoleEventSink
-from src.infra.io.event_protocol import EventRunConfig, MalaEventSink
+from src.core.protocols import EventRunConfig, MalaEventSink
 
 
 class TestEventRunConfig:

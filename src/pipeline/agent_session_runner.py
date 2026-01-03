@@ -66,7 +66,7 @@ if TYPE_CHECKING:
 
     from claude_agent_sdk import ClaudeAgentOptions
 
-    from src.infra.io.event_protocol import MalaEventSink
+    from src.core.protocols import MalaEventSink
     from src.domain.lifecycle import (
         GateOutcome,
         RetryState,

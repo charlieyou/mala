@@ -19,7 +19,7 @@ if TYPE_CHECKING:
         LogProvider,
     )
     from src.infra.io.config import MalaConfig
-    from src.infra.io.event_protocol import MalaEventSink
+    from src.core.protocols import MalaEventSink
     from src.infra.telemetry import TelemetryProvider
     from src.orchestration.orchestrator import MalaOrchestrator
 

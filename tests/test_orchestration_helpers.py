@@ -32,8 +32,7 @@ from src.orchestration.review_tracking import (
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
 
 if TYPE_CHECKING:
-    from src.core.protocols import IssueProvider
-    from src.infra.io.event_protocol import MalaEventSink
+    from src.core.protocols import IssueProvider, MalaEventSink
 
 # Load prompts once for tests
 _prompts = load_prompts(PROMPTS_DIR)

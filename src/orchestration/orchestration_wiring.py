@@ -63,7 +63,7 @@ if TYPE_CHECKING:
     )
     from src.infra.epic_verifier import EpicVerificationResult
     from src.infra.io.config import MalaConfig
-    from src.infra.io.event_protocol import MalaEventSink
+    from src.core.protocols import MalaEventSink
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.issue_result import IssueResult
 

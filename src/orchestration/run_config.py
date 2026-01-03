@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.infra.io.event_protocol import EventRunConfig
+from src.core.protocols import EventRunConfig
 from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
 
 if TYPE_CHECKING:

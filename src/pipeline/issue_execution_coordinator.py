@@ -16,8 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from src.core.protocols import IssueProvider
-    from src.infra.io.event_protocol import MalaEventSink
+    from src.core.protocols import IssueProvider, MalaEventSink
 
 
 class SpawnCallback(Protocol):
