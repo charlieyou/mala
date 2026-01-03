@@ -536,6 +536,35 @@ def _emit_review_result_events(
         )
 
 
+def _emit_gate_passed_events(
+    event_sink: MalaEventSink | None,
+    issue_id: str,
+    review_attempt: int,
+) -> None:
+    """Emit gate passed events when first entering review.
+
+    Only emits events on the first review attempt (review_attempt == 1),
+    indicating the gate has just passed.
+
+    Args:
+        event_sink: Event sink to emit to, or None to skip emission.
+        issue_id: The issue identifier.
+        review_attempt: Current review attempt number (1-based).
+    """
+    if review_attempt != 1 or event_sink is None:
+        return
+
+    event_sink.on_gate_passed(
+        issue_id,
+        issue_id=issue_id,
+    )
+    event_sink.on_validation_result(
+        issue_id,
+        passed=True,
+        issue_id=issue_id,
+    )
+
+
 def _count_blocking_issues(issues: list[ReviewIssue] | None) -> int:
     """Count issues with priority <= 1 (P0 or P1).
 
@@ -1120,16 +1149,7 @@ class AgentSessionRunner:
         result = lifecycle.on_gate_result(lifecycle_ctx, gate_result, new_offset)
 
         if result.effect == Effect.COMPLETE_SUCCESS:
-            if self.event_sink is not None:
-                self.event_sink.on_gate_passed(
-                    input.issue_id,
-                    issue_id=input.issue_id,
-                )
-                self.event_sink.on_validation_result(
-                    input.issue_id,
-                    passed=True,
-                    issue_id=input.issue_id,
-                )
+            _emit_gate_passed_events(self.event_sink, input.issue_id, review_attempt=1)
             return None, True, result  # break
 
         if result.effect == Effect.COMPLETE_FAILURE:
@@ -1291,8 +1311,8 @@ class AgentSessionRunner:
 
         # Emit gate passed events when first entering review
         # (review_attempt == 1 means gate just passed)
-        self._emit_gate_passed_events(
-            input.issue_id, lifecycle_ctx.retry_state.review_attempt
+        _emit_gate_passed_events(
+            self.event_sink, input.issue_id, lifecycle_ctx.retry_state.review_attempt
         )
 
         # Check no-progress before running review
@@ -1393,24 +1413,6 @@ class AgentSessionRunner:
             result,
             pending_query,
         )
-
-    def _emit_gate_passed_events(self, issue_id: str, review_attempt: int) -> None:
-        """Emit gate passed events when first entering review.
-
-        Args:
-            issue_id: The issue identifier.
-            review_attempt: Current review attempt number.
-        """
-        if review_attempt == 1 and self.event_sink is not None:
-            self.event_sink.on_gate_passed(
-                issue_id,
-                issue_id=issue_id,
-            )
-            self.event_sink.on_validation_result(
-                issue_id,
-                passed=True,
-                issue_id=issue_id,
-            )
 
     async def _apply_retry_backoff(self, retry_count: int) -> None:
         """Apply backoff delay before an idle retry attempt.

@@ -2701,40 +2701,14 @@ class TestEmitGatePassedEvents:
         """Create a fake event sink for testing."""
         return FakeEventSink()
 
-    @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
-        """Create a session config for testing."""
-        return AgentSessionConfig(
-            repo_path=tmp_path,
-            timeout_seconds=600,
-            max_gate_retries=3,
-            max_review_retries=3,
-        )
-
-    @pytest.fixture
-    def runner(
-        self, session_config: AgentSessionConfig, fake_sink: FakeEventSink
-    ) -> AgentSessionRunner:
-        """Create a runner with fake sink for testing."""
-        from pathlib import Path
-
-        def get_log_path(session_id: str) -> Path:
-            return Path("/tmp/test.jsonl")
-
-        callbacks = SessionCallbacks(get_log_path=get_log_path)
-        return AgentSessionRunner(
-            config=session_config,
-            callbacks=callbacks,
-            sdk_client_factory=FakeSDKClientFactory(FakeSDKClient()),
-            event_sink=fake_sink,  # type: ignore[arg-type]
-        )
-
     @pytest.mark.unit
     def test_emits_events_on_first_review_attempt(
-        self, runner: AgentSessionRunner, fake_sink: FakeEventSink
+        self, fake_sink: FakeEventSink
     ) -> None:
         """Events should be emitted when review_attempt is 1."""
-        runner._emit_gate_passed_events("test-123", review_attempt=1)
+        from src.pipeline.agent_session_runner import _emit_gate_passed_events
+
+        _emit_gate_passed_events(fake_sink, "test-123", review_attempt=1)  # type: ignore[arg-type]
 
         event_names = [e[0] for e in fake_sink.events]
         assert "on_gate_passed" in event_names
@@ -2748,33 +2722,22 @@ class TestEmitGatePassedEvents:
 
     @pytest.mark.unit
     def test_no_events_on_subsequent_review_attempts(
-        self, runner: AgentSessionRunner, fake_sink: FakeEventSink
+        self, fake_sink: FakeEventSink
     ) -> None:
         """No events should be emitted when review_attempt > 1."""
-        runner._emit_gate_passed_events("test-123", review_attempt=2)
+        from src.pipeline.agent_session_runner import _emit_gate_passed_events
+
+        _emit_gate_passed_events(fake_sink, "test-123", review_attempt=2)  # type: ignore[arg-type]
 
         assert len(fake_sink.events) == 0
 
     @pytest.mark.unit
-    def test_no_events_without_event_sink(
-        self, session_config: AgentSessionConfig
-    ) -> None:
+    def test_no_events_without_event_sink(self) -> None:
         """No errors when event_sink is None."""
-        from pathlib import Path
-
-        def get_log_path(session_id: str) -> Path:
-            return Path("/tmp/test.jsonl")
-
-        callbacks = SessionCallbacks(get_log_path=get_log_path)
-        runner = AgentSessionRunner(
-            config=session_config,
-            callbacks=callbacks,
-            sdk_client_factory=FakeSDKClientFactory(FakeSDKClient()),
-            event_sink=None,
-        )
+        from src.pipeline.agent_session_runner import _emit_gate_passed_events
 
         # Should not raise
-        runner._emit_gate_passed_events("test-123", review_attempt=1)
+        _emit_gate_passed_events(None, "test-123", review_attempt=1)
 
 
 class TestHandleGateCheck:
