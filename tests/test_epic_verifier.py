@@ -1,8 +1,6 @@
 """Unit tests for epic verification functionality.
 
 Tests the EpicVerifier class and ClaudeEpicVerificationModel including:
-- Scoped commit computation (child commits only, skip merges)
-- Commit range summarization with timestamps
 - Spec path extraction from descriptions
 - Remediation issue creation with deduplication
 - Human review issue creation
@@ -23,6 +21,7 @@ if TYPE_CHECKING:
 
     from src.orchestration.orchestrator import MalaOrchestrator
 
+from src.domain.epic.scope import ScopedCommits
 from src.infra.epic_verifier import (
     ClaudeEpicVerificationModel,
     EpicVerifier,
@@ -80,12 +79,16 @@ def verifier(
 
 
 def _stub_commit_helpers(verifier: EpicVerifier, sha: str = "abc123") -> None:
-    """Stub commit-scoped helpers to avoid hitting git in tests."""
-    setattr(verifier, "_compute_scoped_commits", AsyncMock(return_value=[sha]))
-    setattr(verifier, "_summarize_commit_range", AsyncMock(return_value=sha))
-    setattr(
-        verifier, "_format_commit_summary", AsyncMock(return_value=f"- {sha} summary")
+    """Stub scope_analyzer to avoid hitting git in tests."""
+    mock_scope_analyzer = MagicMock()
+    mock_scope_analyzer.compute_scoped_commits = AsyncMock(
+        return_value=ScopedCommits(
+            commit_shas=[sha],
+            commit_range=sha,
+            commit_summary=f"- {sha} summary",
+        )
     )
+    verifier.scope_analyzer = mock_scope_analyzer
 
 
 # ============================================================================
@@ -150,98 +153,6 @@ class TestExtractSpecPaths:
         paths = extract_spec_paths(text)
         assert "specs/a.md" in paths
         assert "specs/b.md" in paths
-
-
-# ============================================================================
-# Test scoped commit computation
-# ============================================================================
-
-
-class TestScopedCommitComputation:
-    """Tests for scoped commit computation from child commits."""
-
-    @pytest.mark.asyncio
-    async def test_collects_commits_by_prefix(self, verifier: EpicVerifier) -> None:
-        """Should collect commits matching bd-<child_id>: prefix."""
-
-        # Mock git log to return commits
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "git" in cmd and "log" in cmd:
-                if "--grep=bd-child-1:" in cmd:
-                    return CommandResult(
-                        command=cmd,
-                        returncode=0,
-                        stdout="abc123\ndef456",
-                    )
-                elif "--grep=bd-child-2:" in cmd:
-                    return CommandResult(
-                        command=cmd,
-                        returncode=0,
-                        stdout="ghi789",
-                    )
-            if "git" in cmd and "show" in cmd:
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout="diff content for commit",
-                )
-            return CommandResult(command=cmd, returncode=1, stdout="", stderr="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
-
-        commits = await verifier._compute_scoped_commits({"child-1", "child-2"})
-        # Order depends on set iteration, so check all commits are present
-        assert set(commits) == {"abc123", "def456", "ghi789"}
-
-    @pytest.mark.asyncio
-    async def test_skips_merge_commits(self, verifier: EpicVerifier) -> None:
-        """Should skip merge commits via --no-merges flag."""
-        commands_run: list[list[str]] = []
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            commands_run.append(cmd)
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
-
-        await verifier._compute_scoped_commits({"child-1"})
-
-        # Verify --no-merges was used
-        log_cmds = [c for c in commands_run if "log" in c]
-        assert len(log_cmds) > 0
-        assert "--no-merges" in log_cmds[0]
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_when_no_commits(self, verifier: EpicVerifier) -> None:
-        """Should return empty string when no commits found."""
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
-
-        commits = await verifier._compute_scoped_commits({"child-1"})
-        assert commits == []
-
-    @pytest.mark.asyncio
-    async def test_handles_multiple_commits_per_issue(
-        self, verifier: EpicVerifier
-    ) -> None:
-        """Should include all commits matching an issue prefix."""
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "log" in cmd:
-                return CommandResult(
-                    command=cmd,
-                    returncode=0,
-                    stdout="commit1\ncommit2\ncommit3",
-                )
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
-
-        commits = await verifier._compute_scoped_commits({"child-1"})
-        assert commits == ["commit1", "commit2", "commit3"]
 
 
 # ============================================================================
@@ -1173,14 +1084,7 @@ class TestModelErrorHandling:
         # Make model raise timeout error
         mock_model.verify.side_effect = TimeoutError("Model call timed out")
 
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "log" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="abc123")
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="diff")
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        _stub_commit_helpers(verifier)
 
         verdict = await verifier.verify_epic("epic-1")
 
@@ -1196,14 +1100,7 @@ class TestModelErrorHandling:
         # Make model raise generic error
         mock_model.verify.side_effect = RuntimeError("API connection failed")
 
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "log" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="abc123")
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="diff")
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        _stub_commit_helpers(verifier)
 
         verdict = await verifier.verify_epic("epic-1")
 

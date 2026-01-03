@@ -33,6 +33,7 @@ from src.core.models import (
     RetryConfig,
     UnmetCriterion,
 )
+from src.domain.epic.scope import EpicScopeAnalyzer
 from src.infra.tools.command_runner import CommandRunner
 
 if TYPE_CHECKING:
@@ -390,6 +391,7 @@ class EpicVerifier:
         retry_config: RetryConfig | None = None,
         lock_manager: object | None = None,
         event_sink: MalaEventSink | None = None,
+        scope_analyzer: EpicScopeAnalyzer | None = None,
     ):
         """Initialize EpicVerifier.
 
@@ -400,6 +402,8 @@ class EpicVerifier:
             retry_config: Configuration for retry behavior.
             lock_manager: Optional lock manager for sequential processing.
             event_sink: Optional event sink for emitting verification lifecycle events.
+            scope_analyzer: Optional EpicScopeAnalyzer for computing scoped commits.
+                If not provided, a default instance is created.
         """
         self.beads = beads
         self.model = model
@@ -407,6 +411,7 @@ class EpicVerifier:
         self.retry_config = retry_config or RetryConfig()
         self.lock_manager = lock_manager
         self.event_sink = event_sink
+        self.scope_analyzer = scope_analyzer or EpicScopeAnalyzer(repo_path)
         self._runner = CommandRunner(cwd=repo_path)
 
     async def verify_and_close_eligible(
@@ -598,9 +603,11 @@ class EpicVerifier:
         # Get blocker issue IDs (remediation issues from previous verification runs)
         blocker_ids = await self.beads.get_epic_blockers_async(epic_id) or set()
 
-        # Compute scoped commit list from child and blocker commits
-        commit_shas = await self._compute_scoped_commits(child_ids, blocker_ids)
-        if not commit_shas:
+        # Compute scoped commits using EpicScopeAnalyzer
+        scoped = await self.scope_analyzer.compute_scoped_commits(
+            child_ids, blocker_ids
+        )
+        if not scoped.commit_shas:
             return (
                 EpicVerdict(
                     passed=False,
@@ -610,9 +617,6 @@ class EpicVerifier:
                 ),
                 None,
             )
-
-        commit_range = await self._summarize_commit_range(commit_shas)
-        commit_summary = await self._format_commit_summary(commit_shas)
 
         # Extract and load spec content if referenced
         spec_paths = extract_spec_paths(epic_description)
@@ -631,16 +635,19 @@ class EpicVerifier:
             spec_content=spec_content,
             child_ids=child_ids,
             blocker_ids=blocker_ids,
-            commit_shas=commit_shas,
-            commit_range=commit_range,
-            commit_summary=commit_summary,
+            commit_shas=scoped.commit_shas,
+            commit_range=scoped.commit_range,
+            commit_summary=scoped.commit_summary,
         )
 
         # Invoke verification model with error handling
         # Per spec: timeouts/errors should trigger human review, not abort
         try:
             result = await self.model.verify(
-                epic_description, commit_range or "", commit_summary, spec_content
+                epic_description,
+                scoped.commit_range or "",
+                scoped.commit_summary,
+                spec_content,
             )
             verdict = EpicVerdict(
                 passed=result.passed,
@@ -906,137 +913,6 @@ class EpicVerifier:
             verdicts=verdicts,
             remediation_issues_created=remediation_issues,
         )
-
-    async def _compute_scoped_commits(
-        self, child_ids: set[str], blocker_ids: set[str] | None = None
-    ) -> list[str]:
-        """Compute scoped commit list from child and blocker issue commits.
-
-        Collects all commits matching bd-<issue_id>: prefix for each child
-        issue and blocker issue (remediation issues), skips merge commits,
-        and returns a deduplicated list of commit SHAs.
-
-        Args:
-            child_ids: Set of child issue IDs.
-            blocker_ids: Optional set of blocker issue IDs (e.g., remediation
-                issues). Commits from these issues are also included in the
-                scope to capture work done to address epic verification failures.
-
-        Returns:
-            List of commit SHAs, or empty list if no commits found.
-        """
-        # Combine child IDs and blocker IDs
-        all_issue_ids = child_ids.copy()
-        if blocker_ids:
-            all_issue_ids.update(blocker_ids)
-
-        all_commits: list[str] = []
-
-        for issue_id in all_issue_ids:
-            # Find commits matching bd-<issue_id>: prefix
-            # Note: Intentionally searches only HEAD branch - child issue commits
-            # should be merged before epic verification runs
-            result = await self._runner.run_async(
-                [
-                    "git",
-                    "log",
-                    "--oneline",
-                    "--no-merges",  # Skip merge commits
-                    f"--grep=bd-{issue_id}:",  # Substring match, not start-of-line
-                    "--format=%H",
-                ]
-            )
-            if result.ok and result.stdout.strip():
-                commits = result.stdout.strip().split("\n")
-                all_commits.extend(commits)
-
-        if not all_commits:
-            return []
-
-        # Deduplicate commits while preserving order
-        # A single commit may fix multiple child issues under the same epic
-        unique_commits = list(dict.fromkeys(all_commits))
-
-        return unique_commits
-
-    async def _summarize_commit_range(self, commits: list[str]) -> str | None:
-        """Summarize commit range from a list of commit SHAs.
-
-        Returns a git range hint covering all commits, or None if timestamps
-        cannot be retrieved. The agent still receives the authoritative commit
-        list even when this returns None.
-
-        Note: For non-linear histories, the range may include unrelated commits.
-        The authoritative commit list should be used for precise scoping.
-        """
-        if not commits:
-            return None
-        timestamps: list[tuple[int, str]] = []
-        for commit in commits:
-            result = await self._runner.run_async(
-                ["git", "show", "-s", "--format=%ct", commit]
-            )
-            if result.ok and result.stdout.strip().isdigit():
-                timestamps.append((int(result.stdout.strip()), commit))
-        # Only provide a range hint if we have timestamps for all commits.
-        # The commits list is aggregated from multiple git log calls over an
-        # unordered set of issue IDs, so we cannot assume any ordering without
-        # timestamps. When timestamps are unavailable, return None and rely on
-        # the authoritative commit list instead.
-        if len(timestamps) < len(commits):
-            return None
-        timestamps.sort(key=lambda item: item[0])
-        base = timestamps[0][1]
-        tip = timestamps[-1][1]
-        if base == tip:
-            return base
-        # Check if base has a parent (not a root commit) before using base^
-        parent_check = await self._runner.run_async(
-            ["git", "rev-parse", "--verify", f"{base}^", "--"]
-        )
-        if parent_check.ok:
-            # base has a parent, use base^..tip for inclusive range
-            return f"{base}^..{tip}"
-        else:
-            # base is a root commit; return valid range syntax only.
-            # The agent uses the authoritative commit list for precise scoping.
-            # Note: base..tip excludes base, so agent should inspect base separately.
-            return f"{base}..{tip}"
-
-    async def _format_commit_summary(
-        self, commits: list[str], max_commits: int = 50
-    ) -> str:
-        """Format commit list with SHA and subject for prompts/issues.
-
-        Args:
-            commits: List of commit SHAs to format.
-            max_commits: Maximum number of commits to include (default 50).
-                Prevents excessively large prompts/issue bodies.
-
-        Returns:
-            Formatted commit summary string.
-        """
-        if not commits:
-            return "No commits found."
-
-        truncated = len(commits) > max_commits
-        display_commits = commits[:max_commits] if truncated else commits
-
-        lines: list[str] = []
-        for commit in display_commits:
-            result = await self._runner.run_async(
-                ["git", "show", "-s", "--format=%H %s", commit]
-            )
-            summary = result.stdout.strip() if result.ok else ""
-            if summary:
-                lines.append(f"- {summary}")
-            else:
-                lines.append(f"- {commit}")
-
-        if truncated:
-            lines.append(f"\n[... {len(commits) - max_commits} more commits omitted]")
-
-        return "\n".join(lines)
 
     def _truncate_text(self, text: str, max_chars: int = 4000) -> str:
         """Truncate text for issue descriptions to keep context manageable."""
