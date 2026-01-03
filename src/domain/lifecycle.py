@@ -232,7 +232,10 @@ class ContextUsage:
     cache_read_tokens: int = 0
 
     def pressure_ratio(self, limit: int) -> float:
-        """Return ratio of input tokens used to the limit.
+        """Return ratio of total tokens used to the limit.
+
+        Includes input_tokens, cache_read_tokens, and output_tokens
+        since all occupy space in the context window.
 
         Args:
             limit: Maximum context tokens (e.g., 200_000)
@@ -243,7 +246,7 @@ class ContextUsage:
         """
         if limit <= 0:
             return 0.0
-        return self.input_tokens / limit
+        return (self.input_tokens + self.cache_read_tokens + self.output_tokens) / limit
 
 
 @dataclass

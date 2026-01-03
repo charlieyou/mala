@@ -49,6 +49,8 @@ class OrchestratorConfig:
         cli_args: CLI arguments for logging and metadata.
         epic_override_ids: Epic IDs to close without verification.
         orphans_only: Only process issues with no parent epic.
+        context_restart_threshold: Ratio (0.0-1.0) at which to restart agent.
+        context_limit: Maximum context tokens (default 200K for Claude).
     """
 
     repo_path: Path

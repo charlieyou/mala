@@ -848,6 +848,16 @@ class TestContextUsage:
         usage = ContextUsage(input_tokens=100_000)
         assert usage.pressure_ratio(-1) == 0.0
 
+    def test_pressure_ratio_includes_all_token_types(self) -> None:
+        """pressure_ratio includes input, output, and cache_read tokens."""
+        usage = ContextUsage(
+            input_tokens=50_000,
+            output_tokens=30_000,
+            cache_read_tokens=20_000,
+        )
+        # Total: 100_000 / 200_000 = 0.5
+        assert usage.pressure_ratio(200_000) == 0.5
+
 
 class TestLifecycleContextUsage:
     """Tests for context_usage field in LifecycleContext."""
