@@ -187,6 +187,16 @@ class TestExtractToolName:
             ("npx -p eslint eslint .", "eslint"),
             ("uvx --from ruff ruff check", "ruff"),
             ("uv run --extra dev pytest", "pytest"),
+            # uv run with --group flag (issue mala-drqh)
+            ("uv run --group dev pytest", "pytest"),
+            ("uv run --only-group test pytest", "pytest"),
+            ("uv run --no-group dev pytest", "pytest"),
+            # uv run with other value flags
+            ("uv run --python 3.12 pytest", "pytest"),
+            ("uv run -C /tmp pytest", "pytest"),
+            ("uv run --directory /tmp pytest", "pytest"),
+            # poetry run with --quiet (standalone flag)
+            ("poetry run --quiet pytest", "pytest"),
         ],
     )
     def test_wrapper_with_flags(self, command: str, expected: str) -> None:

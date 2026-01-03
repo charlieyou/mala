@@ -88,7 +88,22 @@ _SKIP_REST_BUILTINS: frozenset[str] = frozenset(
 
 # Wrapper flags that consume a value (skip flag + value)
 _WRAPPER_VALUE_FLAGS: frozenset[str] = frozenset(
-    {"-p", "--package", "--from", "--extra", "--with"}
+    {
+        "-p",
+        "--package",
+        "--from",
+        "--extra",
+        "--with",
+        # uv run flags that take a value
+        "--group",
+        "--only-group",
+        "--no-group",
+        "--python",
+        "-c",
+        "--directory",
+        "--env-file",
+        "--config-file",
+    }
 )
 
 # Commands that are typically setup/shell commands, not actual tools
