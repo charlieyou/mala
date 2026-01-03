@@ -848,15 +848,15 @@ class TestContextUsage:
         usage = ContextUsage(input_tokens=100_000)
         assert usage.pressure_ratio(-1) == 0.0
 
-    def test_pressure_ratio_includes_all_token_types(self) -> None:
-        """pressure_ratio includes input, output, and cache_read tokens."""
+    def test_pressure_ratio_does_not_double_count_cache(self) -> None:
+        """pressure_ratio uses input + output only (cache_read is in input)."""
         usage = ContextUsage(
             input_tokens=50_000,
             output_tokens=30_000,
-            cache_read_tokens=20_000,
+            cache_read_tokens=20_000,  # Already included in input_tokens
         )
-        # Total: 100_000 / 200_000 = 0.5
-        assert usage.pressure_ratio(200_000) == 0.5
+        # Total: 80_000 / 200_000 = 0.4 (cache_read not added separately)
+        assert usage.pressure_ratio(200_000) == 0.4
 
 
 class TestLifecycleContextUsage:
