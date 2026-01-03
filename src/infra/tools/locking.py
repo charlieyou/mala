@@ -265,8 +265,12 @@ def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) ->
             os.link(tmp_path, lp)
             os.unlink(tmp_path)
             # Write meta file after successful lock acquisition
-            meta_path = lp.with_suffix(".meta")
-            meta_path.write_text(f"{canonical}\n")
+            # If meta write fails, we still own the lock - proceed anyway
+            try:
+                meta_path = lp.with_suffix(".meta")
+                meta_path.write_text(f"{canonical}\n")
+            except OSError:
+                pass  # Lock acquired; meta is optional
             return True
         except OSError:
             os.unlink(tmp_path)
@@ -412,6 +416,14 @@ def get_all_locks() -> dict[str, list[str]]:
                 locks_by_agent[agent_id] = []
             # Use filepath if available, else fall back to hash stem
             locks_by_agent[agent_id].append(filepath or lock.stem)
+
+    # Clean up orphaned .meta files (whose .lock was deleted externally)
+    for meta in lock_dir.glob("*.meta"):
+        if not meta.with_suffix(".lock").exists():
+            try:
+                meta.unlink()
+            except OSError:
+                pass
 
     return locks_by_agent
 
