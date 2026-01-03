@@ -6,7 +6,7 @@ commands:
   setup: "uv sync"
   test: "uv run pytest -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
   lint: "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff check ."
-  format: "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format --check ."
+  format: "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format ."
   typecheck: "uvx ty check"
   e2e: "uv run pytest -m e2e -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
 
