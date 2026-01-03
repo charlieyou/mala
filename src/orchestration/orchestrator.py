@@ -476,6 +476,10 @@ class MalaOrchestrator:
         self._cleanup_session_paths(issue_id)
         self.async_gate_runner.clear_gate_result(issue_id)
 
+        # Remove agent_id from tracking now that finalization is complete
+        # (deferred from run_implementer.finally to keep it available for get_agent_id callback)
+        self.agent_ids.pop(issue_id, None)
+
     async def _abort_active_tasks(self, run_metadata: RunMetadata) -> None:
         """Cancel active tasks and mark them as failed.
 
@@ -594,7 +598,9 @@ class MalaOrchestrator:
                 else:
                     tracer.set_error(output.summary)
         finally:
-            agent_id = self.agent_ids.pop(issue_id, temp_agent_id)
+            # Get agent_id for lock cleanup but don't pop - entry needed for get_agent_id callback
+            # until finalization completes (see _finalize_issue_result)
+            agent_id = self.agent_ids.get(issue_id, temp_agent_id)
             self._cleanup_agent_locks(agent_id)
 
         return IssueResult(

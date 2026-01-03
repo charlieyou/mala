@@ -239,7 +239,8 @@ class EpicVerificationCoordinator:
                 raise
             except Exception as e:
                 self.callbacks.on_warning(
-                    f"Failed to finalize remediation result for {issue_id}: {e}",
+                    f"Failed to finalize remediation result for {issue_id} "
+                    f"(agent: {result.agent_id}): {e}",
                 )
 
             # Mark as completed in the coordinator
