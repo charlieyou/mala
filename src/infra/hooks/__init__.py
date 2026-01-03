@@ -20,6 +20,7 @@ from .dangerous_commands import (
     PreToolUseHook,
     SAFE_GIT_ALTERNATIVES,
     block_dangerous_commands,
+    block_mala_disallowed_tools,
     block_morph_replaced_tools,
 )
 from .file_cache import (
@@ -66,6 +67,7 @@ __all__ = [
     "_detect_lint_command",
     "_get_git_state",
     "block_dangerous_commands",
+    "block_mala_disallowed_tools",
     "block_morph_replaced_tools",
     "get_lock_holder",
     "make_file_read_cache_hook",

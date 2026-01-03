@@ -60,11 +60,15 @@ def get_mcp_servers(
 def get_disallowed_tools(morph_enabled: bool) -> list[str]:
     """Get list of disallowed tools based on Morph enablement.
 
+    Always includes MALA_DISALLOWED_TOOLS (tools disabled for mala agents).
+    Additionally includes MORPH_DISALLOWED_TOOLS when Morph MCP is enabled.
+
     Args:
         morph_enabled: Whether Morph MCP is enabled.
 
     Returns:
-        List of tool names that should be disallowed. Empty if Morph is disabled.
+        List of tool names that should be disallowed. Always includes
+        mala-specific tools; adds Morph-replaced tools when Morph is enabled.
     """
     tools = list(MALA_DISALLOWED_TOOLS)  # Always disable mala-specific tools
     if morph_enabled:

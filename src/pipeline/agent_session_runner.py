@@ -33,6 +33,7 @@ from src.infra.hooks import (
     FileReadCache,
     LintCache,
     block_dangerous_commands,
+    block_mala_disallowed_tools,
     block_morph_replaced_tools,
     make_file_read_cache_hook,
     make_lint_cache_hook,
@@ -481,12 +482,13 @@ class AgentSessionRunner:
         """
         pre_tool_hooks: list[object] = [
             block_dangerous_commands,
+            block_mala_disallowed_tools,
             make_lock_enforcement_hook(agent_id, str(self.config.repo_path)),
             make_file_read_cache_hook(file_read_cache),
             make_lint_cache_hook(lint_cache),
         ]
         if self.config.morph_enabled:
-            pre_tool_hooks.insert(1, block_morph_replaced_tools)
+            pre_tool_hooks.insert(2, block_morph_replaced_tools)
 
         stop_hooks: list[object] = [make_stop_hook(agent_id)]
 
