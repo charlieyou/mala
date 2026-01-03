@@ -262,6 +262,7 @@ def _build_cli_args_metadata(
     no_morph: bool,
     epic_override: str | None,
     resolved: ResolvedConfig,
+    braintrust_enabled: bool,
 ) -> dict[str, object]:
     """Build the cli_args metadata dictionary for logging and OrchestratorConfig.
 
@@ -275,6 +276,7 @@ def _build_cli_args_metadata(
         no_morph: Whether morph is disabled.
         epic_override: Raw epic override string from CLI.
         resolved: Resolved config with effective values.
+        braintrust_enabled: Whether braintrust actually initialized successfully.
 
     Returns:
         Dictionary of CLI arguments for logging/metadata.
@@ -286,7 +288,7 @@ def _build_cli_args_metadata(
         "max_issues": max_issues,
         "max_gate_retries": max_gate_retries,
         "max_review_retries": max_review_retries,
-        "braintrust": resolved.braintrust_enabled,
+        "braintrust": braintrust_enabled,
         "no_morph": no_morph,
         "review_timeout": resolved.review_timeout,
         "cerberus_spawn_args": list(resolved.cerberus_spawn_args),
@@ -729,6 +731,7 @@ def run(
         no_morph=no_morph,
         epic_override=epic_override,
         resolved=override_result.resolved,
+        braintrust_enabled=_braintrust_enabled,
     )
 
     # Build OrchestratorConfig and run
