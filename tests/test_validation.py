@@ -220,15 +220,9 @@ class TestCheckE2EPrereqs:
             assert result is not None
             assert "bd CLI not found" in result
 
-    def test_missing_morph_api_key_does_not_fail(self) -> None:
-        """MORPH_API_KEY is not a hard prereq - E2E should still run without it."""
-        with patch("shutil.which", return_value="/usr/bin/fake"):
-            result = check_e2e_prereqs({})
-            assert result is None  # Should pass even without MORPH_API_KEY
-
     def test_all_prereqs_met(self) -> None:
         with patch("shutil.which", return_value="/usr/bin/fake"):
-            result = check_e2e_prereqs({"MORPH_API_KEY": "test-key"})
+            result = check_e2e_prereqs({})
             assert result is None
 
 
@@ -3302,7 +3296,7 @@ class TestSpecResultBuilder:
         spec = ValidationSpec(
             commands=[],
             scope=ValidationScope.PER_ISSUE,
-            coverage=CoverageConfig(enabled=True, min_percent=85.0),
+            coverage=CoverageConfig(enabled=True, min_percent=None),
             e2e=E2EConfig(enabled=False),
         )
 

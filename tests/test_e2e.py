@@ -103,18 +103,6 @@ class TestE2ERunnerPrereqs:
     def test_all_prereqs_met(self) -> None:
         runner = E2ERunner()
         with patch("shutil.which", return_value="/usr/bin/fake"):
-            result = runner.check_prereqs({"MORPH_API_KEY": "test-key"})
-            assert result.ok is True
-            assert result.missing == []
-
-    def test_prereqs_ok_without_morph_api_key(self) -> None:
-        """E2E prereqs should pass even without MORPH_API_KEY.
-
-        The MORPH_API_KEY is only needed for Morph-specific tests,
-        not for the core E2E validation to run.
-        """
-        runner = E2ERunner()
-        with patch("shutil.which", return_value="/usr/bin/fake"):
             result = runner.check_prereqs({})
             assert result.ok is True
             assert result.missing == []
@@ -146,15 +134,14 @@ class TestE2ERunnerPrereqs:
             patch.dict("os.environ", {}, clear=True),
         ):
             result = runner.check_prereqs(None)
-            # Should pass even without MORPH_API_KEY
             assert result.ok is True
 
 
 class TestE2ERunnerRun:
     """Test E2ERunner.run method."""
 
-    def test_run_proceeds_without_morph_api_key(self, tmp_path: Path) -> None:
-        """E2E should pass without MORPH_API_KEY - it's optional."""
+    def test_run_proceeds_without_api_keys(self, tmp_path: Path) -> None:
+        """E2E should work without optional API keys."""
         runner = E2ERunner()
 
         def mock_runner_run(

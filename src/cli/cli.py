@@ -259,7 +259,6 @@ def _build_cli_args_metadata(
     max_issues: int | None,
     max_gate_retries: int,
     max_review_retries: int,
-    no_morph: bool,
     epic_override: str | None,
     resolved: ResolvedConfig,
     braintrust_enabled: bool,
@@ -273,7 +272,6 @@ def _build_cli_args_metadata(
         max_issues: Maximum issues to process.
         max_gate_retries: Maximum gate retry attempts.
         max_review_retries: Maximum review retry attempts.
-        no_morph: Whether morph is disabled.
         epic_override: Raw epic override string from CLI.
         resolved: Resolved config with effective values.
         braintrust_enabled: Whether braintrust actually initialized successfully.
@@ -289,7 +287,6 @@ def _build_cli_args_metadata(
         "max_gate_retries": max_gate_retries,
         "max_review_retries": max_review_retries,
         "braintrust": braintrust_enabled,
-        "no_morph": no_morph,
         "review_timeout": resolved.review_timeout,
         "cerberus_spawn_args": list(resolved.cerberus_spawn_args),
         "cerberus_wait_args": list(resolved.cerberus_wait_args),
@@ -306,7 +303,6 @@ def _apply_config_overrides(
     cerberus_wait_args: str | None,
     cerberus_env: str | None,
     max_epic_verification_retries: int | None,
-    no_morph: bool,
     braintrust_enabled: bool,
     disable_review: bool,
 ) -> ConfigOverrideResult:
@@ -319,7 +315,6 @@ def _apply_config_overrides(
         cerberus_wait_args: Raw string of extra args for wait.
         cerberus_env: Raw string of extra env vars (key=value pairs).
         max_epic_verification_retries: Optional max retries override.
-        no_morph: Whether to disable morph.
         braintrust_enabled: Whether braintrust is enabled.
         disable_review: Whether review is disabled.
 
@@ -337,7 +332,6 @@ def _apply_config_overrides(
         cerberus_env=cerberus_env,
         review_timeout=review_timeout,
         max_epic_verification_retries=max_epic_verification_retries,
-        no_morph=no_morph,
         no_braintrust=not braintrust_enabled,
         disable_review=disable_review,
     )
@@ -641,13 +635,6 @@ def run(
             help="Extra env for review-gate (JSON object or comma KEY=VALUE list)",
         ),
     ] = None,
-    no_morph: Annotated[
-        bool,
-        typer.Option(
-            "--no-morph",
-            help="Disable MorphLLM routing; use models directly for debugging or when MorphLLM is unavailable",
-        ),
-    ] = False,
     epic_override: Annotated[
         str | None,
         typer.Option(
@@ -715,7 +702,6 @@ def run(
         cerberus_wait_args=cerberus_wait_args,
         cerberus_env=cerberus_env,
         max_epic_verification_retries=max_epic_verification_retries,
-        no_morph=no_morph,
         braintrust_enabled=_braintrust_enabled,
         disable_review="review" in (disable_set or set()),
     )
@@ -728,7 +714,6 @@ def run(
         max_issues=max_issues,
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
-        no_morph=no_morph,
         epic_override=epic_override,
         resolved=override_result.resolved,
         braintrust_enabled=_braintrust_enabled,

@@ -105,22 +105,6 @@ class TestMakeLockEnforcementHook:
         assert result == {}  # Empty dict means allow
 
     @pytest.mark.asyncio
-    async def test_handles_edit_file_mcp_tool(self, tmp_path: Path) -> None:
-        """MCP edit_file tool should also check lock ownership."""
-        test_file = str(tmp_path / "test.py")
-        hook_input = make_hook_input(
-            "mcp__morphllm__edit_file", {"path": test_file, "code_edit": "..."}
-        )
-        agent_id = "test-agent"
-        hook = make_lock_enforcement_hook(agent_id)
-        context = make_context(agent_id)
-
-        with patch("src.infra.hooks.locking.get_lock_holder", return_value=agent_id):
-            result = await hook(hook_input, None, context)
-
-        assert result == {}  # Allowed when agent holds lock
-
-    @pytest.mark.asyncio
     async def test_handles_notebook_edit_tool(self, tmp_path: Path) -> None:
         """NotebookEdit tool should also check lock ownership."""
         notebook_file = str(tmp_path / "notebook.ipynb")
@@ -139,7 +123,7 @@ class TestMakeLockEnforcementHook:
 
     @pytest.mark.asyncio
     async def test_handles_edit_tool(self, tmp_path: Path) -> None:
-        """Edit tool should check lock ownership when Morph is disabled."""
+        """Edit tool should check lock ownership."""
         test_file = str(tmp_path / "test.py")
         hook_input = make_hook_input(
             "Edit",
@@ -158,7 +142,7 @@ class TestMakeLockEnforcementHook:
     async def test_file_write_tools_constant_contains_expected_tools(self) -> None:
         """FILE_WRITE_TOOLS should contain expected write tools."""
         # These are the tools we expect to be file-write tools
-        expected_tools = {"Write", "Edit", "NotebookEdit", "mcp__morphllm__edit_file"}
+        expected_tools = {"Write", "Edit", "NotebookEdit"}
         assert expected_tools.issubset(FILE_WRITE_TOOLS)
 
     @pytest.mark.asyncio
@@ -697,27 +681,6 @@ class TestMakeFileReadCacheHook:
         # Write tool - should invalidate cache
         write_input = make_hook_input("Write", {"file_path": str(test_file)})
         await hook(write_input, None, context)
-        assert cache.cache_size == 0
-
-    @pytest.mark.asyncio
-    async def test_invalidates_cache_on_edit_file(self, tmp_path: Path) -> None:
-        """MCP edit_file tool should invalidate cache."""
-        cache = FileReadCache()
-        hook = make_file_read_cache_hook(cache)
-        test_file = tmp_path / "test.py"
-        test_file.write_text("content")
-
-        # Read to cache
-        read_input = make_hook_input("Read", {"file_path": str(test_file)})
-        context = make_context()
-        await hook(read_input, None, context)
-
-        # Edit file - should invalidate
-        edit_input = make_hook_input(
-            "mcp__morphllm__edit_file",
-            {"path": str(test_file), "code_edit": "new content"},
-        )
-        await hook(edit_input, None, context)
         assert cache.cache_size == 0
 
     @pytest.mark.asyncio
@@ -1434,8 +1397,8 @@ class TestMakeLintCacheHook:
         assert cache.cache_size == 0
 
     @pytest.mark.asyncio
-    async def test_invalidates_cache_on_edit_file(self, tmp_path: Path) -> None:
-        """MCP edit_file tool should invalidate lint cache."""
+    async def test_invalidates_cache_on_notebook_edit(self, tmp_path: Path) -> None:
+        """NotebookEdit tool should invalidate lint cache."""
         from src.infra.hooks import LintCache, make_lint_cache_hook
 
         # Create a git repo
@@ -1474,10 +1437,13 @@ class TestMakeLintCacheHook:
         cache.mark_success("ruff", "uvx ruff check .")
         assert cache.cache_size == 1
 
-        # Edit file - should invalidate
+        # NotebookEdit - should invalidate
         edit_input = make_hook_input(
-            "mcp__morphllm__edit_file",
-            {"path": str(tmp_path / "file.py"), "code_edit": "new content"},
+            "NotebookEdit",
+            {
+                "notebook_path": str(tmp_path / "notebook.ipynb"),
+                "new_source": "cell content",
+            },
         )
         await hook(edit_input, None, context)
         assert cache.cache_size == 0

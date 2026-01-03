@@ -270,66 +270,6 @@ def _make_dummy_create_orchestrator_with_verifier(
     return dummy_create_orchestrator
 
 
-def test_run_without_morph_api_key_passes_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Test that CLI passes config to orchestrator when MORPH_API_KEY is missing."""
-    cli = _reload_cli(monkeypatch)
-    monkeypatch.delenv("MORPH_API_KEY", raising=False)
-
-    config_dir = tmp_path / "config"
-    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    # CLI now uses create_orchestrator from factory
-    import src.orchestration.factory
-
-    monkeypatch.setattr(
-        src.orchestration.factory,
-        "create_orchestrator",
-        _make_dummy_create_orchestrator(),
-    )
-    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
-
-    with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path)
-
-    assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_mala_config is not None
-    # Check the MalaConfig passed to create_orchestrator
-    mala_config = DummyOrchestrator.last_mala_config
-    assert mala_config.morph_api_key is None
-    assert mala_config.morph_enabled is False
-
-
-def test_run_with_morph_api_key_passes_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Test that CLI passes config with morph_api_key when MORPH_API_KEY is set."""
-    cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
-
-    config_dir = tmp_path / "config"
-    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    # CLI now uses create_orchestrator from factory
-    import src.orchestration.factory
-
-    monkeypatch.setattr(
-        src.orchestration.factory,
-        "create_orchestrator",
-        _make_dummy_create_orchestrator(),
-    )
-    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
-
-    with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path)
-
-    assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_mala_config is not None
-    # Check the MalaConfig passed to create_orchestrator
-    mala_config = DummyOrchestrator.last_mala_config
-    assert mala_config.morph_api_key == "test-key"
-    assert mala_config.morph_enabled is True
-
-
 def test_run_invalid_only_exits(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -351,7 +291,6 @@ def test_run_invalid_only_exits(
 
 def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     verbose_calls = {"enabled": None}
 
@@ -394,7 +333,6 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert orch_config.cli_args["review_timeout"] == 600
     # Check MalaConfig
     mala_config = DummyOrchestrator.last_mala_config
-    assert mala_config.morph_enabled is True
     # review_timeout is also applied to MalaConfig for orchestrator use
     assert mala_config.review_timeout == 600
     assert config_dir.exists()
@@ -405,7 +343,6 @@ def test_run_verbose_mode_sets_verbose_true(
 ) -> None:
     """Test that --verbose flag sets verbose to True."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     verbose_calls = {"enabled": None}
 
@@ -435,7 +372,6 @@ def test_run_default_quiet_mode(
 ) -> None:
     """Test that default is quiet (verbose=False)."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     verbose_calls = {"enabled": None}
 
@@ -461,7 +397,6 @@ def test_run_default_quiet_mode(
 
 def test_run_repo_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     logs: list[tuple[object, ...]] = []
 
@@ -559,7 +494,7 @@ def test_status_no_running_instance(
 
     config_dir = tmp_path / "config"
     config_dir.mkdir()
-    (config_dir / ".env").write_text("MORPH_API_KEY=test")
+    (config_dir / ".env").write_text("BRAINTRUST_API_KEY=test")
 
     lock_dir = tmp_path / "locks"
     lock_dir.mkdir()
@@ -594,7 +529,7 @@ def test_status_with_running_instance(
 
     config_dir = tmp_path / "config"
     config_dir.mkdir()
-    (config_dir / ".env").write_text("MORPH_API_KEY=test")
+    (config_dir / ".env").write_text("BRAINTRUST_API_KEY=test")
 
     lock_dir = tmp_path / "locks"
     lock_dir.mkdir()
@@ -652,7 +587,7 @@ def test_status_all_flag(
 
     config_dir = tmp_path / "config"
     config_dir.mkdir()
-    (config_dir / ".env").write_text("MORPH_API_KEY=test")
+    (config_dir / ".env").write_text("BRAINTRUST_API_KEY=test")
 
     lock_dir = tmp_path / "locks"
     lock_dir.mkdir()
@@ -708,7 +643,6 @@ def test_run_disable_validations_valid(
 ) -> None:
     """Test that valid --disable-validations values are accepted and passed to orchestrator."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
@@ -741,7 +675,6 @@ def test_run_disable_validations_invalid_value(
 ) -> None:
     """Test that unknown --disable-validations values produce a clear CLI error."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     logs: list[tuple[object, ...]] = []
 
@@ -773,7 +706,6 @@ def test_run_disable_validations_empty_value(
 ) -> None:
     """Test that empty --disable-validations value produces error."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     logs: list[tuple[object, ...]] = []
 
@@ -799,7 +731,6 @@ def test_run_validation_flags_passed_to_orchestrator(
 ) -> None:
     """Test that validation flags are correctly passed to orchestrator."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
@@ -830,7 +761,6 @@ def test_run_validation_flags_defaults(
 ) -> None:
     """Test that validation flags have correct defaults."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
@@ -859,7 +789,6 @@ def test_run_wip_flag_passed_to_orchestrator(
 ) -> None:
     """Test that --wip flag is correctly passed to orchestrator."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
@@ -885,7 +814,6 @@ def test_run_focus_flag_default_true(
 ) -> None:
     """Test that --focus defaults to True (epic-grouped ordering)."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
@@ -911,7 +839,6 @@ def test_run_no_focus_flag_passed_to_orchestrator(
 ) -> None:
     """Test that --no-focus flag sets focus=False for priority-only ordering."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
@@ -937,7 +864,6 @@ def test_run_focus_composes_with_wip(
 ) -> None:
     """Test that --focus and --wip flags compose correctly."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
@@ -964,7 +890,6 @@ def test_run_review_disabled_via_disable_validations(
 ) -> None:
     """Test that review can be disabled via --disable-validations=review."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
@@ -993,7 +918,6 @@ def test_disable_validations_legacy_codex_value_rejected(
 ) -> None:
     """Test that legacy codex-review value is rejected (use 'review' instead)."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     logs: list[tuple[object, ...]] = []
 
@@ -1022,7 +946,6 @@ def test_run_review_timeout_default(
 ) -> None:
     """Test that --review-timeout defaults to 1200."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
@@ -1052,7 +975,6 @@ def test_run_review_timeout_custom(
 ) -> None:
     """Test that --review-timeout accepts custom value."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
@@ -1082,7 +1004,6 @@ def test_run_cerberus_overrides(
 ) -> None:
     """Test that Cerberus CLI overrides apply to config and cli_args."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
@@ -1134,7 +1055,6 @@ def test_run_coverage_threshold_invalid_negative(
 ) -> None:
     """Test that negative --coverage-threshold value produces error."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     logs: list[tuple[object, ...]] = []
 
@@ -1163,7 +1083,6 @@ def test_run_coverage_threshold_invalid_over_100(
 ) -> None:
     """Test that --coverage-threshold over 100 produces error."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     logs: list[tuple[object, ...]] = []
 
@@ -1192,7 +1111,6 @@ def test_run_epic_and_orphans_only_mutually_exclusive(
 ) -> None:
     """Test that --epic and --orphans-only cannot be used together."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     logs: list[tuple[object, ...]] = []
 
@@ -1318,7 +1236,6 @@ def test_dry_run_exits_without_processing(
 ) -> None:
     """Test that --dry-run exits without creating orchestrator."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     # Reset DummyOrchestrator to detect if it gets called
     DummyOrchestrator.last_orch_config = None
@@ -1349,7 +1266,6 @@ def test_dry_run_passes_flags_to_beads_client(
 ) -> None:
     """Test that --dry-run passes correct flags to get_ready_issues_async."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     DummyBeadsClient.last_kwargs = None
     DummyBeadsClient.issues_to_return = []
@@ -1381,7 +1297,6 @@ def test_dry_run_displays_empty_task_list(
 ) -> None:
     """Test that --dry-run handles empty task list."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     DummyBeadsClient.issues_to_return = []
 
@@ -1403,7 +1318,6 @@ def test_dry_run_displays_tasks_with_metadata(
 ) -> None:
     """Test that --dry-run displays task ID, priority, title, and epic."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     DummyBeadsClient.issues_to_return = [
         {
@@ -1450,7 +1364,6 @@ def test_dry_run_focus_mode_groups_by_epic(
 ) -> None:
     """Test that --dry-run with focus mode shows epic headers."""
     cli = _reload_cli(monkeypatch)
-    monkeypatch.setenv("MORPH_API_KEY", "test-key")
 
     DummyBeadsClient.issues_to_return = [
         {
@@ -1853,7 +1766,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env=None,
             max_epic_verification_retries=None,
-            no_morph=False,
             braintrust_enabled=False,
             disable_review=False,
         )
@@ -1881,7 +1793,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env=None,
             max_epic_verification_retries=None,
-            no_morph=False,
             braintrust_enabled=False,
             disable_review=False,
         )
@@ -1907,7 +1818,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env=None,
             max_epic_verification_retries=10,
-            no_morph=False,
             braintrust_enabled=False,
             disable_review=False,
         )
@@ -1932,7 +1842,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env=None,
             max_epic_verification_retries=None,
-            no_morph=False,
             braintrust_enabled=False,
             disable_review=False,
         )
@@ -1967,7 +1876,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args="--poll-interval 5",
             cerberus_env=None,
             max_epic_verification_retries=None,
-            no_morph=False,
             braintrust_enabled=False,
             disable_review=False,
         )
@@ -1992,7 +1900,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env="FOO=bar,BAZ=qux",
             max_epic_verification_retries=None,
-            no_morph=False,
             braintrust_enabled=False,
             disable_review=False,
         )
@@ -2018,7 +1925,6 @@ class TestApplyConfigOverrides:
                 cerberus_wait_args=None,
                 cerberus_env=None,
                 max_epic_verification_retries=None,
-                no_morph=False,
                 braintrust_enabled=False,
                 disable_review=False,
             )
@@ -2042,7 +1948,6 @@ class TestApplyConfigOverrides:
                 cerberus_wait_args="--poll 'bad",
                 cerberus_env=None,
                 max_epic_verification_retries=None,
-                no_morph=False,
                 braintrust_enabled=False,
                 disable_review=False,
             )
@@ -2066,7 +1971,6 @@ class TestApplyConfigOverrides:
                 cerberus_wait_args=None,
                 cerberus_env="INVALID_NO_EQUALS",
                 max_epic_verification_retries=None,
-                no_morph=False,
                 braintrust_enabled=False,
                 disable_review=False,
             )

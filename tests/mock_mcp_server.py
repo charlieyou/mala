@@ -80,7 +80,7 @@ def handle_initialize(request_id: int) -> dict:
         "result": {
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "mock-morphllm", "version": "1.0.0"},
+            "serverInfo": {"name": "mock-mcp-server", "version": "1.0.0"},
         },
     }
 
@@ -161,8 +161,8 @@ def handle_edit_file(request_id: int, arguments: dict) -> dict:
                 if "a - b" in current and ("a + b" in code_edit or "+ b" in code_edit):
                     new_content = current.replace("a - b", "a + b")
                     file_path.write_text(new_content)
-                elif "# edited by morph" in code_edit or "edited" in code_edit.lower():
-                    file_path.write_text(current.rstrip() + "\n# edited by morph\n")
+                elif "edited" in code_edit.lower():
+                    file_path.write_text(current.rstrip() + "\n# edited\n")
                 else:
                     file_path.write_text(current + "\n" + code_edit)
             else:

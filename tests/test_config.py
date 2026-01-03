@@ -37,13 +37,11 @@ class TestMalaConfigDefaults:
         """API keys default to None."""
         config = MalaConfig()
         assert config.braintrust_api_key is None
-        assert config.morph_api_key is None
 
     def test_default_feature_flags_disabled(self) -> None:
         """Feature flags are disabled when API keys are not provided."""
         config = MalaConfig()
         assert config.braintrust_enabled is False
-        assert config.morph_enabled is False
 
     def test_default_cerberus_overrides_empty(self) -> None:
         """Cerberus override settings default to empty values."""
@@ -61,35 +59,18 @@ class TestMalaConfigFeatureFlags:
         config = MalaConfig(braintrust_api_key="test-api-key")
         assert config.braintrust_enabled is True
 
-    def test_morph_enabled_when_api_key_provided(self) -> None:
-        """morph_enabled is True when morph_api_key is provided."""
-        config = MalaConfig(morph_api_key="test-morph-key")
-        assert config.morph_enabled is True
-
-    def test_both_features_enabled(self) -> None:
-        """Both features can be enabled simultaneously."""
-        config = MalaConfig(
-            braintrust_api_key="bt-key",
-            morph_api_key="morph-key",
-        )
-        assert config.braintrust_enabled is True
-        assert config.morph_enabled is True
-
     def test_feature_flag_explicit_override_preserved(self) -> None:
         """Explicit feature flag setting is preserved."""
         # With explicit flag=True but no API key, validation will fail
         # So we test that the flag is set, not that it's valid
         config = MalaConfig(
             braintrust_enabled=True,
-            morph_enabled=True,
         )
         assert config.braintrust_enabled is True
-        assert config.morph_enabled is True
         # But validation should fail due to missing API keys
         errors = config.validate()
-        assert len(errors) == 2
+        assert len(errors) == 1
         assert any("BRAINTRUST_API_KEY" in e for e in errors)
-        assert any("MORPH_API_KEY" in e for e in errors)
 
 
 class TestMalaConfigFromEnv:
@@ -110,7 +91,6 @@ class TestMalaConfigFromEnv:
         assert config.lock_dir == Path("/tmp/mala-locks")
         assert config.claude_config_dir == Path.home() / ".claude"
         assert config.braintrust_api_key is None
-        assert config.morph_api_key is None
 
     def test_from_env_reads_mala_runs_dir(
         self, monkeypatch: pytest.MonkeyPatch
@@ -147,15 +127,6 @@ class TestMalaConfigFromEnv:
         config = MalaConfig.from_env()
         assert config.braintrust_api_key == "bt-test-key"
         assert config.braintrust_enabled is True
-
-    def test_from_env_reads_morph_api_key(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """from_env() reads MORPH_API_KEY."""
-        monkeypatch.setenv("MORPH_API_KEY", "morph-test-key")
-        config = MalaConfig.from_env()
-        assert config.morph_api_key == "morph-test-key"
-        assert config.morph_enabled is True
 
     def test_from_env_reads_review_timeout(
         self, monkeypatch: pytest.MonkeyPatch
@@ -245,12 +216,9 @@ class TestMalaConfigFromEnv:
     ) -> None:
         """from_env() treats empty string API keys as None."""
         monkeypatch.setenv("BRAINTRUST_API_KEY", "")
-        monkeypatch.setenv("MORPH_API_KEY", "")
         config = MalaConfig.from_env()
         assert config.braintrust_api_key is None
-        assert config.morph_api_key is None
         assert config.braintrust_enabled is False
-        assert config.morph_enabled is False
 
     def test_from_env_validates_by_default(
         self, monkeypatch: pytest.MonkeyPatch
@@ -259,7 +227,6 @@ class TestMalaConfigFromEnv:
         # Set relative path which will fail validation
         monkeypatch.setenv("MALA_RUNS_DIR", "relative/path")
         monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
-        monkeypatch.delenv("MORPH_API_KEY", raising=False)
 
         with pytest.raises(ConfigurationError) as exc_info:
             MalaConfig.from_env()
@@ -293,22 +260,14 @@ class TestMalaConfigValidate:
         errors = config.validate()
         assert any("BRAINTRUST_API_KEY" in e for e in errors)
 
-    def test_validate_missing_morph_api_key(self) -> None:
-        """validate() reports missing MORPH_API_KEY when enabled."""
-        config = MalaConfig(morph_enabled=True)
-        errors = config.validate()
-        assert any("MORPH_API_KEY" in e for e in errors)
-
     def test_validate_api_key_present_passes(self) -> None:
         """validate() passes when API key is present for enabled feature."""
         config = MalaConfig(
             braintrust_api_key="test-key",
-            morph_api_key="test-key",
         )
         errors = config.validate()
         # Should pass - API keys are present
         assert not any("BRAINTRUST_API_KEY" in e for e in errors)
-        assert not any("MORPH_API_KEY" in e for e in errors)
 
     def test_validate_custom_absolute_paths(self, tmp_path: Path) -> None:
         """Custom absolute paths pass validation."""
@@ -392,8 +351,8 @@ class TestMalaConfigImmutability:
 
     def test_config_is_hashable(self) -> None:
         """Frozen MalaConfig is hashable and can be used in sets."""
-        config1 = MalaConfig(morph_api_key="key1")
-        config2 = MalaConfig(morph_api_key="key2")
+        config1 = MalaConfig(braintrust_api_key="key1")
+        config2 = MalaConfig(braintrust_api_key="key2")
 
         # Should be hashable
         config_set = {config1, config2}
@@ -410,7 +369,6 @@ class TestBuildResolvedConfig:
             lock_dir=tmp_path / "locks",
             claude_config_dir=tmp_path / "claude",
             braintrust_api_key="bt-key",
-            morph_api_key="morph-key",
         )
         resolved = build_resolved_config(base, None)
 
@@ -418,10 +376,7 @@ class TestBuildResolvedConfig:
         assert resolved.lock_dir == tmp_path / "locks"
         assert resolved.claude_config_dir == tmp_path / "claude"
         assert resolved.braintrust_api_key == "bt-key"
-        assert resolved.morph_api_key == "morph-key"
         assert resolved.braintrust_enabled is True
-        assert resolved.morph_enabled is True
-        assert resolved.morph_disabled_reason is None
         assert resolved.braintrust_disabled_reason is None
 
     def test_cli_overrides_only_default_base(self) -> None:
@@ -610,47 +565,7 @@ class TestCerberusEnvParsing:
 
 
 class TestDerivedDisabledReasons:
-    """Tests for morph_disabled_reason and braintrust_disabled_reason derivation."""
-
-    def test_morph_disabled_reason_no_morph_flag(self) -> None:
-        """--no-morph flag sets morph_disabled_reason."""
-        base = MalaConfig(morph_api_key="key")  # Would be enabled otherwise
-        overrides = CLIOverrides(no_morph=True)
-        resolved = build_resolved_config(base, overrides)
-
-        assert resolved.morph_enabled is False
-        assert resolved.morph_disabled_reason == "--no-morph"
-
-    def test_morph_disabled_reason_missing_api_key(self) -> None:
-        """Missing MORPH_API_KEY sets appropriate disabled reason."""
-        base = MalaConfig(morph_api_key=None)  # No API key
-        resolved = build_resolved_config(base, None)
-
-        assert resolved.morph_enabled is False
-        assert resolved.morph_disabled_reason is not None
-        assert "MORPH_API_KEY" in resolved.morph_disabled_reason
-
-    def test_morph_disabled_reason_config_disabled(self) -> None:
-        """Config with morph_enabled=False and no API key shows disabled by config."""
-        # MalaConfig auto-enables when API key present, so to test "disabled by config"
-        # we need enabled=True but no API key, which triggers validation error.
-        # The "disabled by config" path is hit when base_config.morph_enabled is False
-        # (due to no API key) and no CLI flag was passed.
-        base = MalaConfig(morph_api_key=None, morph_enabled=False)
-        resolved = build_resolved_config(base, None)
-
-        assert resolved.morph_enabled is False
-        # With no API key and enabled=False, reason is "missing API key" not "disabled by config"
-        assert resolved.morph_disabled_reason is not None
-        assert "MORPH_API_KEY" in resolved.morph_disabled_reason
-
-    def test_morph_enabled_has_no_disabled_reason(self) -> None:
-        """Enabled morph has None disabled_reason."""
-        base = MalaConfig(morph_api_key="key")
-        resolved = build_resolved_config(base, None)
-
-        assert resolved.morph_enabled is True
-        assert resolved.morph_disabled_reason is None
+    """Tests for braintrust_disabled_reason derivation."""
 
     def test_braintrust_disabled_reason_no_braintrust_flag(self) -> None:
         """--no-braintrust flag sets braintrust_disabled_reason."""
@@ -702,8 +617,8 @@ class TestResolvedConfigImmutability:
 
     def test_resolved_config_is_hashable(self) -> None:
         """ResolvedConfig can be used in sets."""
-        base1 = MalaConfig(morph_api_key="key1")
-        base2 = MalaConfig(morph_api_key="key2")
+        base1 = MalaConfig(braintrust_api_key="key1")
+        base2 = MalaConfig(braintrust_api_key="key2")
         resolved1 = build_resolved_config(base1, None)
         resolved2 = build_resolved_config(base2, None)
 
@@ -718,7 +633,7 @@ class TestBuildResolvedConfigIdempotency:
         """Same inputs produce identical outputs."""
         base = MalaConfig(
             runs_dir=tmp_path,
-            morph_api_key="key",
+            braintrust_api_key="key",
             cerberus_spawn_args=("--arg",),
         )
         overrides = CLIOverrides(cerberus_env="FOO=bar")

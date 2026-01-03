@@ -34,8 +34,6 @@ class TestEventRunConfig:
         assert config.only_ids is None
         assert config.braintrust_enabled is False
         assert config.review_enabled is True
-        assert config.morph_enabled is True
-        assert config.morph_disallowed_tools is None
         assert config.prioritize_wip is False
         assert config.cli_args is None
 
@@ -52,8 +50,6 @@ class TestEventRunConfig:
             only_ids=["issue-1", "issue-2"],
             braintrust_enabled=True,
             review_enabled=False,
-            morph_enabled=False,
-            morph_disallowed_tools=["Edit", "Write"],
             prioritize_wip=True,
             cli_args={"verbose": True},
         )
@@ -61,8 +57,6 @@ class TestEventRunConfig:
         assert config.only_ids == ["issue-1", "issue-2"]
         assert config.braintrust_enabled is True
         assert config.review_enabled is False
-        assert config.morph_enabled is False
-        assert config.morph_disallowed_tools == ["Edit", "Write"]
         assert config.prioritize_wip is True
         assert config.cli_args == {"verbose": True}
 

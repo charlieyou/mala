@@ -194,7 +194,6 @@ class TestAgentSessionRunnerBasics:
             timeout_seconds=60,
             max_gate_retries=3,
             max_review_retries=2,
-            morph_enabled=False,
             review_enabled=False,  # Disable review for basic tests
         )
 
@@ -439,7 +438,6 @@ class TestAgentSessionRunnerGateHandling:
             timeout_seconds=60,
             max_gate_retries=3,
             max_review_retries=2,
-            morph_enabled=False,
             review_enabled=False,
         )
 
@@ -501,7 +499,6 @@ class TestAgentSessionRunnerGateHandling:
             repo_path=tmp_path,
             timeout_seconds=60,
             max_gate_retries=1,
-            morph_enabled=False,
             review_enabled=False,
         )
 
@@ -563,7 +560,6 @@ class TestAgentSessionRunnerCallbacks:
             timeout_seconds=60,
             max_gate_retries=3,
             max_review_retries=2,
-            morph_enabled=False,
             review_enabled=False,
         )
 
@@ -652,16 +648,12 @@ class TestAgentSessionRunnerConfig:
             timeout_seconds=120,
             max_gate_retries=5,
             max_review_retries=4,
-            morph_enabled=True,
-            morph_api_key="test-key",
             review_enabled=False,
         )
 
         assert config.timeout_seconds == 120
         assert config.max_gate_retries == 5
         assert config.max_review_retries == 4
-        assert config.morph_enabled is True
-        assert config.morph_api_key == "test-key"
         assert config.review_enabled is False
 
 
@@ -734,7 +726,6 @@ class TestAgentSessionRunnerStreamingCallbacks:
             timeout_seconds=60,
             max_gate_retries=3,
             max_review_retries=2,
-            morph_enabled=False,
             review_enabled=False,
         )
 
@@ -1047,7 +1038,6 @@ class TestAgentSessionRunnerEventSink:
             timeout_seconds=60,
             max_gate_retries=3,
             max_review_retries=2,
-            morph_enabled=False,
             review_enabled=False,
         )
 
@@ -1136,7 +1126,6 @@ class TestAgentSessionRunnerEventSink:
             repo_path=tmp_path,
             timeout_seconds=60,
             max_gate_retries=1,  # Fail immediately
-            morph_enabled=False,
             review_enabled=False,
         )
 
@@ -1219,7 +1208,6 @@ class TestAgentSessionRunnerEventSink:
             repo_path=tmp_path,
             timeout_seconds=60,
             max_gate_retries=2,  # Allow 1 retry
-            morph_enabled=False,
             review_enabled=False,
         )
 
@@ -1342,7 +1330,6 @@ class TestAgentSessionRunnerEventSink:
             timeout_seconds=60,
             max_gate_retries=3,
             max_review_retries=2,
-            morph_enabled=False,
             review_enabled=True,  # Enable review
         )
 
@@ -1440,7 +1427,6 @@ class TestAgentSessionRunnerEventSink:
             timeout_seconds=60,
             max_gate_retries=3,
             max_review_retries=2,  # Allow 1 retry
-            morph_enabled=False,
             review_enabled=True,  # Enable review
         )
 
@@ -1967,7 +1953,6 @@ class TestIdleTimeoutRetry:
             repo_path=tmp_path,
             timeout_seconds=60,
             max_gate_retries=2,
-            morph_enabled=False,
             review_enabled=False,
         )
 
@@ -2070,7 +2055,6 @@ class TestInitializeSession:
             timeout_seconds=600,
             max_gate_retries=3,
             max_review_retries=2,
-            morph_enabled=False,
             review_enabled=True,
         )
 
