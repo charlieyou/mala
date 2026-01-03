@@ -33,6 +33,7 @@ from src.orchestration.review_tracking import (
     create_review_tracking_issues,
 )
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
+from src.infra.tools.env import USER_CONFIG_DIR
 
 if TYPE_CHECKING:
     from src.core.protocols import IssueProvider
@@ -797,12 +798,15 @@ class TestBuildEventRunConfig:
             prioritize_wip=False,
             orphans_only=False,
             cli_args=None,
-            morph_disabled_reason="MORPH_API_KEY not set",
+            morph_disabled_reason=f"add MORPH_API_KEY to {USER_CONFIG_DIR}/.env",
             braintrust_disabled_reason=None,
         )
 
         assert config.morph_enabled is False
-        assert config.morph_disabled_reason == "MORPH_API_KEY not set"
+        assert (
+            config.morph_disabled_reason
+            == f"add MORPH_API_KEY to {USER_CONFIG_DIR}/.env"
+        )
 
     def test_morph_disabled_by_cli(self, tmp_path: Path) -> None:
         """Should set morph_disabled_reason when --no-morph used."""
