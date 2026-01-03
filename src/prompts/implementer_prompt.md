@@ -10,13 +10,13 @@ Implement the assigned issue completely before returning.
 
 ## Quick Rules (Read First)
 
-1. **grep first, then small reads**: Use `grep -n` to find line numbers, then Read with `read_range` ≤120 lines. Never read full files.
+1. **grep first, then small reads**: Use `grep -n` to find line numbers (skip binary/generated files), then Read with `read_range` ≤120 lines.
 2. **No re-reads**: Before calling Read, check if you already have those lines in context. Reuse what you saw.
 3. **Lock before edit**: Acquire locks before editing. Use exponential backoff (2s, 4s, 8s...) not constant polling.
 4. **Minimal responses**: No narration ("Let me...", "I understand..."). No large code dumps. Reference as `file:line`.
 5. **Validate once per revision**: Run validations once per code revision. Re-run only after fixing code.
 6. **Know when to stop**: If no changes needed, return ISSUE_* marker. If blocked on locks >15 min, return BLOCKED.
-7. **No git archaeology**: Don't use `git log`/`git blame` unless verifying ISSUE_ALREADY_COMPLETE or debugging regressions.
+7. **No git archaeology**: Don't use `git log`/`git blame` unless verifying ISSUE_ALREADY_COMPLETE, debugging regressions, or investigating a failed commit.
 8. **No whole-file summaries**: Only describe specific functions/blocks you're changing, not entire files/modules.
 9. **Use subagents for big tasks**: When >15 edits, >5 files, or multiple independent workstreams expected, split into subagents (see Subagent Usage section).
 
@@ -60,7 +60,7 @@ Spawn at most **3 subagents** per issue; prefer 2.
 Each subagent prompt MUST include:
 - One goal sentence
 - Explicit file allowlist: "You may ONLY touch: file1.py, file2.py"
-- Instruction: "Follow Quick Rules, Token Efficiency, Locking rules"
+- Instruction: "Follow Quick Rules, Token Efficiency, File Locking Protocol, and Parallel Work Rules"
 
 Each subagent MUST return:
 ```
@@ -70,7 +70,7 @@ Tests/checks: <command run> OR "Skipped (main will run)"
 Notes: <blockers, questions, or "None">
 ```
 
-If subagent exceeds ≤15 edits or ≤5 files, it MUST stop and report: "SHARD_TOO_LARGE: <reason>".
+If subagent exceeds 15 edits or 5 files, it MUST stop and report: "SHARD_TOO_LARGE: <reason>".
 
 If subagent is blocked on locks, return: "BLOCKED: <file> held by <holder>".
 
@@ -176,7 +176,7 @@ Run validation commands before committing:
 - If checks fail in UNTOUCHED files: report failure in `Quality checks:` and stop (do not fix others' code)
 - If a command is unavailable or fails for non-code reasons: record `Not run (reason)` and proceed
 - Do NOT pipe to `head`/`tail` or truncate output
-- Do NOT skip validation
+- Do NOT skip validation without recording a concrete reason
 
 ### 5. Self-Review
 Verify before committing:
@@ -188,56 +188,34 @@ Verify before committing:
 
 If issues found, fix them and re-run quality checks.
 
-### 6. Commit
+### 6. If No Code Changes Required
+
+If after investigation you determine no changes are needed, return one of these markers instead of committing:
+
+- `ISSUE_NO_CHANGE: <rationale>` - Issue already addressed or no changes needed
+- `ISSUE_OBSOLETE: <rationale>` - Issue no longer relevant (code removed, feature deprecated, etc.)
+- `ISSUE_ALREADY_COMPLETE: <rationale>` - Work was done in a previous run (commit with `bd-<issue_id>` exists)
+
+**Requirements:**
+- Working tree must be clean (`git status` shows no changes)
+- For ALREADY_COMPLETE: include the `bd-<issue_id>` tag in rationale
+
+After outputting a marker, skip to step 8 (Release Locks).
+
+### 7. Commit
+
+If you made code changes:
 ```bash
 git status             # Review changes
 git add <files>        # Stage YOUR code files only
 git commit -m "bd-{issue_id}: <summary>"
 ```
 
-**CRITICAL: Only release locks AFTER successful commit!**
 - Do NOT push - only commit locally
-- Do NOT close the issue - the orchestrator closes issues after quality gate and review pass
+- Do NOT close the issue - orchestrator handles that
+- Only release locks AFTER successful commit
 
-### 7. If No Code Changes Required
-
-These markers are valid "complete implementations". Return one instead of a commit when criteria are met.
-
-Before choosing a marker, do a quick grep or read relevant functions to confirm—don't scan the entire codebase.
-
-**When to use:**
-- `ISSUE_NO_CHANGE: <rationale>` - Issue already addressed or no changes needed
-- `ISSUE_OBSOLETE: <rationale>` - Issue no longer relevant (code removed, feature deprecated, etc.)
-- `ISSUE_ALREADY_COMPLETE: <rationale>` - Work was done in a previous run (commit exists with correct issue ID)
-
-**Requirements for NO_CHANGE / OBSOLETE:**
-1. Working tree must be clean (`git status` shows no changes)
-2. Provide a clear rationale explaining why no changes are needed
-
-**Requirements for ALREADY_COMPLETE:**
-1. A commit with `bd-<issue_id>` must exist (created in a prior run)
-2. Include the `bd-<issue_id>` tag in your rationale (this is required for validation)
-3. For duplicate issues: reference the original issue's commit tag (e.g., `bd-original-issue`)
-
-**Example output:**
-```
-ISSUE_NO_CHANGE: The validation logic already exists in src/validator.py:45-52
-```
-```
-ISSUE_OBSOLETE: The legacy API endpoint was removed in commit abc123
-```
-```
-ISSUE_ALREADY_COMPLETE: Work committed in 238e17f (bd-issue-123: Add feature X)
-```
-
-**Duplicate issue example** (when this issue duplicates another):
-```
-ISSUE_ALREADY_COMPLETE: This is a duplicate. Work was done in bd-mala-xyz commit 238e17f
-```
-
-After outputting the marker, proceed to release locks (step 8).
-
-### 8. Release Locks (after commit)
+### 8. Release Locks
 ```bash
 # Release locks (commit exit code already confirmed success)
 lock-release-all.sh
