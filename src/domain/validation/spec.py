@@ -25,11 +25,12 @@ from src.core.models import (
     ResolutionOutcome as ResolutionOutcome,
     ValidationArtifacts as ValidationArtifacts,
 )
+from src.domain.validation.config import CommandsConfig
 
 if TYPE_CHECKING:
     from re import Pattern
 
-    from src.domain.validation.config import ValidationConfig, YamlCoverageConfig
+    from src.domain.validation.config import CommandConfig, YamlCoverageConfig
 
 
 class ValidationScope(Enum):
@@ -328,21 +329,57 @@ def build_validation_spec(
             "Specify a preset or define commands directly."
         )
 
-    # Coverage requires a test command
-    if merged_config.coverage is not None and merged_config.commands.test is None:
-        raise ConfigError("Coverage requires a test command to generate coverage data.")
+    # Resolve commands for scope (run-level may override base commands)
+    commands_config = merged_config.commands
+    if scope == ValidationScope.RUN_LEVEL:
+        commands_config = _apply_command_overrides(
+            merged_config.commands, merged_config.run_level_commands
+        )
+
+    # Coverage requires a test command in the effective commands_config
+    # This check must happen after _apply_command_overrides to catch cases where
+    # run_level_commands.test is explicitly null (disabling the base test command)
+    # However, we only raise an error if there's no run_level_commands.test set either -
+    # if run_level_commands.test is set, coverage will be generated at run-level
+    if merged_config.coverage is not None and commands_config.test is None:
+        # Check if run_level_commands.test provides a test command for coverage
+        run_level_test_set = (
+            merged_config.run_level_commands._fields_set
+            and "test" in merged_config.run_level_commands._fields_set
+            and merged_config.run_level_commands.test is not None
+        )
+        if not run_level_test_set:
+            raise ConfigError(
+                "Coverage requires a test command to generate coverage data."
+            )
 
     # Build commands list from config
     commands: list[ValidationCommand] = []
 
     if not skip_tests:
-        commands = _build_commands_from_config(merged_config)
+        commands = _build_commands_from_config(commands_config)
 
     # Determine if coverage is enabled
+    # Coverage is disabled for PER_ISSUE scope when run_level_commands.test provides
+    # a different test command (e.g., with --cov flags). In this pattern, only the
+    # run-level test command generates coverage.xml, so per-issue validation should
+    # not check coverage.
+    # Note: If run_level_commands.test is explicitly null, we don't disable coverage
+    # for PER_ISSUE - the intent is to skip tests at run level, not to move coverage
+    # to run level.
+    run_level_has_different_test_command = (
+        merged_config.run_level_commands._fields_set
+        and "test" in merged_config.run_level_commands._fields_set
+        and merged_config.run_level_commands.test is not None
+    )
+    coverage_only_at_run_level = (
+        run_level_has_different_test_command and scope == ValidationScope.PER_ISSUE
+    )
     coverage_enabled = (
         merged_config.coverage is not None
         and "coverage" not in disable
         and not skip_tests
+        and not coverage_only_at_run_level
     )
 
     # Build coverage config
@@ -358,10 +395,11 @@ def build_validation_spec(
     )
 
     # Configure E2E
+    # Use commands_config which has run_level_commands overrides applied
     e2e_enabled = (
         scope == ValidationScope.RUN_LEVEL
         and "e2e" not in disable
-        and merged_config.commands.e2e is not None
+        and commands_config.e2e is not None
     )
     e2e_config = E2EConfig(
         enabled=e2e_enabled,
@@ -382,11 +420,39 @@ def build_validation_spec(
     )
 
 
-def _build_commands_from_config(config: ValidationConfig) -> list[ValidationCommand]:
-    """Build ValidationCommand list from a merged ValidationConfig.
+def _apply_command_overrides(
+    base: CommandsConfig, overrides: CommandsConfig
+) -> CommandsConfig:
+    """Apply run-level command overrides on top of base commands."""
+
+    def is_explicit(field_name: str, value: CommandConfig | None) -> bool:
+        if overrides._fields_set:
+            return field_name in overrides._fields_set
+        return value is not None
+
+    def pick(
+        field_name: str,
+        base_cmd: CommandConfig | None,
+        override_cmd: CommandConfig | None,
+    ) -> CommandConfig | None:
+        return override_cmd if is_explicit(field_name, override_cmd) else base_cmd
+
+    return CommandsConfig(
+        setup=pick("setup", base.setup, overrides.setup),
+        test=pick("test", base.test, overrides.test),
+        lint=pick("lint", base.lint, overrides.lint),
+        format=pick("format", base.format, overrides.format),
+        typecheck=pick("typecheck", base.typecheck, overrides.typecheck),
+        e2e=pick("e2e", base.e2e, overrides.e2e),
+        _fields_set=overrides._fields_set,
+    )
+
+
+def _build_commands_from_config(config: CommandsConfig) -> list[ValidationCommand]:
+    """Build ValidationCommand list from a CommandsConfig.
 
     Args:
-        config: The merged configuration.
+        config: The command configuration.
 
     Returns:
         List of ValidationCommand instances.
@@ -394,7 +460,7 @@ def _build_commands_from_config(config: ValidationConfig) -> list[ValidationComm
     from src.domain.validation.tool_name_extractor import extract_tool_name
 
     commands: list[ValidationCommand] = []
-    cmds = config.commands
+    cmds = config
 
     # Setup command
     if cmds.setup is not None:

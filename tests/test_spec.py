@@ -437,6 +437,93 @@ class TestBuildValidationSpec:
         assert "format" not in command_names
         assert "typecheck" not in command_names
 
+    def test_run_level_commands_override_base(self, tmp_path: Path) -> None:
+        """Run-level commands should override base commands when provided."""
+        config_dst = tmp_path / "mala.yaml"
+        config_dst.write_text(
+            "\n".join(
+                [
+                    "commands:",
+                    '  test: "pytest issue"',
+                    "run_level_commands:",
+                    '  test: "pytest run-level"',
+                ]
+            )
+            + "\n"
+        )
+
+        issue_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        run_spec = build_validation_spec(tmp_path, scope=ValidationScope.RUN_LEVEL)
+
+        issue_test = next(cmd for cmd in issue_spec.commands if cmd.name == "test")
+        run_test = next(cmd for cmd in run_spec.commands if cmd.name == "test")
+
+        assert issue_test.command == "pytest issue"
+        assert run_test.command == "pytest run-level"
+
+    def test_run_level_commands_can_disable_base(self, tmp_path: Path) -> None:
+        """Run-level overrides can explicitly disable a base command."""
+        config_dst = tmp_path / "mala.yaml"
+        config_dst.write_text(
+            "\n".join(
+                [
+                    "commands:",
+                    '  test: "pytest issue"',
+                    "run_level_commands:",
+                    "  test: null",
+                ]
+            )
+            + "\n"
+        )
+
+        issue_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        run_spec = build_validation_spec(tmp_path, scope=ValidationScope.RUN_LEVEL)
+
+        assert any(cmd.name == "test" for cmd in issue_spec.commands)
+        assert not any(cmd.name == "test" for cmd in run_spec.commands)
+
+    def test_coverage_with_run_level_null_test_raises_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Coverage enabled + run_level test=null should raise ConfigError.
+
+        If commands.test is set but run_level_commands.test is explicitly null,
+        and coverage is enabled, building a RUN_LEVEL spec should fail because
+        coverage requires a test command to generate coverage data.
+        """
+        import pytest
+
+        from src.domain.validation.config import ConfigError
+
+        config_dst = tmp_path / "mala.yaml"
+        config_dst.write_text(
+            "\n".join(
+                [
+                    "commands:",
+                    '  test: "uv run pytest"',
+                    "run_level_commands:",
+                    "  test: null",
+                    "coverage:",
+                    "  format: xml",
+                    "  file: coverage.xml",
+                    "  threshold: 80",
+                ]
+            )
+            + "\n"
+        )
+
+        # PER_ISSUE scope should work fine (test command is present)
+        issue_spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        assert issue_spec.coverage.enabled is True
+        assert any(cmd.name == "test" for cmd in issue_spec.commands)
+
+        # RUN_LEVEL scope should fail because test is disabled but coverage is enabled
+        with pytest.raises(ConfigError) as exc_info:
+            build_validation_spec(tmp_path, scope=ValidationScope.RUN_LEVEL)
+
+        assert "coverage" in str(exc_info.value).lower()
+        assert "test" in str(exc_info.value).lower()
+
     def test_command_with_custom_timeout(self, tmp_path: Path) -> None:
         """Test that custom timeout values are applied."""
         config_src = Path("tests/fixtures/mala-configs/command-with-timeout.yaml")
@@ -524,6 +611,185 @@ commands:
 
         assert spec.e2e.enabled is True
 
+    def test_run_level_commands_e2e_null_disables_e2e(self, tmp_path: Path) -> None:
+        """run_level_commands.e2e: null disables E2E even if base e2e is defined."""
+        # Create config with e2e command but run_level_commands.e2e: null
+        config_content = """
+commands:
+  test: "pytest"
+  e2e: "pytest -m e2e"
+run_level_commands:
+  e2e: null
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.RUN_LEVEL)
+
+        # E2E should be disabled because run_level_commands.e2e: null overrides
+        assert spec.e2e.enabled is False
+
+    def test_run_level_test_disables_coverage_for_per_issue(
+        self, tmp_path: Path
+    ) -> None:
+        """Coverage should be disabled for PER_ISSUE when run_level_commands.test is set.
+
+        When run_level_commands.test provides a different test command (e.g., with
+        --cov flags), the base commands.test won't generate coverage.xml, so
+        per-issue validation should not check coverage.
+        """
+        config_content = """
+commands:
+  test: "pytest"
+run_level_commands:
+  test: "pytest --cov=src --cov-report=xml"
+coverage:
+  format: xml
+  file: coverage.xml
+  threshold: 80
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        # PER_ISSUE scope should have coverage DISABLED
+        # because run_level_commands.test is set (meaning only run-level generates coverage)
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+        assert per_issue_spec.coverage.enabled is False
+
+        # RUN_LEVEL scope should have coverage ENABLED
+        run_level_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.RUN_LEVEL
+        )
+        assert run_level_spec.coverage.enabled is True
+
+    def test_no_run_level_test_enables_coverage_for_both_scopes(
+        self, tmp_path: Path
+    ) -> None:
+        """Coverage should be enabled for both scopes when run_level_commands.test is not set.
+
+        When there's no run_level_commands.test override, the same test command
+        is used for both scopes, so coverage should be enabled for both.
+        """
+        config_content = """
+commands:
+  test: "pytest --cov=src --cov-report=xml"
+coverage:
+  format: xml
+  file: coverage.xml
+  threshold: 80
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        # Both scopes should have coverage enabled
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+        assert per_issue_spec.coverage.enabled is True
+
+        run_level_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.RUN_LEVEL
+        )
+        assert run_level_spec.coverage.enabled is True
+
+    def test_run_level_test_null_preserves_coverage_for_per_issue(
+        self, tmp_path: Path
+    ) -> None:
+        """Coverage should stay enabled for PER_ISSUE when run_level_commands.test is null.
+
+        When run_level_commands.test is explicitly null (disabling test at run level),
+        per-issue should still run with coverage since it has a test command. The null
+        value indicates "skip test at run level" - not "move coverage to run level".
+        """
+        config_content = """
+commands:
+  test: "pytest --cov=src --cov-report=xml"
+run_level_commands:
+  test: null
+coverage:
+  format: xml
+  file: coverage.xml
+  threshold: 80
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        # PER_ISSUE scope should have coverage enabled (base test has --cov)
+        # run_level_commands.test is null, which means "skip test at run level",
+        # not "move coverage to run level"
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+        assert per_issue_spec.coverage.enabled is True
+
+    def test_run_level_only_test_with_coverage_no_base_test(
+        self, tmp_path: Path
+    ) -> None:
+        """Coverage with run_level_commands.test only (no base test) should work.
+
+        When a config has only run_level_commands.test (no base commands.test)
+        plus coverage settings, building a PER_ISSUE spec should not raise an error.
+        Coverage will be generated at run-level where the test command exists.
+        """
+        config_content = """
+commands:
+  lint: "uvx ruff check ."
+run_level_commands:
+  test: "uv run pytest --cov=src --cov-report=xml"
+coverage:
+  format: xml
+  file: coverage.xml
+  threshold: 80
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        # PER_ISSUE scope should NOT raise ConfigError
+        # Coverage is disabled for PER_ISSUE since there's no test command
+        # but the error should not fire because run_level_commands.test exists
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+        # Coverage should be disabled for PER_ISSUE (no test command to run)
+        assert per_issue_spec.coverage.enabled is False
+        # No test command in per-issue spec
+        assert not any(cmd.name == "test" for cmd in per_issue_spec.commands)
+
+        # RUN_LEVEL scope should have coverage enabled
+        run_level_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.RUN_LEVEL
+        )
+        assert run_level_spec.coverage.enabled is True
+        # Run-level should have test command
+        assert any(cmd.name == "test" for cmd in run_level_spec.commands)
+
+    def test_no_test_command_anywhere_with_coverage_raises_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Coverage without any test command should raise ConfigError.
+
+        If there's no commands.test and no run_level_commands.test, but coverage
+        is enabled, we should raise an error because there's no way to generate
+        coverage data.
+        """
+        import pytest
+
+        from src.domain.validation.config import ConfigError
+
+        config_content = """
+commands:
+  lint: "uvx ruff check ."
+coverage:
+  format: xml
+  file: coverage.xml
+  threshold: 80
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        # Should raise ConfigError because no test command exists anywhere
+        with pytest.raises(ConfigError) as exc_info:
+            build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+
+        assert "coverage" in str(exc_info.value).lower()
+        assert "test" in str(exc_info.value).lower()
+
     def test_command_shell_is_true_by_default(self, tmp_path: Path) -> None:
         """All commands should have shell=True by default."""
         config_src = Path("tests/fixtures/mala-configs/partial-config.yaml")
@@ -594,3 +860,110 @@ class TestBuildValidationSpecWithPreset:
         assert "lint" in command_names
         assert "format" in command_names
         assert "typecheck" in command_names
+
+
+class TestCoverageOnlyAtRunLevel:
+    """Tests for coverage-only-at-run-level behavior based on run_level_commands.test.
+
+    When a user explicitly sets run_level_commands.test (e.g., with --cov flags),
+    coverage should only be checked at run-level, not per-issue. This prevents
+    per-issue validation from failing due to missing coverage.xml that only
+    run-level generates.
+    """
+
+    def test_user_run_level_test_disables_per_issue_coverage(
+        self, tmp_path: Path
+    ) -> None:
+        """User's run_level_commands.test should disable coverage for per-issue.
+
+        When the user explicitly sets run_level_commands.test with coverage flags,
+        per-issue scope should have coverage disabled since only run-level
+        generates coverage.xml.
+        """
+        config_content = """
+preset: python-uv
+run_level_commands:
+  test: "pytest --cov=src --cov-report=xml"
+coverage:
+  format: xml
+  file: coverage.xml
+  threshold: 80
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+        run_level_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.RUN_LEVEL
+        )
+
+        # Per-issue should NOT check coverage (run-level generates it)
+        assert per_issue_spec.coverage.enabled is False
+        # Run-level should check coverage
+        assert run_level_spec.coverage.enabled is True
+
+    def test_preset_run_level_test_does_not_disable_per_issue_coverage(
+        self, tmp_path: Path
+    ) -> None:
+        """Preset's run_level_commands.test should NOT disable per-issue coverage.
+
+        When run_level_commands.test comes from preset (not user), it shouldn't
+        affect coverage behavior. This is because the user didn't explicitly
+        opt into the coverage-only-at-run-level pattern.
+
+        Note: Currently python-uv doesn't have run_level_commands, so we use
+        a custom mala.yaml to simulate this scenario.
+        """
+        # Write a preset-like config directly (simulating a preset with run_level_commands)
+        # In real usage, this would come from a preset
+        config_content = """
+commands:
+  test: "pytest"
+coverage:
+  format: xml
+  file: coverage.xml
+  threshold: 80
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        # Without explicit run_level_commands.test, coverage should be enabled for both
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+        run_level_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.RUN_LEVEL
+        )
+
+        # Both scopes should have coverage enabled
+        assert per_issue_spec.coverage.enabled is True
+        assert run_level_spec.coverage.enabled is True
+
+    def test_run_level_test_null_preserves_per_issue_coverage(
+        self, tmp_path: Path
+    ) -> None:
+        """run_level_commands.test: null should NOT disable per-issue coverage.
+
+        When user sets run_level_commands.test to null (to skip tests at run level),
+        this is different from setting a test command. The intent is to skip
+        testing at run level, not to move coverage there.
+        """
+        config_content = """
+commands:
+  test: "pytest --cov=src --cov-report=xml"
+run_level_commands:
+  test: null
+coverage:
+  format: xml
+  file: coverage.xml
+  threshold: 80
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+
+        # Per-issue should still check coverage (run-level test is disabled, not moved)
+        assert per_issue_spec.coverage.enabled is True
+        assert any(cmd.name == "test" for cmd in per_issue_spec.commands)

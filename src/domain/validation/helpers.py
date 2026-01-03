@@ -7,12 +7,9 @@ from __future__ import annotations
 
 import json
 import shutil
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 from src.infra.tools.command_runner import run_command
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def tail(text: str, max_chars: int = 800, max_lines: int = 20) -> str:
@@ -103,6 +100,80 @@ def check_e2e_prereqs(env: dict[str, str]) -> str | None:
     return None
 
 
+def _generate_fixture_programmatically(repo_path: Path) -> None:
+    """Generate E2E fixture files programmatically.
+
+    This is a fallback when the fixture template directory is not available
+    (e.g., in installed packages where only src/ is included).
+
+    Args:
+        repo_path: Path to create the fixture repository in.
+    """
+    # Create src/app.py with a bug (subtracts instead of adds)
+    src_dir = repo_path / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    (src_dir / "app.py").write_text(
+        "def add(a: int, b: int) -> int:\n    return a - b\n"
+    )
+
+    # Create tests/test_app.py
+    tests_dir = repo_path / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tests_dir / "test_app.py").write_text(
+        """import pytest
+
+from app import add
+
+
+@pytest.mark.unit
+def test_add():
+    assert add(2, 2) == 4
+"""
+    )
+
+    # Create pyproject.toml
+    (repo_path / "pyproject.toml").write_text(
+        """[project]
+name = "mala-e2e-fixture"
+version = "0.0.0"
+description = "Fixture repo for mala e2e validation"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "pytest-cov>=4.1.0", "pytest-xdist>=3.8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+markers = [
+    "unit: fast, isolated tests (default)",
+    "integration: tests that exercise multiple components",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=6.0.0",
+    "pytest-xdist>=3.8.0",
+]
+"""
+    )
+
+    # Create mala.yaml
+    (repo_path / "mala.yaml").write_text(
+        """preset: python-uv
+
+run_level_commands:
+  test: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
+
+coverage:
+  format: xml
+  file: coverage.xml
+  threshold: 0
+"""
+    )
+
+
 def write_fixture_repo(repo_path: Path) -> None:
     """Create a minimal fixture repository for E2E testing.
 
@@ -110,59 +181,21 @@ def write_fixture_repo(repo_path: Path) -> None:
     implementer agent needs to fix. Uses src/ layout for compatibility
     with mala's coverage checking (--cov=src).
 
+    Fixture files are sourced from tests/fixtures/e2e-fixture if available,
+    otherwise generated programmatically (for installed packages).
+
     Args:
         repo_path: Path to create the fixture repository in.
     """
-    (repo_path / "src").mkdir(parents=True, exist_ok=True)
-    (repo_path / "tests").mkdir(parents=True, exist_ok=True)
-    (repo_path / "src" / "app.py").write_text(
-        "def add(a: int, b: int) -> int:\n    return a - b\n"
+    fixture_root = (
+        Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "e2e-fixture"
     )
-    (repo_path / "tests" / "test_app.py").write_text(
-        "\n".join(
-            [
-                "import pytest",
-                "",
-                "from app import add",
-                "",
-                "",
-                "@pytest.mark.unit",
-                "def test_add():",
-                "    assert add(2, 2) == 4",
-            ]
-        )
-        + "\n"
-    )
-    (repo_path / "pyproject.toml").write_text(
-        "\n".join(
-            [
-                "[project]",
-                'name = "mala-e2e-fixture"',
-                'version = "0.0.0"',
-                'description = "Fixture repo for mala e2e validation"',
-                'requires-python = ">=3.11"',
-                "dependencies = []",
-                "",
-                "[project.optional-dependencies]",
-                'dev = ["pytest>=8.0.0", "pytest-cov>=4.1.0", "pytest-xdist>=3.8.0"]',
-                "",
-                "[tool.pytest.ini_options]",
-                'pythonpath = ["src"]',
-                "markers = [",
-                '    "unit: fast, isolated tests (default)",',
-                '    "integration: tests that exercise multiple components",',
-                "]",
-                "",
-                "[dependency-groups]",
-                "dev = [",
-                '    "pytest>=9.0.2",',
-                '    "pytest-cov>=6.0.0",',
-                '    "pytest-xdist>=3.8.0",',
-                "]",
-            ]
-        )
-        + "\n"
-    )
+    if fixture_root.exists():
+        shutil.copytree(fixture_root, repo_path, dirs_exist_ok=True)
+    else:
+        # Fallback to programmatic generation when fixture template is not available
+        # (e.g., in installed packages where only src/ is included in the wheel)
+        _generate_fixture_programmatically(repo_path)
 
 
 def init_fixture_repo(repo_path: Path) -> str | None:

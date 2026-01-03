@@ -1,0 +1,23 @@
+[project]
+name = "mala-e2e-fixture"
+version = "0.0.0"
+description = "Fixture repo for mala e2e validation"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "pytest-cov>=4.1.0", "pytest-xdist>=3.8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+markers = [
+    "unit: fast, isolated tests (default)",
+    "integration: tests that exercise multiple components",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=6.0.0",
+    "pytest-xdist>=3.8.0",
+]

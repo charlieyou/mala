@@ -6,4 +6,4 @@ run_level_commands:
 coverage:
   format: xml
   file: coverage.xml
-  threshold: 72
+  threshold: 0

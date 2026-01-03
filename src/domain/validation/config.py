@@ -331,6 +331,7 @@ class ValidationConfig:
     Attributes:
         preset: Optional preset name to extend (e.g., "python-uv", "go").
         commands: Command definitions. May be partially filled if extending preset.
+        run_level_commands: Optional overrides for run-level validation commands.
         coverage: Coverage configuration. None means coverage is disabled.
         code_patterns: Glob patterns for code files that trigger validation.
         config_files: Tool config files that invalidate lint/format cache.
@@ -340,6 +341,7 @@ class ValidationConfig:
     """
 
     commands: CommandsConfig = field(default_factory=CommandsConfig)
+    run_level_commands: CommandsConfig = field(default_factory=CommandsConfig)
     preset: str | None = None
     coverage: YamlCoverageConfig | None = None
     code_patterns: tuple[str, ...] = field(default_factory=tuple)
@@ -393,6 +395,21 @@ class ValidationConfig:
             cast("dict[str, object] | None", commands_data)
         )
 
+        # Parse run-level commands
+        run_level_commands_data = data.get("run_level_commands")
+        if "run_level_commands" in data:
+            fields_set.add("run_level_commands")
+        if run_level_commands_data is not None and not isinstance(
+            run_level_commands_data, dict
+        ):
+            raise ConfigError(
+                "run_level_commands must be an object, got "
+                f"{type(run_level_commands_data).__name__}"
+            )
+        run_level_commands = CommandsConfig.from_dict(
+            cast("dict[str, object] | None", run_level_commands_data)
+        )
+
         # Parse coverage - track if explicitly present (even if null)
         if "coverage" in data:
             fields_set.add("coverage")
@@ -433,6 +450,7 @@ class ValidationConfig:
         return cls(
             preset=preset,
             commands=commands,
+            run_level_commands=run_level_commands,
             coverage=coverage,
             code_patterns=code_patterns,
             config_files=config_files,
@@ -454,6 +472,12 @@ class ValidationConfig:
                 self.commands.format,
                 self.commands.typecheck,
                 self.commands.e2e,
+                self.run_level_commands.setup,
+                self.run_level_commands.test,
+                self.run_level_commands.lint,
+                self.run_level_commands.format,
+                self.run_level_commands.typecheck,
+                self.run_level_commands.e2e,
             ]
         )
 

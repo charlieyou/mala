@@ -43,6 +43,9 @@ commands:                # Optional. Command definitions
   typecheck: string | null  # Type checker (e.g., "uvx ty check", "tsc --noEmit")
   e2e: string | null     # End-to-end tests (e.g., "uv run pytest -m e2e")
 
+run_level_commands:      # Optional. Overrides for run-level validation
+  test: string | null    # Run-level test command (e.g., with coverage)
+
 code_patterns:           # Optional. Glob patterns for code files
   - "*.py"
   - "src/**/*.ts"
@@ -69,6 +72,8 @@ coverage:                # Optional. Omit to disable coverage
 | `preset` | string | No | Preset name to extend |
 | `commands` | object | No | Map of command kind to shell command |
 | `commands.<kind>` | string or null | No | Shell command. `null` explicitly disables |
+| `run_level_commands` | object | No | Overrides for run-level validation commands |
+| `run_level_commands.<kind>` | string or null | No | Run-level command override. `null` disables |
 | `code_patterns` | list | No | Glob patterns for code files |
 | `config_files` | list | No | Tool config files that trigger re-lint |
 | `setup_files` | list | No | Lock files that trigger setup re-run |
@@ -210,6 +215,7 @@ code_patterns:
 When using a preset:
 
 - **Commands**: User value replaces preset value. `null` disables. Omitted inherits from preset.
+- **Run-level commands**: User value overrides base commands for run-level validation only. Omitted inherits from `commands`.
 - **Lists** (`code_patterns`, `config_files`, `setup_files`): User list **replaces** preset list entirely.
 - **Coverage**: User config **replaces** preset coverage. `coverage: null` disables.
 
@@ -264,6 +270,18 @@ preset: python-uv
 preset: python-uv
 coverage:
   command: "uv run pytest --cov --cov-report=xml"
+  format: xml
+  file: coverage.xml
+  threshold: 85
+```
+
+### Python Run-Level Coverage Only
+
+```yaml
+preset: python-uv
+run_level_commands:
+  test: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0"
+coverage:
   format: xml
   file: coverage.xml
   threshold: 85

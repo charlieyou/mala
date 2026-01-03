@@ -23,6 +23,9 @@ if TYPE_CHECKING:
     from src.infra.telemetry import TelemetryProvider
     from src.orchestration.orchestrator import MalaOrchestrator
 
+# Ignore fixture templates under tests/fixtures
+collect_ignore_glob = ["fixtures/e2e-fixture/**"]
+
 
 def pytest_configure(config: pytest.Config) -> None:
     """Configure test environment before collection.

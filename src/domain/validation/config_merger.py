@@ -124,6 +124,20 @@ def merge_configs(
         preset.commands, user.commands, user_commands_explicitly_set
     )
 
+    # Merge run-level command overrides
+    user_run_level_commands_explicitly_set = _is_field_explicitly_set(
+        "run_level_commands",
+        user._fields_set,
+        user.run_level_commands,
+        user.run_level_commands == CommandsConfig(),
+    )
+    merged_run_level_commands = _merge_commands(
+        preset.run_level_commands,
+        user.run_level_commands,
+        user_run_level_commands_explicitly_set,
+        clear_on_explicit_empty=True,  # Allow users to clear preset run-level overrides
+    )
+
     # Coverage: user replaces if explicitly set, otherwise inherit
     user_coverage_explicitly_set = _is_field_explicitly_set(
         "coverage",
@@ -169,6 +183,7 @@ def merge_configs(
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
+        run_level_commands=merged_run_level_commands,
         coverage=merged_coverage,
         code_patterns=merged_code_patterns,
         config_files=merged_config_files,
@@ -181,6 +196,8 @@ def _merge_commands(
     preset: CommandsConfig,
     user: CommandsConfig,
     user_commands_explicitly_set: bool,
+    *,
+    clear_on_explicit_empty: bool = False,
 ) -> CommandsConfig:
     """Merge preset and user command configurations.
 
@@ -188,7 +205,24 @@ def _merge_commands(
     - If field is explicitly set by user: use user value (even if None)
     - If field is not explicitly set: inherit from preset
 
+    Args:
+        preset: Preset CommandsConfig to merge with.
+        user: User CommandsConfig with overrides.
+        user_commands_explicitly_set: Whether the user explicitly set the commands
+            field at the parent level (commands or run_level_commands).
+        clear_on_explicit_empty: If True and user explicitly set the field to null
+            or empty ({}) at the top level, return empty CommandsConfig without
+            inheriting from preset. This is used for run_level_commands to allow
+            users to clear all preset overrides.
+
     """
+    # If clear_on_explicit_empty is enabled and user explicitly set commands to
+    # null/empty (no individual fields set), short-circuit to return the user's
+    # empty config without inheriting. This allows users to clear all preset
+    # run_level_commands overrides.
+    if clear_on_explicit_empty and user_commands_explicitly_set and not user._fields_set:
+        return user
+
     return CommandsConfig(
         setup=_merge_command_field(preset.setup, user.setup, "setup", user._fields_set),
         test=_merge_command_field(preset.test, user.test, "test", user._fields_set),

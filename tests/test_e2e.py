@@ -1,5 +1,7 @@
 """Unit tests for src/validation/e2e.py - E2E fixture runner."""
 
+import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -18,6 +20,7 @@ from src.domain.validation.e2e import (
     check_e2e_prereqs,
 )
 from src.domain.validation.helpers import (
+    _generate_fixture_programmatically,
     annotate_issue,
     decode_timeout_output,
     get_ready_issue_id,
@@ -384,7 +387,24 @@ class TestE2ERunnerIntegration:
             assert result.passed is True
             assert result.status == E2EStatus.PASSED
             assert result.fixture_path is not None
-            assert (result.fixture_path / "coverage.xml").exists()
+            assert result.fixture_path is not None
+            runs_dir = Path(
+                os.environ.get(
+                    "MALA_RUNS_DIR",
+                    str(Path.home() / ".config" / "mala" / "runs"),
+                )
+            )
+            encoded = "-" + str(result.fixture_path).lstrip("/").replace("/", "-")
+            run_dir = runs_dir / encoded
+            assert run_dir.exists()
+            run_metadata_path = max(
+                run_dir.glob("*.json"), key=lambda path: path.stat().st_mtime
+            )
+            run_metadata = json.loads(run_metadata_path.read_text())
+            coverage_percent = run_metadata.get("run_validation", {}).get(
+                "coverage_percent"
+            )
+            assert coverage_percent is not None
         finally:
             if result.fixture_path and result.fixture_path.exists():
                 shutil.rmtree(result.fixture_path, ignore_errors=True)
@@ -446,6 +466,54 @@ class TestWriteFixtureFiles:
 
         content = (tmp_path / "src" / "app.py").read_text()
         assert "return a - b" in content  # The bug
+
+    def test_programmatic_fallback_creates_same_structure(
+        self, tmp_path: Path
+    ) -> None:
+        """Test that programmatic generation creates the same file structure."""
+        _generate_fixture_programmatically(tmp_path)
+
+        # Verify all expected files exist
+        assert (tmp_path / "src").is_dir()
+        assert (tmp_path / "src" / "app.py").exists()
+        assert (tmp_path / "tests").is_dir()
+        assert (tmp_path / "tests" / "test_app.py").exists()
+        assert (tmp_path / "pyproject.toml").exists()
+        assert (tmp_path / "mala.yaml").exists()
+
+        # Verify the app has the expected bug
+        content = (tmp_path / "src" / "app.py").read_text()
+        assert "return a - b" in content
+
+        # Verify test file has expected test
+        test_content = (tmp_path / "tests" / "test_app.py").read_text()
+        assert "assert add(2, 2) == 4" in test_content
+
+    def test_fallback_used_when_template_missing(self, tmp_path: Path) -> None:
+        """Test that write_fixture_repo falls back to programmatic generation.
+
+        When the fixture template directory doesn't exist (e.g., installed packages
+        where tests/ is not included), it should use programmatic generation.
+        """
+        # Mock Path.exists to return False for the fixture_root check
+        original_exists = Path.exists
+
+        def mock_exists(path: Path) -> bool:
+            if "e2e-fixture" in str(path):
+                return False
+            return original_exists(path)
+
+        with patch.object(Path, "exists", mock_exists):
+            write_fixture_repo(tmp_path)
+
+        # Verify fixture was created via programmatic fallback
+        assert (tmp_path / "src" / "app.py").exists()
+        assert (tmp_path / "mala.yaml").exists()
+        assert (tmp_path / "tests" / "test_app.py").exists()
+
+        # Verify content is correct
+        content = (tmp_path / "src" / "app.py").read_text()
+        assert "return a - b" in content
 
 
 class TestInitFixtureRepo:

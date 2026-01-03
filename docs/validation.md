@@ -82,6 +82,8 @@ After all issues complete, the orchestrator runs a final validation pass. This c
 3. **Fixer agent**: On failure, spawns a dedicated fixer agent with the failure output
 4. **Retry loop**: Continues up to `max_gate_retries` attempts
 
+Run-level validations can override the base `commands` via `run_level_commands` in `mala.yaml`. Any omitted fields inherit from `commands`.
+
 ### Validation Scopes
 
 | Scope | When | What runs |
