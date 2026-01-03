@@ -815,6 +815,33 @@ class TestBuildRunMetadata:
         assert metadata.config.review_enabled is True
         assert metadata.config.orphans_only is False
 
+    def test_none_timeout(self, tmp_path: Path) -> None:
+        """Should handle None timeout."""
+        with patch(
+            "src.infra.io.log_output.run_metadata.configure_debug_logging"
+        ) as mock_debug:
+            mock_debug.return_value = None
+
+            metadata = build_run_metadata(
+                repo_path=tmp_path,
+                max_agents=None,
+                timeout_seconds=None,
+                max_issues=None,
+                epic_id=None,
+                only_ids=None,
+                braintrust_enabled=False,
+                max_gate_retries=3,
+                max_review_retries=2,
+                review_enabled=False,
+                orphans_only=False,
+                cli_args=None,
+                version="1.0.0",
+            )
+
+        assert metadata.config.timeout_minutes is None
+        assert metadata.config.max_agents is None
+        assert metadata.config.max_issues is None
+
 
 # ============================================================================
 # prompts tests

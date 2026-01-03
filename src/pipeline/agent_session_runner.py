@@ -1425,7 +1425,7 @@ class AgentSessionRunner:
             await asyncio.sleep(backoff)
 
     async def _disconnect_client_safely(
-        self, client: SDKClientProtocol | object, issue_id: str
+        self, client: SDKClientProtocol, issue_id: str
     ) -> None:
         """Disconnect SDK client with timeout, logging any failures."""
         try:
@@ -1650,7 +1650,10 @@ class AgentSessionRunner:
             if self.sdk_client_factory is not None:
                 client = self.sdk_client_factory.create(options)
             else:
-                client = ClaudeSDKClient(options=cast("ClaudeAgentOptions", options))
+                client = cast(
+                    "SDKClientProtocol",
+                    ClaudeSDKClient(options=cast("ClaudeAgentOptions", options)),
+                )
 
             try:
                 async with client:
