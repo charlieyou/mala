@@ -47,40 +47,58 @@ Implement the assigned issue completely before returning.
 
 ## Subagent Usage (Scaling Large Tasks)
 
-Subagents provide separate context windows and can run in parallel. Use them to keep each worker in the 25-40% context sweet spot.
+Subagents have separate context windows. Use them to keep each worker focused and small.
 
-### When to Spawn Subagents
+### When to Spawn
 
 Use subagents when ANY is true:
 - **>15 edits or >5 files** expected
 - **Multiple independent workstreams** (e.g., API + UI + tests)
-- **Large codebase exploration** would otherwise bloat context to 50%+
+- **Large codebase exploration** would bloat context to 50%+
 
-Skip subagents when task fits in **≤15 edits, ≤5 files, ≤40% context**.
+Skip subagents when task fits in ≤15 edits, ≤5 files.
 
-### Subagent Patterns
+### Patterns
 
-1. **Shard by workstream** (primary): Identify distinct workstreams (backend, frontend, tests). Each subagent owns one with strict file allowlist, ≤15 edits, ≤5 files.
+1. **Shard by area**: Group work into 2-3 independent areas (backend/frontend/tests, or handlers/models/tests). One subagent per area with strict file allowlist.
 
-2. **Shard by file cluster**: Group files into 2-3 clusters (handlers, models, tests). One subagent per cluster.
+2. **Explore-first**: For unfamiliar areas, spawn Explore subagent to map files/functions. Output: `file: key_function` lines, max 20 lines. No prose.
 
-3. **Explore-first**: For unfamiliar areas, spawn Explore subagent to map files/functions first, return compact index, then decide on implementation subagents.
+3. **Plan subagent**: For complex issues, spawn Plan subagent first. Output: numbered list of 5-10 steps, each ≤10 words.
 
-4. **Plan subagent**: For complex/ambiguous issues, spawn Plan subagent to produce stepwise plan before coding subagents.
+### Subagent Contract
 
-### Subagent Requirements
+Spawn at most **3 subagents** per issue; prefer 2.
 
-Each subagent MUST:
-- Follow all Quick Rules, Token Efficiency, and Locking rules
-- Have **strict file allowlist** (no overlapping writes between subagents)
-- Stay within **≤15 edits, ≤5 files** soft limit
-- Return: summary, `Files changed:` with `file:line`, tests/checks run
+Each subagent prompt MUST include:
+- One goal sentence
+- Explicit file allowlist: "You may ONLY touch: file1.py, file2.py"
+- Instruction: "Follow Quick Rules, Token Efficiency, Locking rules"
 
-Main implementer:
-- Coordinates file assignments (no overlapping writes)
-- Aggregates results
-- Runs final validation once on combined changes
-- Performs Self-Review and Commit
+Each subagent MUST return:
+```
+Goal: <one sentence>
+Files changed: <file:line for each>
+Tests/checks: <command run> OR "Skipped (main will run)"
+Notes: <blockers, questions, or "None">
+```
+
+If subagent exceeds ≤15 edits or ≤5 files, it MUST stop and report: "SHARD_TOO_LARGE: <reason>".
+
+If subagent is blocked on locks, return: "BLOCKED: <file> held by <holder>".
+
+### Validation Split
+
+- **Subagents**: Run NO repo-level commands (`{lint_command}`, `{test_command}`, etc.). May run targeted file-level checks only.
+- **Main implementer**: Runs full validation once after aggregating all subagent changes.
+
+### Cross-Cutting Files
+
+If a file spans multiple shards (shared helper, config):
+- Assign it to ONE subagent or keep in main implementer
+- Other subagents treat it as **read-only**
+
+Subagents must also follow **Parallel Work Rules** for their assigned files.
 
 ## Commands
 
