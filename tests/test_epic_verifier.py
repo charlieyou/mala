@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -71,6 +71,9 @@ def mock_command_runner() -> MagicMock:
     runner = MagicMock()
     runner.run.return_value = CommandResult(
         command=["mock"], returncode=0, stdout="", stderr=""
+    )
+    runner.run_async = AsyncMock(
+        return_value=CommandResult(command=["mock"], returncode=0, stdout="", stderr="")
     )
     return runner
 
@@ -433,6 +436,7 @@ class TestVerifyEpic:
             beads=mock_beads,
             model=mock_model,
             repo_path=tmp_path,
+            command_runner=MagicMock(),
         )
 
         _stub_commit_helpers(verifier)
@@ -980,8 +984,14 @@ class TestLockUsage:
         self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:
         """Should acquire lock before verifying an epic."""
-        # Set up lock_manager
-        verifier.lock_manager = MagicMock()
+        import os
+
+        expected_agent_id = f"epic_verifier_{os.getpid()}"
+
+        # Set up lock_manager with mock methods
+        mock_lock_manager = MagicMock()
+        mock_lock_manager.wait_for_lock.return_value = True
+        verifier.lock_manager = mock_lock_manager
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             if "epic" in cmd and "status" in cmd:
@@ -995,32 +1005,14 @@ class TestLockUsage:
         verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
         _stub_commit_helpers(verifier)
 
-        # Mock the locking module
-        import os
+        await verifier.verify_and_close_eligible()
 
-        expected_agent_id = f"epic_verifier_{os.getpid()}"
-
-        with patch("src.infra.tools.locking.wait_for_lock") as mock_wait:
-            mock_wait.return_value = True
-
-            with patch("src.infra.tools.locking.get_lock_holder") as mock_holder:
-                mock_holder.return_value = expected_agent_id
-
-                with patch("src.infra.tools.locking.lock_path") as mock_path:
-                    mock_lock_path = MagicMock()
-                    mock_lock_path.exists.return_value = True
-                    mock_path.return_value = mock_lock_path
-
-                    await verifier.verify_and_close_eligible()
-
-                    # Lock should have been attempted since lock_manager is set
-                    # (the actual call happens inside a try/except ImportError)
-                    # Since we patched the module, the import succeeds
-                    mock_wait.assert_called_once()
-                    call_args = mock_wait.call_args[0]
-                    assert call_args[0] == "epic_verify:epic-1"
-                    assert call_args[1] == expected_agent_id
-                    assert call_args[2] == str(verifier.repo_path)  # repo_namespace
+        # Lock should have been acquired via lock_manager
+        mock_lock_manager.wait_for_lock.assert_called_once()
+        call_args = mock_lock_manager.wait_for_lock.call_args[0]
+        assert call_args[0] == "epic_verify:epic-1"
+        assert call_args[1] == expected_agent_id
+        assert call_args[2] == str(verifier.repo_path)  # repo_namespace
 
 
 # ============================================================================
@@ -1155,13 +1147,8 @@ class TestEpicVerifierOrchestratorIntegration:
         mock_model = MagicMock()
         mock_model.verify = AsyncMock()  # Should NOT be called
 
-        verifier = EpicVerifier(
-            beads=mock_beads,
-            model=mock_model,
-            repo_path=Path("/tmp"),
-        )
+        mock_runner = MagicMock()
 
-        # Mock _get_eligible_epics to return epic-1
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             if "epic" in cmd and "status" in cmd:
                 return CommandResult(
@@ -1171,7 +1158,14 @@ class TestEpicVerifierOrchestratorIntegration:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        mock_runner.run_async = mock_run_async
+
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=Path("/tmp"),
+            command_runner=mock_runner,
+        )
 
         result = await verifier.verify_and_close_eligible(
             human_override_epic_ids={"epic-1"}
@@ -1216,11 +1210,7 @@ class TestEpicVerifierOrchestratorIntegration:
             )
         )
 
-        verifier = EpicVerifier(
-            beads=mock_beads,
-            model=mock_model,
-            repo_path=Path("/tmp"),
-        )
+        mock_runner = MagicMock()
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             if "epic" in cmd and "status" in cmd:
@@ -1239,7 +1229,14 @@ class TestEpicVerifierOrchestratorIntegration:
                 return CommandResult(command=cmd, returncode=0, stdout="")
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        mock_runner.run_async = mock_run_async
+
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=Path("/tmp"),
+            command_runner=mock_runner,
+        )
         _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_eligible()
@@ -1269,11 +1266,7 @@ class TestEpicVerifierOrchestratorIntegration:
             )
         )
 
-        verifier = EpicVerifier(
-            beads=mock_beads,
-            model=mock_model,
-            repo_path=Path("/tmp"),
-        )
+        mock_runner = MagicMock()
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             if "epic" in cmd and "status" in cmd:
@@ -1284,7 +1277,14 @@ class TestEpicVerifierOrchestratorIntegration:
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+        mock_runner.run_async = mock_run_async
+
+        verifier = EpicVerifier(
+            beads=mock_beads,
+            model=mock_model,
+            repo_path=Path("/tmp"),
+            command_runner=mock_runner,
+        )
         _stub_commit_helpers(verifier)
 
         result = await verifier.verify_and_close_eligible()
