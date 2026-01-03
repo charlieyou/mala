@@ -10,8 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
-
 if TYPE_CHECKING:
     from src.domain.validation.config import PromptValidationCommands
 
@@ -98,6 +96,8 @@ def format_implementer_prompt(
     repo_path: Path,
     agent_id: str,
     validation_commands: PromptValidationCommands,
+    lock_dir: Path,
+    scripts_dir: Path,
 ) -> str:
     """Format the implementer prompt with runtime values.
 
@@ -106,6 +106,8 @@ def format_implementer_prompt(
         repo_path: Path to the repository.
         agent_id: The agent ID for this session.
         validation_commands: Validation commands for the prompt.
+        lock_dir: Directory for lock files (from infra layer).
+        scripts_dir: Directory containing helper scripts (from infra layer).
 
     Returns:
         Formatted prompt string.
@@ -113,8 +115,8 @@ def format_implementer_prompt(
     return get_implementer_prompt().format(
         issue_id=issue_id,
         repo_path=repo_path,
-        lock_dir=get_lock_dir(),
-        scripts_dir=SCRIPTS_DIR,
+        lock_dir=lock_dir,
+        scripts_dir=scripts_dir,
         agent_id=agent_id,
         lint_command=validation_commands.lint,
         format_command=validation_commands.format,
