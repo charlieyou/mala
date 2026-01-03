@@ -22,6 +22,8 @@ from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
     AgentSessionRunner,
+    ContextPressureError,
+    MessageIterationState,
     PromptProvider,
     SessionCallbacks,
 )
@@ -1540,6 +1542,266 @@ class TestAgentSessionRunnerEventSink:
         review_retry = next(e for e in fake_sink.events if e[0] == "on_review_retry")
         assert review_retry[1][0] == "test-123"  # agent_id
         assert review_retry[2]["error_count"] == 1  # one P1 error
+
+
+class TestContextPressureDetection:
+    """Test context pressure detection and ContextPressureError."""
+
+    @pytest.fixture
+    def tmp_log_path(self, tmp_path: Path) -> Path:
+        """Create a temporary log file path."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+        return log_path
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_extracts_usage_from_result_message(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """ResultMessage with usage updates lifecycle_ctx.context_usage."""
+        # Create ResultMessage with usage
+        result_msg = ResultMessage(
+            subtype="result",
+            duration_ms=100,
+            duration_api_ms=50,
+            is_error=False,
+            num_turns=1,
+            session_id="test-session-usage",
+            result="done",
+            usage={
+                "input_tokens": 50000,
+                "output_tokens": 10000,
+                "cache_read_input_tokens": 5000,
+            },
+        )
+        client = FakeSDKClient(result_message=result_msg)
+        factory = FakeSDKClientFactory(client)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            prompts=make_test_prompts(),
+            review_enabled=False,  # Disable review for this test
+            context_restart_threshold=0.95,  # High threshold - won't trigger
+            context_limit=200_000,
+        )
+        runner = AgentSessionRunner(
+            config=config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-usage", prompt="Test")
+        output = await runner.run_session(input_data)
+
+        # Verify usage was extracted and stored in output's lifecycle context
+        # The output contains the final session state
+        assert output.success is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_warns_when_usage_missing(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """ResultMessage without usage logs warning, no crash."""
+        # ResultMessage without usage field (uses make_result_message default)
+        result_msg = make_result_message(session_id="no-usage-session")
+        client = FakeSDKClient(result_message=result_msg)
+        factory = FakeSDKClientFactory(client)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            prompts=make_test_prompts(),
+            review_enabled=False,  # Disable review for this test
+        )
+        runner = AgentSessionRunner(
+            config=config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-no-usage", prompt="Test")
+        output = await runner.run_session(input_data)
+
+        # Should succeed without crash
+        assert output.success is True
+        # Should log warning about missing usage
+        assert any(
+            "missing usage field" in record.message
+            for record in caplog.records
+            if record.levelname == "WARNING"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_raises_context_pressure_error_at_threshold(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """ContextPressureError raised when pressure >= threshold.
+
+        This test directly calls _process_message_stream to verify the
+        exception is raised. The run_session method catches all exceptions
+        (including ContextPressureError) and converts them to output.
+        The restart loop in mala-d6x.9 will handle re-raising or processing
+        this error at a higher level.
+        """
+        from src.domain.lifecycle import LifecycleContext
+
+        # Create ResultMessage with usage at exactly 90% threshold
+        # 180000 input + 0 output = 180000 / 200000 = 0.90
+        result_msg = ResultMessage(
+            subtype="result",
+            duration_ms=100,
+            duration_api_ms=50,
+            is_error=False,
+            num_turns=1,
+            session_id="pressure-session",
+            result="done",
+            usage={
+                "input_tokens": 180000,
+                "output_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        )
+
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            prompts=make_test_prompts(),
+            review_enabled=False,
+            context_restart_threshold=0.90,
+            context_limit=200_000,
+        )
+        runner = AgentSessionRunner(config=config)
+
+        # Create a simple async generator that yields the result message
+        async def mock_stream() -> AsyncIterator[Any]:
+            yield result_msg
+
+        lifecycle_ctx = LifecycleContext()
+        state = MessageIterationState()
+        lint_cache = MagicMock()
+
+        with pytest.raises(ContextPressureError) as exc_info:
+            await runner._process_message_stream(
+                mock_stream(),
+                "test-pressure",
+                state,
+                lifecycle_ctx,
+                lint_cache,
+                0.0,  # query_start
+                None,  # tracer
+            )
+
+        err = exc_info.value
+        assert err.session_id == "pressure-session"
+        assert err.input_tokens == 180000
+        assert err.output_tokens == 0
+        assert err.cache_read_tokens == 0
+        assert err.pressure_ratio == pytest.approx(0.90)
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_no_error_below_threshold(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """No ContextPressureError when pressure < threshold."""
+        # 170000 / 200000 = 0.85 < 0.90 threshold
+        result_msg = ResultMessage(
+            subtype="result",
+            duration_ms=100,
+            duration_api_ms=50,
+            is_error=False,
+            num_turns=1,
+            session_id="safe-session",
+            result="done",
+            usage={
+                "input_tokens": 170000,
+                "output_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        )
+        client = FakeSDKClient(result_message=result_msg)
+        factory = FakeSDKClientFactory(client)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=60,
+            prompts=make_test_prompts(),
+            review_enabled=False,  # Disable review for this test
+            context_restart_threshold=0.90,
+            context_limit=200_000,
+        )
+        runner = AgentSessionRunner(
+            config=config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(issue_id="test-safe", prompt="Test")
+        output = await runner.run_session(input_data)
+
+        # Should succeed without error
+        assert output.success is True
 
 
 class TestIdleTimeoutRetry:

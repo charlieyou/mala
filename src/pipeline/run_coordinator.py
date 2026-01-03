@@ -41,7 +41,7 @@ from src.domain.validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
-from src.infra.tool_name_extractor import extract_lint_tools_from_spec
+from src.domain.validation.spec import extract_lint_tools_from_spec
 from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:

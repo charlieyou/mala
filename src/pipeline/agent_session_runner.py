@@ -91,6 +91,39 @@ class IdleTimeoutError(Exception):
     """Raised when the SDK response stream is idle for too long."""
 
 
+class ContextPressureError(Exception):
+    """Raised when context usage exceeds the restart threshold.
+
+    This exception signals that the agent session should be checkpointed
+    and restarted with a fresh context to avoid context exhaustion.
+
+    Attributes:
+        session_id: SDK session ID for checkpoint query.
+        input_tokens: Current input token count.
+        output_tokens: Current output token count.
+        cache_read_tokens: Current cache read token count.
+        pressure_ratio: Ratio of usage to limit (e.g., 0.92 = 92%).
+    """
+
+    def __init__(
+        self,
+        session_id: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int,
+        pressure_ratio: float,
+    ) -> None:
+        self.session_id = session_id
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cache_read_tokens = cache_read_tokens
+        self.pressure_ratio = pressure_ratio
+        super().__init__(
+            f"Context pressure {pressure_ratio:.1%} exceeds threshold "
+            f"(input={input_tokens}, output={output_tokens}, session={session_id})"
+        )
+
+
 _T = TypeVar("_T")
 
 
@@ -355,6 +388,9 @@ class AgentSessionConfig:
             lint tools. Populated from ValidationSpec commands.
         prompt_validation_commands: Validation commands for prompt templates.
             If None, uses default Python/uv commands.
+        context_restart_threshold: Ratio (0.0-1.0) at which to raise
+            ContextPressureError. Default 0.90 (90% of context_limit).
+        context_limit: Maximum context tokens. Default 200K for Claude.
     """
 
     repo_path: Path
@@ -369,6 +405,8 @@ class AgentSessionConfig:
     idle_retry_backoff: tuple[float, ...] = (0.0, 5.0, 15.0)
     lint_tools: frozenset[str] | None = None
     prompt_validation_commands: PromptValidationCommands | None = None
+    context_restart_threshold: float = 0.90
+    context_limit: int = 200_000
 
 
 @dataclass
@@ -1592,6 +1630,43 @@ class AgentSessionRunner:
                 state.session_id = message.session_id
                 lifecycle_ctx.session_id = message.session_id
                 lifecycle_ctx.final_result = message.result or ""
+
+                # Extract token usage from SDK for context pressure detection
+                usage = getattr(message, "usage", None)
+                if usage is not None:
+                    # Handle both dict and object forms of usage
+                    if isinstance(usage, dict):
+                        input_tokens = usage.get("input_tokens", 0) or 0
+                        output_tokens = usage.get("output_tokens", 0) or 0
+                        cache_read = usage.get("cache_read_input_tokens", 0) or 0
+                    else:
+                        input_tokens = getattr(usage, "input_tokens", 0) or 0
+                        output_tokens = getattr(usage, "output_tokens", 0) or 0
+                        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+
+                    # Update lifecycle context with cumulative usage
+                    lifecycle_ctx.context_usage.input_tokens = input_tokens
+                    lifecycle_ctx.context_usage.output_tokens = output_tokens
+                    lifecycle_ctx.context_usage.cache_read_tokens = cache_read
+
+                    # Check context pressure threshold
+                    pressure = lifecycle_ctx.context_usage.pressure_ratio(
+                        self.config.context_limit
+                    )
+                    if pressure >= self.config.context_restart_threshold:
+                        raise ContextPressureError(
+                            session_id=message.session_id,
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            cache_read_tokens=cache_read,
+                            pressure_ratio=pressure,
+                        )
+                else:
+                    logger.warning(
+                        "Session %s: ResultMessage missing usage field, "
+                        "context pressure tracking disabled",
+                        issue_id,
+                    )
 
         # Success
         stream_duration = time.time() - query_start
