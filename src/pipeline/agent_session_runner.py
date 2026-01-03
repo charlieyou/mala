@@ -47,7 +47,10 @@ from src.domain.lifecycle import (
     LifecycleContext,
     LifecycleState,
 )
-from src.domain.prompts import get_gate_followup_prompt as _get_gate_followup_prompt
+from src.domain.prompts import (
+    get_default_validation_commands as _get_default_validation_commands,
+    get_gate_followup_prompt as _get_gate_followup_prompt,
+)
 from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 
 if TYPE_CHECKING:
@@ -983,22 +986,19 @@ class AgentSessionRunner:
             # Build follow-up prompt
             failure_text = "\n".join(f"- {r}" for r in gate_result.failure_reasons)
             # Get validation commands or use defaults
-            cmds = self.config.prompt_validation_commands
+            cmds = (
+                self.config.prompt_validation_commands
+                or _get_default_validation_commands()
+            )
             pending_query = _get_gate_followup_prompt().format(
                 attempt=lifecycle_ctx.retry_state.gate_attempt,
                 max_attempts=self.config.max_gate_retries,
                 failure_reasons=failure_text,
                 issue_id=input.issue_id,
-                lint_command=cmds.lint
-                if cmds
-                else "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff check .",
-                format_command=cmds.format
-                if cmds
-                else "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format .",
-                typecheck_command=cmds.typecheck if cmds else "uvx ty check",
-                test_command=cmds.test
-                if cmds
-                else "uv run pytest -o cache_dir=/tmp/pytest-${AGENT_ID:-default}",
+                lint_command=cmds.lint,
+                format_command=cmds.format,
+                typecheck_command=cmds.typecheck,
+                test_command=cmds.test,
             )
             return pending_query, False, result  # continue with retry
 

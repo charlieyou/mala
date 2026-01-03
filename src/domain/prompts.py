@@ -26,6 +26,26 @@ def get_gate_followup_prompt() -> str:
     return GATE_FOLLOWUP_FILE.read_text()
 
 
+def get_default_validation_commands() -> PromptValidationCommands:
+    """Return default Python/uv validation commands with cache isolation.
+
+    These defaults are used when no mala.yaml configuration is found.
+    Commands include cache isolation flags for parallel agent runs,
+    using $AGENT_ID environment variable (set in the agent environment).
+
+    Returns:
+        PromptValidationCommands with default Python/uv toolchain commands.
+    """
+    from src.domain.validation.config import PromptValidationCommands
+
+    return PromptValidationCommands(
+        lint="RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff check .",
+        format="RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format .",
+        typecheck="uvx ty check",
+        test="uv run pytest -o cache_dir=/tmp/pytest-${AGENT_ID:-default}",
+    )
+
+
 def build_prompt_validation_commands(repo_path: Path) -> PromptValidationCommands:
     """Build PromptValidationCommands for a repository.
 
@@ -47,15 +67,8 @@ def build_prompt_validation_commands(repo_path: Path) -> PromptValidationCommand
     try:
         user_config = load_config(repo_path)
     except ConfigMissingError:
-        # No config file - return default Python/uv commands with isolation flags
-        # for parallel agent runs ($AGENT_ID is set in the agent environment)
-        # Note: RUFF_CACHE_DIR env var for ruff, -o cache_dir for pytest
-        return PromptValidationCommands(
-            lint="RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff check .",
-            format="RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format .",
-            typecheck="uvx ty check",
-            test="uv run pytest -o cache_dir=/tmp/pytest-${AGENT_ID:-default}",
-        )
+        # No config file - return defaults
+        return get_default_validation_commands()
 
     # Load and merge preset if specified
     if user_config.preset is not None:
