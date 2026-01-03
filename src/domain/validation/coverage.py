@@ -12,12 +12,10 @@ This module provides:
 from __future__ import annotations
 
 import os
-import shlex
 import shutil
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
-from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -25,8 +23,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from .config import YamlCoverageConfig  # noqa: TC001 - used at runtime
+from .coverage_args import rewrite_coverage_command
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from src.core.protocols import CommandRunnerPort, EnvConfigPort, LockManagerPort
 
     from .spec import ValidationSpec
@@ -441,6 +442,109 @@ _FALLBACK_LOCK_ADAPTER = _FallbackLockAdapter()
 
 
 @dataclass
+class WorktreeRefreshContext:
+    """Context for baseline refresh worktree lifecycle.
+
+    Holds the worktree path, command runner, and environment for running
+    commands in an isolated worktree during baseline coverage refresh.
+    """
+
+    worktree_path: Path
+    runner: CommandRunnerPort
+    env: dict[str, str]
+
+
+@contextmanager
+def baseline_worktree(
+    repo_path: Path,
+    timeout: float,
+    lock_dir: Path,
+    command_runner: CommandRunnerPort | None = None,
+) -> Iterator[WorktreeRefreshContext]:
+    """Create and manage a temporary worktree for baseline coverage refresh.
+
+    Args:
+        repo_path: Path to the main repository.
+        timeout: Timeout in seconds for commands.
+        lock_dir: Lock directory to set in environment.
+        command_runner: Optional injected command runner for testing.
+
+    Yields:
+        WorktreeRefreshContext with worktree path, runner, and environment.
+
+    Raises:
+        RuntimeError: If worktree creation fails.
+    """
+    from .worktree import (
+        WorktreeConfig,
+        WorktreeState,
+        create_worktree,
+        remove_worktree,
+    )
+
+    run_id = f"baseline-{uuid.uuid4().hex[:8]}"
+    temp_dir = Path(tempfile.mkdtemp(prefix="mala-baseline-"))
+    worktree_config = WorktreeConfig(
+        base_dir=temp_dir,
+        keep_on_failure=False,
+    )
+
+    worktree_ctx = None
+    # Use injected runner or create one for worktree creation
+    from src.infra.tools.command_runner import CommandRunner
+
+    if command_runner is not None:
+        worktree_runner: CommandRunnerPort = command_runner
+    else:
+        worktree_runner = cast("CommandRunnerPort", CommandRunner(cwd=repo_path))
+
+    try:
+        worktree_ctx = create_worktree(
+            repo_path=repo_path,
+            commit_sha="HEAD",
+            config=worktree_config,
+            run_id=run_id,
+            issue_id="baseline",
+            attempt=1,
+            command_runner=worktree_runner,
+        )
+
+        if worktree_ctx.state == WorktreeState.FAILED:
+            raise RuntimeError(
+                f"Baseline worktree creation failed: {worktree_ctx.error}"
+            )
+
+        worktree_path = worktree_ctx.path
+
+        # Build environment
+        env = {
+            **os.environ,
+            "AGENT_ID": f"baseline-{run_id}",
+            "LOCK_DIR": str(lock_dir),
+        }
+
+        # Create runner for worktree context
+        if command_runner is not None:
+            runner = command_runner
+        else:
+            runner = CommandRunner(cwd=worktree_path, timeout_seconds=timeout)
+
+        yield WorktreeRefreshContext(
+            worktree_path=worktree_path,
+            runner=runner,
+            env=env,
+        )
+    finally:
+        # Clean up temp worktree
+        if worktree_ctx is not None:
+            remove_worktree(
+                worktree_ctx, validation_passed=True, command_runner=worktree_runner
+            )
+        # Clean up temp directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@dataclass
 class BaselineRefreshResult:
     """Result of a baseline coverage refresh operation.
 
@@ -625,263 +729,160 @@ class BaselineCoverageService:
             assumes coverage_config and coverage_config.command are validated
             as non-None by the caller (refresh_if_stale).
         """
-        from .worktree import (
-            WorktreeConfig,
-            WorktreeState,
-            create_worktree,
-            remove_worktree,
-        )
-
         # coverage_config.command is validated non-None in refresh_if_stale
         assert self.coverage_config is not None
         assert self.coverage_config.command is not None
         coverage_command = self.coverage_config.command
 
-        # Create temp worktree at HEAD
-        run_id = f"baseline-{uuid.uuid4().hex[:8]}"
-        temp_dir = Path(tempfile.mkdtemp(prefix="mala-baseline-"))
-        worktree_config = WorktreeConfig(
-            base_dir=temp_dir,
-            keep_on_failure=False,
+        # Determine timeout: prefer coverage_config.timeout, then step_timeout_seconds, then default
+        timeout = float(
+            self.coverage_config.timeout or self.step_timeout_seconds or 300.0
         )
 
-        worktree_ctx = None
+        # Determine lock directory
+        if self.env_config is not None:
+            lock_dir = self.env_config.lock_dir
+        else:
+            # Fallback for legacy callers without env_config
+            from src.infra.tools.env import get_lock_dir
+
+            lock_dir = get_lock_dir()
+
         try:
-            # Use injected runner or create one for worktree creation
-            from src.infra.tools.command_runner import CommandRunner
-
-            if self.command_runner is not None:
-                worktree_runner: CommandRunnerPort = self.command_runner
-            else:
-                worktree_runner = cast(
-                    "CommandRunnerPort", CommandRunner(cwd=self.repo_path)
-                )
-
-            worktree_ctx = create_worktree(
+            with baseline_worktree(
                 repo_path=self.repo_path,
-                commit_sha="HEAD",
-                config=worktree_config,
-                run_id=run_id,
-                issue_id="baseline",
-                attempt=1,
-                command_runner=worktree_runner,
-            )
+                timeout=timeout,
+                lock_dir=lock_dir,
+                command_runner=self.command_runner,
+            ) as ctx:
+                worktree_path = ctx.worktree_path
+                runner = ctx.runner
+                env = ctx.env
 
-            if worktree_ctx.state == WorktreeState.FAILED:
-                return BaselineRefreshResult.fail(
-                    f"Baseline worktree creation failed: {worktree_ctx.error}"
+                # Run uv sync first to install dependencies
+                sync_result = runner.run(
+                    ["uv", "sync", "--all-extras"], env=env, cwd=worktree_path
                 )
-
-            worktree_path = worktree_ctx.path
-
-            # Build environment
-            env = {
-                **os.environ,
-                "AGENT_ID": f"baseline-{run_id}",
-            }
-            if self.env_config is not None:
-                env["LOCK_DIR"] = str(self.env_config.lock_dir)
-            else:
-                # Fallback for legacy callers without env_config
-                from src.infra.tools.env import get_lock_dir
-
-                env["LOCK_DIR"] = str(get_lock_dir())
-
-            # Determine timeout: prefer coverage_config.timeout, then step_timeout_seconds, then default
-            timeout = float(
-                self.coverage_config.timeout or self.step_timeout_seconds or 300.0
-            )
-
-            # Create runner for worktree context
-            # Use injected runner if available (for testability), otherwise create one.
-            # Pass cwd=worktree_path to run() calls since the worktree path differs
-            # from the main repo path.
-            if self.command_runner is not None:
-                runner = self.command_runner
-            else:
-                from src.infra.tools.command_runner import CommandRunner
-
-                runner = CommandRunner(cwd=worktree_path, timeout_seconds=timeout)
-
-            # Run uv sync first to install dependencies
-            sync_result = runner.run(
-                ["uv", "sync", "--all-extras"], env=env, cwd=worktree_path
-            )
-            if sync_result.returncode != 0:
-                return BaselineRefreshResult.fail(
-                    f"uv sync failed during baseline refresh: {sync_result.stderr}"
-                )
-
-            # Convert coverage command to list for manipulation
-            coverage_cmd = shlex.split(coverage_command)
-
-            # Replace any existing --cov-fail-under with 0
-            # This ensures we capture baseline even if it's below pyproject.toml threshold
-            # Also replace any existing -m marker with "unit or integration" to
-            # avoid end-to-end tests during baseline refresh.
-            # Remove xdist flags to avoid coverage merge flakiness in baseline refresh.
-            new_coverage_cmd = []
-            marker_expr: str | None = None
-            skip_next = False
-            for arg in coverage_cmd:
-                if skip_next:
-                    skip_next = False
-                    continue
-                # Strip xdist flags for deterministic coverage generation
-                if arg in {"-n", "--numprocesses", "--dist"}:
-                    skip_next = True
-                    continue
-                if arg.startswith("-n=") or arg.startswith("--numprocesses="):
-                    continue
-                if arg.startswith("--dist="):
-                    continue
-                if arg.startswith("--cov-fail-under="):
-                    continue
-                if arg == "--cov-fail-under":
-                    skip_next = True
-                    continue
-                # Strip any existing -m marker (we'll re-add a safe marker at the end)
-                if arg.startswith("-m="):
-                    marker_expr = arg.split("=", 1)[1]
-                    continue
-                if arg == "-m":
-                    skip_next = True
-                    marker_expr = None  # will be captured via skip_next branch
-                    continue
-                new_coverage_cmd.append(arg)
-
-            # If we skipped "-m <expr>", capture the expression from the next arg
-            if skip_next:
-                # Defensive: skip_next should always be paired with an arg
-                skip_next = False
-
-            # If we stripped a marker via "-m", it was the immediate next arg
-            if marker_expr is None:
-                for i, arg in enumerate(coverage_cmd[:-1]):
-                    if arg == "-m":
-                        marker_expr = coverage_cmd[i + 1]
-                        break
-
-            # Normalize marker expression: never include e2e in baseline refresh
-            marker_expr = (marker_expr or "unit or integration").strip()
-            if "e2e" in marker_expr:
-                marker_expr = "unit or integration"
-
-            # Ensure XML coverage output is written to the configured path.
-            # Strip any existing --cov-report=xml or --cov-report=xml:<path> arguments
-            # to avoid path mismatches where output goes to a different location than
-            # coverage_config.file specifies.
-            coverage_file = self.coverage_config.file
-            new_coverage_cmd = [
-                arg
-                for arg in new_coverage_cmd
-                if arg != "--cov-report=xml" and not arg.startswith("--cov-report=xml:")
-            ]
-            new_coverage_cmd.append(f"--cov-report=xml:{coverage_file}")
-
-            new_coverage_cmd.append("--cov-fail-under=0")
-            new_coverage_cmd.extend(["-m", marker_expr])
-
-            # Run coverage command - we ignore the exit code because tests may fail
-            # but still generate a valid coverage.xml baseline
-            coverage_result = runner.run(new_coverage_cmd, env=env, cwd=worktree_path)
-
-            # Check for coverage file in worktree (use configured file path)
-            coverage_file = Path(self.coverage_config.file)
-            worktree_coverage = worktree_path / coverage_file
-            if not worktree_coverage.exists():
-                # Fallback: combine coverage data if coverage command didn't emit XML
-                coverage_data = [
-                    path
-                    for path in worktree_path.glob(".coverage*")
-                    if path.is_file() and not path.name.endswith(".xml")
-                ]
-
-                combine_result = None
-                xml_result = None
-
-                if coverage_data:
-                    # Use the same invocation style as the coverage command when possible.
-                    if (
-                        len(coverage_cmd) >= 3
-                        and coverage_cmd[0] == "uv"
-                        and coverage_cmd[1] == "run"
-                    ):
-                        coverage_base = ["uv", "run", "coverage"]
-                    elif (
-                        len(coverage_cmd) >= 3
-                        and coverage_cmd[1] == "-m"
-                        and coverage_cmd[2] == "pytest"
-                    ):
-                        coverage_base = [coverage_cmd[0], "-m", "coverage"]
-                    else:
-                        coverage_base = ["coverage"]
-
-                    combine_result = runner.run(
-                        [*coverage_base, "combine"],
-                        env=env,
-                        cwd=worktree_path,
+                if sync_result.returncode != 0:
+                    return BaselineRefreshResult.fail(
+                        f"uv sync failed during baseline refresh: {sync_result.stderr}"
                     )
-                    if combine_result.returncode == 0:
-                        xml_result = runner.run(
-                            [*coverage_base, "xml", "-o", str(worktree_coverage)],
+
+                # Rewrite coverage command for baseline refresh:
+                # - Strip xdist flags for deterministic coverage
+                # - Remove fail-under threshold
+                # - Normalize marker expression (no e2e)
+                # - Set output path for XML coverage
+                coverage_file = self.coverage_config.file
+                new_coverage_cmd = rewrite_coverage_command(
+                    coverage_command, coverage_file
+                )
+
+                # Run coverage command - we ignore the exit code because tests may fail
+                # but still generate a valid coverage.xml baseline
+                coverage_result = runner.run(
+                    new_coverage_cmd, env=env, cwd=worktree_path
+                )
+
+                # Check for coverage file in worktree (use configured file path)
+                coverage_file = Path(self.coverage_config.file)
+                worktree_coverage = worktree_path / coverage_file
+                if not worktree_coverage.exists():
+                    # Fallback: combine coverage data if coverage command didn't emit XML
+                    coverage_data = [
+                        path
+                        for path in worktree_path.glob(".coverage*")
+                        if path.is_file() and not path.name.endswith(".xml")
+                    ]
+
+                    combine_result = None
+                    xml_result = None
+
+                    if coverage_data:
+                        # Use the same invocation style as the coverage command when possible.
+                        if (
+                            len(new_coverage_cmd) >= 3
+                            and new_coverage_cmd[0] == "uv"
+                            and new_coverage_cmd[1] == "run"
+                        ):
+                            coverage_base = ["uv", "run", "coverage"]
+                        elif (
+                            len(new_coverage_cmd) >= 3
+                            and new_coverage_cmd[1] == "-m"
+                            and new_coverage_cmd[2] == "pytest"
+                        ):
+                            coverage_base = [new_coverage_cmd[0], "-m", "coverage"]
+                        else:
+                            coverage_base = ["coverage"]
+
+                        combine_result = runner.run(
+                            [*coverage_base, "combine"],
                             env=env,
                             cwd=worktree_path,
                         )
+                        if combine_result.returncode == 0:
+                            xml_result = runner.run(
+                                [*coverage_base, "xml", "-o", str(worktree_coverage)],
+                                env=env,
+                                cwd=worktree_path,
+                            )
 
-                if not worktree_coverage.exists():
-                    details: list[str] = []
-                    if coverage_result.timed_out:
-                        details.append("coverage command timed out")
-                    elif coverage_result.returncode != 0:
-                        details.append(
-                            f"coverage command exited {coverage_result.returncode}"
+                    if not worktree_coverage.exists():
+                        details: list[str] = []
+                        if coverage_result.timed_out:
+                            details.append("coverage command timed out")
+                        elif coverage_result.returncode != 0:
+                            details.append(
+                                f"coverage command exited {coverage_result.returncode}"
+                            )
+                        cmd_tail = (
+                            coverage_result.stderr_tail()
+                            or coverage_result.stdout_tail()
                         )
-                    cmd_tail = (
-                        coverage_result.stderr_tail() or coverage_result.stdout_tail()
-                    )
-                    if cmd_tail:
-                        details.append(f"command output: {cmd_tail}")
-                    if combine_result is not None and combine_result.returncode != 0:
-                        combine_tail = (
-                            combine_result.stderr_tail() or combine_result.stdout_tail()
+                        if cmd_tail:
+                            details.append(f"command output: {cmd_tail}")
+                        if (
+                            combine_result is not None
+                            and combine_result.returncode != 0
+                        ):
+                            combine_tail = (
+                                combine_result.stderr_tail()
+                                or combine_result.stdout_tail()
+                            )
+                            if combine_tail:
+                                details.append(
+                                    f"coverage combine failed: {combine_tail}"
+                                )
+                        if xml_result is not None and xml_result.returncode != 0:
+                            xml_tail = (
+                                xml_result.stderr_tail() or xml_result.stdout_tail()
+                            )
+                            if xml_tail:
+                                details.append(f"coverage xml failed: {xml_tail}")
+
+                        detail_msg = f" ({'; '.join(details)})" if details else ""
+                        return BaselineRefreshResult.fail(
+                            f"No {coverage_file} generated during baseline refresh"
+                            + detail_msg
                         )
-                        if combine_tail:
-                            details.append(f"coverage combine failed: {combine_tail}")
-                    if xml_result is not None and xml_result.returncode != 0:
-                        xml_tail = xml_result.stderr_tail() or xml_result.stdout_tail()
-                        if xml_tail:
-                            details.append(f"coverage xml failed: {xml_tail}")
 
-                    detail_msg = f" ({'; '.join(details)})" if details else ""
+                # Atomic rename to main repo
+                temp_coverage = baseline_path.with_suffix(".xml.tmp")
+                shutil.copy2(worktree_coverage, temp_coverage)
+                os.rename(temp_coverage, baseline_path)
+
+                # Parse and return the coverage percentage
+                try:
+                    baseline = get_baseline_coverage(baseline_path)
+                    if baseline is None:
+                        return BaselineRefreshResult.fail(
+                            f"Baseline {coverage_file} exists but has no coverage data"
+                        )
+                    return BaselineRefreshResult.ok(baseline)
+                except ValueError as e:
                     return BaselineRefreshResult.fail(
-                        f"No {coverage_file} generated during baseline refresh"
-                        + detail_msg
+                        f"Failed to parse baseline coverage: {e}"
                     )
-
-            # Atomic rename to main repo
-            temp_coverage = baseline_path.with_suffix(".xml.tmp")
-            shutil.copy2(worktree_coverage, temp_coverage)
-            os.rename(temp_coverage, baseline_path)
-
-            # Parse and return the coverage percentage
-            try:
-                baseline = get_baseline_coverage(baseline_path)
-                if baseline is None:
-                    return BaselineRefreshResult.fail(
-                        f"Baseline {coverage_file} exists but has no coverage data"
-                    )
-                return BaselineRefreshResult.ok(baseline)
-            except ValueError as e:
-                return BaselineRefreshResult.fail(
-                    f"Failed to parse baseline coverage: {e}"
-                )
-
-        finally:
-            # Clean up temp worktree
-            if worktree_ctx is not None:
-                remove_worktree(
-                    worktree_ctx, validation_passed=True, command_runner=worktree_runner
-                )
-            # Clean up temp directory
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        except RuntimeError as e:
+            # Worktree creation failed
+            return BaselineRefreshResult.fail(str(e))
