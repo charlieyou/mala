@@ -32,12 +32,12 @@ from src.core.models import (
     RetryConfig,
     UnmetCriterion,
 )
-from src.domain.epic.scope import EpicScopeAnalyzer
+from src.infra.epic_scope import EpicScopeAnalyzer
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from src.core.protocols import EpicVerificationModel
+    from src.core.protocols import EpicVerificationModel, LockManagerPort
     from src.infra.clients.beads_client import BeadsClient
     from src.infra.io.event_protocol import MalaEventSink
     from src.infra.tools.command_runner import CommandRunner
@@ -59,7 +59,7 @@ EPIC_VERIFY_LOCK_TIMEOUT_SECONDS = 300
 async def epic_verify_lock(
     epic_id: str,
     repo_path: Path,
-    lock_manager: object | None,
+    lock_manager: LockManagerPort | None,
 ) -> AsyncIterator[bool]:
     """Acquire per-epic verification lock with automatic cleanup.
 
@@ -72,34 +72,20 @@ async def epic_verify_lock(
 
     lock_key = f"epic_verify:{epic_id}"
     lock_agent_id = f"epic_verifier_{os.getpid()}"
-    acquired = False
 
-    try:
-        from src.infra.tools.locking import wait_for_lock
-
-        acquired = await asyncio.to_thread(
-            wait_for_lock,
-            lock_key,
-            lock_agent_id,
-            str(repo_path),
-            EPIC_VERIFY_LOCK_TIMEOUT_SECONDS,
-        )
-    except ImportError:
-        acquired = True  # No locking available, proceed without lock
+    acquired = await asyncio.to_thread(
+        lock_manager.wait_for_lock,
+        lock_key,
+        lock_agent_id,
+        str(repo_path),
+        EPIC_VERIFY_LOCK_TIMEOUT_SECONDS,
+    )
 
     try:
         yield acquired
     finally:
         if acquired:
-            try:
-                from src.infra.tools.locking import get_lock_holder, lock_path
-
-                repo_ns = str(repo_path)
-                lp = lock_path(lock_key, repo_ns)
-                if lp.exists() and get_lock_holder(lock_key, repo_ns) == lock_agent_id:
-                    lp.unlink(missing_ok=True)
-            except ImportError:
-                pass
+            lock_manager.release_lock(lock_key, lock_agent_id, str(repo_path))
 
 
 def _compute_criterion_hash(criterion: str) -> str:
@@ -386,7 +372,7 @@ class EpicVerifier:
         repo_path: Path,
         command_runner: CommandRunner,
         retry_config: RetryConfig | None = None,
-        lock_manager: object | None = None,
+        lock_manager: LockManagerPort | None = None,
         event_sink: MalaEventSink | None = None,
         scope_analyzer: EpicScopeAnalyzer | None = None,
     ):

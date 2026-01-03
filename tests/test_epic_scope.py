@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.domain.epic.scope import EpicScopeAnalyzer, ScopedCommits
+from src.infra.epic_scope import EpicScopeAnalyzer, ScopedCommits
 from src.infra.tools.command_runner import CommandResult
 
 if TYPE_CHECKING:

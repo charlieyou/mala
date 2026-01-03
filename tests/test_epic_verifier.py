@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
     from src.orchestration.orchestrator import MalaOrchestrator
 
-from src.domain.epic.scope import ScopedCommits
+from src.infra.epic_scope import ScopedCommits
 from src.infra.epic_verifier import (
     ClaudeEpicVerificationModel,
     EpicVerifier,
@@ -66,14 +66,28 @@ def mock_model() -> MagicMock:
 
 
 @pytest.fixture
+def mock_command_runner() -> MagicMock:
+    """Create a mock CommandRunner."""
+    runner = MagicMock()
+    runner.run.return_value = CommandResult(
+        command=["mock"], returncode=0, stdout="", stderr=""
+    )
+    return runner
+
+
+@pytest.fixture
 def verifier(
-    tmp_path: Path, mock_beads: MagicMock, mock_model: MagicMock
+    tmp_path: Path,
+    mock_beads: MagicMock,
+    mock_model: MagicMock,
+    mock_command_runner: MagicMock,
 ) -> EpicVerifier:
     """Create an EpicVerifier with mock dependencies."""
     return EpicVerifier(
         beads=mock_beads,
         model=mock_model,
         repo_path=tmp_path,
+        command_runner=mock_command_runner,
     )
 
 
