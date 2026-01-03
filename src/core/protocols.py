@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
     from pathlib import Path
 
 
@@ -747,5 +747,82 @@ class EpicVerificationModel(Protocol):
 
         Returns:
             Structured verdict with pass/fail and unmet criteria details.
+        """
+        ...
+
+
+# =============================================================================
+# Command Runner Protocols
+# =============================================================================
+
+
+@runtime_checkable
+class CommandResultProtocol(Protocol):
+    """Protocol for command execution results.
+
+    Matches the interface of src.infra.tools.command_runner.CommandResult
+    for structural typing without import-time dependencies.
+    """
+
+    ok: bool
+    returncode: int
+    stdout: str
+    stderr: str
+    timed_out: bool
+
+
+@runtime_checkable
+class CommandRunnerPort(Protocol):
+    """Protocol for abstracting command execution.
+
+    Enables dependency injection of command runners into domain modules,
+    allowing the core layer to define the interface without depending on
+    the infrastructure implementation.
+
+    The canonical implementation is CommandRunner in
+    src/infra/tools/command_runner.py.
+    """
+
+    def run(
+        self,
+        cmd: list[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout_seconds: float | None = None,
+        capture: bool = True,
+    ) -> CommandResultProtocol:
+        """Run a command synchronously.
+
+        Args:
+            cmd: Command to run as a list of strings.
+            cwd: Working directory for command execution.
+            env: Environment variables to set.
+            timeout_seconds: Timeout for command execution.
+            capture: Whether to capture stdout/stderr.
+
+        Returns:
+            CommandResultProtocol with execution details.
+        """
+        ...
+
+    async def run_async(
+        self,
+        cmd: list[str],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout_seconds: float | None = None,
+    ) -> CommandResultProtocol:
+        """Run a command asynchronously.
+
+        Args:
+            cmd: Command to run as a list of strings.
+            cwd: Working directory for command execution.
+            env: Environment variables to set.
+            timeout_seconds: Timeout for command execution.
+
+        Returns:
+            CommandResultProtocol with execution details.
         """
         ...
