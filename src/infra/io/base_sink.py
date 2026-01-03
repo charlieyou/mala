@@ -305,14 +305,6 @@ class BaseEventSink:
     ) -> None:
         pass
 
-    def on_epic_verification_human_review(
-        self,
-        epic_id: str,
-        reason: str,
-        review_issue_id: str,
-    ) -> None:
-        pass
-
     def on_epic_remediation_created(
         self,
         epic_id: str,

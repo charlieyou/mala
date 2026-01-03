@@ -351,57 +351,6 @@ class TestRemediationIssueCreation:
 
 
 # ============================================================================
-# Test human review issue creation
-# ============================================================================
-
-
-class TestHumanReviewCreation:
-    """Tests for human review issue creation."""
-
-    @pytest.mark.asyncio
-    async def test_creates_human_review_issue(
-        self, verifier: EpicVerifier, mock_beads: MagicMock
-    ) -> None:
-        """Should create human review issue with correct format."""
-        mock_beads.create_issue_async = AsyncMock(return_value="review-1")
-
-        issue_id = await verifier.request_human_review(
-            "epic-1",
-            "Missing acceptance criteria",
-            None,
-        )
-
-        assert issue_id == "review-1"
-        mock_beads.create_issue_async.assert_called_once()
-        call_kwargs = mock_beads.create_issue_async.call_args[1]
-        assert "[Human Review]" in call_kwargs["title"]
-        assert "epic-1" in call_kwargs["title"]
-
-    @pytest.mark.asyncio
-    async def test_human_review_adds_blocker(
-        self, verifier: EpicVerifier, mock_beads: MagicMock
-    ) -> None:
-        """Should add review issue as epic blocker."""
-        mock_beads.create_issue_async = AsyncMock(return_value="review-1")
-        dep_cmds: list[list[str]] = []
-
-        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "dep" in cmd and "add" in cmd:
-                dep_cmds.append(list(cmd))
-                return CommandResult(command=cmd, returncode=0, stdout="")
-            return CommandResult(command=cmd, returncode=0, stdout="")
-
-        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
-
-        await verifier.request_human_review("epic-1", "Low confidence", None)
-
-        assert len(dep_cmds) == 1
-        assert "epic-1" in dep_cmds[0]
-        assert "--blocked-by" in dep_cmds[0]
-        assert "review-1" in dep_cmds[0]
-
-
-# ============================================================================
 # Test verify_epic
 # ============================================================================
 
@@ -601,19 +550,16 @@ class TestVerifyAndCloseEligible:
         mock_beads.close_async.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_low_confidence_triggers_review(
+    async def test_low_confidence_still_passes_if_verdict_passed(
         self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:
-        """Should create human review for low confidence verdicts."""
+        """Low confidence verdict with passed=True should still close epic."""
         mock_model.verify.return_value = EpicVerdict(
             passed=True,
             unmet_criteria=[],
-            confidence=0.3,  # Below 0.5 threshold
+            confidence=0.3,  # Low confidence no longer triggers special handling
             reasoning="Uncertain",
         )
-
-        # Mock beads.create_issue_async for human review creation
-        mock_beads.create_issue_async = AsyncMock(return_value="review-1")
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             if "epic" in cmd and "status" in cmd:
@@ -631,8 +577,10 @@ class TestVerifyAndCloseEligible:
 
         result = await verifier.verify_and_close_eligible()
 
-        assert result.human_review_count == 1
-        mock_beads.create_issue_async.assert_called()  # Human review was created
+        # Low confidence no longer triggers human review - just passes/closes
+        assert result.human_review_count == 0
+        assert result.passed_count == 1
+        mock_beads.close_async.assert_called_with("epic-1")
 
 
 # ============================================================================
@@ -1109,14 +1057,11 @@ class TestModelErrorHandling:
         assert "API connection failed" in verdict.reasoning
 
     @pytest.mark.asyncio
-    async def test_model_error_triggers_human_review_in_eligible_flow(
+    async def test_model_error_triggers_failure_in_eligible_flow(
         self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:
-        """Model errors should trigger human review in verify_and_close_eligible."""
+        """Model errors should trigger failure (not human review) in verify_and_close_eligible."""
         mock_model.verify.side_effect = TimeoutError("timeout")
-
-        # Mock beads.create_issue_async for human review creation
-        mock_beads.create_issue_async = AsyncMock(return_value="review-1")
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             if "epic" in cmd and "status" in cmd:
@@ -1134,9 +1079,10 @@ class TestModelErrorHandling:
 
         result = await verifier.verify_and_close_eligible()
 
-        # Low confidence (0.0) should trigger human review
-        assert result.human_review_count == 1
-        mock_beads.create_issue_async.assert_called()  # Human review was created
+        # Model error results in passed=False verdict, which triggers failure
+        assert result.human_review_count == 0
+        assert result.failed_count == 1
+        mock_beads.close_async.assert_not_called()
 
 
 # ============================================================================

@@ -197,12 +197,6 @@ class TestBaseEventSink:
             is None
         )
         assert (
-            sink.on_epic_verification_human_review(
-                "epic-1", "Low confidence", "issue-3"
-            )
-            is None
-        )
-        assert (
             sink.on_epic_remediation_created("epic-1", "issue-4", "Criterion text here")
             is None
         )
@@ -335,12 +329,6 @@ class TestNullEventSink:
         assert sink.on_epic_verification_passed("epic-1", 0.95) is None
         assert (
             sink.on_epic_verification_failed("epic-1", 2, ["issue-1", "issue-2"])
-            is None
-        )
-        assert (
-            sink.on_epic_verification_human_review(
-                "epic-1", "Low confidence", "issue-3"
-            )
             is None
         )
         assert (
@@ -634,21 +622,6 @@ class TestConsoleEventSink:
         first_call = mock_log.call_args_list[0]
         assert "epic-123" in first_call[0][1]
         assert "2" in first_call[0][1]
-
-    @patch("src.infra.io.console_sink.log")
-    def test_on_epic_verification_human_review_logs_reason(
-        self, mock_log: MagicMock
-    ) -> None:
-        """on_epic_verification_human_review logs reason and review issue."""
-        sink = ConsoleEventSink()
-        sink.on_epic_verification_human_review("epic-123", "Low confidence", "review-1")
-
-        # Called twice: once for main message, once for review issue
-        assert mock_log.call_count == 2
-        first_call = mock_log.call_args_list[0]
-        assert "epic-123" in first_call[0][1]
-        assert "human review" in first_call[0][1]
-        assert "Low confidence" in first_call[0][1]
 
     @patch("src.infra.io.console_sink.log")
     def test_on_epic_remediation_created_logs_criterion(

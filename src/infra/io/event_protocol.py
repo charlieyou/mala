@@ -600,21 +600,6 @@ class MalaEventSink(Protocol):
         """
         ...
 
-    def on_epic_verification_human_review(
-        self,
-        epic_id: str,
-        reason: str,
-        review_issue_id: str,
-    ) -> None:
-        """Called when epic verification requires human review.
-
-        Args:
-            epic_id: The epic requiring review.
-            reason: Why human review is needed.
-            review_issue_id: ID of the created review issue.
-        """
-        ...
-
     def on_epic_remediation_created(
         self,
         epic_id: str,

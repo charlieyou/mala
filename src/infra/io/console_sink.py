@@ -208,7 +208,12 @@ class ConsoleEventSink(BaseEventSink):
         max_attempts: int,
         issue_id: str | None = None,
     ) -> None:
-        log("→", f"GATE Retry {attempt}/{max_attempts}", agent_id=agent_id, issue_id=issue_id)
+        log(
+            "→",
+            f"GATE Retry {attempt}/{max_attempts}",
+            agent_id=agent_id,
+            issue_id=issue_id,
+        )
 
     def on_gate_result(
         self,
@@ -218,7 +223,12 @@ class ConsoleEventSink(BaseEventSink):
         issue_id: str | None = None,
     ) -> None:
         if passed:
-            log("✓", "GATE all checks passed", agent_id=agent_id or "run", issue_id=issue_id)
+            log(
+                "✓",
+                "GATE all checks passed",
+                agent_id=agent_id or "run",
+                issue_id=issue_id,
+            )
         elif failure_reasons:
             log(
                 "✗",
@@ -240,7 +250,12 @@ class ConsoleEventSink(BaseEventSink):
         max_attempts: int,
         issue_id: str | None = None,
     ) -> None:
-        log("→", f"REVIEW Attempt {attempt}/{max_attempts}", agent_id=agent_id, issue_id=issue_id)
+        log(
+            "→",
+            f"REVIEW Attempt {attempt}/{max_attempts}",
+            agent_id=agent_id,
+            issue_id=issue_id,
+        )
 
     def on_review_passed(
         self,
@@ -446,19 +461,6 @@ class ConsoleEventSink(BaseEventSink):
         )
         for issue_id in remediation_ids:
             log("→", f"  → Remediation: {issue_id}", agent_id="epic")
-
-    def on_epic_verification_human_review(
-        self,
-        epic_id: str,
-        reason: str,
-        review_issue_id: str,
-    ) -> None:
-        log(
-            "?",
-            f"VERIFY {Colors.YELLOW}{epic_id} needs human review: {reason}{Colors.RESET}",
-            agent_id="epic",
-        )
-        log("→", f"  → Review issue: {review_issue_id}", agent_id="epic")
 
     def on_epic_remediation_created(
         self,

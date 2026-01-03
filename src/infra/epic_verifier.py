@@ -12,7 +12,6 @@ Design principles:
 - Scoped commits: Only include commits linked to child issues (by bd-<id>: prefix)
 - Agent-driven exploration: Verification agent explores repo using commit list
 - Remediation issues: Auto-create with deduplication for unmet criteria
-- Human review: Flag low confidence, missing criteria, or timeout cases
 """
 
 from __future__ import annotations
@@ -51,9 +50,6 @@ SPEC_PATH_PATTERNS = [
     r"(?:^|[\s(])(specs/[\w/-]+\.(?:md|MD))(?:\s|[.,;:!?)]|$)",  # Bare "specs/foo.md" or "(specs/foo.md)"
 ]
 
-
-# Low confidence threshold for human review
-LOW_CONFIDENCE_THRESHOLD = 0.5
 
 # Lock timeout for epic verification (5 minutes)
 EPIC_VERIFY_LOCK_TIMEOUT_SECONDS = 300
@@ -702,20 +698,15 @@ class EpicVerifier:
                         reasoning="Human override - bypassed verification",
                     )
                 else:
-                    human_review_count = 1
-                    reason = "Human override close failed - epic could not be closed"
-                    review_id = await self.request_human_review(epic_id, reason, None)
-                    remediation_issues.append(review_id)
+                    failed_count = 1
                     verdicts[epic_id] = EpicVerdict(
                         passed=False,
                         unmet_criteria=[],
                         confidence=0.0,
-                        reasoning=reason,
+                        reasoning="Human override close failed - epic could not be closed",
                     )
                     if self.event_sink is not None:
-                        self.event_sink.on_epic_verification_human_review(
-                            epic_id, reason, review_id
-                        )
+                        self.event_sink.on_epic_verification_failed(epic_id, 0, [])
             else:
                 verdicts[epic_id] = EpicVerdict(
                     passed=True,
@@ -754,67 +745,47 @@ class EpicVerifier:
             verdicts[epic_id] = verdict
             verified_count = 1
 
-            if verdict.confidence < LOW_CONFIDENCE_THRESHOLD:
-                reason = f"Low confidence ({verdict.confidence:.2f})"
-                review_id = await self.request_human_review(
-                    epic_id,
-                    reason,
-                    verdict,
-                )
-                remediation_issues.append(review_id)
-                human_review_count = 1
+            # Create remediation/advisory issues for any unmet criteria
+            blocking_ids: list[str] = []
+            informational_ids: list[str] = []
+            if verdict.unmet_criteria:
+                (
+                    blocking_ids,
+                    informational_ids,
+                ) = await self.create_remediation_issues(epic_id, verdict, context)
+                remediation_issues.extend(blocking_ids)
+                remediation_issues.extend(informational_ids)
+
+            # Epic fails if: has P0/P1 blocking issues OR model explicitly said passed=false
+            if blocking_ids or not verdict.passed:
+                if blocking_ids:
+                    await self.add_epic_blockers(epic_id, blocking_ids)
+                failed_count = 1
                 if self.event_sink is not None:
-                    self.event_sink.on_epic_verification_human_review(
-                        epic_id, reason, review_id
+                    self.event_sink.on_epic_verification_failed(
+                        epic_id, len(blocking_ids), blocking_ids
                     )
             else:
-                # Create remediation/advisory issues for any unmet criteria
-                blocking_ids: list[str] = []
-                informational_ids: list[str] = []
-                if verdict.unmet_criteria:
-                    (
-                        blocking_ids,
-                        informational_ids,
-                    ) = await self.create_remediation_issues(epic_id, verdict, context)
-                    remediation_issues.extend(blocking_ids)
-                    remediation_issues.extend(informational_ids)
-
-                # Epic fails if: has P0/P1 blocking issues OR model explicitly said passed=false
-                if blocking_ids or not verdict.passed:
-                    if blocking_ids:
-                        await self.add_epic_blockers(epic_id, blocking_ids)
-                    failed_count = 1
-                    if self.event_sink is not None:
-                        self.event_sink.on_epic_verification_failed(
-                            epic_id, len(blocking_ids), blocking_ids
-                        )
-                else:
-                    # No blocking issues and verdict.passed=True - close epic if requested (may have P2/P3 advisories)
-                    if close_epic:
-                        closed = await self.beads.close_async(epic_id)
-                        if closed:
-                            passed_count = 1
-                            if self.event_sink is not None:
-                                self.event_sink.on_epic_verification_passed(
-                                    epic_id, verdict.confidence
-                                )
-                        else:
-                            human_review_count = 1
-                            reason = "Verification passed but epic close failed"
-                            review_id = await self.request_human_review(
-                                epic_id, reason, verdict
-                            )
-                            remediation_issues.append(review_id)
-                            if self.event_sink is not None:
-                                self.event_sink.on_epic_verification_human_review(
-                                    epic_id, reason, review_id
-                                )
-                    else:
+                # No blocking issues and verdict.passed=True - close epic if requested (may have P2/P3 advisories)
+                if close_epic:
+                    closed = await self.beads.close_async(epic_id)
+                    if closed:
                         passed_count = 1
                         if self.event_sink is not None:
                             self.event_sink.on_epic_verification_passed(
                                 epic_id, verdict.confidence
                             )
+                    else:
+                        # Close failed - treat as verification failure
+                        failed_count = 1
+                        if self.event_sink is not None:
+                            self.event_sink.on_epic_verification_failed(epic_id, 0, [])
+                else:
+                    passed_count = 1
+                    if self.event_sink is not None:
+                        self.event_sink.on_epic_verification_passed(
+                            epic_id, verdict.confidence
+                        )
         return EpicVerificationResult(
             verified_count=verified_count,
             passed_count=passed_count,
@@ -976,53 +947,3 @@ This issue was auto-created by epic verification for epic `{epic_id}`.
             await self._runner.run_async(
                 ["bd", "dep", "add", epic_id, "--blocked-by", blocker_id]
             )
-
-    async def request_human_review(
-        self, epic_id: str, reason: str, verdict: EpicVerdict | None = None
-    ) -> str:
-        """Create a human review issue that blocks the epic.
-
-        Args:
-            epic_id: The epic requiring review.
-            reason: Why human review is needed.
-            verdict: Optional verdict details.
-
-        Returns:
-            Issue ID of the created review request.
-        """
-        title = f"[Human Review] Epic {epic_id} requires manual verification"
-
-        description = f"""## Context
-This epic has been flagged for human review.
-
-## Reason
-{reason}
-
-## Epic ID
-{epic_id}
-"""
-        if verdict:
-            description += f"""
-## Verification Details
-- Confidence: {verdict.confidence:.2f}
-- Reasoning: {verdict.reasoning}
-"""
-
-        description += f"""
-## Resolution
-Review the epic and its child issues manually. When satisfied, close this issue
-to unblock the epic, or use `--epic-override {epic_id}` to force closure.
-"""
-
-        issue_id = await self.beads.create_issue_async(
-            title=title,
-            description=description,
-            priority="P1",
-            tags=["epic_human_review", f"epic_id:{epic_id}"],
-            parent_id=epic_id,
-        )
-
-        if issue_id:
-            await self.add_epic_blockers(epic_id, [issue_id])
-
-        return issue_id or ""

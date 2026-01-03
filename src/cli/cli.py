@@ -842,10 +842,6 @@ def epic_verify(
         log("✗", f"Epic {epic_id} failed verification", Colors.RED)
         raise typer.Exit(1)
 
-    if result.human_review_count > 0:
-        log("⚠", f"Epic {epic_id} requires human review", Colors.YELLOW)
-        raise typer.Exit(1)
-
     if close:
         log("✓", f"Epic {epic_id} verified and closed", Colors.GREEN)
     else:
