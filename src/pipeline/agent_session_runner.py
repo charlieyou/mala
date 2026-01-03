@@ -1903,18 +1903,19 @@ class AgentSessionRunner:
 
         while True:
             # Create fresh lifecycle for each iteration
-            session_cfg, state = self._initialize_session(
-                AgentSessionInput(
-                    issue_id=input.issue_id,
-                    prompt=current_prompt,
-                    baseline_commit=input.baseline_commit,
-                    issue_description=input.issue_description,
-                )
+            session_input = AgentSessionInput(
+                issue_id=input.issue_id,
+                prompt=current_prompt,
+                baseline_commit=input.baseline_commit,
+                issue_description=input.issue_description,
             )
+            session_cfg, state = self._initialize_session(session_input)
 
             try:
                 async with asyncio.timeout(self.config.timeout_seconds):
-                    await self._run_lifecycle_loop(input, session_cfg, state, tracer)
+                    await self._run_lifecycle_loop(
+                        session_input, session_cfg, state, tracer
+                    )
                 # Normal completion - exit loop
                 break
             except ContextPressureError as e:
