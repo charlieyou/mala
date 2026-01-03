@@ -3,7 +3,6 @@
 import json
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -158,10 +157,10 @@ class TestE2ERunnerRun:
         """E2E should pass without MORPH_API_KEY - it's optional."""
         runner = E2ERunner()
 
-        def mock_run_command(
-            cmd: list[str], cwd: Path, **kwargs: object
+        def mock_runner_run(
+            cmd: list[str], cwd: Path | None = None, **kwargs: object
         ) -> CommandResult:
-            """Mock run_command for fixture setup commands (git, bd)."""
+            """Mock CommandRunner.run for fixture setup commands (git, bd)."""
             return CommandResult(
                 command=cmd,
                 returncode=0,
@@ -172,8 +171,8 @@ class TestE2ERunnerRun:
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
             patch(
-                "src.domain.validation.helpers.run_command",
-                side_effect=mock_run_command,
+                "src.infra.tools.command_runner.CommandRunner.run",
+                side_effect=mock_runner_run,
             ),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
@@ -207,7 +206,7 @@ class TestE2ERunnerRun:
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
             patch(
-                "src.domain.validation.helpers.run_command",
+                "src.infra.tools.command_runner.CommandRunner.run",
                 return_value=mock_run_result,
             ),
             patch("tempfile.mkdtemp", return_value="/tmp/test-fixture"),
@@ -224,8 +223,8 @@ class TestE2ERunnerRun:
         config = E2EConfig(keep_fixture=False)
         runner = E2ERunner(config)
 
-        def mock_run_command(
-            cmd: list[str], cwd: Path, **kwargs: object
+        def mock_runner_run(
+            cmd: list[str], cwd: Path | None = None, **kwargs: object
         ) -> CommandResult:
             # Return success for all commands
             return CommandResult(
@@ -238,8 +237,8 @@ class TestE2ERunnerRun:
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
             patch(
-                "src.domain.validation.helpers.run_command",
-                side_effect=mock_run_command,
+                "src.infra.tools.command_runner.CommandRunner.run",
+                side_effect=mock_runner_run,
             ),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
@@ -261,16 +260,16 @@ class TestE2ERunnerRun:
         def mock_rmtree(*args: object, **kwargs: object) -> None:
             cleanup_called["value"] = True
 
-        def mock_run_command(
-            cmd: list[str], cwd: Path, **kwargs: object
+        def mock_runner_run(
+            cmd: list[str], cwd: Path | None = None, **kwargs: object
         ) -> CommandResult:
             return CommandResult(command=cmd, returncode=0, stdout="", stderr="")
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
             patch(
-                "src.domain.validation.helpers.run_command",
-                side_effect=mock_run_command,
+                "src.infra.tools.command_runner.CommandRunner.run",
+                side_effect=mock_runner_run,
             ),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree", side_effect=mock_rmtree),
@@ -285,16 +284,16 @@ class TestE2ERunnerRun:
         config = E2EConfig(keep_fixture=True)
         runner = E2ERunner(config)
 
-        def mock_run_command(
-            cmd: list[str], cwd: Path, **kwargs: object
+        def mock_runner_run(
+            cmd: list[str], cwd: Path | None = None, **kwargs: object
         ) -> CommandResult:
             return CommandResult(command=cmd, returncode=0, stdout="", stderr="")
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
             patch(
-                "src.domain.validation.helpers.run_command",
-                side_effect=mock_run_command,
+                "src.infra.tools.command_runner.CommandRunner.run",
+                side_effect=mock_runner_run,
             ),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree") as mock_rmtree,
@@ -312,48 +311,33 @@ class TestE2ERunnerRun:
         config = E2EConfig(timeout_seconds=1.0)
         runner = E2ERunner(config)
 
-        def mock_run_command(
-            cmd: list[str], cwd: Path, **kwargs: object
+        call_count = {"value": 0}
+
+        def mock_runner_run(
+            cmd: list[str], cwd: Path | None = None, **kwargs: object
         ) -> CommandResult:
-            """Mock run_command for fixture setup commands (git, bd)."""
-            return CommandResult(command=cmd, returncode=0, stdout="", stderr="")
-
-        def mock_popen(*args: object, **kwargs: object) -> MagicMock:
-            """Mock subprocess.Popen for CommandRunner (mala command)."""
-            cmd: list[str] = list(args[0]) if args else []  # type: ignore[arg-type]
-            mock_proc = MagicMock()
-            mock_proc.pid = 12345
-            call_count = {"value": 0}
-
-            def communicate_timeout(timeout: float | None = None) -> tuple[str, str]:
-                call_count["value"] += 1
-                # Only timeout on first call (main command); subsequent calls are
-                # during cleanup/termination and should return output
-                if call_count["value"] == 1:
-                    exc = subprocess.TimeoutExpired(cmd=cmd, timeout=1.0)
-                    exc.stdout = b"partial output"
-                    exc.stderr = b""
-                    raise exc
-                return ("partial output", "")
-
-            mock_proc.communicate = communicate_timeout
-            return mock_proc
+            """Mock CommandRunner.run - succeed for fixture setup, timeout for mala."""
+            call_count["value"] += 1
+            # Fixture setup commands (git, bd) succeed
+            if any(x in cmd for x in ["git", "bd"]):
+                return CommandResult(command=cmd, returncode=0, stdout="", stderr="")
+            # mala command times out
+            return CommandResult(
+                command=cmd,
+                returncode=124,
+                stdout="partial output",
+                stderr="",
+                timed_out=True,
+            )
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
             patch(
-                "src.domain.validation.helpers.run_command",
-                side_effect=mock_run_command,
-            ),
-            patch(
-                "src.infra.tools.command_runner.subprocess.Popen",
-                side_effect=mock_popen,
+                "src.infra.tools.command_runner.CommandRunner.run",
+                side_effect=mock_runner_run,
             ),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
-            patch(
-                "src.infra.tools.command_runner.os.killpg"
-            ),  # Mock process group kill
         ):
             (tmp_path / "fixture").mkdir()
             (tmp_path / "fixture" / "tests").mkdir()
@@ -520,7 +504,7 @@ class TestInitFixtureRepo:
     def test_returns_none_on_success(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
         with patch(
-            "src.domain.validation.helpers.run_command", return_value=mock_result
+            "src.infra.tools.command_runner.CommandRunner.run", return_value=mock_result
         ):
             result = init_fixture_repo(tmp_path)
             assert result is None
@@ -530,7 +514,7 @@ class TestInitFixtureRepo:
             command=[], returncode=1, stdout="", stderr="git init failed"
         )
         with patch(
-            "src.domain.validation.helpers.run_command", return_value=mock_result
+            "src.infra.tools.command_runner.CommandRunner.run", return_value=mock_result
         ):
             result = init_fixture_repo(tmp_path)
             assert result is not None
@@ -548,7 +532,7 @@ class TestGetReadyIssueId:
             stderr="",
         )
         with patch(
-            "src.domain.validation.helpers.run_command", return_value=mock_result
+            "src.infra.tools.command_runner.CommandRunner.run", return_value=mock_result
         ):
             result = get_ready_issue_id(tmp_path)
             assert result == "test-123"
@@ -556,7 +540,7 @@ class TestGetReadyIssueId:
     def test_returns_none_on_failure(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=1, stdout="", stderr="")
         with patch(
-            "src.domain.validation.helpers.run_command", return_value=mock_result
+            "src.infra.tools.command_runner.CommandRunner.run", return_value=mock_result
         ):
             result = get_ready_issue_id(tmp_path)
             assert result is None
@@ -566,7 +550,7 @@ class TestGetReadyIssueId:
             command=[], returncode=0, stdout="not json", stderr=""
         )
         with patch(
-            "src.domain.validation.helpers.run_command", return_value=mock_result
+            "src.infra.tools.command_runner.CommandRunner.run", return_value=mock_result
         ):
             result = get_ready_issue_id(tmp_path)
             assert result is None
@@ -574,7 +558,7 @@ class TestGetReadyIssueId:
     def test_returns_none_on_empty_list(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="[]", stderr="")
         with patch(
-            "src.domain.validation.helpers.run_command", return_value=mock_result
+            "src.infra.tools.command_runner.CommandRunner.run", return_value=mock_result
         ):
             result = get_ready_issue_id(tmp_path)
             assert result is None
@@ -586,7 +570,7 @@ class TestAnnotateIssue:
     def test_calls_bd_update(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
         mock_run = MagicMock(return_value=mock_result)
-        with patch("src.domain.validation.helpers.run_command", mock_run):
+        with patch("src.infra.tools.command_runner.CommandRunner.run", mock_run):
             annotate_issue(tmp_path, "test-123")
 
             mock_run.assert_called_once()

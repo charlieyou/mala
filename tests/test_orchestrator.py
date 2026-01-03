@@ -1151,7 +1151,7 @@ class TestQualityGateCommitCheck:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.domain.quality_gate.run_command") as mock_run:
+        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(
                 stdout="abc1234 bd-issue-123: Fix the bug\n"
             )
@@ -1166,7 +1166,7 @@ class TestQualityGateCommitCheck:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.domain.quality_gate.run_command") as mock_run:
+        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(stdout="")
             result = gate.check_commit_exists("issue-123")
 
@@ -1179,7 +1179,7 @@ class TestQualityGateCommitCheck:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.domain.quality_gate.run_command") as mock_run:
+        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(
                 returncode=1, stderr="fatal: not a git repository"
             )
@@ -1193,7 +1193,7 @@ class TestQualityGateCommitCheck:
 
         gate = QualityGate(tmp_path)
 
-        with patch("src.domain.quality_gate.run_command") as mock_run:
+        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(
                 stdout="abc1234 bd-issue-123: Long-running work\n"
             )
@@ -1251,7 +1251,7 @@ class TestQualityGateFullCheck:
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.domain.quality_gate.run_command") as mock_run:
+        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(
                 stdout="abc1234 bd-issue-123: Implement feature\n"
             )
@@ -1292,7 +1292,7 @@ class TestQualityGateFullCheck:
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.domain.quality_gate.run_command") as mock_run:
+        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(stdout="")
             result = gate.check_with_resolution("issue-123", log_path, spec=spec)
 
@@ -1331,7 +1331,7 @@ class TestQualityGateFullCheck:
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.domain.quality_gate.run_command") as mock_run:
+        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(stdout="")
             result = gate.check_with_resolution("issue-123", log_path, spec=spec)
 
@@ -1354,7 +1354,7 @@ class TestQualityGateFullCheck:
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
-        with patch("src.domain.quality_gate.run_command") as mock_run:
+        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(
                 stdout="abc1234 bd-issue-123: Implement feature\n"
             )
