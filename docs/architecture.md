@@ -268,7 +268,7 @@ External integrations and utilities.
 | Subpackage | Purpose |
 |------------|---------|
 | `clients/` | SDK wrappers (Anthropic, Braintrust, Beads, Cerberus) |
-| `io/` | Config loading, event sink, console output, log parsing |
+| `io/` | Config loading, event sink (base_sink, console_sink), log parsing |
 | `tools/` | Command runner, file locking, environment helpers |
 | `hooks/` | Agent hooks (lint cache, file cache, lock enforcement) |
 
@@ -288,6 +288,10 @@ Pipeline components for running agent sessions.
 | `gate_runner.py` | Quality gate execution |
 | `review_runner.py` | External code review via Cerberus |
 | `run_coordinator.py` | Run-level validation and fixer agent |
+| `issue_execution_coordinator.py` | Per-issue pipeline: session → gate → review |
+| `issue_finalizer.py` | Issue close/mark-needs-followup logic |
+| `session_callback_factory.py` | SDK session callback construction |
+| `epic_verification_coordinator.py` | Epic verification pipeline |
 
 ### `src/orchestration` — Coordination
 
@@ -532,7 +536,7 @@ Key directories:
 | Integration | `@pytest.mark.integration` | Multi-component tests |
 | E2E | `@pytest.mark.e2e` | Full CLI + agent tests |
 
-Coverage threshold: 85% (enforced via the validation pipeline, not default pytest runs)
+Coverage threshold: 72% (enforced via `--cov-fail-under=72`)
 
 ## Notes on Naming
 

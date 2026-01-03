@@ -7,14 +7,14 @@ The validation module (`src/domain/validation/`) provides structured validation 
 After an agent completes an issue, the orchestrator runs a quality gate that verifies:
 
 1. **Commit exists**: A git commit with `bd-<issue_id>` in the message, created during the current run (stale commits from previous runs are rejected via baseline timestamp)
-2. **Validation evidence**: The agent ran ALL required checks (parsed from JSONL logs):
+2. **Validation evidence**: The agent ran ALL required checks defined in `mala.yaml` (parsed from JSONL logs). For Python projects using `preset: python-uv`:
    - `pytest` - tests
    - `ruff check` - linting
    - `ruff format` - formatting
    - `ty check` - type checking
 3. **Commands succeeded**: All validation commands must exit with zero status (non-zero exits fail the gate)
 
-All validation commands must run AND pass for the gate to pass. Partial validation (e.g., only tests) is rejected. The required commands are spec-driven via `ValidationSpec`.
+All validation commands must run AND pass for the gate to pass. Partial validation (e.g., only tests) is rejected. The required commands are spec-driven via `ValidationSpec` built from `mala.yaml`.
 
 ### Same-Session Re-entry
 
@@ -155,11 +155,11 @@ Clean-room validation runs in isolated git worktrees:
 
 ## Parallel Validation
 
-Agents run validation commands in parallel using **isolated cache directories** to prevent conflicts:
+Agents run validation commands in parallel using **isolated cache directories** to prevent conflicts. For `preset: python-uv`:
 
 ```bash
 pytest -o cache_dir=/tmp/pytest-$AGENT_ID        # Isolated pytest cache
-ruff check . --cache-dir=/tmp/ruff-$AGENT_ID     # Isolated ruff cache
+ruff check . --cache-dir=/tmp/ruff-$AGENT_ID     # Isolated ruff cache (via RUFF_CACHE_DIR)
 ruff format .                                     # No cache conflicts
 ty check                                          # Type check (read-only)
 uv sync                                           # Has internal locking

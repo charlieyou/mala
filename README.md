@@ -150,7 +150,8 @@ See `commands/bd-breakdown.md` for the full issue creation workflow.
 ## Documentation
 
 - [Architecture](docs/architecture.md) — Layered architecture, module responsibilities, key flows
-- [Configuration](docs/configuration.md) — CLI options, environment variables, integrations
+- [CLI Reference](docs/cli-reference.md) — CLI options, environment variables, integrations
+- [Project Configuration](docs/project-config.md) — mala.yaml schema, presets, coverage settings
 - [Validation](docs/validation.md) — Quality gate, external review, run-level validation
 - [Development](docs/development.md) — Type checking, testing, package structure
 - `plans/` — Historical design documents (not actively maintained)

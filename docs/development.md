@@ -14,7 +14,7 @@ All ty rules are set to `error` level in `pyproject.toml` for maximum strictness
 
 ## Test Coverage
 
-Tests require 85% minimum coverage (enforced at quality gate, not during default test runs):
+Tests require 72% minimum coverage (enforced via `--cov-fail-under=72`):
 
 ```bash
 uv run pytest                              # Unit + integration tests (default, excludes e2e, no coverage)
@@ -24,7 +24,7 @@ uv run pytest -m e2e                       # End-to-end tests (requires CLI auth
 uv run pytest -m "unit or integration or e2e"  # All tests
 uv run pytest --reruns 2                   # Auto-retry flaky tests (2 retries)
 uv run pytest -m integration -n auto --reruns 2   # Parallel + auto-retry
-uv run pytest --cov=src --cov-fail-under=85       # Manual coverage check
+uv run pytest --cov=src --cov-fail-under=72       # Manual coverage check
 ```
 
 - **Parallel execution**: Use `-n auto` for parallel test runs (pytest-xdist)
@@ -39,10 +39,10 @@ The codebase is organized into layered packages with enforced import boundaries 
 ```
 src/
 ├── core/           # Models, protocols, log events (no internal dependencies)
-├── domain/         # Business logic: lifecycle, quality_gate, validation
+├── domain/         # Business logic: lifecycle, quality_gate, validation, prompts
 ├── infra/          # Infrastructure: clients/, io/, tools/, hooks/
-├── orchestration/  # Orchestrator and CLI support
-├── pipeline/       # Agent session pipeline
+├── pipeline/       # Agent session pipeline, gate/review runners, run coordinator
+├── orchestration/  # Orchestrator, factory, CLI support
 ├── cli/            # CLI entry point
 ├── prompts/        # Prompt templates
 └── scripts/        # Utility scripts
@@ -52,8 +52,8 @@ src/
 - `core` → (none)
 - `domain` → `core`
 - `infra` → `core`
-- `orchestration` → `core`, `domain`, `infra`
 - `pipeline` → `core`, `domain`, `infra`
+- `orchestration` → `core`, `domain`, `infra`, `pipeline`
 - `cli` → all layers
 
 For detailed architecture documentation, see [architecture.md](architecture.md).

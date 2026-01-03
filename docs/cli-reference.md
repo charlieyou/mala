@@ -11,14 +11,16 @@
 | `--max-issues`, `-i` | unlimited | Maximum total issues to process |
 | `--epic`, `-e` | - | Only process tasks that are children of this epic |
 | `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
+| `--orphans-only` | false | Only process issues with no parent epic (standalone/orphan issues) |
 | `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
 | `--max-review-retries` | 3 | Maximum external review retry attempts per issue |
-| `--review-timeout` | 1200 | Timeout in seconds for Cerberus review operations |
+| `--max-epic-verification-retries` | 3 | Maximum retries for epic verification loop |
+| `--review-timeout` | 1200 | Timeout in seconds for review operations |
 | `--cerberus-spawn-args` | - | Extra args appended to `review-gate spawn-code-review` |
 | `--cerberus-wait-args` | - | Extra args appended to `review-gate wait` |
 | `--cerberus-env` | - | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
 | `--disable-validations` | - | Comma-separated list (see below) |
-| `--coverage-threshold` | 85 | Minimum coverage percentage (0-100); if not set, uses 'no decrease' mode |
+| `--coverage-threshold` | - | Minimum coverage percentage (0-100); if not set, uses 'no decrease' mode |
 | `--wip` | false | Prioritize in_progress issues before open issues |
 | `--focus/--no-focus` | focus | Group tasks by epic for focused work; `--no-focus` uses priority-only ordering |
 | `--dry-run` | false | Preview task order without processing |
