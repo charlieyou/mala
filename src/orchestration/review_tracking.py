@@ -83,7 +83,8 @@ def _extract_existing_fingerprints(description: str) -> set[str]:
     We use a hex hash to avoid issues with special characters in titles.
 
     Also supports legacy format <!-- fp:file:line:line:title --> for backwards
-    compatibility with existing tracking issues.
+    compatibility with existing tracking issues. Legacy fingerprints are hashed
+    to match the format used by _get_finding_fingerprint.
     """
     # Match new hex-only format (16 hex chars)
     hex_pattern = r"<!-- fp:([a-f0-9]{16}) -->"
@@ -92,9 +93,13 @@ def _extract_existing_fingerprints(description: str) -> set[str]:
     # Match legacy format (file:line:line:title) for backwards compatibility
     # Legacy fingerprints contain colons and non-hex characters
     legacy_pattern = r"<!-- fp:([^>]+:[^>]+) -->"
-    legacy_matches = set(re.findall(legacy_pattern, description))
+    legacy_matches = re.findall(legacy_pattern, description)
+    # Hash legacy fingerprints to match the format used by _get_finding_fingerprint
+    legacy_hashes = {
+        hashlib.sha256(m.encode()).hexdigest()[:16] for m in legacy_matches
+    }
 
-    return hex_matches | legacy_matches
+    return hex_matches | legacy_hashes
 
 
 def _update_header_count(description: str, new_count: int) -> str:

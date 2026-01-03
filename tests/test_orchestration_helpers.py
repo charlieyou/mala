@@ -422,15 +422,16 @@ Some content here.
         assert result == set()
 
     def test_extracts_legacy_fingerprints(self) -> None:
-        """Should extract legacy format fingerprints for backwards compatibility."""
+        """Should extract legacy format fingerprints as hashed values."""
         description = """
 <!-- fp:abc123def456789a -->
 <!-- fp:file.py:10:20:title -->
 <!-- not a fingerprint -->
 """
         result = _extract_existing_fingerprints(description)
-        # Both hex and legacy fingerprints should match
-        assert result == {"abc123def456789a", "file.py:10:20:title"}
+        # Hex fingerprints returned as-is, legacy fingerprints are hashed
+        # hash of "file.py:10:20:title" = 1b405df404ffe502
+        assert result == {"abc123def456789a", "1b405df404ffe502"}
 
     def test_ignores_arrow_in_content(self) -> None:
         """Should not be confused by --> appearing in content."""
