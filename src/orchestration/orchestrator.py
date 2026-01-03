@@ -21,10 +21,8 @@ from src.infra.git_utils import (
 from src.infra.clients.cerberus_review import DefaultReviewer
 from src.infra.io.log_output.console import (
     is_verbose_enabled,
-    truncate_text,
 )
 from src.infra.io.log_output.run_metadata import (
-    IssueRun,
     remove_run_marker,
     write_run_marker,
 )
@@ -48,6 +46,12 @@ from src.pipeline.gate_runner import (
     GateRunnerConfig,
     PerIssueGateInput,
 )
+from src.pipeline.issue_finalizer import (
+    IssueFinalizeCallbacks,
+    IssueFinalizeConfig,
+    IssueFinalizeInput,
+    IssueFinalizer,
+)
 from src.pipeline.review_runner import (
     NoProgressInput,
     ReviewInput,
@@ -62,11 +66,6 @@ from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
     RunLevelValidationInput,
-)
-from src.orchestration.gate_metadata import (
-    GateMetadata,
-    build_gate_metadata,
-    build_gate_metadata_from_logs,
 )
 from src.orchestration.issue_result import IssueResult
 from src.orchestration.prompts import get_implementer_prompt
@@ -268,6 +267,55 @@ class MalaOrchestrator:
             beads=self.beads,
             event_sink=self.event_sink,
             config=coordinator_config,
+        )
+
+        # IssueFinalizer
+        finalizer_config = IssueFinalizeConfig(
+            track_review_issues=self._mala_config.track_review_issues,
+        )
+        self.issue_finalizer = IssueFinalizer(
+            config=finalizer_config,
+            callbacks=self._create_finalizer_callbacks(),
+            quality_gate=self.quality_gate,
+            per_issue_spec=None,  # Set later when spec is built
+        )
+
+    def _create_finalizer_callbacks(self) -> IssueFinalizeCallbacks:
+        """Create callbacks for IssueFinalizer.
+
+        Uses lambdas to defer method resolution, allowing tests to patch
+        self.beads and self.event_sink after orchestrator construction.
+        """
+        return IssueFinalizeCallbacks(
+            close_issue=lambda issue_id: self.beads.close_async(issue_id),
+            mark_needs_followup=lambda issue_id, summary, log_path: (
+                self.beads.mark_needs_followup_async(
+                    issue_id, summary, log_path=log_path
+                )
+            ),
+            on_issue_closed=lambda agent_id, issue_id: self.event_sink.on_issue_closed(
+                agent_id, issue_id
+            ),
+            on_issue_completed=lambda agent_id, issue_id, success, duration, summary: (
+                self.event_sink.on_issue_completed(
+                    agent_id, issue_id, success, duration, summary
+                )
+            ),
+            trigger_epic_closure=self._check_epic_closure,
+            create_tracking_issues=self._create_review_tracking_issues,
+        )
+
+    async def _create_review_tracking_issues(
+        self,
+        issue_id: str,
+        review_issues: list,
+    ) -> None:
+        """Create tracking issues for P2/P3 review findings."""
+        await create_review_tracking_issues(
+            self.beads,
+            self.event_sink,
+            issue_id,
+            review_issues,
         )
 
     # Backward compatibility: expose _config as alias for _mala_config
@@ -557,40 +605,6 @@ class MalaOrchestrator:
             # Mark as completed in the coordinator
             self.issue_coordinator.mark_completed(issue_id)
 
-    def _record_issue_run(
-        self,
-        issue_id: str,
-        result: IssueResult,
-        log_path: Path | None,
-        gate_metadata: GateMetadata,
-        run_metadata: RunMetadata,
-    ) -> None:
-        """Record an issue run to the run metadata.
-
-        Args:
-            issue_id: The issue ID.
-            result: The issue result.
-            log_path: Path to the session log (if any).
-            gate_metadata: Extracted gate metadata.
-            run_metadata: The run metadata to record to.
-        """
-        issue_run = IssueRun(
-            issue_id=result.issue_id,
-            agent_id=result.agent_id,
-            status="success" if result.success else "failed",
-            duration_seconds=result.duration_seconds,
-            session_id=result.session_id,
-            log_path=str(log_path) if log_path else None,
-            quality_gate=gate_metadata.quality_gate_result,
-            error=result.summary if not result.success else None,
-            gate_attempts=result.gate_attempts,
-            review_attempts=result.review_attempts,
-            validation=gate_metadata.validation_result,
-            resolution=result.resolution,
-            review_log_path=self.review_log_paths.get(issue_id),
-        )
-        run_metadata.record_issue(issue_run)
-
     def _cleanup_session_paths(self, issue_id: str) -> None:
         """Remove stored session and review log paths for an issue.
 
@@ -600,32 +614,6 @@ class MalaOrchestrator:
         self.session_log_paths.pop(issue_id, None)
         self.review_log_paths.pop(issue_id, None)
 
-    async def _emit_completion(
-        self,
-        issue_id: str,
-        result: IssueResult,
-        log_path: Path | None,
-    ) -> None:
-        """Emit completion event and handle failure tracking.
-
-        Args:
-            issue_id: The issue ID.
-            result: The issue result.
-            log_path: Path to the session log (if any).
-        """
-        self.event_sink.on_issue_completed(
-            issue_id,
-            issue_id,
-            result.success,
-            result.duration_seconds,
-            truncate_text(result.summary, 50) if result.success else result.summary,
-        )
-        if not result.success:
-            self.failed_issues.add(issue_id)
-            await self.beads.mark_needs_followup_async(
-                issue_id, result.summary, log_path=log_path
-            )
-
     async def _finalize_issue_result(
         self,
         issue_id: str,
@@ -634,6 +622,7 @@ class MalaOrchestrator:
     ) -> None:
         """Record an issue result, update metadata, and emit logs.
 
+        Delegates to IssueFinalizer for the core finalization logic.
         Uses stored gate result to derive metadata, avoiding duplicate
         validation parsing. Gate result includes validation_evidence
         already parsed during quality gate check.
@@ -641,41 +630,31 @@ class MalaOrchestrator:
         log_path = self.session_log_paths.get(issue_id)
         stored_gate_result = self.last_gate_results.get(issue_id)
 
-        # Build gate metadata from stored result or logs
-        if stored_gate_result is not None:
-            gate_metadata = build_gate_metadata(stored_gate_result, result.success)
-        elif not result.success and log_path and log_path.exists():
-            gate_metadata = build_gate_metadata_from_logs(
-                log_path,
-                result.summary,
-                result.success,
-                self.quality_gate,
-                self.per_issue_spec,
-            )
-        else:
-            gate_metadata = GateMetadata()
+        # Update finalizer's per_issue_spec if it has changed
+        self.issue_finalizer.per_issue_spec = self.per_issue_spec
 
-        # Handle successful issue closure and epic verification
-        if result.success and await self.beads.close_async(issue_id):
-            self.event_sink.on_issue_closed(issue_id, issue_id)
-            await self._check_epic_closure(issue_id, run_metadata)
+        # Build finalization input
+        finalize_input = IssueFinalizeInput(
+            issue_id=issue_id,
+            result=result,
+            run_metadata=run_metadata,
+            log_path=log_path,
+            stored_gate_result=stored_gate_result,
+            review_log_path=self.review_log_paths.get(issue_id),
+        )
 
-            # Create tracking issues for P2/P3 review findings (if enabled)
-            if self._config.track_review_issues and result.low_priority_review_issues:
-                await create_review_tracking_issues(
-                    self.beads,
-                    self.event_sink,
-                    issue_id,
-                    result.low_priority_review_issues,
-                )
+        # Delegate to finalizer
+        await self.issue_finalizer.finalize(finalize_input)
 
         # Update tracking state (active_tasks is updated by mark_completed in finalize_callback)
         self.completed.append(result)
 
-        # Record to run metadata and cleanup
-        self._record_issue_run(issue_id, result, log_path, gate_metadata, run_metadata)
+        # Track failed issues
+        if not result.success:
+            self.failed_issues.add(issue_id)
+
+        # Cleanup session paths
         self._cleanup_session_paths(issue_id)
-        await self._emit_completion(issue_id, result, log_path)
 
     async def _abort_active_tasks(self, run_metadata: RunMetadata) -> None:
         """Cancel active tasks and mark them as failed.

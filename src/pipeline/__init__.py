@@ -30,6 +30,13 @@ from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
 )
+from src.pipeline.issue_finalizer import (
+    IssueFinalizeCallbacks,
+    IssueFinalizeConfig,
+    IssueFinalizeInput,
+    IssueFinalizeOutput,
+    IssueFinalizer,
+)
 from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
@@ -47,6 +54,11 @@ __all__ = [
     "GateRunner",
     "GateRunnerConfig",
     "IssueExecutionCoordinator",
+    "IssueFinalizeCallbacks",
+    "IssueFinalizeConfig",
+    "IssueFinalizeInput",
+    "IssueFinalizeOutput",
+    "IssueFinalizer",
     "PerIssueGateInput",
     "PerIssueGateOutput",
     "RunCoordinator",
