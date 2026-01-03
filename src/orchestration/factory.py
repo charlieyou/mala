@@ -251,6 +251,7 @@ def _build_dependencies(
                 spawn_args=mala_config.cerberus_spawn_args,
                 wait_args=mala_config.cerberus_wait_args,
                 env=dict(mala_config.cerberus_env),
+                event_sink=event_sink,
             ),
         )
 
