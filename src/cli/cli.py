@@ -15,9 +15,12 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
+
+if TYPE_CHECKING:
+    from src.infra.io.config import MalaConfig, ResolvedConfig
 
 # Bootstrap state: tracks whether bootstrap() has been called
 # These are populated on first access via __getattr__
@@ -238,6 +241,77 @@ class ValidatedRunArgs:
     only_ids: set[str] | None
     disable_set: set[str] | None
     epic_override_ids: set[str] | None
+
+
+@dataclass(frozen=True)
+class ConfigOverrideResult:
+    """Result of applying CLI overrides to config."""
+
+    resolved: ResolvedConfig
+    updated_config: MalaConfig
+
+
+def _apply_config_overrides(
+    config: MalaConfig,
+    review_timeout: int | None,
+    cerberus_spawn_args: str | None,
+    cerberus_wait_args: str | None,
+    cerberus_env: str | None,
+    max_epic_verification_retries: int | None,
+    no_morph: bool,
+    braintrust_enabled: bool,
+    disable_review: bool,
+) -> ConfigOverrideResult:
+    """Apply CLI overrides to MalaConfig, raising typer.Exit(1) on parse errors.
+
+    Args:
+        config: Base MalaConfig from environment.
+        review_timeout: Optional review timeout override.
+        cerberus_spawn_args: Raw string of extra args for spawn.
+        cerberus_wait_args: Raw string of extra args for wait.
+        cerberus_env: Raw string of extra env vars (key=value pairs).
+        max_epic_verification_retries: Optional max retries override.
+        no_morph: Whether to disable morph.
+        braintrust_enabled: Whether braintrust is enabled.
+        disable_review: Whether review is disabled.
+
+    Returns:
+        ConfigOverrideResult with resolved config and updated MalaConfig.
+
+    Raises:
+        typer.Exit: If any override parsing fails.
+    """
+    from dataclasses import replace
+
+    from src.infra.io.config import CLIOverrides, build_resolved_config
+
+    cli_overrides = CLIOverrides(
+        cerberus_spawn_args=cerberus_spawn_args,
+        cerberus_wait_args=cerberus_wait_args,
+        cerberus_env=cerberus_env,
+        review_timeout=review_timeout,
+        max_epic_verification_retries=max_epic_verification_retries,
+        no_morph=no_morph,
+        no_braintrust=not braintrust_enabled,
+        disable_review=disable_review,
+    )
+
+    try:
+        resolved = build_resolved_config(config, cli_overrides)
+    except ValueError as exc:
+        log("✗", str(exc), Colors.RED)
+        raise typer.Exit(1)
+
+    updated_config = replace(
+        config,
+        review_timeout=resolved.review_timeout,
+        cerberus_spawn_args=resolved.cerberus_spawn_args,
+        cerberus_wait_args=resolved.cerberus_wait_args,
+        cerberus_env=resolved.cerberus_env,
+        max_epic_verification_retries=resolved.max_epic_verification_retries,
+    )
+
+    return ConfigOverrideResult(resolved=resolved, updated_config=updated_config)
 
 
 def _validate_run_args(
@@ -574,24 +648,20 @@ def run(
     # Construct config from environment (orchestrator uses this for API keys and feature flags)
     config = _lazy("MalaConfig").from_env(validate=False)
 
-    # Build CLI overrides and resolve configuration
-    try:
-        from src.infra.io.config import CLIOverrides, build_resolved_config
-
-        cli_overrides = CLIOverrides(
-            cerberus_spawn_args=cerberus_spawn_args,
-            cerberus_wait_args=cerberus_wait_args,
-            cerberus_env=cerberus_env,
-            review_timeout=review_timeout,
-            max_epic_verification_retries=max_epic_verification_retries,
-            no_morph=no_morph,
-            no_braintrust=not _braintrust_enabled,
-            disable_review="review" in (disable_set or set()),
-        )
-        resolved = build_resolved_config(config, cli_overrides)
-    except ValueError as exc:
-        log("✗", str(exc), Colors.RED)
-        raise typer.Exit(1)
+    # Apply CLI overrides to config
+    override_result = _apply_config_overrides(
+        config=config,
+        review_timeout=review_timeout,
+        cerberus_spawn_args=cerberus_spawn_args,
+        cerberus_wait_args=cerberus_wait_args,
+        cerberus_env=cerberus_env,
+        max_epic_verification_retries=max_epic_verification_retries,
+        no_morph=no_morph,
+        braintrust_enabled=_braintrust_enabled,
+        disable_review="review" in (disable_set or set()),
+    )
+    resolved = override_result.resolved
+    updated_config = override_result.updated_config
 
     # Record effective values for logging/metadata
     cli_args["review_timeout"] = resolved.review_timeout
@@ -621,17 +691,7 @@ def run(
         orphans_only=orphans_only,
     )
 
-    # Use factory to create orchestrator - pass resolved config values via updated MalaConfig
-    from dataclasses import replace
-
-    updated_config = replace(
-        config,
-        review_timeout=resolved.review_timeout,
-        cerberus_spawn_args=resolved.cerberus_spawn_args,
-        cerberus_wait_args=resolved.cerberus_wait_args,
-        cerberus_env=resolved.cerberus_env,
-        max_epic_verification_retries=resolved.max_epic_verification_retries,
-    )
+    # Use factory to create orchestrator
     orchestrator = _lazy("create_orchestrator")(orch_config, mala_config=updated_config)
 
     success_count, total = asyncio.run(orchestrator.run())

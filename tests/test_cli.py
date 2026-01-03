@@ -1693,3 +1693,250 @@ class TestValidateRunArgs:
         )
         # No exception raised
         assert result.only_ids is None
+
+
+# ============================================================================
+# Tests for _apply_config_overrides helper function
+# ============================================================================
+
+
+class TestApplyConfigOverrides:
+    """Tests for the _apply_config_overrides helper function."""
+
+    def test_no_overrides_returns_config_unchanged(self) -> None:
+        """When no overrides provided, resolved config uses base config values."""
+        from src.cli.cli import _apply_config_overrides
+        from src.infra.io.config import MalaConfig
+
+        config = MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+            review_timeout=1200,
+            max_epic_verification_retries=3,
+        )
+
+        result = _apply_config_overrides(
+            config=config,
+            review_timeout=None,
+            cerberus_spawn_args=None,
+            cerberus_wait_args=None,
+            cerberus_env=None,
+            max_epic_verification_retries=None,
+            no_morph=False,
+            braintrust_enabled=False,
+            disable_review=False,
+        )
+
+        assert result.resolved.review_timeout == 1200
+        assert result.resolved.max_epic_verification_retries == 3
+        assert result.updated_config.review_timeout == 1200
+        assert result.updated_config.max_epic_verification_retries == 3
+
+    def test_review_timeout_override_applies(self) -> None:
+        """review_timeout override is applied to resolved and updated config."""
+        from src.cli.cli import _apply_config_overrides
+        from src.infra.io.config import MalaConfig
+
+        config = MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+            review_timeout=1200,
+        )
+
+        result = _apply_config_overrides(
+            config=config,
+            review_timeout=600,
+            cerberus_spawn_args=None,
+            cerberus_wait_args=None,
+            cerberus_env=None,
+            max_epic_verification_retries=None,
+            no_morph=False,
+            braintrust_enabled=False,
+            disable_review=False,
+        )
+
+        assert result.resolved.review_timeout == 600
+        assert result.updated_config.review_timeout == 600
+
+    def test_max_epic_verification_retries_override_applies(self) -> None:
+        """max_epic_verification_retries override is applied."""
+        from src.cli.cli import _apply_config_overrides
+        from src.infra.io.config import MalaConfig
+
+        config = MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+            max_epic_verification_retries=3,
+        )
+
+        result = _apply_config_overrides(
+            config=config,
+            review_timeout=None,
+            cerberus_spawn_args=None,
+            cerberus_wait_args=None,
+            cerberus_env=None,
+            max_epic_verification_retries=10,
+            no_morph=False,
+            braintrust_enabled=False,
+            disable_review=False,
+        )
+
+        assert result.resolved.max_epic_verification_retries == 10
+        assert result.updated_config.max_epic_verification_retries == 10
+
+    def test_cerberus_spawn_args_override_applies(self) -> None:
+        """cerberus_spawn_args string is parsed and applied."""
+        from src.cli.cli import _apply_config_overrides
+        from src.infra.io.config import MalaConfig
+
+        config = MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+        )
+
+        result = _apply_config_overrides(
+            config=config,
+            review_timeout=None,
+            cerberus_spawn_args="--model opus --timeout 60",
+            cerberus_wait_args=None,
+            cerberus_env=None,
+            max_epic_verification_retries=None,
+            no_morph=False,
+            braintrust_enabled=False,
+            disable_review=False,
+        )
+
+        assert result.resolved.cerberus_spawn_args == (
+            "--model",
+            "opus",
+            "--timeout",
+            "60",
+        )
+        assert result.updated_config.cerberus_spawn_args == (
+            "--model",
+            "opus",
+            "--timeout",
+            "60",
+        )
+
+    def test_cerberus_wait_args_override_applies(self) -> None:
+        """cerberus_wait_args string is parsed and applied."""
+        from src.cli.cli import _apply_config_overrides
+        from src.infra.io.config import MalaConfig
+
+        config = MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+        )
+
+        result = _apply_config_overrides(
+            config=config,
+            review_timeout=None,
+            cerberus_spawn_args=None,
+            cerberus_wait_args="--poll-interval 5",
+            cerberus_env=None,
+            max_epic_verification_retries=None,
+            no_morph=False,
+            braintrust_enabled=False,
+            disable_review=False,
+        )
+
+        assert result.resolved.cerberus_wait_args == ("--poll-interval", "5")
+        assert result.updated_config.cerberus_wait_args == ("--poll-interval", "5")
+
+    def test_cerberus_env_override_applies(self) -> None:
+        """cerberus_env string is parsed and applied."""
+        from src.cli.cli import _apply_config_overrides
+        from src.infra.io.config import MalaConfig
+
+        config = MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+        )
+
+        result = _apply_config_overrides(
+            config=config,
+            review_timeout=None,
+            cerberus_spawn_args=None,
+            cerberus_wait_args=None,
+            cerberus_env="FOO=bar,BAZ=qux",
+            max_epic_verification_retries=None,
+            no_morph=False,
+            braintrust_enabled=False,
+            disable_review=False,
+        )
+
+        assert result.resolved.cerberus_env == (("BAZ", "qux"), ("FOO", "bar"))
+        assert result.updated_config.cerberus_env == (("BAZ", "qux"), ("FOO", "bar"))
+
+    def test_invalid_cerberus_spawn_args_raises_exit(self) -> None:
+        """Invalid cerberus_spawn_args raises typer.Exit(1)."""
+        from src.cli.cli import _apply_config_overrides
+        from src.infra.io.config import MalaConfig
+
+        config = MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+        )
+
+        with pytest.raises(typer.Exit) as excinfo:
+            _apply_config_overrides(
+                config=config,
+                review_timeout=None,
+                cerberus_spawn_args="--model 'unclosed quote",
+                cerberus_wait_args=None,
+                cerberus_env=None,
+                max_epic_verification_retries=None,
+                no_morph=False,
+                braintrust_enabled=False,
+                disable_review=False,
+            )
+        assert excinfo.value.exit_code == 1
+
+    def test_invalid_cerberus_wait_args_raises_exit(self) -> None:
+        """Invalid cerberus_wait_args raises typer.Exit(1)."""
+        from src.cli.cli import _apply_config_overrides
+        from src.infra.io.config import MalaConfig
+
+        config = MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+        )
+
+        with pytest.raises(typer.Exit) as excinfo:
+            _apply_config_overrides(
+                config=config,
+                review_timeout=None,
+                cerberus_spawn_args=None,
+                cerberus_wait_args="--poll 'bad",
+                cerberus_env=None,
+                max_epic_verification_retries=None,
+                no_morph=False,
+                braintrust_enabled=False,
+                disable_review=False,
+            )
+        assert excinfo.value.exit_code == 1
+
+    def test_invalid_cerberus_env_raises_exit(self) -> None:
+        """Invalid cerberus_env (missing =) raises typer.Exit(1)."""
+        from src.cli.cli import _apply_config_overrides
+        from src.infra.io.config import MalaConfig
+
+        config = MalaConfig(
+            runs_dir=Path("/tmp/runs"),
+            lock_dir=Path("/tmp/locks"),
+        )
+
+        with pytest.raises(typer.Exit) as excinfo:
+            _apply_config_overrides(
+                config=config,
+                review_timeout=None,
+                cerberus_spawn_args=None,
+                cerberus_wait_args=None,
+                cerberus_env="INVALID_NO_EQUALS",
+                max_epic_verification_retries=None,
+                no_morph=False,
+                braintrust_enabled=False,
+                disable_review=False,
+            )
+        assert excinfo.value.exit_code == 1
