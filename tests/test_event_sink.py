@@ -483,7 +483,7 @@ class TestConsoleEventSink:
         missing = protocol_methods - sink_methods
         assert not missing, f"ConsoleEventSink missing protocol methods: {missing}"
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_on_run_started_logs(self, mock_log: MagicMock) -> None:
         """on_run_started logs run configuration."""
         sink = ConsoleEventSink()
@@ -501,7 +501,7 @@ class TestConsoleEventSink:
         all_call_args = [str(call) for call in mock_log.call_args_list]
         assert any("START" in args for args in all_call_args)
 
-    @patch("src.infra.io.event_sink.log_tool")
+    @patch("src.infra.io.console_sink.log_tool")
     def test_on_tool_use_delegates_to_log_tool(self, mock_log_tool: MagicMock) -> None:
         """on_tool_use delegates to log_tool helper."""
         sink = ConsoleEventSink()
@@ -510,7 +510,7 @@ class TestConsoleEventSink:
             "Read", "file.py", agent_id="agent-1", arguments={"path": "file.py"}
         )
 
-    @patch("src.infra.io.event_sink.log_agent_text")
+    @patch("src.infra.io.console_sink.log_agent_text")
     def test_on_agent_text_delegates_to_log_agent_text(
         self, mock_log_agent_text: MagicMock
     ) -> None:
@@ -519,7 +519,7 @@ class TestConsoleEventSink:
         sink.on_agent_text("agent-1", "Processing...")
         mock_log_agent_text.assert_called_once_with("Processing...", "agent-1")
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_representative_methods_execute(self, mock_log: MagicMock) -> None:
         """Representative methods from each category execute without error."""
         sink = ConsoleEventSink()
@@ -575,7 +575,7 @@ class TestConsoleEventSink:
         # All should have executed without raising exceptions
         assert mock_log.called
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_on_abort_requested_logs_fatal_error(self, mock_log: MagicMock) -> None:
         """on_abort_requested logs abort message."""
         sink = ConsoleEventSink()
@@ -586,7 +586,7 @@ class TestConsoleEventSink:
         assert "ABORT" in call_args[0][1]
         assert "Database connection lost" in call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_on_tasks_aborting_logs_count_and_reason(self, mock_log: MagicMock) -> None:
         """on_tasks_aborting logs task count and reason."""
         sink = ConsoleEventSink()
@@ -597,7 +597,7 @@ class TestConsoleEventSink:
         assert "5" in call_args[0][1]
         assert "Timeout exceeded" in call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_on_epic_verification_started_logs_epic_id(
         self, mock_log: MagicMock
     ) -> None:
@@ -610,7 +610,7 @@ class TestConsoleEventSink:
         assert "VERIFY" in call_args[0][1]
         assert "epic-123" in call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_on_epic_verification_passed_logs_confidence(
         self, mock_log: MagicMock
     ) -> None:
@@ -624,7 +624,7 @@ class TestConsoleEventSink:
         assert "passed" in call_args[0][1]
         assert "95%" in call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_on_epic_verification_failed_logs_details(
         self, mock_log: MagicMock
     ) -> None:
@@ -638,7 +638,7 @@ class TestConsoleEventSink:
         assert "epic-123" in first_call[0][1]
         assert "2" in first_call[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_on_epic_verification_human_review_logs_reason(
         self, mock_log: MagicMock
     ) -> None:
@@ -653,7 +653,7 @@ class TestConsoleEventSink:
         assert "human review" in first_call[0][1]
         assert "Low confidence" in first_call[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_on_epic_remediation_created_logs_criterion(
         self, mock_log: MagicMock
     ) -> None:
@@ -669,7 +669,7 @@ class TestConsoleEventSink:
         # Should be truncated (80 chars + ...)
         assert "..." in call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_on_epic_remediation_created_short_criterion_not_truncated(
         self, mock_log: MagicMock
     ) -> None:
@@ -684,7 +684,7 @@ class TestConsoleEventSink:
         # Short text should not have "..." appended
         assert "..." not in call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_validation_started_logs_message_with_issue_id(
         self, mock_log: MagicMock
     ) -> None:
@@ -699,7 +699,7 @@ class TestConsoleEventSink:
         # Check issue_id is in the message
         assert "issue-123" in call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_on_gate_started_uses_log_not_verbose(self, mock_log: MagicMock) -> None:
         """on_gate_started uses log() not log_verbose() for normal visibility."""
         sink = ConsoleEventSink()
@@ -712,7 +712,7 @@ class TestConsoleEventSink:
         assert "1/3" in call_args[0][1]
         assert "issue-123" in call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_on_review_started_uses_log_not_verbose(self, mock_log: MagicMock) -> None:
         """on_review_started uses log() not log_verbose() for normal visibility."""
         sink = ConsoleEventSink()
@@ -725,7 +725,7 @@ class TestConsoleEventSink:
         assert "1/2" in call_args[0][1]
         assert "issue-123" in call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_gate_passed_passes_issue_id(self, mock_log: MagicMock) -> None:
         """on_gate_passed includes issue_id in message."""
         sink = ConsoleEventSink()
@@ -734,7 +734,7 @@ class TestConsoleEventSink:
         mock_log.assert_called_once()
         assert "issue-456" in mock_log.call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_gate_failed_passes_issue_id(self, mock_log: MagicMock) -> None:
         """on_gate_failed includes issue_id in message."""
         sink = ConsoleEventSink()
@@ -743,7 +743,7 @@ class TestConsoleEventSink:
         mock_log.assert_called_once()
         assert "issue-789" in mock_log.call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_gate_retry_passes_issue_id(self, mock_log: MagicMock) -> None:
         """on_gate_retry includes issue_id in message."""
         sink = ConsoleEventSink()
@@ -752,7 +752,7 @@ class TestConsoleEventSink:
         mock_log.assert_called_once()
         assert "issue-abc" in mock_log.call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_review_passed_passes_issue_id(self, mock_log: MagicMock) -> None:
         """on_review_passed includes issue_id in message."""
         sink = ConsoleEventSink()
@@ -761,7 +761,7 @@ class TestConsoleEventSink:
         mock_log.assert_called_once()
         assert "issue-def" in mock_log.call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_review_retry_passes_issue_id(self, mock_log: MagicMock) -> None:
         """on_review_retry includes issue_id in message."""
         sink = ConsoleEventSink()
@@ -770,7 +770,7 @@ class TestConsoleEventSink:
         mock_log.assert_called_once()
         assert "issue-ghi" in mock_log.call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_validation_result_failed_passes_issue_id(
         self, mock_log: MagicMock
     ) -> None:
@@ -781,7 +781,7 @@ class TestConsoleEventSink:
         mock_log.assert_called_once()
         assert "issue-jkl" in mock_log.call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_gate_result_passes_issue_id(self, mock_log: MagicMock) -> None:
         """on_gate_result includes issue_id in message."""
         sink = ConsoleEventSink()
@@ -793,7 +793,7 @@ class TestConsoleEventSink:
         assert mock_log.call_count == 2
         assert "issue-mno" in mock_log.call_args_list[0][0][1]
 
-    @patch("src.infra.io.event_sink.log")
+    @patch("src.infra.io.console_sink.log")
     def test_validation_result_passed_passes_issue_id(
         self, mock_log: MagicMock
     ) -> None:
