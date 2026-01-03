@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort, LoggerPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort
     from src.infra.io.event_protocol import MalaEventSink
 
     from .spec import ValidationCommand
@@ -43,7 +43,6 @@ class ExecutorConfig:
         step_timeout_seconds: Optional timeout for individual command execution.
         env_config: Environment configuration for paths (scripts, cache, etc.).
         command_runner: Command runner for executing commands.
-        logger: Logger for console output (optional, defaults to no-op).
         event_sink: Event sink for emitting validation step events (optional).
     """
 
@@ -52,7 +51,6 @@ class ExecutorConfig:
     step_timeout_seconds: float | None = None
     env_config: EnvConfigPort | None = None
     command_runner: CommandRunnerPort
-    logger: LoggerPort | None = None
     event_sink: MalaEventSink | None = None
 
 
@@ -435,15 +433,3 @@ class SpecCommandExecutor:
         if details:
             reason = f"{reason}: {details}"
         return reason
-
-    def _log_message(self, prefix: str, message: str, color: str | None = None) -> None:
-        """Log a message using the injected logger if available.
-
-        Args:
-            prefix: Symbol prefix (e.g., "▸", "✓", "✗").
-            message: The message to log.
-            color: Optional color name (e.g., "cyan", "green", "red").
-        """
-        if self.config.logger is not None:
-            full_message = f"{prefix} {message}"
-            self.config.logger.log(full_message, color=color)
