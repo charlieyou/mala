@@ -1434,6 +1434,87 @@ class AgentSessionRunner:
             logger.info(f"Idle retry {retry_count}: waiting {backoff}s")
             await asyncio.sleep(backoff)
 
+    async def _disconnect_client_safely(
+        self, client: SDKClientProtocol | Any, issue_id: str
+    ) -> None:
+        """Disconnect SDK client with timeout, logging any failures."""
+        try:
+            await asyncio.wait_for(
+                client.disconnect(),
+                timeout=DISCONNECT_TIMEOUT,
+            )
+        except TimeoutError:
+            logger.warning("disconnect() timed out, subprocess abandoned")
+        except Exception as e:
+            logger.debug(f"Error during disconnect: {e}")
+
+    def _prepare_idle_retry(
+        self,
+        state: MessageIterationState,
+        lifecycle_ctx: LifecycleContext,
+        issue_id: str,
+    ) -> str:
+        """Prepare state for idle retry and return the next query.
+
+        Updates state.idle_retry_count, state.pending_session_id, and clears
+        state.pending_tool_ids.
+
+        Raises:
+            IdleTimeoutError: If retry is not possible (max retries exceeded,
+                or tool calls occurred without session context).
+
+        Returns:
+            The query to use for the retry attempt.
+        """
+        # Check if we can retry
+        if state.idle_retry_count >= self.config.max_idle_retries:
+            logger.error(
+                f"Session {issue_id}: max idle retries "
+                f"({self.config.max_idle_retries}) exceeded"
+            )
+            raise IdleTimeoutError(
+                f"Max idle retries ({self.config.max_idle_retries}) exceeded"
+            )
+
+        # Prepare for retry
+        state.idle_retry_count += 1
+        # Clear pending state from previous attempt to avoid
+        # hanging on stale tool IDs (they won't resolve on new stream)
+        state.pending_tool_ids.clear()
+        state.tool_calls_this_turn = 0
+        state.first_message_received = False
+        resume_id = state.session_id or lifecycle_ctx.session_id
+
+        if resume_id is not None:
+            state.pending_session_id = resume_id
+            pending_query = _get_idle_resume_prompt().format(issue_id=issue_id)
+            logger.info(
+                f"Session {issue_id}: retrying with resume "
+                f"(session_id={resume_id[:8]}..., "
+                f"attempt {state.idle_retry_count})"
+            )
+            return pending_query
+        elif state.tool_calls_this_turn == 0:
+            state.pending_session_id = None
+            # Keep original query - caller must provide it
+            logger.info(
+                f"Session {issue_id}: retrying with fresh session "
+                f"(no session_id, no side effects, "
+                f"attempt {state.idle_retry_count})"
+            )
+            # Return empty string to signal caller to keep original query
+            return ""
+        else:
+            logger.error(
+                f"Session {issue_id}: cannot retry - "
+                f"{state.tool_calls_this_turn} tool calls "
+                "occurred without session_id"
+            )
+            raise IdleTimeoutError(
+                f"Cannot retry: {state.tool_calls_this_turn} tool calls "
+                "occurred without session context"
+            )
+
     async def _process_message_stream(
         self,
         stream: AsyncIterator[Any],
@@ -1627,66 +1708,15 @@ class AgentSessionRunner:
                             f"{idle_duration:.1f}s, first_msg={state.first_message_received}, "
                             f"{state.tool_calls_this_turn} tool calls, disconnecting subprocess"
                         )
-                        try:
-                            await asyncio.wait_for(
-                                client.disconnect(),
-                                timeout=DISCONNECT_TIMEOUT,
-                            )
-                        except TimeoutError:
-                            logger.warning(
-                                "disconnect() timed out, subprocess abandoned"
-                            )
-                        except Exception as e:
-                            logger.debug(f"Error during disconnect: {e}")
+                        await self._disconnect_client_safely(client, issue_id)
 
-                        # Check if we can retry
-                        if state.idle_retry_count >= self.config.max_idle_retries:
-                            logger.error(
-                                f"Session {issue_id}: max idle retries "
-                                f"({self.config.max_idle_retries}) exceeded"
-                            )
-                            raise IdleTimeoutError(
-                                f"Max idle retries ({self.config.max_idle_retries}) "
-                                "exceeded"
-                            ) from None
-
-                        # Prepare for retry
-                        state.idle_retry_count += 1
-                        # Clear pending state from previous attempt to avoid
-                        # hanging on stale tool IDs (they won't resolve on new stream)
-                        state.pending_tool_ids.clear()
-                        state.tool_calls_this_turn = 0
-                        state.first_message_received = False
-                        resume_id = state.session_id or lifecycle_ctx.session_id
-
-                        if resume_id is not None:
-                            state.pending_session_id = resume_id
-                            pending_query = _get_idle_resume_prompt().format(
-                                issue_id=issue_id
-                            )
-                            logger.info(
-                                f"Session {issue_id}: retrying with resume "
-                                f"(session_id={resume_id[:8]}..., "
-                                f"attempt {state.idle_retry_count})"
-                            )
-                        elif state.tool_calls_this_turn == 0:
-                            state.pending_session_id = None
-                            # Keep original query
-                            logger.info(
-                                f"Session {issue_id}: retrying with fresh session "
-                                f"(no session_id, no side effects, "
-                                f"attempt {state.idle_retry_count})"
-                            )
-                        else:
-                            logger.error(
-                                f"Session {issue_id}: cannot retry - "
-                                f"{state.tool_calls_this_turn} tool calls "
-                                "occurred without session_id"
-                            )
-                            raise IdleTimeoutError(
-                                f"Cannot retry: {state.tool_calls_this_turn} tool calls "
-                                "occurred without session context"
-                            ) from None
+                        # Prepare state for retry (may raise IdleTimeoutError)
+                        retry_query = self._prepare_idle_retry(
+                            state, lifecycle_ctx, issue_id
+                        )
+                        # Empty string means keep original query
+                        if retry_query:
+                            pending_query = retry_query
 
             except IdleTimeoutError:
                 raise
