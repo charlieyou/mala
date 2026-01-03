@@ -21,7 +21,6 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.infra.tools.command_runner import CommandRunner
 from .helpers import (
     annotate_issue,
     get_ready_issue_id,
@@ -32,7 +31,7 @@ from .helpers import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from src.core.protocols import EnvConfigPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort
 
 
 class E2EStatus(Enum):
@@ -125,16 +124,22 @@ class E2ERunner:
     """Orchestrates E2E validation using a fixture repository."""
 
     def __init__(
-        self, config: E2EConfig | None = None, env_config: EnvConfigPort | None = None
+        self,
+        config: E2EConfig | None = None,
+        env_config: EnvConfigPort | None = None,
+        command_runner: CommandRunnerPort | None = None,
     ):
         """Initialize the E2E runner.
 
         Args:
             config: E2E configuration. Uses defaults if None.
             env_config: Environment configuration for finding cerberus bin path.
+            command_runner: Optional CommandRunnerPort for running mala commands.
+                If not provided, creates a CommandRunner when needed.
         """
         self.config = config or E2EConfig()
         self.env_config = env_config
+        self._command_runner = command_runner
 
     def check_prereqs(self, env: Mapping[str, str] | None = None) -> E2EPrereqResult:
         """Check if all E2E prerequisites are met.
@@ -318,10 +323,15 @@ class E2ERunner:
             f"--cerberus-spawn-args=--mode={self.config.cerberus_mode}",
         ]
 
-        # Use CommandRunner with buffer for cleanup time
-        runner = CommandRunner(
-            cwd=cwd, timeout_seconds=self.config.timeout_seconds + 30
-        )
+        # Use injected CommandRunner or create a new one
+        if self._command_runner is not None:
+            runner = self._command_runner
+        else:
+            from src.infra.tools.command_runner import CommandRunner
+
+            runner = CommandRunner(
+                cwd=cwd, timeout_seconds=self.config.timeout_seconds + 30
+            )
         result = runner.run(cmd, env=child_env)
 
         if result.ok:

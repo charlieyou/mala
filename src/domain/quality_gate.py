@@ -18,7 +18,6 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
-from src.infra.tools.command_runner import run_command
 from src.infra.io.session_log_parser import (
     FileSystemLogProvider,
     JsonlEntry,
@@ -39,6 +38,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols import (
+        CommandRunnerPort,
         IssueResolutionProtocol,
         LogProvider,
         ValidationEvidenceProtocol,
@@ -283,13 +283,20 @@ class QualityGate:
         r"\bbd-([a-zA-Z0-9_-]+)\b"
     )
 
-    def __init__(self, repo_path: Path, log_provider: LogProvider | None = None):
+    def __init__(
+        self,
+        repo_path: Path,
+        log_provider: LogProvider | None = None,
+        command_runner: CommandRunnerPort | None = None,
+    ):
         """Initialize quality gate.
 
         Args:
             repo_path: Path to the repository for git operations.
             log_provider: Optional LogProvider for reading session logs.
                 If not provided, uses FileSystemLogProvider (filesystem access).
+            command_runner: Optional CommandRunnerPort for running git commands.
+                If not provided, creates a CommandRunner with repo_path as cwd.
         """
         self.repo_path = repo_path
         # Use injected LogProvider or create default FileSystemLogProvider
@@ -297,6 +304,13 @@ class QualityGate:
             self._log_provider = log_provider
         else:
             self._log_provider = FileSystemLogProvider()
+        # Use injected CommandRunner or create default
+        if command_runner is not None:
+            self._command_runner = command_runner
+        else:
+            from src.infra.tools.command_runner import CommandRunner
+
+            self._command_runner = CommandRunner(cwd=repo_path)
         # Keep SessionLogParser for extract_* helper methods
         self._parser = SessionLogParser()
 
@@ -438,10 +452,7 @@ class QualityGate:
             Tuple of (is_clean, status_output). On git failure, returns
             (False, error_message) to treat unknown state as dirty.
         """
-        result = run_command(
-            ["git", "status", "--porcelain"],
-            cwd=self.repo_path,
-        )
+        result = self._command_runner.run(["git", "status", "--porcelain"])
         # Treat git failures as dirty/unknown state
         if not result.ok:
             error_msg = result.stderr.strip() or "git status failed"
@@ -586,11 +597,7 @@ class QualityGate:
         """
         # Use git status --porcelain to detect any changes
         # This includes staged, unstaged, and untracked files
-        result = run_command(
-            ["git", "status", "--porcelain"],
-            cwd=self.repo_path,
-            timeout_seconds=5.0,
-        )
+        result = self._command_runner.run(["git", "status", "--porcelain"], timeout=5.0)
         if not result.ok:
             # If git status fails, assume changes exist (conservative default)
             # This prevents false "no progress" conclusions when git state is unknown
@@ -640,7 +647,7 @@ class QualityGate:
         # Include commit timestamp in format for baseline comparison
         format_str = "%h %ct %s" if baseline_timestamp is not None else "%h %s"
 
-        result = run_command(
+        result = self._command_runner.run(
             [
                 "git",
                 "log",
@@ -650,8 +657,7 @@ class QualityGate:
                 "-n",
                 "1",
                 "--since=30 days ago",
-            ],
-            cwd=self.repo_path,
+            ]
         )
 
         if not result.ok:
