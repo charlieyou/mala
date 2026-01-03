@@ -35,6 +35,8 @@ class TestLoadPrompts:
         assert isinstance(result.gate_followup_prompt, str)
         assert isinstance(result.fixer_prompt, str)
         assert isinstance(result.idle_resume_prompt, str)
+        assert isinstance(result.checkpoint_request_prompt, str)
+        assert isinstance(result.continuation_prompt, str)
 
     def test_gate_followup_contains_template_placeholders(self) -> None:
         """Gate followup prompt contains expected placeholders."""
@@ -78,6 +80,13 @@ class TestLoadPrompt:
         with pytest.raises(FileNotFoundError):
             load_prompt("nonexistent_prompt")
 
+    def test_uses_custom_prompt_dir(self, tmp_path: Path) -> None:
+        """load_prompt uses custom prompt_dir when provided."""
+        prompt_file = tmp_path / "custom_prompt.md"
+        prompt_file.write_text("Custom prompt content")
+        result = load_prompt("custom_prompt", prompt_dir=tmp_path)
+        assert result == "Custom prompt content"
+
 
 class TestBuildContinuationPrompt:
     """Tests for build_continuation_prompt function."""
@@ -95,6 +104,25 @@ Complete the feature implementation.
         assert checkpoint in result
         assert "{checkpoint}" not in result
         assert "continuation" in result.lower()
+
+    def test_handles_curly_braces_in_checkpoint(self) -> None:
+        """build_continuation_prompt handles curly braces in checkpoint text."""
+        checkpoint = """## Code snippet
+```python
+data = {"key": "value", "nested": {}}
+```"""
+        result = build_continuation_prompt(checkpoint)
+        assert checkpoint in result
+        assert "{checkpoint}" not in result
+        # Verify the braces are preserved exactly
+        assert '{"key": "value"' in result
+
+    def test_uses_custom_prompt_dir(self, tmp_path: Path) -> None:
+        """build_continuation_prompt uses custom prompt_dir when provided."""
+        prompt_file = tmp_path / "continuation.md"
+        prompt_file.write_text("Custom template: {checkpoint}")
+        result = build_continuation_prompt("test content", prompt_dir=tmp_path)
+        assert result == "Custom template: test content"
 
 
 class TestExtractCheckpoint:

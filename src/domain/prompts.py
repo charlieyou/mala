@@ -27,6 +27,8 @@ class PromptProvider:
     gate_followup_prompt: str
     fixer_prompt: str
     idle_resume_prompt: str
+    checkpoint_request_prompt: str
+    continuation_prompt: str
 
 
 def load_prompts(prompt_dir: Path) -> PromptProvider:
@@ -47,6 +49,8 @@ def load_prompts(prompt_dir: Path) -> PromptProvider:
         gate_followup_prompt=(prompt_dir / "gate_followup.md").read_text(),
         fixer_prompt=(prompt_dir / "fixer.md").read_text(),
         idle_resume_prompt=(prompt_dir / "idle_resume.md").read_text(),
+        checkpoint_request_prompt=(prompt_dir / "checkpoint_request.md").read_text(),
+        continuation_prompt=(prompt_dir / "continuation.md").read_text(),
     )
 
 
@@ -106,11 +110,17 @@ def get_default_validation_commands() -> PromptValidationCommands:
     )
 
 
-def load_prompt(name: str) -> str:
+def _default_prompt_dir() -> Path:
+    """Return the default prompts directory."""
+    return Path(__file__).parent.parent / "prompts"
+
+
+def load_prompt(name: str, prompt_dir: Path | None = None) -> str:
     """Load a single prompt template by name.
 
     Args:
         name: Name of the prompt (without .md extension).
+        prompt_dir: Directory containing prompt files. Defaults to src/prompts.
 
     Returns:
         The prompt template content.
@@ -118,7 +128,8 @@ def load_prompt(name: str) -> str:
     Raises:
         FileNotFoundError: If the prompt file doesn't exist.
     """
-    prompt_dir = Path(__file__).parent.parent / "prompts"
+    if prompt_dir is None:
+        prompt_dir = _default_prompt_dir()
     return (prompt_dir / f"{name}.md").read_text()
 
 
@@ -148,17 +159,22 @@ def extract_checkpoint(text: str) -> str:
     return text
 
 
-def build_continuation_prompt(checkpoint_text: str) -> str:
+def build_continuation_prompt(
+    checkpoint_text: str, prompt_dir: Path | None = None
+) -> str:
     """Build a continuation prompt with checkpoint context.
 
     Args:
         checkpoint_text: The checkpoint block from the previous session.
+        prompt_dir: Directory containing prompt files. Defaults to src/prompts.
 
     Returns:
         Formatted continuation prompt with checkpoint embedded.
     """
-    template = load_prompt("continuation")
-    return template.format(checkpoint=checkpoint_text)
+    template = load_prompt("continuation", prompt_dir)
+    # Use str.replace instead of str.format to avoid KeyError if checkpoint
+    # contains curly braces (e.g., JSON or code snippets)
+    return template.replace("{checkpoint}", checkpoint_text)
 
 
 def build_prompt_validation_commands(repo_path: Path) -> PromptValidationCommands:
