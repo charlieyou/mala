@@ -262,6 +262,7 @@ class FakeIssueProvider:
         self.existing_tags: dict[str, str] = {}
         self.issue_descriptions: dict[str, str] = {}
         self.updated_descriptions: list[tuple[str, str]] = []
+        self.updated_issues: list[tuple[str, str | None, str | None]] = []
 
     async def find_issue_by_tag_async(self, tag: str) -> str | None:
         return self.existing_tags.get(tag)
@@ -274,6 +275,16 @@ class FakeIssueProvider:
     ) -> bool:
         self.updated_descriptions.append((issue_id, description))
         self.issue_descriptions[issue_id] = description
+        return True
+
+    async def update_issue_async(
+        self,
+        issue_id: str,
+        *,
+        title: str | None = None,
+        priority: str | None = None,
+    ) -> bool:
+        self.updated_issues.append((issue_id, title, priority))
         return True
 
     async def create_issue_async(

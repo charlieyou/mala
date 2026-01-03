@@ -528,6 +528,28 @@ class IssueProvider(Protocol):
         """
         ...
 
+    async def update_issue_async(
+        self,
+        issue_id: str,
+        *,
+        title: str | None = None,
+        priority: str | None = None,
+    ) -> bool:
+        """Update an issue's title and/or priority.
+
+        Used for updating tracking issues when new findings change
+        the count or highest priority.
+
+        Args:
+            issue_id: The issue ID to update.
+            title: New title (optional).
+            priority: New priority string like "P2" (optional).
+
+        Returns:
+            True if successfully updated, False otherwise.
+        """
+        ...
+
 
 @runtime_checkable
 class CodeReviewer(Protocol):

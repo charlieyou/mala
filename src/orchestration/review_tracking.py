@@ -7,6 +7,7 @@ review findings that didn't block the review but should be tracked.
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -14,10 +15,15 @@ if TYPE_CHECKING:
     from src.infra.io.event_sink import MalaEventSink
 
 
+def _get_finding_fingerprint(issue: ReviewIssueProtocol) -> str:
+    """Generate a unique fingerprint for a single finding."""
+    return f"{issue.file}:{issue.line_start}:{issue.line_end}:{issue.title}"
+
+
 def _build_findings_section(
     review_issues: list[ReviewIssueProtocol],
     start_idx: int = 1,
-) -> tuple[str, str]:
+) -> tuple[str, str, list[str]]:
     """Build markdown sections for review findings.
 
     Args:
@@ -25,14 +31,12 @@ def _build_findings_section(
         start_idx: Starting index for finding numbering.
 
     Returns:
-        Tuple of (formatted sections string, dedup tag based on content hash).
+        Tuple of (formatted sections string, batch dedup tag, list of individual fingerprints).
     """
-    # Build a dedup tag from finding fingerprints for this batch
-    finding_fingerprints = sorted(
-        f"{issue.file}:{issue.line_start}:{issue.line_end}:{issue.title}"
-        for issue in review_issues
-    )
-    content_hash = hashlib.sha256("|".join(finding_fingerprints).encode()).hexdigest()[
+    # Build fingerprints for each finding
+    finding_fingerprints = [_get_finding_fingerprint(issue) for issue in review_issues]
+    sorted_fingerprints = sorted(finding_fingerprints)
+    content_hash = hashlib.sha256("|".join(sorted_fingerprints).encode()).hexdigest()[
         :12
     ]
     dedup_tag = f"review_finding:{content_hash}"
@@ -65,7 +69,28 @@ def _build_findings_section(
             parts.extend(["", body])
         parts.extend(["", "---", ""])
 
-    return "\n".join(parts), dedup_tag
+    return "\n".join(parts), dedup_tag, finding_fingerprints
+
+
+def _extract_existing_fingerprints(description: str) -> set[str]:
+    """Extract individual finding fingerprints from existing description.
+
+    Fingerprints are stored as HTML comments: <!-- fp:file:line_start:line_end:title -->
+    """
+    pattern = r"<!-- fp:(.+?) -->"
+    return set(re.findall(pattern, description))
+
+
+def _update_header_count(description: str, new_count: int) -> str:
+    """Update the finding count in the description header using regex.
+
+    Handles both singular and plural forms.
+    """
+    plural_s = "s" if new_count != 1 else ""
+    # Match "N non-blocking finding" or "N non-blocking findings"
+    pattern = r"\d+ non-blocking findings?"
+    replacement = f"{new_count} non-blocking finding{plural_s}"
+    return re.sub(pattern, replacement, description)
 
 
 async def create_review_tracking_issues(
@@ -90,45 +115,103 @@ async def create_review_tracking_issues(
         return
 
     # Build the new findings section and get a content-based dedup tag
-    new_findings_section, new_dedup_tag = _build_findings_section(review_issues)
+    new_findings_section, new_dedup_tag, new_fingerprints = _build_findings_section(
+        review_issues
+    )
 
     # Check for existing tracking issue for this source
     source_tag = f"source:{source_issue_id}"
     existing_id = await beads.find_issue_by_tag_async(source_tag)
 
     if existing_id:
-        # Check if these exact findings already exist (avoid duplicating)
+        # Fetch existing description - skip update on failure (Finding 4)
         existing_desc = await beads.get_issue_description_async(existing_id)
-        if existing_desc and new_dedup_tag in existing_desc:
-            # These findings are already recorded
+        if existing_desc is None:
+            event_sink.on_warning(
+                f"Failed to fetch description for {existing_id}, skipping update",
+                agent_id=source_issue_id,
+            )
+            return
+
+        # Check batch-level dedup first (fast path)
+        if new_dedup_tag in existing_desc:
+            return
+
+        # Finding 6: Filter out individually duplicate findings
+        existing_fingerprints = _extract_existing_fingerprints(existing_desc)
+        unique_issues = [
+            issue
+            for issue in review_issues
+            if _get_finding_fingerprint(issue) not in existing_fingerprints
+        ]
+
+        if not unique_issues:
+            # All findings already exist individually
             return
 
         # Append new findings to existing issue
         # Count existing findings to continue numbering
-        existing_finding_count = (
-            existing_desc.count("### Finding ") if existing_desc else 0
-        )
-        new_findings_section, new_dedup_tag = _build_findings_section(
-            review_issues, start_idx=existing_finding_count + 1
+        existing_finding_count = existing_desc.count("### Finding ")
+        new_findings_section, new_dedup_tag, unique_fingerprints = (
+            _build_findings_section(unique_issues, start_idx=existing_finding_count + 1)
         )
 
-        # Build updated description
-        updated_desc = existing_desc or ""
-        # Update the finding count in header
-        total_count = existing_finding_count + len(review_issues)
-        updated_desc = updated_desc.replace(
-            f"{existing_finding_count} non-blocking finding",
-            f"{total_count} non-blocking finding",
+        # Build updated description with proper count (Findings 2, 5)
+        total_count = existing_finding_count + len(unique_issues)
+        updated_desc = _update_header_count(existing_desc, total_count)
+
+        # Add fingerprint markers for individual dedup (Finding 6)
+        fingerprint_comments = "\n".join(
+            f"<!-- fp:{fp} -->" for fp in unique_fingerprints
         )
+
         # Append new findings and dedup tag before the end
         updated_desc = (
             updated_desc.rstrip()
-            + f"\n\n{new_findings_section}\n<!-- {new_dedup_tag} -->\n"
+            + f"\n\n{new_findings_section}\n{fingerprint_comments}\n<!-- {new_dedup_tag} -->\n"
         )
 
-        await beads.update_issue_description_async(existing_id, updated_desc)
+        # Finding 3: Compute new highest priority across all findings
+        new_priorities = [i.priority for i in unique_issues if i.priority is not None]
+        new_highest = min(new_priorities) if new_priorities else 3
+
+        # Extract current highest priority from description
+        priority_match = re.search(r"\*\*Highest priority:\*\* P(\d+)", existing_desc)
+        current_highest = int(priority_match.group(1)) if priority_match else 3
+
+        # Update if new findings have higher priority (lower number)
+        final_highest = min(current_highest, new_highest)
+        if final_highest != current_highest:
+            updated_desc = re.sub(
+                r"\*\*Highest priority:\*\* P\d+",
+                f"**Highest priority:** P{final_highest}",
+                updated_desc,
+            )
+
+        # Finding 3: Update issue title
+        plural_s = "s" if total_count != 1 else ""
+        new_title = f"[Review] {total_count} non-blocking finding{plural_s} from {source_issue_id}"
+
+        # Finding 1: Check return value of update
+        update_success = await beads.update_issue_description_async(
+            existing_id, updated_desc
+        )
+        if not update_success:
+            event_sink.on_warning(
+                f"Failed to update tracking issue {existing_id}",
+                agent_id=source_issue_id,
+            )
+            return
+
+        # Update title and priority (Finding 3)
+        await beads.update_issue_async(
+            existing_id,
+            title=new_title,
+            priority=f"P{final_highest}",
+        )
+
         event_sink.on_warning(
-            f"Appended {len(review_issues)} finding{'s' if len(review_issues) > 1 else ''} to tracking issue {existing_id}",
+            f"Appended {len(unique_issues)} finding{'s' if len(unique_issues) > 1 else ''} to tracking issue {existing_id}",
             agent_id=source_issue_id,
         )
         return
@@ -143,6 +226,9 @@ async def create_review_tracking_issues(
     issue_count = len(review_issues)
     issue_title = f"[Review] {issue_count} non-blocking finding{'s' if issue_count > 1 else ''} from {source_issue_id}"
 
+    # Add fingerprint markers for individual dedup (Finding 6)
+    fingerprint_comments = "\n".join(f"<!-- fp:{fp} -->" for fp in new_fingerprints)
+
     # Build description with all findings
     description_parts = [
         "## Review Findings",
@@ -155,6 +241,7 @@ async def create_review_tracking_issues(
         "---",
         "",
         new_findings_section,
+        fingerprint_comments,
         f"<!-- {new_dedup_tag} -->",
     ]
 

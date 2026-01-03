@@ -683,6 +683,35 @@ class BeadsClient:
         )
         return result.returncode == 0
 
+    async def update_issue_async(
+        self,
+        issue_id: str,
+        *,
+        title: str | None = None,
+        priority: str | None = None,
+    ) -> bool:
+        """Update an issue's title and/or priority.
+
+        Args:
+            issue_id: The issue ID to update.
+            title: New title (optional).
+            priority: New priority string like "P2" (optional).
+
+        Returns:
+            True if successfully updated, False otherwise.
+        """
+        if title is None and priority is None:
+            return True  # Nothing to update
+
+        cmd = ["bd", "update", issue_id]
+        if title is not None:
+            cmd.extend(["--title", title])
+        if priority is not None:
+            cmd.extend(["--priority", priority])
+
+        result = await self._run_subprocess_async(cmd)
+        return result.returncode == 0
+
     async def get_parent_epic_async(self, issue_id: str) -> str | None:
         """Get the parent epic ID for an issue.
 
