@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import re
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -35,6 +36,8 @@ from src.core.models import (
 from src.infra.tools.command_runner import CommandRunner
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from src.infra.clients.beads_client import BeadsClient
     from src.infra.io.event_sink import MalaEventSink
     from src.core.protocols import EpicVerificationModel
@@ -53,6 +56,53 @@ LOW_CONFIDENCE_THRESHOLD = 0.5
 
 # Lock timeout for epic verification (5 minutes)
 EPIC_VERIFY_LOCK_TIMEOUT_SECONDS = 300
+
+
+@asynccontextmanager
+async def epic_verify_lock(
+    epic_id: str,
+    repo_path: Path,
+    lock_manager: object | None,
+) -> AsyncIterator[bool]:
+    """Acquire per-epic verification lock with automatic cleanup.
+
+    Yields True if lock acquired (or locking unavailable), False if timed out.
+    Caller decides how to handle False (skip, return empty result, etc.)
+    """
+    if lock_manager is None:
+        yield True
+        return
+
+    lock_key = f"epic_verify:{epic_id}"
+    lock_agent_id = f"epic_verifier_{os.getpid()}"
+    acquired = False
+
+    try:
+        from src.infra.tools.locking import wait_for_lock
+
+        acquired = await asyncio.to_thread(
+            wait_for_lock,
+            lock_key,
+            lock_agent_id,
+            str(repo_path),
+            EPIC_VERIFY_LOCK_TIMEOUT_SECONDS,
+        )
+    except ImportError:
+        acquired = True  # No locking available, proceed without lock
+
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            try:
+                from src.infra.tools.locking import get_lock_holder, lock_path
+
+                repo_ns = str(repo_path)
+                lp = lock_path(lock_key, repo_ns)
+                if lp.exists() and get_lock_holder(lock_key, repo_ns) == lock_agent_id:
+                    lp.unlink(missing_ok=True)
+            except ImportError:
+                pass
 
 
 def _compute_criterion_hash(criterion: str) -> str:
@@ -422,32 +472,13 @@ class EpicVerifier:
                         )
                 continue
 
-            # Acquire per-epic lock for sequential processing
-            lock_key: str | None = None
-            lock_agent_id: str | None = None
-            if self.lock_manager is not None:
-                # Use lock context manager if available
-                lock_key = f"epic_verify:{epic_id}"
-                # Use unique agent_id per process to ensure mutual exclusion
-                lock_agent_id = f"epic_verifier_{os.getpid()}"
-                try:
-                    # Try to acquire lock with timeout
-                    from src.infra.tools.locking import wait_for_lock
+            async with epic_verify_lock(
+                epic_id, self.repo_path, self.lock_manager
+            ) as acquired:
+                if not acquired:
+                    # Could not acquire lock, skip this epic
+                    continue
 
-                    acquired = await asyncio.to_thread(
-                        wait_for_lock,
-                        lock_key,
-                        lock_agent_id,
-                        str(self.repo_path),  # repo_namespace for consistent lock keys
-                        EPIC_VERIFY_LOCK_TIMEOUT_SECONDS,
-                    )
-                    if not acquired:
-                        # Could not acquire lock, skip this epic
-                        continue
-                except ImportError:
-                    pass  # No locking available
-
-            try:
                 # Emit verification started event
                 if self.event_sink is not None:
                     self.event_sink.on_epic_verification_started(epic_id)
@@ -513,22 +544,6 @@ class EpicVerifier:
                             self.event_sink.on_epic_verification_human_review(
                                 epic_id, reason, review_id
                             )
-            finally:
-                # Release lock if we acquired one
-                if self.lock_manager is not None and lock_key is not None:
-                    try:
-                        from src.infra.tools.locking import get_lock_holder, lock_path
-
-                        repo_ns = str(self.repo_path)
-                        lp = lock_path(lock_key, repo_ns)
-                        if (
-                            lp.exists()
-                            and get_lock_holder(lock_key, repo_ns) == lock_agent_id
-                        ):
-                            lp.unlink(missing_ok=True)
-                    except ImportError:
-                        pass
-
         return EpicVerificationResult(
             verified_count=verified_count,
             passed_count=passed_count,
@@ -802,35 +817,19 @@ class EpicVerifier:
                 remediation_issues_created=remediation_issues,
             )
 
-        lock_key: str | None = None
-        lock_agent_id: str | None = None
-        if self.lock_manager is not None:
-            lock_key = f"epic_verify:{epic_id}"
-            # Use unique agent_id per process to ensure mutual exclusion
-            lock_agent_id = f"epic_verifier_{os.getpid()}"
-            try:
-                from src.infra.tools.locking import wait_for_lock
-
-                acquired = await asyncio.to_thread(
-                    wait_for_lock,
-                    lock_key,
-                    lock_agent_id,
-                    str(self.repo_path),  # repo_namespace for consistent lock keys
-                    EPIC_VERIFY_LOCK_TIMEOUT_SECONDS,
+        async with epic_verify_lock(
+            epic_id, self.repo_path, self.lock_manager
+        ) as acquired:
+            if not acquired:
+                return EpicVerificationResult(
+                    verified_count=0,
+                    passed_count=0,
+                    failed_count=0,
+                    human_review_count=0,
+                    verdicts={},
+                    remediation_issues_created=[],
                 )
-                if not acquired:
-                    return EpicVerificationResult(
-                        verified_count=0,
-                        passed_count=0,
-                        failed_count=0,
-                        human_review_count=0,
-                        verdicts={},
-                        remediation_issues_created=[],
-                    )
-            except ImportError:
-                pass
 
-        try:
             if self.event_sink is not None:
                 self.event_sink.on_epic_verification_started(epic_id)
 
@@ -840,7 +839,11 @@ class EpicVerifier:
 
             if verdict.confidence < LOW_CONFIDENCE_THRESHOLD:
                 reason = f"Low confidence ({verdict.confidence:.2f})"
-                review_id = await self.request_human_review(epic_id, reason, verdict)
+                review_id = await self.request_human_review(
+                    epic_id,
+                    reason,
+                    verdict,
+                )
                 remediation_issues.append(review_id)
                 human_review_count = 1
                 if self.event_sink is not None:
@@ -895,21 +898,6 @@ class EpicVerifier:
                             self.event_sink.on_epic_verification_passed(
                                 epic_id, verdict.confidence
                             )
-        finally:
-            if self.lock_manager is not None and lock_key is not None:
-                try:
-                    from src.infra.tools.locking import get_lock_holder, lock_path
-
-                    repo_ns = str(self.repo_path)
-                    lp = lock_path(lock_key, repo_ns)
-                    if (
-                        lp.exists()
-                        and get_lock_holder(lock_key, repo_ns) == lock_agent_id
-                    ):
-                        lp.unlink(missing_ok=True)
-                except ImportError:
-                    pass
-
         return EpicVerificationResult(
             verified_count=verified_count,
             passed_count=passed_count,
