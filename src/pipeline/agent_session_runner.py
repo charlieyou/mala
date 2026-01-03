@@ -1567,6 +1567,7 @@ class AgentSessionRunner:
 
         pending_query: str | None = query
         state.tool_calls_this_turn = 0
+        state.first_message_received = False
         state.pending_tool_ids.clear()
 
         while pending_query is not None:
