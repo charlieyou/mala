@@ -288,7 +288,6 @@ class MalaOrchestrator:
             config=epic_verification_config,
             callbacks=self._create_epic_verification_callbacks(),
             epic_override_ids=self.epic_override_ids,
-            has_epic_verifier=self.epic_verifier is not None,
         )
 
         # SessionCallbackFactory
@@ -358,6 +357,8 @@ class MalaOrchestrator:
             close_eligible_epics=lambda: self.beads.close_eligible_epics_async(),
             on_epic_closed=lambda issue_id: self.event_sink.on_epic_closed(issue_id),
             on_warning=lambda msg: self.event_sink.on_warning(msg),
+            has_epic_verifier=lambda: self.epic_verifier is not None,
+            get_agent_id=lambda issue_id: self.agent_ids.get(issue_id, "unknown"),
         )
 
     async def _create_review_tracking_issues(

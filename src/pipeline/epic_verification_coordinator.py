@@ -54,6 +54,8 @@ class EpicVerificationCallbacks:
         close_eligible_epics: Fallback for mock providers without EpicVerifier.
         on_epic_closed: Emit epic closed event.
         on_warning: Emit warning event.
+        has_epic_verifier: Check if an EpicVerifier is available (callable for test patching).
+        get_agent_id: Get the agent ID for an issue (for error attribution).
     """
 
     get_parent_epic: Callable[[str], Awaitable[str | None]]
@@ -65,6 +67,8 @@ class EpicVerificationCallbacks:
     close_eligible_epics: Callable[[], Awaitable[bool]]
     on_epic_closed: Callable[[str], None]
     on_warning: Callable[[str], None]
+    has_epic_verifier: Callable[[], bool]
+    get_agent_id: Callable[[str], str]
 
 
 @dataclass
@@ -82,13 +86,11 @@ class EpicVerificationCoordinator:
         config: Verification configuration.
         callbacks: Callbacks for orchestrator-owned operations.
         epic_override_ids: Set of epic IDs to force human override.
-        has_epic_verifier: Whether an EpicVerifier is available.
     """
 
     config: EpicVerificationConfig
     callbacks: EpicVerificationCallbacks
     epic_override_ids: set[str] = field(default_factory=set)
-    has_epic_verifier: bool = True
 
     # State: Tracked across multiple check_epic_closure calls
     verified_epics: set[str] = field(default_factory=set)
@@ -117,7 +119,7 @@ class EpicVerificationCoordinator:
         if parent_epic in self.epics_being_verified:
             return
 
-        if self.has_epic_verifier:
+        if self.callbacks.has_epic_verifier():
             # Mark as being verified to prevent parallel verification loops
             self.epics_being_verified.add(parent_epic)
             try:
@@ -263,14 +265,14 @@ class EpicVerificationCoordinator:
         except asyncio.CancelledError:
             return IssueResult(
                 issue_id=issue_id,
-                agent_id="unknown",
+                agent_id=self.callbacks.get_agent_id(issue_id),
                 success=False,
                 summary="Remediation task was cancelled",
             )
         except Exception as e:
             return IssueResult(
                 issue_id=issue_id,
-                agent_id="unknown",
+                agent_id=self.callbacks.get_agent_id(issue_id),
                 success=False,
                 summary=str(e),
             )

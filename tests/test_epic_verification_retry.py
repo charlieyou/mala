@@ -99,6 +99,7 @@ def create_coordinator(
     finalize_remediation: AsyncMock | None = None,
     mark_completed: MagicMock | None = None,
     is_issue_failed: MagicMock | None = None,
+    get_agent_id: MagicMock | None = None,
 ) -> EpicVerificationCoordinator:
     """Create a coordinator with mock callbacks."""
     callbacks = EpicVerificationCallbacks(
@@ -111,13 +112,14 @@ def create_coordinator(
         close_eligible_epics=mock_beads.close_eligible_epics_async,
         on_epic_closed=mock_event_sink.on_epic_closed,
         on_warning=mock_event_sink.on_warning,
+        has_epic_verifier=lambda: has_epic_verifier,
+        get_agent_id=get_agent_id or MagicMock(return_value="unknown"),
     )
     config = EpicVerificationConfig(max_retries=max_retries)
     return EpicVerificationCoordinator(
         config=config,
         callbacks=callbacks,
         epic_override_ids=epic_override_ids or set(),
-        has_epic_verifier=has_epic_verifier,
     )
 
 
