@@ -1432,6 +1432,105 @@ class AgentSessionRunner:
             logger.info(f"Idle retry {retry_count}: waiting {backoff}s")
             await asyncio.sleep(backoff)
 
+    async def _process_message_stream(
+        self,
+        stream: AsyncIterator[Any],
+        issue_id: str,
+        state: MessageIterationState,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: LintCache,
+        query_start: float,
+        tracer: TelemetrySpan | None,
+    ) -> MessageIterationResult:
+        """Process SDK message stream and update state.
+
+        Updates state.session_id, state.tool_calls_this_turn, state.pending_tool_ids,
+        and lint_cache on successful lint commands.
+
+        Args:
+            stream: The message stream to process.
+            issue_id: Issue ID for logging.
+            state: Mutable state for the iteration.
+            lifecycle_ctx: Lifecycle context for session state.
+            lint_cache: Cache for lint command results.
+            query_start: Timestamp when query was sent.
+            tracer: Optional telemetry span context.
+
+        Returns:
+            MessageIterationResult with success status.
+        """
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ResultMessage,
+            TextBlock,
+            ToolResultBlock,
+            ToolUseBlock,
+        )
+
+        first_message_received = False
+
+        async for message in stream:
+            if not first_message_received:
+                first_message_received = True
+                latency = time.time() - query_start
+                logger.debug(
+                    "Session %s: first message after %.1fs",
+                    issue_id,
+                    latency,
+                )
+            if tracer is not None:
+                tracer.log_message(message)
+
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        if self.callbacks.on_agent_text is not None:
+                            self.callbacks.on_agent_text(issue_id, block.text)
+                    elif isinstance(block, ToolUseBlock):
+                        state.tool_calls_this_turn += 1
+                        state.pending_tool_ids.add(block.id)
+                        if self.callbacks.on_tool_use is not None:
+                            self.callbacks.on_tool_use(
+                                issue_id, block.name, block.input
+                            )
+                        if block.name.lower() == "bash":
+                            cmd = block.input.get("command", "")
+                            lint_type = lint_cache.detect_lint_command(cmd)
+                            if lint_type:
+                                state.pending_lint_commands[block.id] = (
+                                    lint_type,
+                                    cmd,
+                                )
+                    elif isinstance(block, ToolResultBlock):
+                        tool_use_id = getattr(block, "tool_use_id", None)
+                        if tool_use_id:
+                            state.pending_tool_ids.discard(tool_use_id)
+                        if tool_use_id in state.pending_lint_commands:
+                            lint_type, cmd = state.pending_lint_commands.pop(
+                                tool_use_id
+                            )
+                            if not getattr(block, "is_error", False):
+                                lint_cache.mark_success(lint_type, cmd)
+
+            elif isinstance(message, ResultMessage):
+                state.session_id = message.session_id
+                lifecycle_ctx.session_id = message.session_id
+                lifecycle_ctx.final_result = message.result or ""
+
+        # Success
+        stream_duration = time.time() - query_start
+        logger.debug(
+            "Session %s: stream complete after %.1fs, %d tool calls",
+            issue_id,
+            stream_duration,
+            state.tool_calls_this_turn,
+        )
+        return MessageIterationResult(
+            success=True,
+            session_id=state.session_id,
+            idle_retry_count=0,
+        )
+
     async def _run_message_iteration(
         self,
         query: str,
@@ -1464,14 +1563,7 @@ class AgentSessionRunner:
         Raises:
             IdleTimeoutError: If max idle retries exceeded.
         """
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeSDKClient,
-            ResultMessage,
-            TextBlock,
-            ToolResultBlock,
-            ToolUseBlock,
-        )
+        from claude_agent_sdk import ClaudeSDKClient
 
         pending_query: str | None = query
         state.tool_calls_this_turn = 0
@@ -1507,7 +1599,6 @@ class AgentSessionRunner:
                             issue_id,
                         )
                         await client.query(pending_query)
-                    first_message_received = False
 
                     # Wrap stream with idle timeout handling
                     stream = IdleTimeoutStream(
@@ -1517,76 +1608,14 @@ class AgentSessionRunner:
                     )
 
                     try:
-                        async for message in stream:
-                            if not first_message_received:
-                                first_message_received = True
-                                latency = time.time() - query_start
-                                logger.debug(
-                                    "Session %s: first message after %.1fs",
-                                    issue_id,
-                                    latency,
-                                )
-                            if tracer is not None:
-                                tracer.log_message(message)
-
-                            if isinstance(message, AssistantMessage):
-                                for block in message.content:
-                                    if isinstance(block, TextBlock):
-                                        if self.callbacks.on_agent_text is not None:
-                                            self.callbacks.on_agent_text(
-                                                issue_id, block.text
-                                            )
-                                    elif isinstance(block, ToolUseBlock):
-                                        state.tool_calls_this_turn += 1
-                                        state.pending_tool_ids.add(block.id)
-                                        if self.callbacks.on_tool_use is not None:
-                                            self.callbacks.on_tool_use(
-                                                issue_id, block.name, block.input
-                                            )
-                                        if block.name.lower() == "bash":
-                                            cmd = block.input.get("command", "")
-                                            lint_type = lint_cache.detect_lint_command(
-                                                cmd
-                                            )
-                                            if lint_type:
-                                                state.pending_lint_commands[
-                                                    block.id
-                                                ] = (
-                                                    lint_type,
-                                                    cmd,
-                                                )
-                                    elif isinstance(block, ToolResultBlock):
-                                        tool_use_id = getattr(
-                                            block, "tool_use_id", None
-                                        )
-                                        if tool_use_id:
-                                            state.pending_tool_ids.discard(tool_use_id)
-                                        if tool_use_id in state.pending_lint_commands:
-                                            lint_type, cmd = (
-                                                state.pending_lint_commands.pop(
-                                                    tool_use_id
-                                                )
-                                            )
-                                            if not getattr(block, "is_error", False):
-                                                lint_cache.mark_success(lint_type, cmd)
-
-                            elif isinstance(message, ResultMessage):
-                                state.session_id = message.session_id
-                                lifecycle_ctx.session_id = message.session_id
-                                lifecycle_ctx.final_result = message.result or ""
-
-                        # Success
-                        stream_duration = time.time() - query_start
-                        logger.debug(
-                            "Session %s: stream complete after %.1fs, %d tool calls",
+                        return await self._process_message_stream(
+                            stream,
                             issue_id,
-                            stream_duration,
-                            state.tool_calls_this_turn,
-                        )
-                        return MessageIterationResult(
-                            success=True,
-                            session_id=state.session_id,
-                            idle_retry_count=0,
+                            state,
+                            lifecycle_ctx,
+                            lint_cache,
+                            query_start,
+                            tracer,
                         )
 
                     except IdleTimeoutError:
@@ -1595,8 +1624,7 @@ class AgentSessionRunner:
                         logger.warning(
                             f"Session {issue_id}: idle timeout after "
                             f"{idle_duration:.1f}s, {state.tool_calls_this_turn} tool "
-                            f"calls, first_msg={'yes' if first_message_received else 'no'}, "
-                            "disconnecting subprocess"
+                            "calls, disconnecting subprocess"
                         )
                         try:
                             await asyncio.wait_for(
