@@ -295,9 +295,9 @@ class MalaOrchestrator:
         self.session_callback_factory = SessionCallbackFactory(
             gate_async_runner=self,
             review_runner=self.review_runner,
-            log_provider=self.log_provider,
-            event_sink=self.event_sink,
-            quality_gate=self.quality_gate,
+            log_provider=lambda: self.log_provider,
+            event_sink=lambda: self.event_sink,
+            quality_gate=lambda: self.quality_gate,
             repo_path=self.repo_path,
             session_log_paths=self.session_log_paths,
             review_log_paths=self.review_log_paths,

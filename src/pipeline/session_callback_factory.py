@@ -8,6 +8,8 @@ Design principles:
 - Single responsibility: only builds callbacks, doesn't run gates/reviews
 - Protocol-based dependencies for testability
 - All callback closures capture minimal state
+- Late-bound lookups: dependencies are accessed via callables to support
+  runtime patching (e.g., tests that swap event_sink after construction)
 """
 
 from __future__ import annotations
@@ -65,9 +67,9 @@ class SessionCallbackFactory:
         self,
         gate_async_runner: GateAsyncRunner,
         review_runner: ReviewRunner,
-        log_provider: LogProvider,
-        event_sink: MalaEventSink,
-        quality_gate: GateChecker,
+        log_provider: Callable[[], LogProvider],
+        event_sink: Callable[[], MalaEventSink],
+        quality_gate: Callable[[], GateChecker],
         repo_path: Path,
         session_log_paths: dict[str, Path],
         review_log_paths: dict[str, str],
@@ -79,20 +81,25 @@ class SessionCallbackFactory:
         Args:
             gate_async_runner: Protocol for running async gate checks.
             review_runner: Runner for Cerberus code review.
-            log_provider: Provider for log file paths.
-            event_sink: Sink for tool use and agent text events.
-            quality_gate: Gate checker for log offset calculation.
+            log_provider: Callable returning the log provider (late-bound).
+            event_sink: Callable returning the event sink (late-bound).
+            quality_gate: Callable returning the gate checker (late-bound).
             repo_path: Repository path for git operations.
             session_log_paths: Dict to store session log paths (mutated).
             review_log_paths: Dict to store review log paths (mutated).
             get_per_issue_spec: Callable to get current per-issue spec.
             is_verbose: Callable to check verbose mode.
+
+        Note:
+            log_provider, event_sink, and quality_gate are callables to support
+            late-bound lookups. This allows tests to patch orchestrator attributes
+            after factory construction and have the patches take effect.
         """
         self._gate_async_runner = gate_async_runner
         self._review_runner = review_runner
-        self._log_provider = log_provider
-        self._event_sink = event_sink
-        self._quality_gate = quality_gate
+        self._get_log_provider = log_provider
+        self._get_event_sink = event_sink
+        self._get_quality_gate = quality_gate
         self._repo_path = repo_path
         self._session_log_paths = session_log_paths
         self._review_log_paths = review_log_paths
@@ -168,18 +175,20 @@ class SessionCallbackFactory:
             return self._review_runner.check_no_progress(no_progress_input)
 
         def get_log_path(session_id: str) -> Path:
-            log_path = self._log_provider.get_log_path(self._repo_path, session_id)
+            log_path = self._get_log_provider().get_log_path(
+                self._repo_path, session_id
+            )
             self._session_log_paths[issue_id] = log_path
             return log_path
 
         def get_log_offset(log_path: Path, start_offset: int) -> int:
-            return self._quality_gate.get_log_end_offset(log_path, start_offset)
+            return self._get_quality_gate().get_log_end_offset(log_path, start_offset)
 
         def on_tool_use(agent_id: str, tool_name: str, arguments: dict | None) -> None:
-            self._event_sink.on_tool_use(agent_id, tool_name, arguments=arguments)
+            self._get_event_sink().on_tool_use(agent_id, tool_name, arguments=arguments)
 
         def on_agent_text(agent_id: str, text: str) -> None:
-            self._event_sink.on_agent_text(agent_id, text)
+            self._get_event_sink().on_agent_text(agent_id, text)
 
         return SessionCallbacks(
             on_gate_check=on_gate_check,
