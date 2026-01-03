@@ -26,8 +26,7 @@ Implement the assigned issue completely before returning.
 - Check context before Read—don't re-fetch ranges you already have.
 - Batch independent Read/Grep calls in a single message.
 - Skip `grep` on binary/large generated files.
-- **Lock retry budget**: Max 3 `lock-try.sh` retries per file (2s/4s/8s gaps). Then either work on other files, run ONE `lock-wait.sh` (≥300s), or return BLOCKED.
-- **No consecutive lock calls**: Never issue two lock-related bash commands without doing other work (read/grep/edit/test) in between.
+- **Lock handling**: If a file is locked, complete all edits on other files first, then run ONE `lock-wait.sh` (≥300s). Do not retry or investigate.
 - **Locks are for editing only**: Reading, grep, planning, and tests don't require locks—do those while blocked.
 - No narration ("Let me...", "Now I will..."). Reference code as `file:line`.
 - Outside Output template, keep explanations to ≤3 sentences.
@@ -39,24 +38,16 @@ Subagents have separate context windows. Use them to keep each worker focused an
 
 ### When to Spawn
 
-Use subagents when ANY is true:
+Use a general subagent when ANY is true:
 - **>15 edits or >5 files** expected
 - **Multiple independent workstreams** (e.g., API + UI + tests)
 - **>10 files to inspect** or **>8 distinct modules** to understand
 
 Skip subagents when task fits in ≤15 edits, ≤5 files.
 
-### Patterns
-
-1. **Shard by area**: Group work into 2-3 independent areas (backend/frontend/tests, or handlers/models/tests). One subagent per area with strict file allowlist.
-
-2. **Explore-first**: For unfamiliar areas, spawn Explore subagent to map files/functions. Output: `file: key_function` lines, max 20 lines. No prose.
-
-3. **Plan subagent**: For complex issues, spawn Plan subagent first. Output: numbered list of 5-10 steps, each ≤10 words.
+**Explore-first**: For unfamiliar areas, spawn Explore subagent to map files/functions. Output: `file: key_function` lines, max 20 lines. No prose.
 
 ### Subagent Contract
-
-Spawn at most **3 subagents** per issue; prefer 2.
 
 Each subagent prompt MUST include:
 - One goal sentence
@@ -70,8 +61,6 @@ Files changed: <file:line for each>
 Tests/checks: <command run> OR "Skipped (main will run)"
 Notes: <blockers, questions, or "None">
 ```
-
-If subagent exceeds 15 edits or 5 files, it MUST stop and report: "SHARD_TOO_LARGE: <reason>".
 
 If subagent is blocked on locks, return: "BLOCKED: <file> held by <holder>".
 
@@ -118,15 +107,14 @@ Lock scripts are pre-configured in your environment (LOCK_DIR, AGENT_ID, REPO_NA
 **Acquisition strategy - mandatory protocol:**
 
 1. Try `lock-try.sh` for ALL files you need (batch in one message if possible)
-2. For blocked files, note the holder and **immediately work on locked files first**
-3. Retry budget per blocked file: max 3 retries with 2s/4s/8s gaps
-4. Between EVERY retry, do concrete work (edit locked file, grep, read, run tests)
-5. After 3 retries exhausted: run ONE `lock-wait.sh <file> 300` (5 min) or return BLOCKED
+2. For blocked files, note the holder and **complete all edits on files you DO have locked**
+3. Once all other work is done, run ONE `lock-wait.sh <file> 300` for each blocked file
+4. If `lock-wait.sh` times out, return BLOCKED—do not retry or investigate
 
 **Hard rules:**
-- **No consecutive lock commands**: Every lock-related bash call must be separated by non-lock work
-- **`lock-wait.sh` is single-shot**: Run at most once per file. If it times out, return BLOCKED—do not loop
-- **15 min total cap**: Track cumulative wait. After 15 min on any file, return BLOCKED
+- **No retries**: Do not call `lock-try.sh` multiple times for the same file
+- **`lock-wait.sh` is single-shot**: Run at most once per file. If it times out, return BLOCKED
+- **15 min total cap**: After 15 min cumulative wait, return BLOCKED
 
 **Example workflow:**
 ```bash
@@ -136,13 +124,11 @@ lock-try.sh config.py  # exit 0 → SUCCESS
 lock-try.sh utils.py   # exit 1 → BLOCKED (holder: bd-43)
 lock-try.sh main.py    # exit 0 → SUCCESS
 
-# → Edit config.py (non-lock work)
-# → Retry 1: lock-try.sh utils.py (2s gap)
-# → Edit main.py (non-lock work)  
-# → Retry 2: lock-try.sh utils.py (4s gap)
-# → Run grep/read for planning (non-lock work)
-# → Retry 3: lock-try.sh utils.py (8s gap)
-# → If still blocked: lock-wait.sh utils.py 300
+# → Edit config.py (all changes needed)
+# → Edit main.py (all changes needed)
+# → Run any other non-lock work (grep, read, tests)
+# → lock-wait.sh utils.py 300
+# → If acquired: edit utils.py
 # → If timeout: return "BLOCKED: utils.py held by bd-43"
 ```
 
@@ -157,9 +143,9 @@ lock-try.sh main.py    # exit 0 → SUCCESS
 ### 3. Implement (with lock-aware ordering)
 
 1. **Acquire all locks you can** - note which are blocked and who holds them
-2. **Work on locked files first** - write code, don't commit yet
-3. **Retry blocked files** following the retry budget (max 3 tries, non-lock work between each)
-4. **If retries exhausted**: one `lock-wait.sh` call OR return BLOCKED (see Acquisition strategy)
+2. **Complete all work on files you have locked** - write code, don't commit yet
+3. **Run `lock-wait.sh`** for each blocked file (one call per file, no retries)
+4. **If wait times out**, return BLOCKED
 5. **Once all locks acquired**, complete remaining implementation
 6. Handle edge cases, add tests if appropriate
 
