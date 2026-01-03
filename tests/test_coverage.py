@@ -33,6 +33,26 @@ def make_mock_runner(
     return mock
 
 
+def make_mock_env_config() -> Mock:
+    """Create a mock EnvConfigPort."""
+    mock = Mock()
+    mock.scripts_dir = Path("/mock/scripts")
+    mock.cache_dir = Path("/mock/cache")
+    mock.lock_dir = Path("/tmp/mock-locks")
+    mock.find_cerberus_bin_path.return_value = None
+    return mock
+
+
+def make_mock_lock_manager() -> Mock:
+    """Create a mock LockManagerPort."""
+    mock = Mock()
+    mock.lock_path.return_value = Path("/tmp/mock-lock")
+    mock.try_lock.return_value = True
+    mock.wait_for_lock.return_value = True
+    mock.release_lock.return_value = True
+    return mock
+
+
 # Fixture XML content for different test cases
 VALID_COVERAGE_XML_90_PERCENT = """\
 <?xml version="1.0" ?>
@@ -605,7 +625,9 @@ class TestIsBaselineStale:
         """Missing baseline file should be considered stale."""
         report = tmp_path / "nonexistent.xml"
 
-        result = is_baseline_stale(report, tmp_path)
+        # Missing file doesn't need command runner, but function requires it
+        mock_runner = make_mock_runner(lambda *args, **kwargs: None)
+        result = is_baseline_stale(report, tmp_path, command_runner=mock_runner)
 
         assert result is True
 
@@ -1030,7 +1052,13 @@ class TestBaselineCoverageService:
         from unittest.mock import MagicMock
 
         # Create service without coverage config
-        service = BaselineCoverageService(repo_path=tmp_path, coverage_config=None)
+        service = BaselineCoverageService(
+            repo_path=tmp_path,
+            env_config=make_mock_env_config(),
+            command_runner=make_mock_runner(lambda *a, **kw: None),
+            lock_manager=make_mock_lock_manager(),
+            coverage_config=None,
+        )
 
         # Mock spec - shouldn't matter since we fail early
         mock_spec = MagicMock()
@@ -1052,7 +1080,13 @@ class TestBaselineCoverageService:
             threshold=85.0,
             command=None,
         )
-        service = BaselineCoverageService(repo_path=tmp_path, coverage_config=config)
+        service = BaselineCoverageService(
+            repo_path=tmp_path,
+            env_config=make_mock_env_config(),
+            command_runner=make_mock_runner(lambda *a, **kw: None),
+            lock_manager=make_mock_lock_manager(),
+            coverage_config=config,
+        )
 
         # Mock spec - shouldn't matter since we fail early
         mock_spec = MagicMock()
@@ -1075,6 +1109,9 @@ class TestBaselineCoverageService:
         )
         service = BaselineCoverageService(
             repo_path=tmp_path,
+            env_config=make_mock_env_config(),
+            command_runner=make_mock_runner(lambda *a, **kw: None),
+            lock_manager=make_mock_lock_manager(),
             coverage_config=config,
             step_timeout_seconds=120.0,  # This should be ignored
         )
@@ -1096,6 +1133,9 @@ class TestBaselineCoverageService:
         )
         service = BaselineCoverageService(
             repo_path=tmp_path,
+            env_config=make_mock_env_config(),
+            command_runner=make_mock_runner(lambda *a, **kw: None),
+            lock_manager=make_mock_lock_manager(),
             coverage_config=config,
             step_timeout_seconds=180.0,
         )
@@ -1140,8 +1180,10 @@ class TestBaselineCoverageService:
         mock_runner = make_mock_runner(mock_run)
         service = BaselineCoverageService(
             repo_path=tmp_path,
-            coverage_config=config,
+            env_config=make_mock_env_config(),
             command_runner=mock_runner,
+            lock_manager=make_mock_lock_manager(),
+            coverage_config=config,
         )
 
         # Mock spec
@@ -1191,9 +1233,10 @@ class TestBaselineCoverageService:
 
         service = BaselineCoverageService(
             repo_path=tmp_path,
-            coverage_config=config,
+            env_config=make_mock_env_config(),
             command_runner=mock_runner,
             lock_manager=mock_lock_manager,
+            coverage_config=config,
         )
 
         mock_spec = MagicMock()
@@ -1264,9 +1307,10 @@ class TestBaselineCoverageService:
 
         service = BaselineCoverageService(
             repo_path=tmp_path,
-            coverage_config=config,
+            env_config=make_mock_env_config(),
             command_runner=mock_runner,
             lock_manager=mock_lock_manager,
+            coverage_config=config,
         )
 
         mock_spec = MagicMock()
@@ -1325,9 +1369,10 @@ class TestBaselineCoverageService:
 
         service = BaselineCoverageService(
             repo_path=tmp_path,
-            coverage_config=config,
+            env_config=make_mock_env_config(),
             command_runner=mock_runner,
             lock_manager=mock_lock_manager,
+            coverage_config=config,
         )
 
         mock_spec = MagicMock()

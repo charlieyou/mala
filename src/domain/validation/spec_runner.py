@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from .lint_cache import LintCache
 from .spec import ValidationArtifacts
@@ -32,7 +32,7 @@ from .validation_gating import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort, LockManagerPort
     from src.infra.io.event_protocol import MalaEventSink
 
     from .result import ValidationStepResult
@@ -72,21 +72,23 @@ class SpecValidationRunner:
     def __init__(
         self,
         repo_path: Path,
+        env_config: EnvConfigPort,
+        command_runner: CommandRunnerPort,
+        lock_manager: LockManagerPort,
         step_timeout_seconds: float | None = None,
         enable_lint_cache: bool = True,
-        env_config: EnvConfigPort | None = None,
-        command_runner: CommandRunnerPort | None = None,
         event_sink: MalaEventSink | None = None,
     ):
         """Initialize the spec validation runner.
 
         Args:
             repo_path: Path to the repository to validate.
+            env_config: Environment configuration for paths.
+            command_runner: Command runner for executing commands.
+            lock_manager: Lock manager for file locking.
             step_timeout_seconds: Optional timeout for individual steps.
             enable_lint_cache: Whether to enable lint caching. Set to False
                 in tests or when caching is not desired.
-            env_config: Environment configuration for paths.
-            command_runner: Command runner for executing commands.
             event_sink: Event sink for emitting validation step events.
         """
         self.repo_path = repo_path.resolve()
@@ -94,6 +96,7 @@ class SpecValidationRunner:
         self.enable_lint_cache = enable_lint_cache
         self.env_config = env_config
         self.command_runner = command_runner
+        self.lock_manager = lock_manager
         self.event_sink = event_sink
 
     async def run_spec(
@@ -149,13 +152,7 @@ class SpecValidationRunner:
         # currently wired up.
 
         # Delegate workspace setup to spec_workspace module
-        # Get command runner, creating fallback if not injected
-        if self.command_runner is not None:
-            runner: CommandRunnerPort = self.command_runner
-        else:
-            from src.infra.tools.command_runner import CommandRunner
-
-            runner = cast("CommandRunnerPort", CommandRunner(cwd=context.repo_path))
+        runner: CommandRunnerPort = self.command_runner
 
         try:
             # Step 0b: Invalidate lint cache if config_files changed
@@ -172,6 +169,7 @@ class SpecValidationRunner:
                 step_timeout_seconds=self.step_timeout_seconds,
                 command_runner=runner,
                 env_config=self.env_config,
+                lock_manager=self.lock_manager,
             )
         except SetupError as e:
             # Return early failure for setup errors
@@ -218,13 +216,7 @@ class SpecValidationRunner:
         if not self.enable_lint_cache:
             return
         try:
-            if self.env_config is not None:
-                cache_dir = self.env_config.cache_dir
-            else:
-                # Fallback for legacy callers without env_config
-                from src.infra.tools.env import get_cache_dir
-
-                cache_dir = get_cache_dir()
+            cache_dir = self.env_config.cache_dir
             cache = LintCache(
                 cache_dir=cache_dir,
                 repo_path=self.repo_path,
@@ -245,7 +237,7 @@ class SpecValidationRunner:
         log_dir: Path,
         run_id: str,
         baseline_percent: float | None,
-        command_runner: CommandRunnerPort | None,
+        command_runner: CommandRunnerPort,
     ) -> ValidationResult:
         """Run pipeline: commands -> coverage -> e2e -> result."""
         env = self._build_spec_env(context, run_id)
@@ -275,8 +267,9 @@ class SpecValidationRunner:
             log_dir=log_dir,
             env=env,
             baseline_percent=baseline_percent,
-            yaml_coverage_config=spec.yaml_coverage_config,
             env_config=self.env_config,
+            command_runner=command_runner,
+            yaml_coverage_config=spec.yaml_coverage_config,
         )
         result = builder.build(builder_input)
 
@@ -337,7 +330,7 @@ class SpecValidationRunner:
         cwd: Path,
         env: dict[str, str],
         log_dir: Path,
-        command_runner: CommandRunnerPort | None,
+        command_runner: CommandRunnerPort,
     ) -> list[ValidationStepResult]:
         """Execute all commands in the spec.
 
@@ -357,21 +350,13 @@ class SpecValidationRunner:
         Raises:
             CommandFailure: If a command fails (and allow_fail is False).
         """
-        # Create fallback runner if not provided (for backward compatibility)
-        if command_runner is None:
-            from src.infra.tools.command_runner import CommandRunner
-
-            runner: CommandRunnerPort = CommandRunner(cwd=cwd)
-        else:
-            runner = command_runner
-
         # Configure executor
         executor_config = ExecutorConfig(
             enable_lint_cache=self.enable_lint_cache,
             repo_path=self.repo_path,
             step_timeout_seconds=self.step_timeout_seconds,
             env_config=self.env_config,
-            command_runner=runner,
+            command_runner=command_runner,
             event_sink=self.event_sink,
         )
         executor = SpecCommandExecutor(executor_config)
@@ -438,13 +423,7 @@ class SpecValidationRunner:
         run_id: str,
     ) -> dict[str, str]:
         """Build environment for spec-based validation."""
-        if self.env_config is not None:
-            lock_dir = str(self.env_config.lock_dir)
-        else:
-            # Fallback for legacy callers without env_config
-            from src.infra.tools.env import get_lock_dir
-
-            lock_dir = str(get_lock_dir())
+        lock_dir = str(self.env_config.lock_dir)
         return {
             **os.environ,
             "LOCK_DIR": lock_dir,

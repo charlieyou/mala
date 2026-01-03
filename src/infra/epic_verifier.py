@@ -33,14 +33,14 @@ from src.core.models import (
     UnmetCriterion,
 )
 from src.domain.epic.scope import EpicScopeAnalyzer
-from src.infra.tools.command_runner import CommandRunner
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from src.core.protocols import EpicVerificationModel
     from src.infra.clients.beads_client import BeadsClient
     from src.infra.io.event_protocol import MalaEventSink
-    from src.core.protocols import EpicVerificationModel
+    from src.infra.tools.command_runner import CommandRunner
 
 # Spec path patterns from docs (case-insensitive)
 SPEC_PATH_PATTERNS = [
@@ -384,6 +384,7 @@ class EpicVerifier:
         beads: BeadsClient,
         model: EpicVerificationModel,
         repo_path: Path,
+        command_runner: CommandRunner,
         retry_config: RetryConfig | None = None,
         lock_manager: object | None = None,
         event_sink: MalaEventSink | None = None,
@@ -395,6 +396,7 @@ class EpicVerifier:
             beads: BeadsClient for issue operations.
             model: EpicVerificationModel for verification.
             repo_path: Path to the repository.
+            command_runner: Command runner for executing commands.
             retry_config: Configuration for retry behavior.
             lock_manager: Optional lock manager for sequential processing.
             event_sink: Optional event sink for emitting verification lifecycle events.
@@ -407,8 +409,10 @@ class EpicVerifier:
         self.retry_config = retry_config or RetryConfig()
         self.lock_manager = lock_manager
         self.event_sink = event_sink
-        self.scope_analyzer = scope_analyzer or EpicScopeAnalyzer(repo_path)
-        self._runner = CommandRunner(cwd=repo_path)
+        self._runner = command_runner
+        self.scope_analyzer = scope_analyzer or EpicScopeAnalyzer(
+            repo_path, self._runner
+        )
 
     async def verify_and_close_eligible(
         self,

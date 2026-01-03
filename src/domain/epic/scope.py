@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.infra.tools.command_runner import CommandRunner
+from src.core.protocols import CommandRunnerPort
 
 
 @dataclass
@@ -18,14 +18,14 @@ class ScopedCommits:
 class EpicScopeAnalyzer:
     """Analyzes epic scope by computing related commits from child issues."""
 
-    def __init__(self, repo_path: Path, runner: CommandRunner | None = None):
+    def __init__(self, repo_path: Path, runner: CommandRunnerPort):
         """Initialize EpicScopeAnalyzer.
 
         Args:
             repo_path: Path to the git repository.
-            runner: Optional CommandRunner instance. If not provided, creates one.
+            runner: CommandRunner instance for executing git commands.
         """
-        self._runner = runner or CommandRunner(cwd=repo_path)
+        self._runner = runner
 
     async def compute_scoped_commits(
         self, child_ids: set[str], blocker_ids: set[str] | None = None

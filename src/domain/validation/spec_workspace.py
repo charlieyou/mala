@@ -31,7 +31,7 @@ from .worktree import (
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort, LockManagerPort
 
     from .spec import ValidationContext, ValidationSpec
     from .worktree import WorktreeContext
@@ -87,7 +87,8 @@ def setup_workspace(
     log_dir: Path | None,
     step_timeout_seconds: float | None,
     command_runner: CommandRunnerPort,
-    env_config: EnvConfigPort | None = None,
+    env_config: EnvConfigPort,
+    lock_manager: LockManagerPort,
 ) -> SpecRunWorkspace:
     """Set up workspace for a validation run.
 
@@ -105,6 +106,7 @@ def setup_workspace(
         step_timeout_seconds: Optional timeout for baseline refresh commands.
         command_runner: Command runner for executing git commands.
         env_config: Environment configuration for paths.
+        lock_manager: Lock manager for file locking.
 
     Returns:
         SpecRunWorkspace with all context needed for validation.
@@ -131,9 +133,11 @@ def setup_workspace(
         # "No decrease" mode - need to get baseline via service
         baseline_service = BaselineCoverageService(
             context.repo_path,
+            env_config=env_config,
+            command_runner=command_runner,
+            lock_manager=lock_manager,
             coverage_config=spec.yaml_coverage_config,
             step_timeout_seconds=step_timeout_seconds,
-            env_config=env_config,
         )
         result = baseline_service.refresh_if_stale(spec)
         if not result.success:
@@ -223,7 +227,8 @@ def workspace_context(
     log_dir: Path | None,
     step_timeout_seconds: float | None,
     command_runner: CommandRunnerPort,
-    env_config: EnvConfigPort | None = None,
+    env_config: EnvConfigPort,
+    lock_manager: LockManagerPort,
 ) -> Generator[SpecRunWorkspace, None, None]:
     """Context manager for workspace setup and cleanup.
 
@@ -237,6 +242,7 @@ def workspace_context(
         step_timeout_seconds: Optional timeout for baseline refresh commands.
         command_runner: Command runner for executing git commands.
         env_config: Environment configuration for paths.
+        lock_manager: Lock manager for file locking.
 
     Yields:
         SpecRunWorkspace with all context needed for validation.
@@ -245,7 +251,13 @@ def workspace_context(
         SetupError: If baseline refresh or worktree creation fails.
     """
     workspace = setup_workspace(
-        spec, context, log_dir, step_timeout_seconds, command_runner, env_config
+        spec,
+        context,
+        log_dir,
+        step_timeout_seconds,
+        command_runner,
+        env_config,
+        lock_manager,
     )
     validation_passed = False
     try:

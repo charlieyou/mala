@@ -124,17 +124,16 @@ class E2ERunner:
 
     def __init__(
         self,
+        env_config: EnvConfigPort,
+        command_runner: CommandRunnerPort,
         config: E2EConfig | None = None,
-        env_config: EnvConfigPort | None = None,
-        command_runner: CommandRunnerPort | None = None,
     ):
         """Initialize the E2E runner.
 
         Args:
-            config: E2E configuration. Uses defaults if None.
             env_config: Environment configuration for finding cerberus bin path.
-            command_runner: Optional CommandRunnerPort for running mala commands.
-                If not provided, creates a CommandRunner when needed.
+            command_runner: CommandRunnerPort for running mala commands.
+            config: E2E configuration. Uses defaults if None.
         """
         self.config = config or E2EConfig()
         self.env_config = env_config
@@ -165,13 +164,7 @@ class E2ERunner:
             missing.append("bd CLI not found in PATH")
 
         # Check for Cerberus review-gate (required for E2E to test review flow)
-        if self.env_config is not None:
-            cerberus_bin = self.env_config.find_cerberus_bin_path()
-        else:
-            # Fallback for legacy callers without env_config
-            from src.infra.io.config import _find_cerberus_bin_path
-
-            cerberus_bin = _find_cerberus_bin_path(Path.home() / ".claude")
+        cerberus_bin = self.env_config.find_cerberus_bin_path()
         if cerberus_bin is None:
             missing.append(
                 "Cerberus review-gate not installed (check ~/.claude/plugins)"
@@ -266,7 +259,7 @@ class E2ERunner:
         write_fixture_repo(repo_path)
 
         # Initialize git and beads using shared helper
-        return init_fixture_repo(repo_path)
+        return init_fixture_repo(repo_path, self._command_runner)
 
     def _run_mala(
         self, fixture_path: Path, env: Mapping[str, str], cwd: Path
@@ -282,9 +275,9 @@ class E2ERunner:
             E2EResult with command execution details.
         """
         # Annotate the issue with context using shared helper
-        issue_id = get_ready_issue_id(fixture_path)
+        issue_id = get_ready_issue_id(fixture_path, self._command_runner)
         if issue_id:
-            annotate_issue(fixture_path, issue_id)
+            annotate_issue(fixture_path, issue_id, self._command_runner)
 
         # Override CLAUDE_SESSION_ID to avoid conflicts with parent session's review gate.
         # The Cerberus review-gate tracks pending reviews per session, so running e2e
@@ -311,15 +304,7 @@ class E2ERunner:
             f"--cerberus-spawn-args=--mode={self.config.cerberus_mode}",
         ]
 
-        # Use injected CommandRunner or create a new one
-        if self._command_runner is not None:
-            runner = self._command_runner
-        else:
-            from src.infra.tools.command_runner import CommandRunner
-
-            runner = CommandRunner(
-                cwd=cwd, timeout_seconds=self.config.timeout_seconds + 30
-            )
+        runner = self._command_runner
         result = runner.run(cmd, env=child_env, cwd=cwd)
 
         if result.ok:
@@ -352,16 +337,21 @@ class E2ERunner:
         )
 
 
-# For backwards compatibility, export the prereq checker with the old name
-def check_e2e_prereqs(env: Mapping[str, str]) -> str | None:
-    """Check E2E prerequisites (legacy interface).
+def check_e2e_prereqs(
+    env_config: EnvConfigPort,
+    command_runner: CommandRunnerPort,
+    env: Mapping[str, str],
+) -> str | None:
+    """Check E2E prerequisites.
 
     Args:
+        env_config: Environment configuration for paths.
+        command_runner: Command runner for executing commands.
         env: Environment variables to check.
 
     Returns:
         Error message if prerequisites not met, None if all ok.
     """
-    runner = E2ERunner()
+    runner = E2ERunner(env_config, command_runner)
     result = runner.check_prereqs(env)
     return result.failure_reason()

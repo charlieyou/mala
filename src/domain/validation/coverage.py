@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from .config import YamlCoverageConfig  # noqa: TC001 - used at runtime
 from .coverage_args import rewrite_coverage_command
@@ -343,7 +343,7 @@ def get_baseline_coverage(report_path: Path) -> float | None:
 def is_baseline_stale(
     report_path: Path,
     repo_path: Path,
-    command_runner: CommandRunnerPort | None = None,
+    command_runner: CommandRunnerPort,
 ) -> bool:
     """Check if the coverage baseline file is stale and needs refresh.
 
@@ -356,8 +356,7 @@ def is_baseline_stale(
     Args:
         report_path: Path to the coverage.xml baseline file.
         repo_path: Path to the git repository root.
-        command_runner: Optional CommandRunnerPort for running git commands.
-            If not provided, creates a CommandRunner with repo_path as cwd.
+        command_runner: CommandRunnerPort for running git commands.
 
     Returns:
         True if baseline is stale or doesn't exist, False if baseline is fresh.
@@ -366,13 +365,7 @@ def is_baseline_stale(
     if not report_path.exists():
         return True
 
-    # Use injected runner or create default
-    if command_runner is not None:
-        runner = command_runner
-    else:
-        from src.infra.tools.command_runner import CommandRunner
-
-        runner = CommandRunner(cwd=repo_path)
+    runner = command_runner
 
     try:
         # Check for dirty working tree
@@ -413,58 +406,6 @@ def is_baseline_stale(
 _BASELINE_LOCK_FILE = "coverage-baseline.lock"
 
 
-class _FallbackLockAdapter:
-    """Adapter that wraps module-level locking functions as LockManagerPort.
-
-    Defined at module level to avoid re-creating the class on every call
-    to refresh_if_stale when no lock manager is injected.
-    """
-
-    def lock_path(self, filepath: str, repo_namespace: str | None = None) -> Path:
-        from src.infra.tools.locking import lock_path as _lock_path
-
-        return _lock_path(filepath, repo_namespace)
-
-    def try_lock(
-        self,
-        filepath: str,
-        agent_id: str,
-        repo_namespace: str | None = None,
-    ) -> bool:
-        from src.infra.tools.locking import try_lock as _try_lock
-
-        return _try_lock(filepath, agent_id, repo_namespace)
-
-    def wait_for_lock(
-        self,
-        filepath: str,
-        agent_id: str,
-        repo_namespace: str | None = None,
-        timeout_seconds: float = 30.0,
-        poll_interval_ms: int = 100,
-    ) -> bool:
-        from src.infra.tools.locking import wait_for_lock as _wait_for_lock
-
-        return _wait_for_lock(
-            filepath,
-            agent_id,
-            repo_namespace,
-            timeout_seconds,
-            poll_interval_ms,
-        )
-
-    def release_lock(
-        self, filepath: str, agent_id: str, repo_namespace: str | None = None
-    ) -> bool:
-        from src.infra.tools.locking import release_lock as _release_lock
-
-        return _release_lock(filepath, agent_id, repo_namespace)
-
-
-# Singleton instance of the fallback adapter
-_FALLBACK_LOCK_ADAPTER = _FallbackLockAdapter()
-
-
 @dataclass
 class WorktreeRefreshContext:
     """Context for baseline refresh worktree lifecycle.
@@ -483,7 +424,7 @@ def baseline_worktree(
     repo_path: Path,
     timeout: float,
     lock_dir: Path,
-    command_runner: CommandRunnerPort | None = None,
+    command_runner: CommandRunnerPort,
 ) -> Iterator[WorktreeRefreshContext]:
     """Create and manage a temporary worktree for baseline coverage refresh.
 
@@ -491,7 +432,7 @@ def baseline_worktree(
         repo_path: Path to the main repository.
         timeout: Timeout in seconds for commands.
         lock_dir: Lock directory to set in environment.
-        command_runner: Optional injected command runner for testing.
+        command_runner: CommandRunnerPort for executing commands.
 
     Yields:
         WorktreeRefreshContext with worktree path, runner, and environment.
@@ -514,13 +455,6 @@ def baseline_worktree(
     )
 
     worktree_ctx = None
-    # Use injected runner or create one for worktree creation
-    from src.infra.tools.command_runner import CommandRunner
-
-    if command_runner is not None:
-        worktree_runner: CommandRunnerPort = command_runner
-    else:
-        worktree_runner = cast("CommandRunnerPort", CommandRunner(cwd=repo_path))
 
     try:
         worktree_ctx = create_worktree(
@@ -530,7 +464,7 @@ def baseline_worktree(
             run_id=run_id,
             issue_id="baseline",
             attempt=1,
-            command_runner=worktree_runner,
+            command_runner=command_runner,
         )
 
         if worktree_ctx.state == WorktreeState.FAILED:
@@ -547,26 +481,16 @@ def baseline_worktree(
             "LOCK_DIR": str(lock_dir),
         }
 
-        # Create runner for worktree context
-        # NOTE: When an injected command_runner is provided, we use it as-is
-        # with its original timeout configuration. This is intentional: callers
-        # injecting a runner (typically tests) are responsible for its setup.
-        # The `timeout` parameter only applies when creating a new CommandRunner.
-        if command_runner is not None:
-            runner = command_runner
-        else:
-            runner = CommandRunner(cwd=worktree_path, timeout_seconds=timeout)
-
         yield WorktreeRefreshContext(
             worktree_path=worktree_path,
-            runner=runner,
+            runner=command_runner,
             env=env,
         )
     finally:
         # Clean up temp worktree
         if worktree_ctx is not None:
             remove_worktree(
-                worktree_ctx, validation_passed=True, command_runner=worktree_runner
+                worktree_ctx, validation_passed=True, command_runner=command_runner
             )
         # Clean up temp directory
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -622,25 +546,23 @@ class BaselineCoverageService:
     def __init__(
         self,
         repo_path: Path,
+        env_config: EnvConfigPort,
+        command_runner: CommandRunnerPort,
+        lock_manager: LockManagerPort,
         coverage_config: YamlCoverageConfig | None = None,
         step_timeout_seconds: float | None = None,
-        env_config: EnvConfigPort | None = None,
-        command_runner: CommandRunnerPort | None = None,
-        lock_manager: LockManagerPort | None = None,
     ):
         """Initialize the baseline coverage service.
 
         Args:
             repo_path: Path to the repository.
+            env_config: Environment configuration for paths (lock_dir, etc.).
+            command_runner: CommandRunnerPort for running commands.
+            lock_manager: LockManagerPort for file locking.
             coverage_config: Coverage configuration from mala.yaml. Required for
                 baseline refresh - if None or if command is None, refresh is unavailable.
             step_timeout_seconds: Optional fallback timeout for commands (used if
                 coverage_config.timeout is None).
-            env_config: Environment configuration for paths (lock_dir, etc.).
-            command_runner: Optional CommandRunnerPort for running commands.
-                If not provided, creates a CommandRunner as needed.
-            lock_manager: Optional LockManagerPort for file locking.
-                If not provided, imports locking functions from infra as needed.
         """
         self.repo_path = repo_path.resolve()
         self.coverage_config = coverage_config
@@ -665,12 +587,7 @@ class BaselineCoverageService:
             BaselineRefreshResult with the baseline percentage or error.
             Returns failure if coverage_config is None or has no command.
         """
-        # Get lock manager (injected or fallback to module-level singleton)
-        lock_mgr = (
-            self.lock_manager
-            if self.lock_manager is not None
-            else _FALLBACK_LOCK_ADAPTER
-        )
+        lock_mgr = self.lock_manager
 
         # Check if baseline refresh is available
         if self.coverage_config is None:
@@ -845,13 +762,7 @@ class BaselineCoverageService:
         )
 
         # Determine lock directory
-        if self.env_config is not None:
-            lock_dir = self.env_config.lock_dir
-        else:
-            # Fallback for legacy callers without env_config
-            from src.infra.tools.env import get_lock_dir
-
-            lock_dir = get_lock_dir()
+        lock_dir = self.env_config.lock_dir
 
         try:
             with baseline_worktree(

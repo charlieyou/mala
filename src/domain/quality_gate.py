@@ -279,25 +279,18 @@ class QualityGate:
         self,
         repo_path: Path,
         log_provider: LogProvider,
-        command_runner: CommandRunnerPort | None = None,
+        command_runner: CommandRunnerPort,
     ):
         """Initialize quality gate.
 
         Args:
             repo_path: Path to the repository for git operations.
             log_provider: LogProvider for reading session logs.
-            command_runner: Optional CommandRunnerPort for running git commands.
-                If not provided, creates a CommandRunner with repo_path as cwd.
+            command_runner: CommandRunnerPort for running git commands.
         """
         self.repo_path = repo_path
         self._log_provider = log_provider
-        # Use injected CommandRunner or create default
-        if command_runner is not None:
-            self._command_runner = command_runner
-        else:
-            from src.infra.tools.command_runner import CommandRunner
-
-            self._command_runner = CommandRunner(cwd=repo_path)
+        self._command_runner = command_runner
 
     def _match_resolution_pattern(self, text: str) -> IssueResolution | None:
         """Check text against all resolution patterns.

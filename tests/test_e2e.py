@@ -4,7 +4,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -27,6 +27,43 @@ from src.domain.validation.helpers import (
     tail,
     write_fixture_repo,
 )
+
+
+def make_mock_env_config(tmp_path: Path | None = None) -> Mock:
+    """Create a mock EnvConfigPort.
+
+    Args:
+        tmp_path: If provided, creates a real cerberus bin directory with review-gate.
+                  Otherwise returns None (skips cerberus check).
+    """
+    mock = Mock()
+    mock.scripts_dir = Path("/mock/scripts")
+    mock.cache_dir = Path("/mock/cache")
+    mock.lock_dir = Path("/tmp/mock-locks")
+
+    if tmp_path is not None:
+        # Create a real cerberus bin directory with review-gate
+        cerberus_bin = tmp_path / "cerberus-bin"
+        cerberus_bin.mkdir(exist_ok=True)
+        (cerberus_bin / "review-gate").touch()
+        mock.find_cerberus_bin_path.return_value = cerberus_bin
+    else:
+        # Return None so check_prereqs fails fast (not the file check)
+        mock.find_cerberus_bin_path.return_value = None
+
+    return mock
+
+
+def make_mock_command_runner() -> Mock:
+    """Create a mock CommandRunnerPort that succeeds by default."""
+    mock = Mock()
+    mock.run.return_value = CommandResult(
+        command=["mock"],
+        returncode=0,
+        stdout='[{"id": "test-123"}]',
+        stderr="",
+    )
+    return mock
 
 
 class TestE2EPrereqResult:
@@ -100,22 +137,22 @@ class TestE2EResult:
 class TestE2ERunnerPrereqs:
     """Test E2ERunner.check_prereqs method."""
 
-    def test_all_prereqs_met(self) -> None:
-        runner = E2ERunner()
+    def test_all_prereqs_met(self, tmp_path: Path) -> None:
+        runner = E2ERunner(make_mock_env_config(tmp_path), make_mock_command_runner())
         with patch("shutil.which", return_value="/usr/bin/fake"):
             result = runner.check_prereqs({})
             assert result.ok is True
             assert result.missing == []
 
-    def test_missing_mala_cli(self) -> None:
-        runner = E2ERunner()
+    def test_missing_mala_cli(self, tmp_path: Path) -> None:
+        runner = E2ERunner(make_mock_env_config(tmp_path), make_mock_command_runner())
         with patch("shutil.which", return_value=None):
             result = runner.check_prereqs({})
             assert result.ok is False
             assert any("mala CLI" in m for m in result.missing)
 
-    def test_missing_bd_cli(self) -> None:
-        runner = E2ERunner()
+    def test_missing_bd_cli(self, tmp_path: Path) -> None:
+        runner = E2ERunner(make_mock_env_config(tmp_path), make_mock_command_runner())
 
         def mock_which(cmd: str) -> str | None:
             if cmd == "mala":
@@ -127,8 +164,8 @@ class TestE2ERunnerPrereqs:
             assert result.ok is False
             assert any("bd CLI" in m for m in result.missing)
 
-    def test_uses_os_environ_when_none(self) -> None:
-        runner = E2ERunner()
+    def test_uses_os_environ_when_none(self, tmp_path: Path) -> None:
+        runner = E2ERunner(make_mock_env_config(tmp_path), make_mock_command_runner())
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
             patch.dict("os.environ", {}, clear=True),
@@ -142,7 +179,7 @@ class TestE2ERunnerRun:
 
     def test_run_proceeds_without_api_keys(self, tmp_path: Path) -> None:
         """E2E should work without optional API keys."""
-        runner = E2ERunner()
+        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner())
 
         def mock_runner_run(
             cmd: list[str], cwd: Path | None = None, **kwargs: object
@@ -172,7 +209,7 @@ class TestE2ERunnerRun:
             assert result.status == E2EStatus.PASSED
 
     def test_run_fails_on_missing_prereqs(self) -> None:
-        runner = E2ERunner()
+        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner())
         with patch("shutil.which", return_value=None):
             result = runner.run(env={})
             assert result.passed is False
@@ -180,7 +217,7 @@ class TestE2ERunnerRun:
             assert "mala CLI" in (result.failure_reason or "")
 
     def test_run_fails_on_fixture_setup_error(self) -> None:
-        runner = E2ERunner()
+        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner())
 
         mock_run_result = CommandResult(
             command=[],
@@ -207,7 +244,7 @@ class TestE2ERunnerRun:
 
     def test_run_success(self, tmp_path: Path) -> None:
         config = E2EConfig(keep_fixture=False)
-        runner = E2ERunner(config)
+        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner(), config)
 
         def mock_runner_run(
             cmd: list[str], cwd: Path | None = None, **kwargs: object
@@ -239,7 +276,7 @@ class TestE2ERunnerRun:
 
     def test_run_cleans_up_fixture(self, tmp_path: Path) -> None:
         config = E2EConfig(keep_fixture=False)
-        runner = E2ERunner(config)
+        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner(), config)
 
         cleanup_called = {"value": False}
 
@@ -268,7 +305,7 @@ class TestE2ERunnerRun:
 
     def test_run_keeps_fixture_when_configured(self, tmp_path: Path) -> None:
         config = E2EConfig(keep_fixture=True)
-        runner = E2ERunner(config)
+        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner(), config)
 
         def mock_runner_run(
             cmd: list[str], cwd: Path | None = None, **kwargs: object
@@ -295,7 +332,7 @@ class TestE2ERunnerRun:
 
     def test_run_handles_mala_timeout(self, tmp_path: Path) -> None:
         config = E2EConfig(timeout_seconds=1.0)
-        runner = E2ERunner(config)
+        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner(), config)
 
         call_count = {"value": 0}
 
@@ -349,7 +386,7 @@ class TestE2ERunnerIntegration:
             )
 
         config = E2EConfig(keep_fixture=True, timeout_seconds=300.0)
-        runner = E2ERunner(config)
+        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner(), config)
 
         result = runner.run(cwd=tmp_path)
 
@@ -591,7 +628,7 @@ class TestE2EIntegration:
 
         This test just checks prerequisites - it doesn't run the full E2E.
         """
-        runner = E2ERunner()
+        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner())
         result = runner.check_prereqs()
         # Just verify it returns a valid result
         assert isinstance(result, E2EPrereqResult)

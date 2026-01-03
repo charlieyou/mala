@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 
@@ -18,10 +19,19 @@ if TYPE_CHECKING:
 # ============================================================================
 
 
+def make_mock_runner() -> Mock:
+    """Create a mock CommandRunnerPort."""
+    mock = Mock()
+    mock.run.return_value = CommandResult(
+        command=["mock"], returncode=0, stdout="", stderr=""
+    )
+    return mock
+
+
 @pytest.fixture
 def analyzer(tmp_path: Path) -> EpicScopeAnalyzer:
     """Create an EpicScopeAnalyzer with a temporary repo path."""
-    return EpicScopeAnalyzer(repo_path=tmp_path)
+    return EpicScopeAnalyzer(repo_path=tmp_path, runner=make_mock_runner())
 
 
 # ============================================================================

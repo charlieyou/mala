@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from src.core.protocols import EnvConfigPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort
 
     from .config import YamlCoverageConfig
     from .e2e import E2EResult
@@ -56,9 +56,10 @@ class ResultBuilderInput:
         log_dir: Directory for logs.
         env: Environment variables for E2E.
         baseline_percent: Baseline coverage for "no decrease" mode.
+        env_config: Environment configuration for paths.
+        command_runner: Command runner for executing commands.
         yaml_coverage_config: Coverage configuration from mala.yaml, or None to
             use spec-based coverage checking (legacy mode).
-        env_config: Environment configuration for paths.
     """
 
     spec: ValidationSpec
@@ -69,8 +70,9 @@ class ResultBuilderInput:
     log_dir: Path
     env: Mapping[str, str]
     baseline_percent: float | None
+    env_config: EnvConfigPort
+    command_runner: CommandRunnerPort
     yaml_coverage_config: YamlCoverageConfig | None = None
-    env_config: EnvConfigPort | None = None
 
 
 class SpecResultBuilder:
@@ -104,6 +106,7 @@ class SpecResultBuilder:
             baseline_percent=input.baseline_percent,
             env=input.env,
             yaml_coverage_config=input.yaml_coverage_config,
+            command_runner=input.command_runner,
         )
         if cov is not None and not cov.passed:
             reason = cov.failure_reason or "Coverage check failed"
@@ -122,6 +125,7 @@ class SpecResultBuilder:
             log_dir=input.log_dir,
             artifacts=input.artifacts,
             env_config=input.env_config,
+            command_runner=input.command_runner,
         )
         if e2e is not None and not e2e.passed and e2e.status != E2EStatus.SKIPPED:
             reason = e2e.failure_reason or "E2E failed"
@@ -150,6 +154,7 @@ class SpecResultBuilder:
         artifacts: ValidationArtifacts,
         baseline_percent: float | None,
         env: Mapping[str, str],
+        command_runner: CommandRunnerPort,
         yaml_coverage_config: YamlCoverageConfig | None = None,
     ) -> CoverageResult | None:
         """Run coverage check if enabled.
@@ -160,6 +165,8 @@ class SpecResultBuilder:
             log_dir: Directory for logs.
             artifacts: Artifacts to update with coverage report path.
             baseline_percent: Baseline coverage for "no decrease" mode.
+            env: Environment variables for command execution.
+            command_runner: Command runner for executing coverage command.
             yaml_coverage_config: Coverage configuration from mala.yaml, or None
                 to use spec-based coverage checking (legacy mode).
 
@@ -172,7 +179,7 @@ class SpecResultBuilder:
         # If yaml_coverage_config is provided, use config-driven coverage checking
         if yaml_coverage_config is not None:
             coverage_command_result = self._run_coverage_command_if_configured(
-                yaml_coverage_config, cwd, env
+                yaml_coverage_config, cwd, env, command_runner
             )
             if coverage_command_result is not None:
                 return coverage_command_result
@@ -195,6 +202,7 @@ class SpecResultBuilder:
         coverage_config: YamlCoverageConfig,
         cwd: Path,
         env: Mapping[str, str],
+        command_runner: CommandRunnerPort,
     ) -> CoverageResult | None:
         """Run coverage command if configured.
 
@@ -202,19 +210,24 @@ class SpecResultBuilder:
             coverage_config: Coverage configuration from mala.yaml.
             cwd: Working directory for the command.
             env: Environment variables for the command.
+            command_runner: Command runner for executing the command.
 
         Returns:
             CoverageResult on failure, None if command not configured or succeeded.
         """
-        from src.infra.tools.command_runner import CommandRunner
         from pathlib import Path
 
         if coverage_config.command is None:
             return None
 
         timeout_seconds = coverage_config.timeout or 120
-        runner = CommandRunner(cwd=cwd, timeout_seconds=timeout_seconds)
-        result = runner.run(coverage_config.command, env=env, shell=True)
+        result = command_runner.run(
+            coverage_config.command,
+            env=env,
+            shell=True,
+            cwd=cwd,
+            timeout=timeout_seconds,
+        )
 
         if result.ok:
             return None
@@ -293,7 +306,8 @@ class SpecResultBuilder:
         cwd: Path,
         log_dir: Path,
         artifacts: ValidationArtifacts,
-        env_config: EnvConfigPort | None = None,
+        env_config: EnvConfigPort,
+        command_runner: CommandRunnerPort,
     ) -> E2EResult | None:
         """Run E2E validation if enabled (only for run-level scope).
 
@@ -304,6 +318,7 @@ class SpecResultBuilder:
             log_dir: Directory for logs.
             artifacts: Artifacts to update with fixture path.
             env_config: Environment configuration for paths.
+            command_runner: Command runner for executing commands.
 
         Returns:
             E2EResult if E2E is enabled and scope is run-level, None otherwise.
@@ -313,7 +328,9 @@ class SpecResultBuilder:
         if not spec.e2e.enabled or spec.scope != ValidationScope.RUN_LEVEL:
             return None
 
-        e2e_result = self._run_e2e(spec.e2e, env, cwd, log_dir, env_config)
+        e2e_result = self._run_e2e(
+            spec.e2e, env, cwd, log_dir, env_config, command_runner
+        )
         if e2e_result.fixture_path:
             artifacts.e2e_fixture_path = e2e_result.fixture_path
 
@@ -325,7 +342,8 @@ class SpecResultBuilder:
         env: Mapping[str, str],
         cwd: Path,
         log_dir: Path,
-        env_config: EnvConfigPort | None = None,
+        env_config: EnvConfigPort,
+        command_runner: CommandRunnerPort,
     ) -> E2EResult:
         """Run E2E validation using the E2ERunner.
 
@@ -335,6 +353,7 @@ class SpecResultBuilder:
             cwd: Working directory.
             log_dir: Directory for logs.
             env_config: Environment configuration for paths.
+            command_runner: Command runner for executing commands.
 
         Returns:
             E2EResult with pass/fail status.
@@ -345,7 +364,7 @@ class SpecResultBuilder:
             keep_fixture=True,  # Keep for debugging
             timeout_seconds=1200.0,  # 20 min for E2E mala run (default 10 min was too short)
         )
-        runner = E2ERunner(runner_config, env_config=env_config)
+        runner = E2ERunner(env_config, command_runner, runner_config)
         return runner.run(env=dict(env), cwd=cwd)
 
     def _build_failure_result(

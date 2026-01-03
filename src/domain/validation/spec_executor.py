@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols import CommandRunnerPort, EnvConfigPort
-    from src.infra.io.event_protocol import MalaEventSink
+    from src.infra.io.event_protocol import MalaEventSink  # Protocol, not impl
 
     from .spec import ValidationCommand
 
@@ -49,7 +49,7 @@ class ExecutorConfig:
     enable_lint_cache: bool = True
     repo_path: Path | None = None
     step_timeout_seconds: float | None = None
-    env_config: EnvConfigPort | None = None
+    env_config: EnvConfigPort
     command_runner: CommandRunnerPort
     event_sink: MalaEventSink | None = None
 
@@ -188,13 +188,7 @@ class SpecCommandExecutor:
             return None
         if self.config.repo_path is None:
             return None
-        if self.config.env_config is not None:
-            cache_dir = self.config.env_config.cache_dir
-        else:
-            # Fallback for legacy callers without env_config
-            from src.infra.tools.env import get_cache_dir
-
-            cache_dir = get_cache_dir()
+        cache_dir = self.config.env_config.cache_dir
         return LintCache(
             cache_dir=cache_dir,
             repo_path=self.config.repo_path,
@@ -293,13 +287,7 @@ class SpecCommandExecutor:
             # Shell mode: pass command string directly with shell=True
             # For mutex wrapping in shell mode, prepend the script path
             if cmd.use_test_mutex:
-                if self.config.env_config is not None:
-                    scripts_dir = self.config.env_config.scripts_dir
-                else:
-                    # Fallback for legacy callers without env_config
-                    from src.infra.tools.env import SCRIPTS_DIR
-
-                    scripts_dir = SCRIPTS_DIR
+                scripts_dir = self.config.env_config.scripts_dir
                 full_cmd = f"{scripts_dir / 'test-mutex.sh'} {cmd.command}"
             else:
                 full_cmd = cmd.command
@@ -331,13 +319,7 @@ class SpecCommandExecutor:
         Returns:
             Command prefixed with test-mutex.sh.
         """
-        if self.config.env_config is not None:
-            scripts_dir = self.config.env_config.scripts_dir
-        else:
-            # Fallback for legacy callers without env_config
-            from src.infra.tools.env import SCRIPTS_DIR
-
-            scripts_dir = SCRIPTS_DIR
+        scripts_dir = self.config.env_config.scripts_dir
         return [str(scripts_dir / "test-mutex.sh"), *cmd]
 
     def _write_file_flushed(self, path: Path, content: str) -> None:

@@ -199,25 +199,18 @@ def write_fixture_repo(repo_path: Path) -> None:
 
 def init_fixture_repo(
     repo_path: Path,
-    command_runner: CommandRunnerPort | None = None,
+    command_runner: CommandRunnerPort,
 ) -> str | None:
     """Initialize a fixture repository with git and beads.
 
     Args:
         repo_path: Path to the fixture repository.
-        command_runner: Optional CommandRunnerPort for running commands.
-            If not provided, creates a CommandRunner with repo_path as cwd.
+        command_runner: CommandRunnerPort for running commands.
 
     Returns:
         Error message if initialization failed, None on success.
     """
-    # Use injected runner or create default
-    if command_runner is not None:
-        runner = command_runner
-    else:
-        from src.infra.tools.command_runner import CommandRunner
-
-        runner = CommandRunner(cwd=repo_path)
+    runner = command_runner
 
     for cmd in (
         ["git", "init"],
@@ -242,25 +235,18 @@ def init_fixture_repo(
 
 def get_ready_issue_id(
     repo_path: Path,
-    command_runner: CommandRunnerPort | None = None,
+    command_runner: CommandRunnerPort,
 ) -> str | None:
     """Get the first ready issue ID from a repository.
 
     Args:
         repo_path: Path to the repository.
-        command_runner: Optional CommandRunnerPort for running commands.
-            If not provided, creates a CommandRunner with repo_path as cwd.
+        command_runner: CommandRunnerPort for running commands.
 
     Returns:
         Issue ID if found, None otherwise.
     """
-    # Use injected runner or create default
-    if command_runner is not None:
-        runner = command_runner
-    else:
-        from src.infra.tools.command_runner import CommandRunner
-
-        runner = CommandRunner(cwd=repo_path)
+    runner = command_runner
 
     result = runner.run(["bd", "ready", "--json"], cwd=repo_path)
     if not result.ok:
@@ -279,23 +265,16 @@ def get_ready_issue_id(
 def annotate_issue(
     repo_path: Path,
     issue_id: str,
-    command_runner: CommandRunnerPort | None = None,
+    command_runner: CommandRunnerPort,
 ) -> None:
     """Add test plan notes to an issue.
 
     Args:
         repo_path: Path to the repository.
         issue_id: Issue ID to annotate.
-        command_runner: Optional CommandRunnerPort for running commands.
-            If not provided, creates a CommandRunner with repo_path as cwd.
+        command_runner: CommandRunnerPort for running commands.
     """
-    # Use injected runner or create default
-    if command_runner is not None:
-        runner = command_runner
-    else:
-        from src.infra.tools.command_runner import CommandRunner
-
-        runner = CommandRunner(cwd=repo_path)
+    runner = command_runner
 
     notes = "\n".join(
         [

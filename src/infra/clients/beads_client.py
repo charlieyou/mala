@@ -196,7 +196,7 @@ class BeadsClient:
     async def fetch_wip_issues_async(self) -> list[dict[str, object]]:
         """Fetch in_progress issues from bd CLI (raw I/O, no processing)."""
         result = await self._run_subprocess_async(
-            ["bd", "list", "--status", "in_progress", "--json"]
+            ["bd", "list", "--status", "in_progress", "--json", "-t", "task"]
         )
         if result.returncode != 0:
             return []

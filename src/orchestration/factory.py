@@ -192,9 +192,13 @@ def _build_dependencies(
     from src.infra.io.console_sink import ConsoleEventSink
     from src.infra.io.session_log_parser import FileSystemLogProvider
     from src.infra.telemetry import NullTelemetryProvider
+    from src.infra.tools.command_runner import CommandRunner
 
     # Get resolved path
     repo_path = config.repo_path.resolve()
+
+    # Command runner (shared by components that need it)
+    command_runner = CommandRunner(cwd=repo_path)
 
     # Event sink (needed for log_warning in BeadsClient)
     if deps is not None and deps.event_sink is not None:
@@ -209,13 +213,16 @@ def _build_dependencies(
     else:
         log_provider = cast("LogProvider", FileSystemLogProvider())
 
-    # Gate checker (needs log_provider)
+    # Gate checker (needs log_provider and command_runner)
     gate_checker: GateChecker
     if deps is not None and deps.gate_checker is not None:
         gate_checker = deps.gate_checker
     else:
         gate_checker = cast(
-            "GateChecker", QualityGate(repo_path, log_provider=log_provider)
+            "GateChecker",
+            QualityGate(
+                repo_path, log_provider=log_provider, command_runner=command_runner
+            ),
         )
 
     # Issue provider (needs event_sink for warnings)
@@ -243,6 +250,7 @@ def _build_dependencies(
             beads=issue_provider,
             model=cast("EpicVerificationModel", verification_model),
             repo_path=repo_path,
+            command_runner=command_runner,
             event_sink=event_sink,
             lock_manager=True,
         )
