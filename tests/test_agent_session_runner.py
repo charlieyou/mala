@@ -3724,3 +3724,318 @@ class TestBuildReviewRetryPrompt:
 
         assert isinstance(prompt, str)
         assert len(prompt) > 0
+
+
+class TestHandleReviewEffectIntegration:
+    """Integration tests for _handle_review_effect.
+
+    Tests the full review effect flow including event emission,
+    callback invocation, and result processing. Covers success,
+    failure, retry, and no-progress paths.
+    """
+
+    @pytest.fixture
+    def tmp_log_path(self, tmp_path: Path) -> Path:
+        """Create a temporary log file path."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+        return log_path
+
+    @pytest.fixture
+    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=600,
+            max_gate_retries=3,
+            max_review_retries=3,
+            review_enabled=True,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_review_effect_success_path(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_handle_review_effect should return success when review passes."""
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+        from src.infra.clients.cerberus_review import ReviewResult
+
+        fake_sink = FakeEventSink()
+
+        async def on_review_check(
+            issue_id: str,
+            description: str | None,
+            baseline: str | None,
+            session_id: str | None,
+            retry_state: RetryState,
+        ) -> ReviewResult:
+            return ReviewResult(passed=True, issues=[], parse_error=None)
+
+        callbacks = SessionCallbacks(on_review_check=on_review_check)
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        lifecycle = ImplementerLifecycle(
+            LifecycleConfig(review_enabled=True, max_review_retries=3)
+        )
+        lifecycle.start()
+        lifecycle._state = LifecycleState.RUNNING_REVIEW
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.retry_state.review_attempt = 1
+
+        input_data = AgentSessionInput(issue_id="integ-success", prompt="Test")
+
+        result = await runner._handle_review_effect(
+            input_data,
+            tmp_log_path,
+            "session-123",
+            lifecycle,
+            lifecycle_ctx,
+        )
+
+        # Should indicate success
+        assert result.should_break is True
+        assert result.pending_query is None
+        # Events should include gate passed and review passed
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_gate_passed" in event_names
+        assert "on_review_started" in event_names
+        assert "on_review_passed" in event_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_review_effect_failure_with_retry(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_handle_review_effect should return retry prompt on failure."""
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+        from src.infra.clients.cerberus_review import ReviewIssue, ReviewResult
+
+        fake_sink = FakeEventSink()
+
+        async def on_review_check(
+            issue_id: str,
+            description: str | None,
+            baseline: str | None,
+            session_id: str | None,
+            retry_state: RetryState,
+        ) -> ReviewResult:
+            return ReviewResult(
+                passed=False,
+                issues=[
+                    ReviewIssue(
+                        title="Test bug",
+                        body="A test bug was found",
+                        priority=1,
+                        file="test.py",
+                        line_start=10,
+                        line_end=15,
+                        reviewer="test-reviewer",
+                    ),
+                ],
+                parse_error=None,
+            )
+
+        callbacks = SessionCallbacks(on_review_check=on_review_check)
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        lifecycle = ImplementerLifecycle(
+            LifecycleConfig(review_enabled=True, max_review_retries=3)
+        )
+        lifecycle.start()
+        lifecycle._state = LifecycleState.RUNNING_REVIEW
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.retry_state.review_attempt = 1
+
+        input_data = AgentSessionInput(issue_id="integ-retry", prompt="Test")
+
+        result = await runner._handle_review_effect(
+            input_data,
+            tmp_log_path,
+            "session-456",
+            lifecycle,
+            lifecycle_ctx,
+        )
+
+        # Should request retry
+        assert result.should_break is False
+        assert result.pending_query is not None
+        assert "Test bug" in result.pending_query or "test.py" in result.pending_query
+        # Events should include gate passed, review started, and retry
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_gate_passed" in event_names
+        assert "on_review_started" in event_names
+        assert "on_review_retry" in event_names
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_review_effect_exhausted_retries(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_handle_review_effect should return failure when retries exhausted."""
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+        from src.infra.clients.cerberus_review import ReviewIssue, ReviewResult
+
+        fake_sink = FakeEventSink()
+
+        async def on_review_check(
+            issue_id: str,
+            description: str | None,
+            baseline: str | None,
+            session_id: str | None,
+            retry_state: RetryState,
+        ) -> ReviewResult:
+            return ReviewResult(
+                passed=False,
+                issues=[
+                    ReviewIssue(
+                        title="Persistent bug",
+                        body="Bug persists",
+                        priority=0,
+                        file="main.py",
+                        line_start=1,
+                        line_end=5,
+                        reviewer="reviewer",
+                    ),
+                ],
+                parse_error=None,
+            )
+
+        callbacks = SessionCallbacks(on_review_check=on_review_check)
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        lifecycle = ImplementerLifecycle(
+            LifecycleConfig(review_enabled=True, max_review_retries=3)
+        )
+        lifecycle.start()
+        lifecycle._state = LifecycleState.RUNNING_REVIEW
+        lifecycle_ctx = LifecycleContext()
+        # Set to max retries to trigger exhaustion
+        lifecycle_ctx.retry_state.review_attempt = 3
+
+        input_data = AgentSessionInput(issue_id="integ-exhaust", prompt="Test")
+
+        result = await runner._handle_review_effect(
+            input_data,
+            tmp_log_path,
+            "session-789",
+            lifecycle,
+            lifecycle_ctx,
+        )
+
+        # Should indicate failure (exhausted)
+        assert result.should_break is True
+        assert result.pending_query is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_review_effect_no_progress_path(
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+    ) -> None:
+        """_handle_review_effect should skip review on no-progress detection."""
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+        from src.domain.quality_gate import GateResult
+
+        fake_sink = FakeEventSink()
+        review_called = False
+
+        async def on_review_check(
+            issue_id: str,
+            description: str | None,
+            baseline: str | None,
+            session_id: str | None,
+            retry_state: RetryState,
+        ) -> None:
+            nonlocal review_called
+            review_called = True
+            raise AssertionError("Review should not be called")
+
+        def on_review_no_progress(
+            log_path: Path,
+            log_offset: int,
+            prev_commit: str | None,
+            curr_commit: str | None,
+        ) -> bool:
+            return True  # No progress detected
+
+        callbacks = SessionCallbacks(
+            on_review_check=on_review_check,  # type: ignore[arg-type]
+            on_review_no_progress=on_review_no_progress,
+        )
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        lifecycle = ImplementerLifecycle(
+            LifecycleConfig(review_enabled=True, max_review_retries=3)
+        )
+        lifecycle.start()
+        lifecycle._state = LifecycleState.RUNNING_REVIEW
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.retry_state.review_attempt = (
+            2  # Must be > 1 for no-progress check
+        )
+        lifecycle_ctx.last_gate_result = GateResult(
+            passed=True, failure_reasons=[], commit_hash="same-commit"
+        )
+
+        input_data = AgentSessionInput(issue_id="integ-no-progress", prompt="Test")
+
+        result = await runner._handle_review_effect(
+            input_data,
+            tmp_log_path,
+            "session-no-prog",
+            lifecycle,
+            lifecycle_ctx,
+        )
+
+        # Review should NOT have been called
+        assert not review_called
+        # Should break without retry
+        assert result.should_break is True
+        assert result.pending_query is None
+        # Should emit skip event
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_review_skipped_no_progress" in event_names
