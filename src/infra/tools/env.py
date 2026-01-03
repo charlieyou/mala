@@ -78,6 +78,9 @@ def get_lock_dir() -> Path:
 # Lock scripts directory (relative to this file: src/infra/tools/env.py -> src/scripts/)
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 
+# Prompts directory (relative to this file: src/infra/tools/env.py -> src/prompts/)
+PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
+
 
 def load_user_env() -> None:
     """Load environment from user config directory.
@@ -154,3 +157,36 @@ def get_claude_log_path(repo_path: Path, session_id: str) -> Path:
     """
     encoded = encode_repo_path(repo_path)
     return get_claude_config_dir() / "projects" / encoded / f"{session_id}.jsonl"
+
+
+class EnvConfig:
+    """Environment configuration implementing EnvConfigPort.
+
+    Provides access to environment paths for dependency injection into domain modules.
+    This class wraps the module-level functions to satisfy the EnvConfigPort protocol.
+    """
+
+    @property
+    def scripts_dir(self) -> Path:
+        """Path to the scripts directory (e.g., test-mutex.sh)."""
+        return SCRIPTS_DIR
+
+    @property
+    def cache_dir(self) -> Path:
+        """Path to the mala cache directory."""
+        return get_cache_dir()
+
+    @property
+    def lock_dir(self) -> Path:
+        """Path to the lock directory for multi-agent coordination."""
+        return get_lock_dir()
+
+    def find_cerberus_bin_path(self) -> Path | None:
+        """Find the cerberus plugin bin directory.
+
+        Returns:
+            Path to cerberus bin directory, or None if not found.
+        """
+        from src.infra.io.config import _find_cerberus_bin_path
+
+        return _find_cerberus_bin_path(get_claude_config_dir())

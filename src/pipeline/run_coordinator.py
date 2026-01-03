@@ -41,7 +41,7 @@ from src.domain.validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
-from src.domain.validation.tool_name_extractor import extract_lint_tools_from_spec
+from src.infra.tool_name_extractor import extract_lint_tools_from_spec
 from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
@@ -50,7 +50,12 @@ if TYPE_CHECKING:
         RunMetadata,
         ValidationResult as MetaValidationResult,
     )
-    from src.core.protocols import GateChecker
+    from src.core.protocols import (
+        CommandRunnerPort,
+        EnvConfigPort,
+        GateChecker,
+        LockManagerPort,
+    )
     from src.domain.validation.result import ValidationResult
     from src.domain.validation.spec import ValidationSpec
     from pathlib import Path
@@ -191,11 +196,17 @@ class RunCoordinator:
     Attributes:
         config: Configuration for run behavior.
         gate_checker: GateChecker for run-level validation.
+        command_runner: CommandRunner for executing validation commands.
+        env_config: Environment configuration for paths.
+        lock_manager: Lock manager for file locking.
         event_sink: Optional event sink for structured logging.
     """
 
     config: RunCoordinatorConfig
     gate_checker: GateChecker
+    command_runner: CommandRunnerPort
+    env_config: EnvConfigPort
+    lock_manager: LockManagerPort
     event_sink: MalaEventSink | None = None
     _active_fixer_ids: list[str] = field(default_factory=list, init=False)
 
@@ -250,6 +261,9 @@ class RunCoordinator:
         runner = SpecValidationRunner(
             self.config.repo_path,
             event_sink=self.event_sink,
+            command_runner=self.command_runner,
+            env_config=self.env_config,
+            lock_manager=self.lock_manager,
         )
 
         # Retry loop with fixer agent

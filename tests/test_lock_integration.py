@@ -17,13 +17,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.domain.prompts import get_implementer_prompt as _get_implementer_prompt
+from src.domain.prompts import load_prompts
 from src.infra.hooks import make_stop_hook
-from src.infra.tools.env import SCRIPTS_DIR
+from src.infra.tools.env import PROMPTS_DIR, SCRIPTS_DIR
 
 if TYPE_CHECKING:
     from claude_agent_sdk.types import HookContext, StopHookInput
 
+# Load prompts once for tests
+_prompts = load_prompts(PROMPTS_DIR)
 
 pytestmark = pytest.mark.integration
 
@@ -116,16 +118,16 @@ class TestPromptTemplateIntegration:
     """Test that the prompt template correctly configures lock environment."""
 
     def test_template_includes_scripts_dir_placeholder(self) -> None:
-        assert "{scripts_dir}" in _get_implementer_prompt()
+        assert "{scripts_dir}" in _prompts.implementer_prompt
 
     def test_template_includes_lock_dir_placeholder(self) -> None:
-        assert "{lock_dir}" in _get_implementer_prompt()
+        assert "{lock_dir}" in _prompts.implementer_prompt
 
     def test_template_includes_agent_id_placeholder(self) -> None:
-        assert "{agent_id}" in _get_implementer_prompt()
+        assert "{agent_id}" in _prompts.implementer_prompt
 
     def test_template_formats_correctly(self, lock_env: Path) -> None:
-        prompt = _get_implementer_prompt().format(
+        prompt = _prompts.implementer_prompt.format(
             issue_id="bd-99",
             repo_path="/tmp/repo",
             lock_dir=lock_env,

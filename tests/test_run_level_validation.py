@@ -26,12 +26,38 @@ from src.pipeline.run_coordinator import (
 )
 
 
+@pytest.fixture
+def mock_command_runner() -> MagicMock:
+    """Create a mock CommandRunnerPort."""
+    return MagicMock()
+
+
+@pytest.fixture
+def mock_env_config() -> MagicMock:
+    """Create a mock EnvConfigPort."""
+    return MagicMock()
+
+
+@pytest.fixture
+def mock_lock_manager() -> MagicMock:
+    """Create a mock LockManagerPort."""
+    mock = MagicMock()
+    mock.try_lock.return_value = True
+    mock.wait_for_lock.return_value = True
+    mock.release_lock.return_value = True
+    return mock
+
+
 class TestRunLevelValidation:
     """Test Gate 4 (run-level validation) in RunCoordinator."""
 
     @pytest.mark.asyncio
     async def test_run_level_validation_skipped_when_disabled(
-        self, tmp_path: Path
+        self,
+        tmp_path: Path,
+        mock_command_runner: MagicMock,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """Run-level validation should be skipped when disabled."""
         # Create a mock gate_checker
@@ -42,7 +68,13 @@ class TestRunLevelValidation:
             timeout_seconds=60,
             disable_validations={"run-level-validate"},
         )
-        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=mock_command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
+        )
 
         run_config = RunConfig(
             max_agents=1,
@@ -64,7 +96,11 @@ class TestRunLevelValidation:
 
     @pytest.mark.asyncio
     async def test_run_level_validation_passes_when_validation_succeeds(
-        self, tmp_path: Path
+        self,
+        tmp_path: Path,
+        mock_command_runner: MagicMock,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """Run-level validation should pass when validation runner succeeds."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
@@ -75,7 +111,13 @@ class TestRunLevelValidation:
             repo_path=tmp_path,
             timeout_seconds=60,
         )
-        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=mock_command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
+        )
 
         run_config = RunConfig(
             max_agents=1,
@@ -124,7 +166,11 @@ class TestRunLevelValidation:
 
     @pytest.mark.asyncio
     async def test_run_level_validation_spawns_fixer_on_failure(
-        self, tmp_path: Path
+        self,
+        tmp_path: Path,
+        mock_command_runner: MagicMock,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """Run-level validation should spawn fixer agent on failure."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
@@ -136,7 +182,13 @@ class TestRunLevelValidation:
             timeout_seconds=60,
             max_gate_retries=2,
         )
-        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=mock_command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
+        )
 
         run_config = RunConfig(
             max_agents=1,
@@ -199,7 +251,11 @@ class TestRunLevelValidation:
 
     @pytest.mark.asyncio
     async def test_run_level_validation_records_to_metadata(
-        self, tmp_path: Path
+        self,
+        tmp_path: Path,
+        mock_command_runner: MagicMock,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """Run-level validation should record results to run metadata."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
@@ -211,7 +267,13 @@ class TestRunLevelValidation:
             timeout_seconds=60,
             max_gate_retries=1,
         )
-        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=mock_command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
+        )
 
         run_config = RunConfig(
             max_agents=1,
@@ -269,13 +331,25 @@ class TestRunLevelValidation:
         assert "pytest" in run_metadata.run_validation.commands_run
         assert "coverage" in run_metadata.run_validation.commands_failed
 
-    def test_build_validation_failure_output_with_result(self, tmp_path: Path) -> None:
+    def test_build_validation_failure_output_with_result(
+        self,
+        tmp_path: Path,
+        mock_command_runner: MagicMock,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
+    ) -> None:
         """_build_validation_failure_output should format failure details."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
         config = RunCoordinatorConfig(repo_path=tmp_path, timeout_seconds=60)
-        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=mock_command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
+        )
 
         result = ValidationResult(
             passed=False,
@@ -299,18 +373,36 @@ class TestRunLevelValidation:
         assert "pytest" in output
         assert "AssertionError" in output
 
-    def test_build_validation_failure_output_with_none(self, tmp_path: Path) -> None:
+    def test_build_validation_failure_output_with_none(
+        self,
+        tmp_path: Path,
+        mock_command_runner: MagicMock,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
+    ) -> None:
         """_build_validation_failure_output should handle None result."""
         mock_gate_checker = MagicMock()
         config = RunCoordinatorConfig(repo_path=tmp_path, timeout_seconds=60)
-        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=mock_command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
+        )
 
         output = coordinator._build_validation_failure_output(None)
 
         assert "crashed" in output.lower()
 
     @pytest.mark.asyncio
-    async def test_e2e_passed_none_when_e2e_disabled(self, tmp_path: Path) -> None:
+    async def test_e2e_passed_none_when_e2e_disabled(
+        self,
+        tmp_path: Path,
+        mock_command_runner: MagicMock,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
+    ) -> None:
         """e2e_passed should be None when E2E is disabled via disable_validations."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
 
@@ -322,7 +414,13 @@ class TestRunLevelValidation:
             timeout_seconds=60,
             disable_validations={"e2e"},
         )
-        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=mock_command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
+        )
 
         run_config = RunConfig(
             max_agents=1,
@@ -374,14 +472,26 @@ class TestRunLevelValidation:
         assert run_metadata.run_validation.e2e_passed is None
 
     @pytest.mark.asyncio
-    async def test_e2e_passed_none_when_e2e_skipped(self, tmp_path: Path) -> None:
+    async def test_e2e_passed_none_when_e2e_skipped(
+        self,
+        tmp_path: Path,
+        mock_command_runner: MagicMock,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
+    ) -> None:
         """e2e_passed should be None when E2E was skipped (status=SKIPPED)."""
         from src.domain.validation.e2e import E2EResult, E2EStatus
         from src.domain.validation.result import ValidationResult, ValidationStepResult
 
         mock_gate_checker = MagicMock()
         config = RunCoordinatorConfig(repo_path=tmp_path, timeout_seconds=60)
-        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=mock_command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
+        )
 
         run_config = RunConfig(
             max_agents=1,
@@ -438,7 +548,11 @@ class TestRunLevelValidation:
 
     @pytest.mark.asyncio
     async def test_e2e_passed_true_when_e2e_enabled_and_passes(
-        self, tmp_path: Path
+        self,
+        tmp_path: Path,
+        mock_command_runner: MagicMock,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """e2e_passed should be True when E2E is enabled and actually passes."""
         from src.domain.validation.e2e import E2EResult, E2EStatus
@@ -446,7 +560,13 @@ class TestRunLevelValidation:
 
         mock_gate_checker = MagicMock()
         config = RunCoordinatorConfig(repo_path=tmp_path, timeout_seconds=60)
-        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=mock_command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
+        )
 
         run_config = RunConfig(
             max_agents=1,
@@ -502,7 +622,11 @@ class TestRunLevelValidation:
 
     @pytest.mark.asyncio
     async def test_e2e_passed_false_when_e2e_enabled_and_fails(
-        self, tmp_path: Path
+        self,
+        tmp_path: Path,
+        mock_command_runner: MagicMock,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """e2e_passed should be False when E2E is enabled and actually fails."""
         from src.domain.validation.e2e import E2EResult, E2EStatus
@@ -516,7 +640,13 @@ class TestRunLevelValidation:
             timeout_seconds=60,
             max_gate_retries=1,
         )
-        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=mock_command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
+        )
 
         run_config = RunConfig(
             max_agents=1,
@@ -574,7 +704,11 @@ class TestRunLevelValidation:
 
     @pytest.mark.asyncio
     async def test_e2e_passed_none_when_earlier_step_fails(
-        self, tmp_path: Path
+        self,
+        tmp_path: Path,
+        mock_command_runner: MagicMock,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """e2e_passed should be None when validation fails before E2E runs."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
@@ -587,7 +721,13 @@ class TestRunLevelValidation:
             timeout_seconds=60,
             max_gate_retries=1,
         )
-        coordinator = RunCoordinator(config=config, gate_checker=mock_gate_checker)
+        coordinator = RunCoordinator(
+            config=config,
+            gate_checker=mock_gate_checker,
+            command_runner=mock_command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
+        )
 
         run_config = RunConfig(
             max_agents=1,

@@ -23,9 +23,6 @@ from src.pipeline.gate_metadata import (
 )
 from src.domain.prompts import PromptProvider, load_prompts
 from src.infra.tools.env import PROMPTS_DIR
-
-# Load prompts once for tests
-_prompts = load_prompts(PROMPTS_DIR)
 from src.orchestration.review_tracking import (
     _extract_existing_fingerprints,
     _get_finding_fingerprint,
@@ -37,6 +34,9 @@ from src.orchestration.run_config import build_event_run_config, build_run_metad
 if TYPE_CHECKING:
     from src.core.protocols import IssueProvider
     from src.infra.io.event_protocol import MalaEventSink
+
+# Load prompts once for tests
+_prompts = load_prompts(PROMPTS_DIR)
 
 
 # ============================================================================

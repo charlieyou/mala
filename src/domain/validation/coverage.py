@@ -662,6 +662,7 @@ class BaselineCoverageService:
         coverage_file: Path,
         worktree_path: Path,
         env: dict[str, str],
+        timeout: float,
     ) -> Path | str:
         """Run coverage command and fallback to combine if XML not generated.
 
@@ -671,13 +672,16 @@ class BaselineCoverageService:
             coverage_file: Path to expected coverage XML file (relative to worktree).
             worktree_path: Path to the worktree directory.
             env: Environment variables for command execution.
+            timeout: Timeout in seconds for each command.
 
         Returns:
             Path to coverage XML on success, or error string on failure.
         """
         # Run coverage command - we ignore the exit code because tests may fail
         # but still generate a valid coverage.xml baseline
-        coverage_result = runner.run(coverage_cmd, env=env, cwd=worktree_path)
+        coverage_result = runner.run(
+            coverage_cmd, env=env, cwd=worktree_path, timeout=timeout
+        )
 
         worktree_coverage = worktree_path / coverage_file
         if worktree_coverage.exists():
@@ -700,12 +704,14 @@ class BaselineCoverageService:
                 [*coverage_base, "combine"],
                 env=env,
                 cwd=worktree_path,
+                timeout=timeout,
             )
             if combine_result.returncode == 0:
                 xml_result = runner.run(
                     [*coverage_base, "xml", "-o", str(worktree_coverage)],
                     env=env,
                     cwd=worktree_path,
+                    timeout=timeout,
                 )
 
         if worktree_coverage.exists():
@@ -777,7 +783,10 @@ class BaselineCoverageService:
 
                 # Run uv sync first to install dependencies
                 sync_result = runner.run(
-                    ["uv", "sync", "--all-extras"], env=env, cwd=worktree_path
+                    ["uv", "sync", "--all-extras"],
+                    env=env,
+                    cwd=worktree_path,
+                    timeout=timeout,
                 )
                 if sync_result.returncode != 0:
                     return BaselineRefreshResult.fail(
@@ -796,7 +805,7 @@ class BaselineCoverageService:
 
                 # Run coverage with fallback to combine
                 result = self._run_coverage_with_fallback(
-                    runner, new_coverage_cmd, coverage_file, worktree_path, env
+                    runner, new_coverage_cmd, coverage_file, worktree_path, env, timeout
                 )
 
                 if isinstance(result, str):

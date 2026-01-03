@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .env import get_lock_dir
 
-__all__ = ["get_lock_dir", "lock_path"]
+__all__ = ["LockManager", "get_lock_dir", "lock_path"]
 
 
 def _get_lock_dir() -> Path:
@@ -374,6 +374,43 @@ def cleanup_agent_locks(agent_id: str) -> int:
             pass
 
     return cleaned
+
+
+class LockManager:
+    """Implementation of LockManagerPort using standalone locking functions.
+
+    This class provides an object-oriented wrapper around the standalone locking
+    functions, enabling dependency injection into domain modules.
+    """
+
+    def lock_path(self, filepath: str, repo_namespace: str | None = None) -> Path:
+        """Get the lock file path for a given filepath."""
+        return lock_path(filepath, repo_namespace)
+
+    def try_lock(
+        self, filepath: str, agent_id: str, repo_namespace: str | None = None
+    ) -> bool:
+        """Try to acquire a lock without blocking."""
+        return try_lock(filepath, agent_id, repo_namespace)
+
+    def wait_for_lock(
+        self,
+        filepath: str,
+        agent_id: str,
+        repo_namespace: str | None = None,
+        timeout_seconds: float = 30.0,
+        poll_interval_ms: int = 100,
+    ) -> bool:
+        """Wait for and acquire a lock on a file."""
+        return wait_for_lock(
+            filepath, agent_id, repo_namespace, timeout_seconds, poll_interval_ms
+        )
+
+    def release_lock(
+        self, filepath: str, agent_id: str, repo_namespace: str | None = None
+    ) -> bool:
+        """Release a lock on a file."""
+        return release_lock(filepath, agent_id, repo_namespace)
 
 
 def _cli_main() -> int:

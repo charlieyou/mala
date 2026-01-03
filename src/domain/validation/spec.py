@@ -185,7 +185,7 @@ class ValidationSpec:
         Returns:
             Frozenset of lint tool names. Empty frozenset if no lint commands.
         """
-        from src.domain.validation.tool_name_extractor import extract_tool_name
+        from src.infra.tool_name_extractor import extract_tool_name
 
         lint_tools: set[str] = set()
         for cmd in self.commands:

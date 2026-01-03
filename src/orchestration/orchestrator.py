@@ -12,7 +12,6 @@ from src.domain.validation.spec import (
 )
 from src.domain.validation.tool_name_extractor import extract_lint_tools_from_spec
 from src.domain.prompts import (
-    PromptProvider,
     build_prompt_validation_commands,
     format_implementer_prompt,
     load_prompts,
@@ -76,6 +75,7 @@ if TYPE_CHECKING:
         IssueProvider,
         LogProvider,
     )
+    from src.domain.prompts import PromptProvider
     from src.infra.epic_verifier import EpicVerifier
     from src.infra.io.config import MalaConfig
     from src.infra.io.event_protocol import MalaEventSink

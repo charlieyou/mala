@@ -25,9 +25,10 @@ from .e2e import E2EConfig as E2ERunnerConfig
 from .e2e import E2ERunner, E2EStatus
 from .result import ValidationResult
 
+from pathlib import Path
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
     from src.core.protocols import CommandRunnerPort, EnvConfigPort
 
@@ -215,8 +216,6 @@ class SpecResultBuilder:
         Returns:
             CoverageResult on failure, None if command not configured or succeeded.
         """
-        from pathlib import Path
-
         if coverage_config.command is None:
             return None
 
