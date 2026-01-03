@@ -297,6 +297,7 @@ class FakeIssueProvider:
         description: str,
         priority: str,
         tags: list[str],
+        parent_id: str | None = None,
     ) -> str | None:
         issue_id = f"new-{len(self.created_issues) + 1}"
         self.created_issues.append(
@@ -306,6 +307,7 @@ class FakeIssueProvider:
                 "description": description,
                 "priority": priority,
                 "tags": tags,
+                "parent_id": parent_id,
             }
         )
         return issue_id
@@ -733,6 +735,63 @@ This issue consolidates 1 non-blocking finding from code review.
 
         assert len(beads.created_issues) == 0
         assert len(event_sink.warnings) == 0
+
+    @pytest.mark.asyncio
+    async def test_passes_parent_epic_id_to_create_issue(self) -> None:
+        """Should pass parent_epic_id to create_issue_async when provided."""
+        beads = FakeIssueProvider()
+        event_sink = FakeEventSink()
+
+        review_issues = [
+            FakeReviewIssue(
+                file="src/foo.py",
+                line_start=10,
+                line_end=10,
+                priority=2,
+                title="Test finding",
+                body="Test body",
+                reviewer="test",
+            )
+        ]
+
+        await create_review_tracking_issues(
+            beads=cast("IssueProvider", beads),
+            event_sink=cast("MalaEventSink", event_sink),
+            source_issue_id="bd-test-parent",
+            review_issues=review_issues,
+            parent_epic_id="bd-epic-123",
+        )
+
+        assert len(beads.created_issues) == 1
+        assert beads.created_issues[0]["parent_id"] == "bd-epic-123"
+
+    @pytest.mark.asyncio
+    async def test_parent_epic_id_defaults_to_none(self) -> None:
+        """Should not pass parent_id when parent_epic_id not provided."""
+        beads = FakeIssueProvider()
+        event_sink = FakeEventSink()
+
+        review_issues = [
+            FakeReviewIssue(
+                file="src/foo.py",
+                line_start=10,
+                line_end=10,
+                priority=2,
+                title="Test finding",
+                body="Test body",
+                reviewer="test",
+            )
+        ]
+
+        await create_review_tracking_issues(
+            beads=cast("IssueProvider", beads),
+            event_sink=cast("MalaEventSink", event_sink),
+            source_issue_id="bd-test-no-parent",
+            review_issues=review_issues,
+        )
+
+        assert len(beads.created_issues) == 1
+        assert beads.created_issues[0]["parent_id"] is None
 
 
 # ============================================================================

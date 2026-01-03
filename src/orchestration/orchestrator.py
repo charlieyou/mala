@@ -354,11 +354,14 @@ class MalaOrchestrator:
         review_issues: list,
     ) -> None:
         """Create tracking issues for P2/P3 review findings."""
+        # Get parent epic so review tracking issues stay in the same epic
+        parent_epic_id = await self.beads.get_parent_epic_async(issue_id)
         await create_review_tracking_issues(
             self.beads,
             self.event_sink,
             issue_id,
             review_issues,
+            parent_epic_id=parent_epic_id,
         )
 
     # Backward compatibility: expose _config as alias for _mala_config

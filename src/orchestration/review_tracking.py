@@ -120,6 +120,7 @@ async def create_review_tracking_issues(
     event_sink: MalaEventSink,
     source_issue_id: str,
     review_issues: list[ReviewIssueProtocol],
+    parent_epic_id: str | None = None,
 ) -> None:
     """Create or update a beads issue from P2/P3 review findings.
 
@@ -132,6 +133,7 @@ async def create_review_tracking_issues(
         event_sink: Event sink for warnings.
         source_issue_id: The issue ID that triggered the review.
         review_issues: List of ReviewIssueProtocol objects from the review.
+        parent_epic_id: Optional parent epic ID to attach new tracking issues to.
     """
     if not review_issues:
         return
@@ -286,6 +288,7 @@ async def create_review_tracking_issues(
         description=description,
         priority=priority_str,
         tags=tags,
+        parent_id=parent_epic_id,
     )
     if new_issue_id:
         event_sink.on_warning(
