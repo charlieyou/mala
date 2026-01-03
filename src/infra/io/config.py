@@ -9,7 +9,6 @@ Environment Variables:
     MALA_LOCK_DIR: Directory for file locks (default: /tmp/mala-locks)
     CLAUDE_CONFIG_DIR: Claude SDK config directory (default: ~/.claude)
     BRAINTRUST_API_KEY: Braintrust API key (required when braintrust_enabled=True)
-    MORPH_API_KEY: Morph API key (required when morph_enabled=True)
     MALA_REVIEW_TIMEOUT: Timeout in seconds for review-gate wait
     MALA_CERBERUS_SPAWN_ARGS: Extra args for `review-gate spawn-code-review`
     MALA_CERBERUS_WAIT_ARGS: Extra args for `review-gate wait`
@@ -169,12 +168,8 @@ class MalaConfig:
             Env: CLAUDE_CONFIG_DIR (default: ~/.claude)
         braintrust_api_key: Braintrust API key for tracing.
             Env: BRAINTRUST_API_KEY (required when braintrust_enabled=True)
-        morph_api_key: Morph API key for MCP features.
-            Env: MORPH_API_KEY (required when morph_enabled=True)
         braintrust_enabled: Whether Braintrust tracing is enabled.
             Derived from braintrust_api_key presence.
-        morph_enabled: Whether Morph MCP features are enabled.
-            Derived from morph_api_key presence.
         review_enabled: Whether automated code review is enabled.
             Defaults to True.
         review_timeout: Timeout in seconds for review operations.
@@ -190,7 +185,7 @@ class MalaConfig:
         llm_api_key: API key for LLM calls (epic verification).
             Env: LLM_API_KEY (falls back to ANTHROPIC_API_KEY if not set)
         llm_base_url: Base URL for LLM API requests.
-            Env: LLM_BASE_URL (for proxy/routing, e.g., MorphLLM)
+            Env: LLM_BASE_URL (for proxy/routing)
         max_epic_verification_retries: Maximum retries for epic verification loop.
             Env: MALA_MAX_EPIC_VERIFICATION_RETRIES (default: 3)
 
@@ -200,7 +195,6 @@ class MalaConfig:
             runs_dir=Path("/custom/runs"),
             lock_dir=Path("/custom/locks"),
             claude_config_dir=Path("/custom/claude"),
-            morph_api_key="my-api-key",
         )
 
         # Load from environment:
@@ -216,11 +210,9 @@ class MalaConfig:
 
     # API keys (optional)
     braintrust_api_key: str | None = None
-    morph_api_key: str | None = None
 
     # Feature flags (derived from API key presence)
     braintrust_enabled: bool = field(default=False)
-    morph_enabled: bool = field(default=False)
 
     # Review settings
     review_enabled: bool = field(default=True)
@@ -265,9 +257,6 @@ class MalaConfig:
         # Derive braintrust_enabled from api key presence if not explicitly set
         if not self.braintrust_enabled and self.braintrust_api_key:
             object.__setattr__(self, "braintrust_enabled", True)
-        # Derive morph_enabled from api key presence if not explicitly set
-        if not self.morph_enabled and self.morph_api_key:
-            object.__setattr__(self, "morph_enabled", True)
 
     @classmethod
     def from_env(cls, *, validate: bool = True) -> MalaConfig:
@@ -278,7 +267,6 @@ class MalaConfig:
             - MALA_LOCK_DIR: Lock files directory (optional)
             - CLAUDE_CONFIG_DIR: Claude SDK config directory (optional)
             - BRAINTRUST_API_KEY: Braintrust API key (optional)
-            - MORPH_API_KEY: Morph API key (optional)
             - MALA_REVIEW_TIMEOUT: Review timeout in seconds (optional)
             - MALA_TRACK_REVIEW_ISSUES: Create beads issues for P2/P3 findings (optional)
             - MALA_CERBERUS_SPAWN_ARGS: Extra args for review-gate spawn (optional)
@@ -301,11 +289,11 @@ class MalaConfig:
 
         Example:
             # Set environment variables first
-            os.environ["MORPH_API_KEY"] = "my-key"
+            os.environ["BRAINTRUST_API_KEY"] = "my-key"
 
             # Load configuration (validates by default)
             config = MalaConfig.from_env()
-            assert config.morph_enabled is True
+            assert config.braintrust_enabled is True
 
             # Skip validation if needed
             config = MalaConfig.from_env(validate=False)
@@ -323,7 +311,6 @@ class MalaConfig:
 
         # Get optional API keys (treat empty strings as None)
         braintrust_api_key = os.environ.get("BRAINTRUST_API_KEY") or None
-        morph_api_key = os.environ.get("MORPH_API_KEY") or None
 
         review_timeout = None
         review_timeout_raw = os.environ.get("MALA_REVIEW_TIMEOUT")
@@ -389,7 +376,6 @@ class MalaConfig:
             lock_dir=lock_dir,
             claude_config_dir=claude_config_dir,
             braintrust_api_key=braintrust_api_key,
-            morph_api_key=morph_api_key,
             review_timeout=review_timeout if review_timeout is not None else 1200,
             cerberus_bin_path=cerberus_bin_path,
             cerberus_spawn_args=tuple(cerberus_spawn_args),
@@ -436,8 +422,6 @@ class MalaConfig:
             errors.append(
                 "braintrust_enabled=True requires BRAINTRUST_API_KEY to be set"
             )
-        if self.morph_enabled and not self.morph_api_key:
-            errors.append("morph_enabled=True requires MORPH_API_KEY to be set")
 
         # Validate paths are absolute (recommended for deterministic behavior)
         if not self.runs_dir.is_absolute():
@@ -476,7 +460,6 @@ class CLIOverrides:
         cerberus_env: Raw string of extra env vars (JSON or KEY=VALUE,KEY=VALUE).
         review_timeout: Override for review timeout in seconds.
         max_epic_verification_retries: Override for max epic verification retries.
-        no_morph: Whether --no-morph flag was passed.
         no_braintrust: Whether --no-braintrust flag was passed.
         disable_review: Whether 'review' is in --disable-validations.
     """
@@ -486,7 +469,6 @@ class CLIOverrides:
     cerberus_env: str | None = None
     review_timeout: int | None = None
     max_epic_verification_retries: int | None = None
-    no_morph: bool = False
     no_braintrust: bool = False
     disable_review: bool = False
 
@@ -504,9 +486,7 @@ class ResolvedConfig:
         lock_dir: Directory for file locks during parallel processing.
         claude_config_dir: Claude SDK configuration directory.
         braintrust_api_key: Braintrust API key for tracing.
-        morph_api_key: Morph API key for MCP features.
         braintrust_enabled: Whether Braintrust tracing is enabled.
-        morph_enabled: Whether Morph MCP features are enabled.
         review_enabled: Whether automated code review is enabled.
         review_timeout: Timeout in seconds for review operations.
         cerberus_bin_path: Path to cerberus bin/ directory.
@@ -517,7 +497,6 @@ class ResolvedConfig:
         llm_api_key: API key for LLM calls.
         llm_base_url: Base URL for LLM API.
         max_epic_verification_retries: Maximum retries for epic verification loop.
-        morph_disabled_reason: Reason morph is disabled, if applicable.
         braintrust_disabled_reason: Reason braintrust is disabled, if applicable.
     """
 
@@ -528,11 +507,9 @@ class ResolvedConfig:
 
     # API keys
     braintrust_api_key: str | None
-    morph_api_key: str | None
 
     # Feature flags
     braintrust_enabled: bool
-    morph_enabled: bool
 
     # Review settings
     review_enabled: bool
@@ -551,7 +528,6 @@ class ResolvedConfig:
     max_epic_verification_retries: int
 
     # Derived disabled reasons
-    morph_disabled_reason: str | None
     braintrust_disabled_reason: str | None
 
 
@@ -578,7 +554,6 @@ def build_resolved_config(
         config = MalaConfig.from_env()
         overrides = CLIOverrides(
             cerberus_spawn_args="--mode fast",
-            no_morph=True,
         )
         resolved = build_resolved_config(config, overrides)
     """
@@ -621,20 +596,10 @@ def build_resolved_config(
     )
 
     # Determine if features are enabled after CLI overrides
-    morph_enabled = base_config.morph_enabled and not overrides.no_morph
     braintrust_enabled = base_config.braintrust_enabled and not overrides.no_braintrust
     review_enabled = base_config.review_enabled and not overrides.disable_review
 
     # Compute disabled reasons
-    morph_disabled_reason: str | None = None
-    if not morph_enabled:
-        if overrides.no_morph:
-            morph_disabled_reason = "--no-morph"
-        elif not base_config.morph_api_key:
-            morph_disabled_reason = f"add MORPH_API_KEY to {USER_CONFIG_DIR}/.env"
-        else:
-            morph_disabled_reason = "disabled by config"
-
     braintrust_disabled_reason: str | None = None
     if not braintrust_enabled:
         if overrides.no_braintrust:
@@ -651,9 +616,7 @@ def build_resolved_config(
         lock_dir=base_config.lock_dir,
         claude_config_dir=base_config.claude_config_dir,
         braintrust_api_key=base_config.braintrust_api_key,
-        morph_api_key=base_config.morph_api_key,
         braintrust_enabled=braintrust_enabled,
-        morph_enabled=morph_enabled,
         review_enabled=review_enabled,
         review_timeout=review_timeout,
         cerberus_bin_path=base_config.cerberus_bin_path,
@@ -664,6 +627,5 @@ def build_resolved_config(
         llm_api_key=base_config.llm_api_key,
         llm_base_url=base_config.llm_base_url,
         max_epic_verification_retries=max_epic_verification_retries,
-        morph_disabled_reason=morph_disabled_reason,
         braintrust_disabled_reason=braintrust_disabled_reason,
     )

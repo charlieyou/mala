@@ -317,8 +317,6 @@ class E2ERunner:
             str(timeout_minutes),
             "--disable-validations",
             "e2e",
-            # Disable Morph MCP to avoid potential hangs from npx network issues
-            "--no-morph",
             # Use fast mode for Cerberus to speed up E2E tests
             f"--cerberus-spawn-args=--mode={self.config.cerberus_mode}",
         ]

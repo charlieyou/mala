@@ -16,7 +16,7 @@ if TYPE_CHECKING:
         SyncHookJSONOutput,
     )
 
-from ..mcp import MALA_DISALLOWED_TOOLS, MORPH_DISALLOWED_TOOLS
+from ..mcp import MALA_DISALLOWED_TOOLS
 
 # Type alias for PreToolUse hooks (using string annotations to avoid import)
 PreToolUseHook = Callable[
@@ -147,27 +147,6 @@ async def block_dangerous_commands(
     return {}  # Allow the command
 
 
-async def block_morph_replaced_tools(
-    hook_input: PreToolUseHookInput,
-    stderr: str | None,
-    context: HookContext,
-) -> SyncHookJSONOutput:
-    """PreToolUse hook to block tools replaced by MorphLLM MCP.
-
-    Note: We use a hook instead of the SDK's `disallowed_tools` parameter because
-    it has a known bug where it's sometimes ignored.
-    See: https://github.com/anthropics/claude-agent-sdk-python/issues/361
-    """
-    tool_name = hook_input["tool_name"]
-    if tool_name in MORPH_DISALLOWED_TOOLS:
-        return {
-            "decision": "block",
-            "reason": f"Use MorphLLM MCP tool instead of {tool_name}. "
-            "Available: edit_file, warpgrep_codebase_search",
-        }
-    return {}
-
-
 async def block_mala_disallowed_tools(
     hook_input: PreToolUseHookInput,
     stderr: str | None,
@@ -176,7 +155,6 @@ async def block_mala_disallowed_tools(
     """PreToolUse hook to block tools disabled for mala agents.
 
     Blocks tools that cause excessive token usage without proportional value.
-    This hook is always active regardless of MorphLLM configuration.
 
     Note: We use a hook instead of the SDK's `disallowed_tools` parameter because
     it has a known bug where it's sometimes ignored.

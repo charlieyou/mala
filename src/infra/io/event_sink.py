@@ -414,7 +414,6 @@ class ConsoleEventSink(BaseEventSink):
         self._log_review_config(config)
         self._log_filters(config)
         self._log_braintrust_config(config)
-        self._log_morph_config(config)
         self._log_cli_args(config)
         print()
 
@@ -478,23 +477,6 @@ class ConsoleEventSink(BaseEventSink):
                 f"braintrust: disabled ({config.braintrust_disabled_reason})",
                 Colors.MUTED,
             )
-
-    def _log_morph_config(self, config: EventRunConfig) -> None:
-        """Log Morph configuration."""
-        if config.morph_enabled:
-            log(
-                "◐",
-                "morph: enabled (edit_file, warpgrep_codebase_search)",
-                Colors.CYAN,
-            )
-            if config.morph_disallowed_tools:
-                log(
-                    "◐",
-                    f"morph: blocked tools: {', '.join(config.morph_disallowed_tools)}",
-                    Colors.MUTED,
-                )
-        elif config.morph_disabled_reason:
-            log("◐", f"morph: disabled ({config.morph_disabled_reason})", Colors.MUTED)
 
     def _log_cli_args(self, config: EventRunConfig) -> None:
         """Log CLI argument reconstruction."""

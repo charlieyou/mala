@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.infra.mcp import MORPH_DISALLOWED_TOOLS
 from src.infra.io.event_protocol import EventRunConfig
 from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
 
@@ -28,11 +27,9 @@ def build_event_run_config(
     braintrust_enabled: bool,
     review_enabled: bool,
     review_disabled_reason: str | None,
-    morph_enabled: bool,
     prioritize_wip: bool,
     orphans_only: bool,
     cli_args: dict[str, object] | None,
-    morph_disabled_reason: str | None,
     braintrust_disabled_reason: str | None,
 ) -> EventRunConfig:
     """Build EventRunConfig for on_run_started event.
@@ -49,11 +46,9 @@ def build_event_run_config(
         braintrust_enabled: Whether Braintrust tracing is enabled.
         review_enabled: Whether code review is enabled.
         review_disabled_reason: Reason review is disabled (if any).
-        morph_enabled: Whether MorphLLM routing is enabled.
         prioritize_wip: Whether to prioritize in-progress issues.
         orphans_only: Whether to only process issues without parent epic.
         cli_args: CLI arguments for logging.
-        morph_disabled_reason: Pre-computed reason morph is disabled (if any).
         braintrust_disabled_reason: Pre-computed reason braintrust is disabled (if any).
 
     Returns:
@@ -72,9 +67,6 @@ def build_event_run_config(
         braintrust_disabled_reason=braintrust_disabled_reason,
         review_enabled=review_enabled,
         review_disabled_reason=review_disabled_reason,
-        morph_enabled=morph_enabled,
-        morph_disallowed_tools=list(MORPH_DISALLOWED_TOOLS) if morph_enabled else None,
-        morph_disabled_reason=morph_disabled_reason,
         prioritize_wip=prioritize_wip,
         orphans_only=orphans_only,
         cli_args=cli_args,

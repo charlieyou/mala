@@ -83,7 +83,6 @@ class WiringDependencies:
     max_gate_retries: int
     max_review_retries: int
     coverage_threshold: float | None
-    morph_enabled: bool
     disabled_validations: set[str] | None
     epic_id: str | None
     only_ids: set[str] | None
@@ -135,8 +134,6 @@ def build_run_coordinator(deps: WiringDependencies) -> RunCoordinator:
         max_gate_retries=deps.max_gate_retries,
         disable_validations=deps.disabled_validations,
         coverage_threshold=deps.coverage_threshold,
-        morph_enabled=deps.morph_enabled,
-        morph_api_key=deps.mala_config.morph_api_key,
     )
     return RunCoordinator(
         config=config,
@@ -256,8 +253,6 @@ def build_session_config(
         timeout_seconds=deps.timeout_seconds,
         max_gate_retries=deps.max_gate_retries,
         max_review_retries=deps.max_review_retries,
-        morph_enabled=deps.morph_enabled,
-        morph_api_key=deps.mala_config.morph_api_key,
         review_enabled=review_enabled,
         lint_tools=None,  # Set at run start
         prompt_validation_commands=deps.prompt_validation_commands,

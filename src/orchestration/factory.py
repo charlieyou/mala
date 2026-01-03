@@ -95,25 +95,10 @@ def _derive_config(
     else:
         braintrust_enabled = mala_config.braintrust_enabled
 
-    if config.morph_enabled is not None:
-        morph_enabled = config.morph_enabled
-    else:
-        morph_enabled = mala_config.morph_enabled
-
     # Build disabled validations set
     disabled_validations = (
         set(config.disable_validations) if config.disable_validations else set()
     )
-
-    # Compute morph disabled reason
-    morph_disabled_reason: str | None = None
-    if not morph_enabled:
-        if config.cli_args and config.cli_args.get("no_morph"):
-            morph_disabled_reason = "--no-morph"
-        elif not mala_config.morph_api_key:
-            morph_disabled_reason = f"add MORPH_API_KEY to {USER_CONFIG_DIR}/.env"
-        else:
-            morph_disabled_reason = "disabled by config"
 
     # Compute braintrust disabled reason
     braintrust_disabled_reason: str | None = None
@@ -130,9 +115,7 @@ def _derive_config(
     return _DerivedConfig(
         timeout_seconds=timeout_seconds,
         braintrust_enabled=braintrust_enabled,
-        morph_enabled=morph_enabled,
         disabled_validations=disabled_validations,
-        morph_disabled_reason=morph_disabled_reason,
         braintrust_disabled_reason=braintrust_disabled_reason,
     )
 

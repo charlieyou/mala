@@ -31,11 +31,6 @@ class EventRunConfig:
     braintrust_disabled_reason: str | None = None  # e.g., "add BRAINTRUST_API_KEY..."
     review_enabled: bool = True  # Cerberus code review enabled
     review_disabled_reason: str | None = None
-    morph_enabled: bool = True
-    morph_disallowed_tools: list[str] | None = None
-    morph_disabled_reason: str | None = (
-        None  # e.g., "--no-morph", "MORPH_API_KEY not set"
-    )
     prioritize_wip: bool = False
     orphans_only: bool = False
     cli_args: dict[str, object] | None = None

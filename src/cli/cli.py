@@ -732,7 +732,6 @@ def run(
         max_review_retries=max_review_retries,
         disable_validations=disable_set,
         coverage_threshold=coverage_threshold,
-        morph_enabled=override_result.resolved.morph_enabled,
         prioritize_wip=wip,
         focus=focus,
         cli_args=cli_args,
