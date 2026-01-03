@@ -145,3 +145,15 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
         return create_orchestrator(orch_config, mala_config=config, deps=deps)
 
     return _make_orchestrator
+
+
+@pytest.fixture
+def log_provider() -> LogProvider:
+    """Provide a FileSystemLogProvider for tests that need log parsing.
+
+    Returns:
+        A LogProvider instance for reading session logs from filesystem.
+    """
+    from src.infra.io.session_log_parser import FileSystemLogProvider
+
+    return FileSystemLogProvider()

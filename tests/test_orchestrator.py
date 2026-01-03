@@ -32,6 +32,8 @@ from src.orchestration.prompts import (
 from src.domain.prompts import get_gate_followup_prompt as _get_gate_followup_prompt
 from src.infra.tools.command_runner import CommandResult
 
+from src.core.protocols import LogProvider
+
 
 @pytest.fixture
 def orchestrator(
@@ -176,7 +178,9 @@ class TestPromptLazyLoading:
         assert len(_get_review_followup_prompt()) > 0
         assert len(_get_fixer_prompt()) > 0
 
-    def test_import_succeeds_without_prompt_files(self, tmp_path: Path) -> None:
+    def test_import_succeeds_without_prompt_files(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Import succeeds even when prompt files don't exist (lazy loading).
 
         This validates the first acceptance criterion: 'import src.orchestration.orchestrator
@@ -348,7 +352,7 @@ class TestGetReadyIssuesAsync:
 
     @pytest.mark.asyncio
     async def test_suppresses_warning_for_only_ids_already_processed(
-        self, tmp_path: Path
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """Only-id warnings should be suppressed for already processed IDs."""
         warnings: list[str] = []
@@ -998,7 +1002,9 @@ class TestOrchestratorWithEpicId:
 class TestQualityGateValidationEvidence:
     """Test JSONL log parsing for validation command evidence."""
 
-    def test_detects_pytest_command(self, tmp_path: Path) -> None:
+    def test_detects_pytest_command(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate should detect pytest execution in JSONL logs."""
         from src.domain.quality_gate import QualityGate
 
@@ -1020,7 +1026,7 @@ class TestQualityGateValidationEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         # Create minimal mala.yaml for test
@@ -1030,7 +1036,9 @@ class TestQualityGateValidationEvidence:
 
         assert evidence.pytest_ran is True
 
-    def test_detects_ruff_check_command(self, tmp_path: Path) -> None:
+    def test_detects_ruff_check_command(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate should detect ruff check execution."""
         from src.domain.quality_gate import QualityGate
 
@@ -1051,7 +1059,7 @@ class TestQualityGateValidationEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         # Create minimal mala.yaml for test
@@ -1061,7 +1069,9 @@ class TestQualityGateValidationEvidence:
 
         assert evidence.ruff_check_ran is True
 
-    def test_detects_ruff_format_command(self, tmp_path: Path) -> None:
+    def test_detects_ruff_format_command(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate should detect ruff format execution."""
         from src.domain.quality_gate import QualityGate
 
@@ -1082,7 +1092,7 @@ class TestQualityGateValidationEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         # Create minimal mala.yaml for test
@@ -1092,7 +1102,9 @@ class TestQualityGateValidationEvidence:
 
         assert evidence.ruff_format_ran is True
 
-    def test_detects_ty_check_command(self, tmp_path: Path) -> None:
+    def test_detects_ty_check_command(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate should detect ty check execution."""
         from src.domain.quality_gate import QualityGate
 
@@ -1113,7 +1125,7 @@ class TestQualityGateValidationEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         # Create minimal mala.yaml for test
@@ -1123,11 +1135,13 @@ class TestQualityGateValidationEvidence:
 
         assert evidence.ty_check_ran is True
 
-    def test_returns_empty_evidence_for_missing_log(self, tmp_path: Path) -> None:
+    def test_returns_empty_evidence_for_missing_log(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate should return empty evidence for missing log file."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         nonexistent = tmp_path / "nonexistent.jsonl"
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
@@ -1145,11 +1159,13 @@ class TestQualityGateValidationEvidence:
 class TestQualityGateCommitCheck:
     """Test git commit message verification."""
 
-    def test_detects_matching_commit(self, tmp_path: Path) -> None:
+    def test_detects_matching_commit(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate should detect commit with correct issue ID."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
 
         with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(
@@ -1160,11 +1176,13 @@ class TestQualityGateCommitCheck:
         assert result.exists is True
         assert result.commit_hash == "abc1234"
 
-    def test_rejects_missing_commit(self, tmp_path: Path) -> None:
+    def test_rejects_missing_commit(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate should reject when no matching commit found."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
 
         with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(stdout="")
@@ -1173,11 +1191,13 @@ class TestQualityGateCommitCheck:
         assert result.exists is False
         assert result.commit_hash is None
 
-    def test_handles_git_failure(self, tmp_path: Path) -> None:
+    def test_handles_git_failure(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate should handle git command failures gracefully."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
 
         with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(
@@ -1187,11 +1207,13 @@ class TestQualityGateCommitCheck:
 
         assert result.exists is False
 
-    def test_searches_30_day_window(self, tmp_path: Path) -> None:
+    def test_searches_30_day_window(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate should search commits from the last 30 days."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
 
         with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(
@@ -1210,11 +1232,13 @@ class TestQualityGateCommitCheck:
 class TestQualityGateFullCheck:
     """Test full quality gate check combining all criteria."""
 
-    def test_passes_when_all_criteria_met(self, tmp_path: Path) -> None:
+    def test_passes_when_all_criteria_met(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate passes when closed, commit exists, validation ran."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
 
         # Create log with all validation commands (including uv sync for SETUP)
         log_path = tmp_path / "session.jsonl"
@@ -1260,11 +1284,13 @@ class TestQualityGateFullCheck:
         assert result.passed is True
         assert result.failure_reasons == []
 
-    def test_fails_when_commit_missing(self, tmp_path: Path) -> None:
+    def test_fails_when_commit_missing(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate fails when commit is missing."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
 
         # Create log with validation commands
         log_path = tmp_path / "session.jsonl"
@@ -1299,11 +1325,13 @@ class TestQualityGateFullCheck:
         assert result.passed is False
         assert "commit" in result.failure_reasons[0].lower()
 
-    def test_failure_message_reflects_30_day_window(self, tmp_path: Path) -> None:
+    def test_failure_message_reflects_30_day_window(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate failure message should mention the 30-day window."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
 
         # Create log with validation commands
         log_path = tmp_path / "session.jsonl"
@@ -1338,11 +1366,13 @@ class TestQualityGateFullCheck:
         assert result.passed is False
         assert "30 days" in result.failure_reasons[0]
 
-    def test_fails_when_validation_missing(self, tmp_path: Path) -> None:
+    def test_fails_when_validation_missing(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Quality gate fails when validation commands didn't run."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
 
         # Create empty log (no validation commands)
         log_path = tmp_path / "session.jsonl"
@@ -1807,7 +1837,9 @@ class TestSubprocessTerminationOnTimeout:
     """Test that timed-out subprocesses are properly terminated."""
 
     @pytest.mark.asyncio
-    async def test_subprocess_terminated_on_timeout(self, tmp_path: Path) -> None:
+    async def test_subprocess_terminated_on_timeout(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """When a subprocess times out, it should be terminated, not left running."""
         from src.infra.clients.beads_client import BeadsClient
 
@@ -1831,7 +1863,9 @@ class TestSubprocessTerminationOnTimeout:
         assert "timed out" in warnings[0]
 
     @pytest.mark.asyncio
-    async def test_subprocess_killed_if_terminate_fails(self, tmp_path: Path) -> None:
+    async def test_subprocess_killed_if_terminate_fails(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """If SIGTERM doesn't work, subprocess should be killed with SIGKILL."""
         from src.infra.clients.beads_client import BeadsClient
 
@@ -1849,7 +1883,9 @@ class TestSubprocessTerminationOnTimeout:
         assert result.stderr == "timeout"
 
     @pytest.mark.asyncio
-    async def test_successful_command_not_affected(self, tmp_path: Path) -> None:
+    async def test_successful_command_not_affected(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Fast commands should complete normally without being terminated."""
         from src.infra.clients.beads_client import BeadsClient
 
@@ -1862,7 +1898,9 @@ class TestSubprocessTerminationOnTimeout:
         assert result.stderr == ""
 
     @pytest.mark.asyncio
-    async def test_command_stderr_captured(self, tmp_path: Path) -> None:
+    async def test_command_stderr_captured(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """stderr from commands should be captured correctly."""
         from src.infra.clients.beads_client import BeadsClient
 
@@ -1879,7 +1917,9 @@ class TestSubprocessTerminationOnTimeout:
     @pytest.mark.skipif(
         sys.platform == "win32", reason="Process groups not supported on Windows"
     )
-    async def test_child_processes_killed_on_timeout(self, tmp_path: Path) -> None:
+    async def test_child_processes_killed_on_timeout(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Child processes spawned by the command should also be killed on timeout."""
         import os
 
@@ -4277,14 +4317,18 @@ class TestRunSync:
 class TestGetMcpServers:
     """Test get_mcp_servers function."""
 
-    def test_returns_empty_when_morph_disabled(self, tmp_path: Path) -> None:
+    def test_returns_empty_when_morph_disabled(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """get_mcp_servers returns empty dict when morph_enabled=False."""
         from src.infra.mcp import get_mcp_servers
 
         result = get_mcp_servers(tmp_path, morph_enabled=False)
         assert result == {}
 
-    def test_returns_config_when_api_key_set(self, tmp_path: Path) -> None:
+    def test_returns_config_when_api_key_set(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """get_mcp_servers returns config when morph_api_key is provided."""
         from src.infra.mcp import get_mcp_servers
 
@@ -4293,7 +4337,9 @@ class TestGetMcpServers:
         assert "morphllm" in result
         assert result["morphllm"]["env"]["MORPH_API_KEY"] == "test-key"
 
-    def test_raises_error_when_api_key_missing(self, tmp_path: Path) -> None:
+    def test_raises_error_when_api_key_missing(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """get_mcp_servers raises ValueError when morph_api_key missing but morph_enabled=True."""
         from src.infra.mcp import get_mcp_servers
 
@@ -4432,7 +4478,9 @@ class TestEventSinkIntegration:
 class TestOrchestratorFactory:
     """Tests for create_orchestrator() factory function."""
 
-    def test_create_orchestrator_with_minimal_config(self, tmp_path: Path) -> None:
+    def test_create_orchestrator_with_minimal_config(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """create_orchestrator works with just repo_path."""
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig
@@ -4444,7 +4492,9 @@ class TestOrchestratorFactory:
         assert orchestrator.max_agents is None
         assert orchestrator.max_issues is None
 
-    def test_create_orchestrator_with_full_config(self, tmp_path: Path) -> None:
+    def test_create_orchestrator_with_full_config(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """create_orchestrator respects all config options."""
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig
@@ -4477,7 +4527,9 @@ class TestOrchestratorFactory:
         assert orchestrator.prioritize_wip is True
         assert orchestrator.focus is False
 
-    def test_create_orchestrator_with_custom_mala_config(self, tmp_path: Path) -> None:
+    def test_create_orchestrator_with_custom_mala_config(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """create_orchestrator uses provided MalaConfig."""
         from dataclasses import replace
 
@@ -4495,7 +4547,9 @@ class TestOrchestratorFactory:
         # Verify mala_config was used
         assert orchestrator._mala_config.review_timeout == 999
 
-    def test_create_orchestrator_with_custom_dependencies(self, tmp_path: Path) -> None:
+    def test_create_orchestrator_with_custom_dependencies(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """create_orchestrator uses provided dependencies."""
         from src.infra.io.event_sink import NullEventSink
         from src.orchestration.factory import create_orchestrator
@@ -4509,7 +4563,9 @@ class TestOrchestratorFactory:
 
         assert orchestrator.event_sink is custom_sink
 
-    def test_create_orchestrator_timeout_defaults_to_60(self, tmp_path: Path) -> None:
+    def test_create_orchestrator_timeout_defaults_to_60(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Default timeout is 60 minutes when not specified."""
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import (
@@ -4523,7 +4579,7 @@ class TestOrchestratorFactory:
         assert orchestrator.timeout_seconds == DEFAULT_AGENT_TIMEOUT_MINUTES * 60
 
     def test_create_orchestrator_zero_timeout_uses_default(
-        self, tmp_path: Path
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """Timeout of 0 is treated as falsy and uses default."""
         from src.orchestration.factory import create_orchestrator
@@ -4702,7 +4758,9 @@ class TestBuildGateMetadata:
 class TestBuildGateMetadataFromLogs:
     """Tests for _build_gate_metadata_from_logs fallback function."""
 
-    def test_none_spec_returns_empty_metadata(self, tmp_path: Path) -> None:
+    def test_none_spec_returns_empty_metadata(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """When per_issue_spec is None, returns empty GateMetadata."""
         from typing import TYPE_CHECKING, cast
 
@@ -4716,7 +4774,7 @@ class TestBuildGateMetadataFromLogs:
 
         log_path = tmp_path / "test.log"
         log_path.write_text("{}")
-        quality_gate = cast("GateChecker", QualityGate(repo_path=tmp_path))
+        quality_gate = cast("GateChecker", QualityGate(tmp_path, log_provider))
 
         result = _build_gate_metadata_from_logs(
             log_path=log_path,
@@ -4729,7 +4787,9 @@ class TestBuildGateMetadataFromLogs:
         assert result.quality_gate_result is None
         assert result.validation_result is None
 
-    def test_valid_spec_parses_evidence(self, tmp_path: Path) -> None:
+    def test_valid_spec_parses_evidence(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """With valid spec, parses evidence from logs."""
         import re
         from typing import TYPE_CHECKING, cast
@@ -4752,7 +4812,7 @@ class TestBuildGateMetadataFromLogs:
         # Write a minimal log entry
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast("GateChecker", QualityGate(repo_path=tmp_path))
+        quality_gate = cast("GateChecker", QualityGate(tmp_path, log_provider))
         spec = ValidationSpec(
             commands=[
                 ValidationCommand(
@@ -4780,7 +4840,9 @@ class TestBuildGateMetadataFromLogs:
         assert result.validation_result is not None
         assert result.validation_result.passed is False
 
-    def test_result_success_determines_passed_status(self, tmp_path: Path) -> None:
+    def test_result_success_determines_passed_status(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """result_success parameter determines quality_gate_result.passed."""
         from typing import TYPE_CHECKING, cast
 
@@ -4796,7 +4858,7 @@ class TestBuildGateMetadataFromLogs:
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast("GateChecker", QualityGate(repo_path=tmp_path))
+        quality_gate = cast("GateChecker", QualityGate(tmp_path, log_provider))
         spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
 
         # Test with result_success=True
@@ -4811,7 +4873,9 @@ class TestBuildGateMetadataFromLogs:
         assert result.quality_gate_result is not None
         assert result.quality_gate_result.passed is True
 
-    def test_extracts_failure_reasons_from_summary(self, tmp_path: Path) -> None:
+    def test_extracts_failure_reasons_from_summary(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Extracts failure reasons from 'Quality gate failed:' prefix."""
         from typing import TYPE_CHECKING, cast
 
@@ -4827,7 +4891,7 @@ class TestBuildGateMetadataFromLogs:
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast("GateChecker", QualityGate(repo_path=tmp_path))
+        quality_gate = cast("GateChecker", QualityGate(tmp_path, log_provider))
         spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
 
         result = _build_gate_metadata_from_logs(
@@ -4844,7 +4908,9 @@ class TestBuildGateMetadataFromLogs:
             "no commit",
         ]
 
-    def test_builds_validation_result_from_evidence(self, tmp_path: Path) -> None:
+    def test_builds_validation_result_from_evidence(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Builds validation_result (not None) matching _build_gate_metadata behavior."""
         from typing import TYPE_CHECKING, cast
 
@@ -4861,7 +4927,7 @@ class TestBuildGateMetadataFromLogs:
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast("GateChecker", QualityGate(repo_path=tmp_path))
+        quality_gate = cast("GateChecker", QualityGate(tmp_path, log_provider))
         spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
 
         result = _build_gate_metadata_from_logs(

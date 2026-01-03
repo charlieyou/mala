@@ -17,7 +17,7 @@ from src.domain.validation.spec import (
     build_validation_spec,
 )
 
-from src.core.protocols import LogProvider  # noqa: TC001
+from src.core.protocols import LogProvider
 from src.domain.quality_gate import (
     QualityGate,
     ValidationEvidence,
@@ -66,7 +66,7 @@ def make_evidence(
 class TestSpecDrivenParsing:
     """Test parse_validation_evidence_with_spec for spec-driven evidence detection."""
 
-    def test_returns_evidence(self, tmp_path: Path) -> None:
+    def test_returns_evidence(self, tmp_path: Path, log_provider: LogProvider) -> None:
         """Should return ValidationEvidence from log."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -85,7 +85,7 @@ class TestSpecDrivenParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -94,7 +94,9 @@ class TestSpecDrivenParsing:
         assert isinstance(evidence, ValidationEvidence)
         assert evidence.pytest_ran is True
 
-    def test_starts_from_given_offset(self, tmp_path: Path) -> None:
+    def test_starts_from_given_offset(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should only parse log entries after the given byte offset."""
         log_path = tmp_path / "session.jsonl"
 
@@ -130,7 +132,7 @@ class TestSpecDrivenParsing:
         )
         log_path.write_text(first_entry + "\n" + second_entry + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -146,7 +148,9 @@ class TestSpecDrivenParsing:
         # Should detect ruff check (after offset)
         assert evidence.ruff_check_ran is True
 
-    def test_offset_zero_parses_entire_file(self, tmp_path: Path) -> None:
+    def test_offset_zero_parses_entire_file(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Offset=0 should parse the entire file (default behavior)."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -165,7 +169,7 @@ class TestSpecDrivenParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -173,7 +177,9 @@ class TestSpecDrivenParsing:
 
         assert evidence.pytest_ran is True
 
-    def test_offset_at_end_returns_empty_evidence(self, tmp_path: Path) -> None:
+    def test_offset_at_end_returns_empty_evidence(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Offset at EOF should return empty evidence."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -192,7 +198,7 @@ class TestSpecDrivenParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -207,7 +213,9 @@ class TestSpecDrivenParsing:
         assert evidence.ruff_format_ran is False
         assert evidence.ty_check_ran is False
 
-    def test_new_offset_points_to_end_of_file(self, tmp_path: Path) -> None:
+    def test_new_offset_points_to_end_of_file(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Log end offset should match file size."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -226,14 +234,16 @@ class TestSpecDrivenParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         new_offset = gate.get_log_end_offset(log_path)
 
         assert new_offset == log_path.stat().st_size
 
-    def test_handles_missing_file(self, tmp_path: Path) -> None:
+    def test_handles_missing_file(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should handle missing log file gracefully."""
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -243,7 +253,9 @@ class TestSpecDrivenParsing:
 
         assert evidence.pytest_ran is False
 
-    def test_detects_all_validation_commands(self, tmp_path: Path) -> None:
+    def test_detects_all_validation_commands(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should detect all validation commands."""
         log_path = tmp_path / "session.jsonl"
 
@@ -274,7 +286,7 @@ class TestSpecDrivenParsing:
             )
         log_path.write_text("\n".join(entries) + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -290,14 +302,14 @@ class TestNoProgressDetection:
     """Test check_no_progress for detecting stalled attempts."""
 
     def test_no_progress_when_same_commit_and_no_new_evidence(
-        self, tmp_path: Path
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """No progress: unchanged commit hash + no new evidence since offset."""
         log_path = tmp_path / "session.jsonl"
         # Empty file - no new evidence
         log_path.write_text("")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Same commit as before, file has no content after offset 0
@@ -310,12 +322,14 @@ class TestNoProgressDetection:
 
         assert is_no_progress is True
 
-    def test_progress_when_commit_changed(self, tmp_path: Path) -> None:
+    def test_progress_when_commit_changed(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Progress detected: different commit hash (even without new evidence)."""
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")  # No new evidence
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
             log_offset=0,
@@ -325,7 +339,9 @@ class TestNoProgressDetection:
 
         assert is_no_progress is False
 
-    def test_progress_when_new_evidence_found(self, tmp_path: Path) -> None:
+    def test_progress_when_new_evidence_found(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Progress detected: new validation evidence (even with same commit)."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -344,7 +360,7 @@ class TestNoProgressDetection:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
             log_offset=0,  # Check from beginning - will find evidence
@@ -354,7 +370,9 @@ class TestNoProgressDetection:
 
         assert is_no_progress is False
 
-    def test_no_progress_when_evidence_before_offset_only(self, tmp_path: Path) -> None:
+    def test_no_progress_when_evidence_before_offset_only(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """No progress: validation evidence exists but only before the offset."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -373,7 +391,7 @@ class TestNoProgressDetection:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Set offset to after the evidence
@@ -388,12 +406,14 @@ class TestNoProgressDetection:
 
         assert is_no_progress is True
 
-    def test_progress_when_no_previous_commit(self, tmp_path: Path) -> None:
+    def test_progress_when_no_previous_commit(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Progress detected: first attempt (no previous commit to compare)."""
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         is_no_progress = gate.check_no_progress(
             log_path=log_path,
             log_offset=0,
@@ -405,13 +425,13 @@ class TestNoProgressDetection:
         assert is_no_progress is False
 
     def test_no_progress_with_none_commits_and_no_evidence(
-        self, tmp_path: Path
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """No progress: both commits None (no commit made) and no new evidence."""
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         is_no_progress = gate.check_no_progress(
@@ -423,9 +443,11 @@ class TestNoProgressDetection:
 
         assert is_no_progress is True
 
-    def test_handles_missing_log_file(self, tmp_path: Path) -> None:
+    def test_handles_missing_log_file(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should handle missing log file (no evidence = no progress)."""
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         nonexistent = tmp_path / "nonexistent.jsonl"
@@ -439,7 +461,9 @@ class TestNoProgressDetection:
 
         assert is_no_progress is True
 
-    def test_progress_when_working_tree_has_changes(self, tmp_path: Path) -> None:
+    def test_progress_when_working_tree_has_changes(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Progress detected: uncommitted changes in working tree.
 
         Even with same commit and no new validation evidence, if there are
@@ -448,7 +472,7 @@ class TestNoProgressDetection:
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("")  # No new evidence
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
 
         # Mock _has_working_tree_changes to return True
         original_method = gate._has_working_tree_changes
@@ -638,7 +662,9 @@ class TestToEvidenceDict:
 class TestCommitBaselineCheck:
     """Test check_commit_exists with baseline timestamp to reject stale commits."""
 
-    def test_rejects_commit_before_baseline(self, tmp_path: Path) -> None:
+    def test_rejects_commit_before_baseline(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should reject commits created before the baseline timestamp."""
         from src.domain.quality_gate import QualityGate
 
@@ -650,14 +676,16 @@ class TestCommitBaselineCheck:
                 stderr="",
             )
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
 
         # Baseline makes the commit stale
         result = gate.check_commit_exists("issue-123", baseline_timestamp=1703501000)
 
         assert result.exists is False
 
-    def test_accepts_commit_after_baseline(self, tmp_path: Path) -> None:
+    def test_accepts_commit_after_baseline(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should accept commits created after the baseline timestamp."""
         from src.domain.quality_gate import QualityGate
 
@@ -669,7 +697,7 @@ class TestCommitBaselineCheck:
                 stderr="",
             )
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
 
         # Baseline allows the newer commit
         result = gate.check_commit_exists("issue-123", baseline_timestamp=1703501000)
@@ -677,7 +705,9 @@ class TestCommitBaselineCheck:
         assert result.exists is True
         assert result.commit_hash == "abc1234"
 
-    def test_accepts_any_commit_without_baseline(self, tmp_path: Path) -> None:
+    def test_accepts_any_commit_without_baseline(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should accept any matching commit when no baseline is provided (backward compat)."""
         from src.domain.quality_gate import QualityGate
 
@@ -689,7 +719,7 @@ class TestCommitBaselineCheck:
                 stderr="",
             )
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
 
         # No baseline - accepts any commit
         result = gate.check_commit_exists("issue-123")
@@ -697,7 +727,9 @@ class TestCommitBaselineCheck:
         assert result.exists is True
         assert result.commit_hash == "abc1234"
 
-    def test_gate_check_uses_baseline(self, tmp_path: Path) -> None:
+    def test_gate_check_uses_baseline(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Gate check method should use baseline to reject stale commits."""
         from src.domain.quality_gate import QualityGate
 
@@ -742,7 +774,7 @@ class TestCommitBaselineCheck:
                 stderr="",
             )
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
 
         # Baseline makes the commit stale
         result = gate.check_with_resolution(
@@ -755,11 +787,13 @@ class TestCommitBaselineCheck:
             for r in result.failure_reasons
         )
 
-    def test_gate_check_passes_with_new_commit(self, tmp_path: Path) -> None:
+    def test_gate_check_passes_with_new_commit(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Gate check should pass when commit is after baseline."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
 
         # Create log with all validation commands (including uv sync for SETUP)
         log_path = tmp_path / "session.jsonl"
@@ -803,7 +837,7 @@ class TestCommitBaselineCheck:
                 stderr="",
             )
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
 
         # Baseline allows the newer commit
         result = gate.check_with_resolution(
@@ -816,7 +850,9 @@ class TestCommitBaselineCheck:
 class TestIssueResolutionMarkerParsing:
     """Test parsing of ISSUE_NO_CHANGE and ISSUE_OBSOLETE markers from logs."""
 
-    def test_parses_no_change_marker_with_rationale(self, tmp_path: Path) -> None:
+    def test_parses_no_change_marker_with_rationale(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should parse ISSUE_NO_CHANGE marker and extract rationale."""
         from src.domain.validation.spec import ResolutionOutcome
 
@@ -836,14 +872,16 @@ class TestIssueResolutionMarkerParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is not None
         assert resolution.outcome == ResolutionOutcome.NO_CHANGE
         assert "already fixed" in resolution.rationale.lower()
 
-    def test_parses_obsolete_marker_with_rationale(self, tmp_path: Path) -> None:
+    def test_parses_obsolete_marker_with_rationale(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should parse ISSUE_OBSOLETE marker and extract rationale."""
         from src.domain.validation.spec import ResolutionOutcome
 
@@ -863,14 +901,16 @@ class TestIssueResolutionMarkerParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is not None
         assert resolution.outcome == ResolutionOutcome.OBSOLETE
         assert "no longer relevant" in resolution.rationale.lower()
 
-    def test_returns_none_when_no_marker_present(self, tmp_path: Path) -> None:
+    def test_returns_none_when_no_marker_present(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should return None when no resolution marker is present."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -888,14 +928,16 @@ class TestIssueResolutionMarkerParsing:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is None
 
-    def test_handles_missing_log_file(self, tmp_path: Path) -> None:
+    def test_handles_missing_log_file(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should return None for missing log file."""
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         nonexistent = tmp_path / "nonexistent.jsonl"
@@ -904,7 +946,9 @@ class TestIssueResolutionMarkerParsing:
 
         assert resolution is None
 
-    def test_parses_marker_from_offset(self, tmp_path: Path) -> None:
+    def test_parses_marker_from_offset(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should parse markers starting from the given offset."""
         from src.domain.validation.spec import ResolutionOutcome
 
@@ -935,7 +979,7 @@ class TestIssueResolutionMarkerParsing:
         )
         log_path.write_text(first_entry + "\n" + second_entry + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         offset = len(first_entry) + 1  # +1 for newline
@@ -944,7 +988,9 @@ class TestIssueResolutionMarkerParsing:
         assert resolution is not None
         assert resolution.outcome == ResolutionOutcome.OBSOLETE
 
-    def test_marker_not_found_before_offset(self, tmp_path: Path) -> None:
+    def test_marker_not_found_before_offset(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should not find markers before the given offset."""
         log_path = tmp_path / "session.jsonl"
 
@@ -964,7 +1010,7 @@ class TestIssueResolutionMarkerParsing:
         )
         log_path.write_text(entry + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Offset at end of file - marker is before
@@ -977,7 +1023,9 @@ class TestIssueResolutionMarkerParsing:
 class TestScopeAwareEvidence:
     """Test EvidenceGate derives expected evidence from ValidationSpec per scope."""
 
-    def test_per_issue_scope_does_not_require_e2e(self, tmp_path: Path) -> None:
+    def test_per_issue_scope_does_not_require_e2e(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Per-issue EvidenceGate should never require E2E evidence."""
 
         # Create minimal mala.yaml for test
@@ -987,7 +1035,9 @@ class TestScopeAwareEvidence:
         # E2E should be disabled for per-issue scope
         assert spec.e2e.enabled is False
 
-    def test_run_level_scope_can_require_e2e(self, tmp_path: Path) -> None:
+    def test_run_level_scope_can_require_e2e(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Run-level scope can require E2E evidence when enabled."""
 
         # Create minimal mala.yaml for test
@@ -998,7 +1048,7 @@ class TestScopeAwareEvidence:
         assert spec.e2e.enabled is True
 
     def test_evidence_gate_accepts_no_change_with_clean_tree(
-        self, tmp_path: Path
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """EvidenceGate should accept no-change resolution with clean working tree."""
         from src.domain.validation.spec import ResolutionOutcome
@@ -1023,7 +1073,7 @@ class TestScopeAwareEvidence:
         mock_runner = make_mock_command_runner(
             CommandResult(command=[], returncode=0, stdout="", stderr="")
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -1041,7 +1091,7 @@ class TestScopeAwareEvidence:
         assert result.resolution.outcome == ResolutionOutcome.NO_CHANGE
 
     def test_evidence_gate_accepts_obsolete_with_clean_tree(
-        self, tmp_path: Path
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """EvidenceGate should accept obsolete resolution with clean working tree."""
         from src.domain.validation.spec import ResolutionOutcome
@@ -1066,7 +1116,7 @@ class TestScopeAwareEvidence:
         mock_runner = make_mock_command_runner(
             CommandResult(command=[], returncode=0, stdout="", stderr="")
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -1084,7 +1134,7 @@ class TestScopeAwareEvidence:
         assert result.resolution.outcome == ResolutionOutcome.OBSOLETE
 
     def test_evidence_gate_passes_no_change_with_dirty_tree(
-        self, tmp_path: Path
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """EvidenceGate should pass no-change resolution even if working tree is dirty.
 
@@ -1109,7 +1159,7 @@ class TestScopeAwareEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -1125,7 +1175,7 @@ class TestScopeAwareEvidence:
         assert result.resolution.outcome == ResolutionOutcome.NO_CHANGE
 
     def test_evidence_gate_requires_rationale_for_no_change(
-        self, tmp_path: Path
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """EvidenceGate should fail no-change resolution without rationale."""
         log_path = tmp_path / "session.jsonl"
@@ -1140,7 +1190,7 @@ class TestScopeAwareEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         resolution = gate.parse_issue_resolution(log_path)
@@ -1153,7 +1203,9 @@ class TestScopeAwareEvidence:
 class TestEvidenceGateSkipsValidation:
     """Test that Gate 2/3 (commit + full validation) is skipped for no-op/obsolete."""
 
-    def test_no_change_skips_commit_check(self, tmp_path: Path) -> None:
+    def test_no_change_skips_commit_check(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """No-change resolution should not require a commit or git status check."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -1175,7 +1227,7 @@ class TestEvidenceGateSkipsValidation:
         mock_runner = make_mock_command_runner(
             CommandResult(command=[], returncode=0, stdout="", stderr="")
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -1185,7 +1237,9 @@ class TestEvidenceGateSkipsValidation:
         # Without detection_pattern, pytest should NOT be detected
         assert evidence.pytest_ran is False
 
-    def test_obsolete_skips_commit_and_validation(self, tmp_path: Path) -> None:
+    def test_obsolete_skips_commit_and_validation(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Obsolete resolution should skip commit, validation, and git status checks."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -1207,7 +1261,7 @@ class TestEvidenceGateSkipsValidation:
         mock_runner = make_mock_command_runner(
             CommandResult(command=[], returncode=0, stdout="", stderr="")
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -1226,9 +1280,11 @@ class TestEvidenceGateSkipsValidation:
 class TestClearFailureMessages:
     """Test clear failure messages when evidence is missing."""
 
-    def test_missing_commit_message_is_clear(self, tmp_path: Path) -> None:
+    def test_missing_commit_message_is_clear(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Failure for missing commit should be descriptive."""
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         log_path = tmp_path / "session.jsonl"
@@ -1266,7 +1322,7 @@ class TestClearFailureMessages:
         mock_runner = make_mock_command_runner(
             CommandResult(command=[], returncode=0, stdout="", stderr="")
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
 
         result = gate.check_with_resolution("missing-commit-123", log_path, spec=spec)
 
@@ -1276,7 +1332,9 @@ class TestClearFailureMessages:
             for r in result.failure_reasons
         )
 
-    def test_missing_validation_message_lists_commands(self, tmp_path: Path) -> None:
+    def test_missing_validation_message_lists_commands(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Failure for missing validation should list which commands didn't run."""
         log_path = tmp_path / "session.jsonl"
         # Log with only partial validation
@@ -1306,7 +1364,7 @@ class TestClearFailureMessages:
                 command=[], returncode=0, stdout="abc1234 bd-test-123: Fix\n", stderr=""
             )
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
@@ -1320,7 +1378,9 @@ class TestClearFailureMessages:
         assert "lint" in missing_msg[0].lower()
         assert "typecheck" in missing_msg[0].lower()
 
-    def test_no_change_without_rationale_message(self, tmp_path: Path) -> None:
+    def test_no_change_without_rationale_message(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Failure for no-change without rationale should be clear."""
         log_path = tmp_path / "session.jsonl"
         # Marker without substantive rationale
@@ -1338,7 +1398,7 @@ class TestClearFailureMessages:
         mock_runner = make_mock_command_runner(
             CommandResult(command=[], returncode=0, stdout="", stderr="")
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -1355,7 +1415,9 @@ class TestClearFailureMessages:
 class TestGetRequiredEvidenceKinds:
     """Test get_required_evidence_kinds extracts gate-required CommandKinds."""
 
-    def test_returns_gate_required_kinds_from_spec(self, tmp_path: Path) -> None:
+    def test_returns_gate_required_kinds_from_spec(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should return set of gate-required command kinds."""
         from src.domain.quality_gate import get_required_evidence_kinds
 
@@ -1377,7 +1439,9 @@ class TestGetRequiredEvidenceKinds:
 class TestCheckEvidenceAgainstSpec:
     """Test check_evidence_against_spec for scope-aware validation."""
 
-    def test_passes_when_all_required_evidence_present(self, tmp_path: Path) -> None:
+    def test_passes_when_all_required_evidence_present(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should pass when all required commands ran."""
         evidence = make_evidence(
             pytest_ran=True,
@@ -1394,7 +1458,9 @@ class TestCheckEvidenceAgainstSpec:
         assert passed is True
         assert len(missing) == 0
 
-    def test_fails_when_missing_required_evidence(self, tmp_path: Path) -> None:
+    def test_fails_when_missing_required_evidence(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should fail and list missing commands."""
         evidence = make_evidence(
             pytest_ran=False,  # Missing pytest
@@ -1411,7 +1477,9 @@ class TestCheckEvidenceAgainstSpec:
         assert passed is False
         assert "test" in missing
 
-    def test_per_issue_does_not_require_e2e(self, tmp_path: Path) -> None:
+    def test_per_issue_does_not_require_e2e(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Per-issue scope should pass without E2E evidence."""
         evidence = make_evidence(
             pytest_ran=True,
@@ -1430,7 +1498,9 @@ class TestCheckEvidenceAgainstSpec:
         # E2E should not be in missing list for per-issue scope
         assert "e2e" not in [m.lower() for m in missing]
 
-    def test_respects_disabled_validations(self, tmp_path: Path) -> None:
+    def test_respects_disabled_validations(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should not require disabled validations."""
         evidence = make_evidence(
             pytest_ran=False,  # Not run
@@ -1460,7 +1530,9 @@ class TestCheckEvidenceAgainstSpec:
 class TestCheckWithResolutionSpec:
     """Test check_with_resolution uses spec for evidence checking."""
 
-    def test_uses_spec_when_provided(self, tmp_path: Path) -> None:
+    def test_uses_spec_when_provided(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should use spec-based evidence checking when spec is provided."""
 
         log_path = tmp_path / "session.jsonl"
@@ -1490,7 +1562,7 @@ class TestCheckWithResolutionSpec:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
@@ -1512,7 +1584,7 @@ class TestCheckWithResolutionSpec:
                 stderr="",
             )
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
 
         result = gate.check_with_resolution(
             issue_id="test-123",
@@ -1524,14 +1596,16 @@ class TestCheckWithResolutionSpec:
         # Should pass since pytest is not required when post-validate is disabled
         assert result.passed is True
 
-    def test_raises_without_spec(self, tmp_path: Path) -> None:
+    def test_raises_without_spec(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should raise ValueError when spec is not provided."""
         import pytest as pytest_module
 
         log_path = tmp_path / "session.jsonl"
         log_path.write_text("{}\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
@@ -1545,7 +1619,9 @@ class TestCheckWithResolutionSpec:
 class TestUserPromptInjectionPrevention:
     """Regression tests: resolution markers in user prompts should be ignored."""
 
-    def test_user_message_with_no_change_marker_ignored(self, tmp_path: Path) -> None:
+    def test_user_message_with_no_change_marker_ignored(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """User prompt containing ISSUE_NO_CHANGE should not trigger resolution."""
         log_path = tmp_path / "session.jsonl"
         # User message with resolution marker (should be ignored)
@@ -1565,7 +1641,7 @@ class TestUserPromptInjectionPrevention:
         )
         log_path.write_text(user_entry + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         resolution = gate.parse_issue_resolution(log_path)
@@ -1573,7 +1649,9 @@ class TestUserPromptInjectionPrevention:
         # Should NOT find resolution from user message
         assert resolution is None
 
-    def test_user_message_with_obsolete_marker_ignored(self, tmp_path: Path) -> None:
+    def test_user_message_with_obsolete_marker_ignored(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """User prompt containing ISSUE_OBSOLETE should not trigger resolution."""
         log_path = tmp_path / "session.jsonl"
         user_entry = json.dumps(
@@ -1592,14 +1670,16 @@ class TestUserPromptInjectionPrevention:
         )
         log_path.write_text(user_entry + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         resolution = gate.parse_issue_resolution(log_path)
 
         assert resolution is None
 
-    def test_assistant_message_still_parsed(self, tmp_path: Path) -> None:
+    def test_assistant_message_still_parsed(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Assistant messages with resolution markers should still work."""
         from src.domain.validation.spec import ResolutionOutcome
 
@@ -1620,7 +1700,7 @@ class TestUserPromptInjectionPrevention:
         )
         log_path.write_text(assistant_entry + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         resolution = gate.parse_issue_resolution(log_path)
@@ -1632,7 +1712,9 @@ class TestUserPromptInjectionPrevention:
 class TestGitFailureHandling:
     """Regression tests: git failures should be treated as dirty state."""
 
-    def test_git_failure_returns_dirty(self, tmp_path: Path) -> None:
+    def test_git_failure_returns_dirty(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Git failure should return is_clean=False with error message."""
         # Create mock command runner that returns git failure
         mock_runner = make_mock_command_runner(
@@ -1643,7 +1725,7 @@ class TestGitFailureHandling:
                 stderr="fatal: not a git repository",
             )
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
@@ -1654,7 +1736,7 @@ class TestGitFailureHandling:
         assert "not a git repository" in output
 
     def test_no_change_resolution_passes_without_git_check(
-        self, tmp_path: Path
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """No-change resolution should pass without checking git status.
 
@@ -1679,7 +1761,7 @@ class TestGitFailureHandling:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -1695,7 +1777,9 @@ class TestGitFailureHandling:
 class TestOffsetBasedEvidenceInCheckWithResolution:
     """Regression tests: check_with_resolution uses log_offset for evidence."""
 
-    def test_evidence_only_from_current_attempt(self, tmp_path: Path) -> None:
+    def test_evidence_only_from_current_attempt(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Evidence before log_offset should not count for current attempt."""
         log_path = tmp_path / "session.jsonl"
 
@@ -1758,7 +1842,7 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
                 stderr="",
             )
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -1786,7 +1870,9 @@ class TestByteOffsetConsistency:
     match those expected by the evidence parser.
     """
 
-    def test_unicode_content_uses_byte_offsets(self, tmp_path: Path) -> None:
+    def test_unicode_content_uses_byte_offsets(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Multi-byte unicode should not break offset calculations.
 
         Text mode would count characters, binary mode counts bytes.
@@ -1827,7 +1913,7 @@ class TestByteOffsetConsistency:
         content = entry_with_emoji + "\n" + validation_entry + "\n"
         log_path.write_text(content)
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -1847,7 +1933,9 @@ class TestByteOffsetConsistency:
             "Evidence parser should correctly find pytest after byte-offset with unicode"
         )
 
-    def test_empty_lines_preserved_in_offset_tracking(self, tmp_path: Path) -> None:
+    def test_empty_lines_preserved_in_offset_tracking(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Empty lines should be counted in byte offsets but skipped in parsing."""
         log_path = tmp_path / "session.jsonl"
 
@@ -1883,7 +1971,7 @@ class TestByteOffsetConsistency:
         content = entry1 + "\n\n\n" + entry2 + "\n"
         log_path.write_text(content)
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         resolution, new_offset = gate.parse_issue_resolution_from_offset(log_path, 0)
@@ -1893,7 +1981,9 @@ class TestByteOffsetConsistency:
         # Offset should be at end of entry2 line (the matched entry)
         assert new_offset == len(content)
 
-    def test_binary_data_skipped_without_crash(self, tmp_path: Path) -> None:
+    def test_binary_data_skipped_without_crash(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Binary data (invalid UTF-8) should be skipped without crashing."""
         log_path = tmp_path / "session.jsonl"
 
@@ -1918,7 +2008,7 @@ class TestByteOffsetConsistency:
             f.write(b"\x80\x81\x82\xff\xfe\n")  # Invalid UTF-8
             f.write((valid_entry + "\n").encode("utf-8"))
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -1929,7 +2019,9 @@ class TestByteOffsetConsistency:
         # Should still parse valid entries
         assert evidence.pytest_ran is True
 
-    def test_truncated_json_skipped_without_crash(self, tmp_path: Path) -> None:
+    def test_truncated_json_skipped_without_crash(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Truncated JSON lines should be skipped without crashing."""
         log_path = tmp_path / "session.jsonl"
 
@@ -1951,7 +2043,7 @@ class TestByteOffsetConsistency:
         content = '{"type": "ass\n' + valid_entry + "\n"
         log_path.write_text(content)
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -1963,7 +2055,9 @@ class TestByteOffsetConsistency:
         # (no pytest command in this log, so pytest_ran is False)
         assert evidence is not None
 
-    def test_offset_beyond_eof_returns_empty_evidence(self, tmp_path: Path) -> None:
+    def test_offset_beyond_eof_returns_empty_evidence(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Offset beyond EOF should return empty evidence."""
         log_path = tmp_path / "session.jsonl"
 
@@ -1975,7 +2069,7 @@ class TestByteOffsetConsistency:
         )
         log_path.write_text(entry + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -1996,7 +2090,9 @@ class TestSpecDrivenEvidencePatterns:
     preventing false failures when commands change but evidence parsing does not.
     """
 
-    def test_all_spec_commands_have_detection_patterns(self, tmp_path: Path) -> None:
+    def test_all_spec_commands_have_detection_patterns(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Every ValidationCommand in build_validation_spec should have a detection_pattern.
 
         This test fails if a command is added to build_validation_spec without a pattern,
@@ -2016,7 +2112,9 @@ class TestSpecDrivenEvidencePatterns:
                 f"Command '{cmd.name}' detection_pattern is not a compiled regex"
             )
 
-    def test_spec_patterns_match_their_own_commands(self, tmp_path: Path) -> None:
+    def test_spec_patterns_match_their_own_commands(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Each command's detection_pattern should match the command itself.
 
         This validates that patterns are correct - if we change a command,
@@ -2035,7 +2133,9 @@ class TestSpecDrivenEvidencePatterns:
                 f"Command '{cmd.name}' pattern does not match its own command: {command_str}"
             )
 
-    def test_quality_gate_uses_spec_patterns_for_evidence(self, tmp_path: Path) -> None:
+    def test_quality_gate_uses_spec_patterns_for_evidence(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """QualityGate should use patterns from the spec, not hardcoded patterns.
 
         This ensures evidence parsing is driven from spec command definitions.
@@ -2068,7 +2168,7 @@ class TestSpecDrivenEvidencePatterns:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -2081,7 +2181,9 @@ class TestSpecDrivenEvidencePatterns:
         # Should detect pytest command via spec patterns
         assert evidence.pytest_ran is True
 
-    def test_command_without_pattern_skipped(self, tmp_path: Path) -> None:
+    def test_command_without_pattern_skipped(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Commands without detection_pattern should be skipped (no fallback)."""
         from src.domain.validation.spec import (
             CommandKind,
@@ -2120,7 +2222,7 @@ class TestSpecDrivenEvidencePatterns:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Use the custom spec (not build_validation_spec which would overwrite it)
@@ -2129,97 +2231,8 @@ class TestSpecDrivenEvidencePatterns:
         # Without detection_pattern, pytest should NOT be detected
         assert evidence.pytest_ran is False
 
-    def test_check_with_resolution_uses_spec_patterns(self, tmp_path: Path) -> None:
-        """check_with_resolution should use spec-defined patterns, not hardcoded.
-
-        This test uses a custom detection pattern that differs from the hardcoded
-        pattern to verify that the gate actually uses spec patterns.
-        """
-        import re
-
-        from src.domain.validation.spec import (
-            CommandKind,
-            ValidationCommand,
-            ValidationScope,
-            ValidationSpec,
-        )
-
-        # Create a spec with a custom pattern that matches "custom_test" but NOT "pytest"
-        custom_test_cmd = ValidationCommand(
-            name="custom_test",
-            command="custom_test run",
-            kind=CommandKind.TEST,
-            detection_pattern=re.compile(
-                r"\bcustom_test\b"
-            ),  # Different from hardcoded pytest pattern
-        )
-        # Include other required commands with their patterns
-        spec = ValidationSpec(
-            commands=[
-                custom_test_cmd,
-                ValidationCommand(
-                    name="ruff check",
-                    command="uvx ruff check",
-                    kind=CommandKind.LINT,
-                    detection_pattern=re.compile(r"\bruff\s+check\b"),
-                ),
-                ValidationCommand(
-                    name="ruff format",
-                    command="uvx ruff format",
-                    kind=CommandKind.FORMAT,
-                    detection_pattern=re.compile(r"\bruff\s+format\b"),
-                ),
-                ValidationCommand(
-                    name="ty check",
-                    command="uvx ty check",
-                    kind=CommandKind.TYPECHECK,
-                    detection_pattern=re.compile(r"\bty\s+check\b"),
-                ),
-            ],
-            scope=ValidationScope.PER_ISSUE,
-        )
-
-        # Create log with custom_test (NOT pytest) - should pass with spec pattern
-        log_path = tmp_path / "session.jsonl"
-        commands = [
-            "custom_test run",  # This matches spec pattern but NOT hardcoded pytest pattern
-            "ruff check .",
-            "ruff format .",
-            "ty check",
-        ]
-        lines = []
-        for cmd in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-        log_path.write_text("\n".join(lines) + "\n")
-
-        gate = QualityGate(tmp_path)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        # Use the custom spec (not build_validation_spec which would overwrite it)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
-
-        # custom_test was detected as TEST command via custom spec pattern
-        # pytest_ran is an alias for commands_ran[CommandKind.TEST]
-        assert evidence.commands_ran.get(CommandKind.TEST, False) is True
-        assert evidence.pytest_ran is True  # True because TEST command ran
-
-    def test_check_with_resolution_uses_spec_patterns_with_offset(
-        self, tmp_path: Path
+    def test_check_with_resolution_uses_spec_patterns(
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """check_with_resolution should use spec-defined patterns, not hardcoded.
 
@@ -2298,7 +2311,98 @@ class TestSpecDrivenEvidencePatterns:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
+        # Use the custom spec (not build_validation_spec which would overwrite it)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
+
+        # custom_test was detected as TEST command via custom spec pattern
+        # pytest_ran is an alias for commands_ran[CommandKind.TEST]
+        assert evidence.commands_ran.get(CommandKind.TEST, False) is True
+        assert evidence.pytest_ran is True  # True because TEST command ran
+
+    def test_check_with_resolution_uses_spec_patterns_with_offset(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
+        """check_with_resolution should use spec-defined patterns, not hardcoded.
+
+        This test uses a custom detection pattern that differs from the hardcoded
+        pattern to verify that the gate actually uses spec patterns.
+        """
+        import re
+
+        from src.domain.validation.spec import (
+            CommandKind,
+            ValidationCommand,
+            ValidationScope,
+            ValidationSpec,
+        )
+
+        # Create a spec with a custom pattern that matches "custom_test" but NOT "pytest"
+        custom_test_cmd = ValidationCommand(
+            name="custom_test",
+            command="custom_test run",
+            kind=CommandKind.TEST,
+            detection_pattern=re.compile(
+                r"\bcustom_test\b"
+            ),  # Different from hardcoded pytest pattern
+        )
+        # Include other required commands with their patterns
+        spec = ValidationSpec(
+            commands=[
+                custom_test_cmd,
+                ValidationCommand(
+                    name="ruff check",
+                    command="uvx ruff check",
+                    kind=CommandKind.LINT,
+                    detection_pattern=re.compile(r"\bruff\s+check\b"),
+                ),
+                ValidationCommand(
+                    name="ruff format",
+                    command="uvx ruff format",
+                    kind=CommandKind.FORMAT,
+                    detection_pattern=re.compile(r"\bruff\s+format\b"),
+                ),
+                ValidationCommand(
+                    name="ty check",
+                    command="uvx ty check",
+                    kind=CommandKind.TYPECHECK,
+                    detection_pattern=re.compile(r"\bty\s+check\b"),
+                ),
+            ],
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        # Create log with custom_test (NOT pytest) - should pass with spec pattern
+        log_path = tmp_path / "session.jsonl"
+        commands = [
+            "custom_test run",  # This matches spec pattern but NOT hardcoded pytest pattern
+            "ruff check .",
+            "ruff format .",
+            "ty check",
+        ]
+        lines = []
+        for cmd in commands:
+            lines.append(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": "Bash",
+                                    "input": {"command": cmd},
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+        log_path.write_text("\n".join(lines) + "\n")
+
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Use the custom spec (not build_validation_spec which would overwrite it)
@@ -2317,7 +2421,9 @@ class TestValidationExitCodeParsing:
     (exit code 0). This prevents marking issues as successful when pytest/ruff/ty failed.
     """
 
-    def test_gate_fails_when_pytest_exits_nonzero(self, tmp_path: Path) -> None:
+    def test_gate_fails_when_pytest_exits_nonzero(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Gate should fail when pytest ran but exited with non-zero exit code."""
         log_path = tmp_path / "session.jsonl"
 
@@ -2355,7 +2461,7 @@ class TestValidationExitCodeParsing:
         )
         log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -2367,7 +2473,9 @@ class TestValidationExitCodeParsing:
         assert "pytest" in evidence.failed_commands
         assert "uv run pytest" not in evidence.failed_commands
 
-    def test_gate_fails_when_ruff_check_exits_nonzero(self, tmp_path: Path) -> None:
+    def test_gate_fails_when_ruff_check_exits_nonzero(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Gate should fail when ruff check ran but exited with non-zero exit code."""
         log_path = tmp_path / "session.jsonl"
 
@@ -2423,7 +2531,7 @@ class TestValidationExitCodeParsing:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -2436,7 +2544,9 @@ class TestValidationExitCodeParsing:
         # Other commands succeeded, so they should not be in failed_commands
         assert "pytest" not in evidence.failed_commands
 
-    def test_gate_passes_when_all_commands_succeed(self, tmp_path: Path) -> None:
+    def test_gate_passes_when_all_commands_succeed(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Gate should pass when all validation commands exit with code 0."""
         log_path = tmp_path / "session.jsonl"
 
@@ -2486,7 +2596,7 @@ class TestValidationExitCodeParsing:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -2498,7 +2608,9 @@ class TestValidationExitCodeParsing:
         assert len(evidence.failed_commands) == 0
         assert evidence.pytest_ran is True
 
-    def test_failure_reason_includes_exit_details(self, tmp_path: Path) -> None:
+    def test_failure_reason_includes_exit_details(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Failure reason should include which command failed and its exit code."""
         log_path = tmp_path / "session.jsonl"
 
@@ -2552,7 +2664,7 @@ class TestValidationExitCodeParsing:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -2564,7 +2676,9 @@ class TestValidationExitCodeParsing:
         assert "ty" in evidence.failed_commands
         assert "uvx ty check" not in evidence.failed_commands
 
-    def test_gate_passes_when_command_fails_then_succeeds(self, tmp_path: Path) -> None:
+    def test_gate_passes_when_command_fails_then_succeeds(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Gate should pass when a command fails initially but succeeds on retry.
 
         This tests that the gate tracks the *latest* status per command, not
@@ -2688,7 +2802,7 @@ class TestValidationExitCodeParsing:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -2704,7 +2818,9 @@ class TestValidationExitCodeParsing:
 class TestAlreadyCompleteResolution:
     """Test ISSUE_ALREADY_COMPLETE resolution for pre-existing commits."""
 
-    def test_already_complete_passes_with_valid_commit(self, tmp_path: Path) -> None:
+    def test_already_complete_passes_with_valid_commit(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """ALREADY_COMPLETE should pass if commit exists (ignoring baseline)."""
         from src.domain.validation.spec import ResolutionOutcome
 
@@ -2733,7 +2849,7 @@ class TestAlreadyCompleteResolution:
                 stderr="",
             )
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
@@ -2751,7 +2867,7 @@ class TestAlreadyCompleteResolution:
         assert result.resolution.outcome == ResolutionOutcome.ALREADY_COMPLETE
 
     def test_already_complete_with_different_issue_id_in_rationale(
-        self, tmp_path: Path
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """ALREADY_COMPLETE should pass when rationale references a different issue ID.
 
@@ -2786,7 +2902,7 @@ class TestAlreadyCompleteResolution:
                 stderr="",
             )
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
@@ -2807,7 +2923,9 @@ class TestAlreadyCompleteResolution:
         call_args = mock_runner.run.call_args[0][0]
         assert "bd-mala-xyz" in call_args
 
-    def test_already_complete_referenced_issue_not_found(self, tmp_path: Path) -> None:
+    def test_already_complete_referenced_issue_not_found(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """ALREADY_COMPLETE should fail with clear error when referenced commit doesn't exist."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
@@ -2834,7 +2952,7 @@ class TestAlreadyCompleteResolution:
                 stderr="",
             )
         )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
@@ -2854,33 +2972,41 @@ class TestAlreadyCompleteResolution:
 class TestExtractIssueFromRationale:
     """Test extract_issue_from_rationale helper method."""
 
-    def test_extracts_issue_from_commit_message_format(self, tmp_path: Path) -> None:
+    def test_extracts_issue_from_commit_message_format(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should extract issue ID from 'bd-issue-123: message' format."""
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         result = gate.extract_issue_from_rationale(
             "Work committed in 238e17f (bd-issue-123: Add feature X)"
         )
         assert result == "issue-123"
 
-    def test_extracts_issue_from_prose_format(self, tmp_path: Path) -> None:
+    def test_extracts_issue_from_prose_format(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should extract issue ID from prose mentioning bd-<id>."""
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         result = gate.extract_issue_from_rationale(
             "This is a duplicate. Work was done in bd-mala-xyz commit 238e17f"
         )
         assert result == "mala-xyz"
 
-    def test_returns_none_when_no_issue_id(self, tmp_path: Path) -> None:
+    def test_returns_none_when_no_issue_id(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should return None when no bd-<id> pattern found."""
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         result = gate.extract_issue_from_rationale(
             "Work was completed previously in commit 238e17f"
         )
         assert result is None
 
-    def test_extracts_first_issue_when_multiple(self, tmp_path: Path) -> None:
+    def test_extracts_first_issue_when_multiple(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Should extract first issue ID when multiple are mentioned."""
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         result = gate.extract_issue_from_rationale(
             "Duplicate of bd-original-123, see also bd-related-456"
         )
@@ -2895,7 +3021,9 @@ class TestSpecCommandChangesPropagation:
     updating spec commands automatically updates gate expectations.
     """
 
-    def test_strict_pattern_change_updates_evidence(self, tmp_path: Path) -> None:
+    def test_strict_pattern_change_updates_evidence(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Changing a spec command's detection_pattern should update evidence detection.
 
         This prevents the desync issue where hardcoded patterns drift from actual
@@ -2973,7 +3101,7 @@ class TestSpecCommandChangesPropagation:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Use the custom strict spec (not build_validation_spec which would overwrite it)
@@ -3030,7 +3158,9 @@ class TestSpecCommandChangesPropagation:
 class TestLogProviderInjection:
     """Test QualityGate with injected LogProvider for testability."""
 
-    def test_accepts_custom_log_provider(self, tmp_path: Path) -> None:
+    def test_accepts_custom_log_provider(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """QualityGate should accept a custom LogProvider."""
         from collections.abc import Iterator
 
@@ -3130,7 +3260,9 @@ class TestLogProviderInjection:
 
         assert evidence.pytest_ran is True
 
-    def test_get_log_end_offset_uses_provider(self, tmp_path: Path) -> None:
+    def test_get_log_end_offset_uses_provider(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """get_log_end_offset should delegate to LogProvider."""
         from collections.abc import Iterator
 
@@ -3167,7 +3299,7 @@ class TestExtractedToolNames:
     """
 
     def test_failed_commands_shows_pytest_not_full_command(
-        self, tmp_path: Path
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """Failed commands should show 'pytest' not 'uv run pytest'."""
         log_path = tmp_path / "session.jsonl"
@@ -3206,7 +3338,7 @@ class TestExtractedToolNames:
         )
         log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -3216,7 +3348,9 @@ class TestExtractedToolNames:
         assert "pytest" in evidence.failed_commands
         assert "uv run pytest" not in evidence.failed_commands
 
-    def test_failed_commands_shows_ruff_not_full_command(self, tmp_path: Path) -> None:
+    def test_failed_commands_shows_ruff_not_full_command(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Failed commands should show 'ruff' not 'uvx ruff check .'."""
         log_path = tmp_path / "session.jsonl"
 
@@ -3254,7 +3388,7 @@ class TestExtractedToolNames:
         )
         log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -3264,7 +3398,9 @@ class TestExtractedToolNames:
         assert "ruff" in evidence.failed_commands
         assert "uvx ruff check ." not in evidence.failed_commands
 
-    def test_gate_failure_message_shows_extracted_names(self, tmp_path: Path) -> None:
+    def test_gate_failure_message_shows_extracted_names(
+        self, tmp_path: Path, log_provider: LogProvider
+    ) -> None:
         """Gate failure messages should show extracted tool names like 'pytest'."""
         log_path = tmp_path / "session.jsonl"
 
@@ -3315,7 +3451,7 @@ class TestExtractedToolNames:
             )
         log_path.write_text("\n".join(lines) + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
@@ -3328,7 +3464,7 @@ class TestExtractedToolNames:
         assert "uv run pytest" not in evidence.failed_commands
 
     def test_failed_commands_deduplicates_same_tool_multiple_kinds(
-        self, tmp_path: Path
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """Failed commands should deduplicate when same tool matches multiple kinds.
 
@@ -3371,7 +3507,7 @@ class TestExtractedToolNames:
         )
         log_path.write_text(tool_use_entry + "\n" + tool_result_entry + "\n")
 
-        gate = QualityGate(tmp_path)
+        gate = QualityGate(tmp_path, log_provider)
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)

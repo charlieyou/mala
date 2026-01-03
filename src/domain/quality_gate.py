@@ -250,8 +250,7 @@ class QualityGate:
     """Quality gate for verifying agent work meets requirements.
 
     Uses LogProvider for JSONL log parsing, keeping this class
-    focused on policy checking and validation logic. If no LogProvider
-    is injected, creates a FileSystemLogProvider by default.
+    focused on policy checking and validation logic.
     """
 
     # Patterns for detecting issue resolution markers in log text
@@ -279,7 +278,7 @@ class QualityGate:
     def __init__(
         self,
         repo_path: Path,
-        log_provider: LogProvider | None = None,
+        log_provider: LogProvider,
         command_runner: CommandRunnerPort | None = None,
     ):
         """Initialize quality gate.
@@ -287,18 +286,11 @@ class QualityGate:
         Args:
             repo_path: Path to the repository for git operations.
             log_provider: LogProvider for reading session logs.
-                If not provided, uses FileSystemLogProvider (filesystem access).
             command_runner: Optional CommandRunnerPort for running git commands.
                 If not provided, creates a CommandRunner with repo_path as cwd.
         """
         self.repo_path = repo_path
-        # Use injected LogProvider or create default FileSystemLogProvider
-        if log_provider is not None:
-            self._log_provider = log_provider
-        else:
-            from src.infra.io.session_log_parser import FileSystemLogProvider
-
-            self._log_provider = FileSystemLogProvider()
+        self._log_provider = log_provider
         # Use injected CommandRunner or create default
         if command_runner is not None:
             self._command_runner = command_runner
