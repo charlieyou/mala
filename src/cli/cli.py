@@ -251,6 +251,52 @@ class ConfigOverrideResult:
     updated_config: MalaConfig
 
 
+def _build_cli_args_metadata(
+    *,
+    disable_validations: str | None,
+    coverage_threshold: float | None,
+    wip: bool,
+    max_issues: int | None,
+    max_gate_retries: int,
+    max_review_retries: int,
+    no_morph: bool,
+    epic_override: str | None,
+    resolved: ResolvedConfig,
+) -> dict[str, object]:
+    """Build the cli_args metadata dictionary for logging and OrchestratorConfig.
+
+    Args:
+        disable_validations: Raw disable validations string from CLI.
+        coverage_threshold: Coverage threshold from CLI.
+        wip: Whether WIP prioritization is enabled.
+        max_issues: Maximum issues to process.
+        max_gate_retries: Maximum gate retry attempts.
+        max_review_retries: Maximum review retry attempts.
+        no_morph: Whether morph is disabled.
+        epic_override: Raw epic override string from CLI.
+        resolved: Resolved config with effective values.
+
+    Returns:
+        Dictionary of CLI arguments for logging/metadata.
+    """
+    return {
+        "disable_validations": disable_validations,
+        "coverage_threshold": coverage_threshold,
+        "wip": wip,
+        "max_issues": max_issues,
+        "max_gate_retries": max_gate_retries,
+        "max_review_retries": max_review_retries,
+        "braintrust": resolved.braintrust_enabled,
+        "no_morph": no_morph,
+        "review_timeout": resolved.review_timeout,
+        "cerberus_spawn_args": list(resolved.cerberus_spawn_args),
+        "cerberus_wait_args": list(resolved.cerberus_wait_args),
+        "cerberus_env": dict(resolved.cerberus_env),
+        "epic_override": epic_override,
+        "max_epic_verification_retries": resolved.max_epic_verification_retries,
+    }
+
+
 def _apply_config_overrides(
     config: MalaConfig,
     review_timeout: int | None,
@@ -657,25 +703,7 @@ def run(
             orphans_only=orphans_only,
         )
 
-    # Build cli_args for logging and metadata
-    cli_args: dict[str, object] = {
-        "disable_validations": disable_validations,
-        "coverage_threshold": coverage_threshold,
-        "wip": wip,
-        "max_issues": max_issues,
-        "max_gate_retries": max_gate_retries,
-        "max_review_retries": max_review_retries,
-        "braintrust": _braintrust_enabled,
-        "no_morph": no_morph,
-        "review_timeout": None,
-        "cerberus_spawn_args": None,
-        "cerberus_wait_args": None,
-        "cerberus_env": None,
-        "epic_override": epic_override,
-        "max_epic_verification_retries": max_epic_verification_retries,
-    }
-
-    # Construct config from environment (orchestrator uses this for API keys and feature flags)
+    # Build and configure MalaConfig from environment
     config = _lazy("MalaConfig").from_env(validate=False)
 
     # Apply CLI overrides to config
@@ -690,17 +718,21 @@ def run(
         braintrust_enabled=_braintrust_enabled,
         disable_review="review" in (disable_set or set()),
     )
-    resolved = override_result.resolved
-    updated_config = override_result.updated_config
 
-    # Record effective values for logging/metadata
-    cli_args["review_timeout"] = resolved.review_timeout
-    cli_args["cerberus_spawn_args"] = list(resolved.cerberus_spawn_args)
-    cli_args["cerberus_wait_args"] = list(resolved.cerberus_wait_args)
-    cli_args["cerberus_env"] = dict(resolved.cerberus_env)
-    cli_args["max_epic_verification_retries"] = resolved.max_epic_verification_retries
+    # Build cli_args metadata for logging
+    cli_args = _build_cli_args_metadata(
+        disable_validations=disable_validations,
+        coverage_threshold=coverage_threshold,
+        wip=wip,
+        max_issues=max_issues,
+        max_gate_retries=max_gate_retries,
+        max_review_retries=max_review_retries,
+        no_morph=no_morph,
+        epic_override=epic_override,
+        resolved=override_result.resolved,
+    )
 
-    # Build OrchestratorConfig for factory
+    # Build OrchestratorConfig and run
     orch_config = _lazy("OrchestratorConfig")(
         repo_path=repo_path,
         max_agents=max_agents,
@@ -708,12 +740,12 @@ def run(
         max_issues=max_issues,
         epic_id=epic,
         only_ids=only_ids,
-        braintrust_enabled=resolved.braintrust_enabled,
+        braintrust_enabled=override_result.resolved.braintrust_enabled,
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         disable_validations=disable_set,
         coverage_threshold=coverage_threshold,
-        morph_enabled=resolved.morph_enabled,
+        morph_enabled=override_result.resolved.morph_enabled,
         prioritize_wip=wip,
         focus=focus,
         cli_args=cli_args,
@@ -721,8 +753,9 @@ def run(
         orphans_only=orphans_only,
     )
 
-    # Use factory to create orchestrator
-    orchestrator = _lazy("create_orchestrator")(orch_config, mala_config=updated_config)
+    orchestrator = _lazy("create_orchestrator")(
+        orch_config, mala_config=override_result.updated_config
+    )
 
     success_count, total = asyncio.run(orchestrator.run())
     # Exit 0 if: no issues to process (no-op) OR at least one succeeded
