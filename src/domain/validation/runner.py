@@ -4,11 +4,16 @@ This module re-exports the validation runner:
 
 - SpecValidationRunner: Modern API using ValidationSpec (RECOMMENDED)
 
-For new code, use SpecValidationRunner directly with ValidationSpec:
+For new code, use SpecValidationRunner directly with ValidationSpec and injected dependencies:
 
     from src.domain.validation import SpecValidationRunner, build_validation_spec
 
-    runner = SpecValidationRunner(repo_path)
+    runner = SpecValidationRunner(
+        repo_path,
+        env_config=env_config,
+        command_runner=command_runner,
+        lock_manager=lock_manager,
+    )
     spec = build_validation_spec(scope=ValidationScope.PER_ISSUE, ...)
     result = await runner.run_spec(spec, context)
 """

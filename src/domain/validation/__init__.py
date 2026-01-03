@@ -5,11 +5,16 @@ in temporary git worktrees:
 
 - SpecValidationRunner: Modern API using ValidationSpec + ValidationContext (RECOMMENDED)
 
-For new code, use SpecValidationRunner with ValidationSpec:
+For new code, use SpecValidationRunner with ValidationSpec and injected dependencies:
 
     from src.domain.validation import SpecValidationRunner, build_validation_spec
 
-    runner = SpecValidationRunner(repo_path)
+    runner = SpecValidationRunner(
+        repo_path,
+        env_config=env_config,
+        command_runner=command_runner,
+        lock_manager=lock_manager,
+    )
     spec = build_validation_spec(repo_path, scope=ValidationScope.PER_ISSUE, ...)
     result = await runner.run_spec(spec, context)
 """
