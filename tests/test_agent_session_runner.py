@@ -4301,3 +4301,414 @@ class TestHandleReviewEffectIntegration:
         # Should emit skip event
         event_names = [e[0] for e in fake_sink.events]
         assert "on_review_skipped_no_progress" in event_names
+
+
+class TestSessionRestartLoop:
+    """Integration tests for run_session context restart behavior."""
+
+    @pytest.fixture
+    def tmp_log_path(self, tmp_path: Path) -> Path:
+        """Create a temporary log file path."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+        return log_path
+
+    def make_prompts_with_continuation(self) -> PromptProvider:
+        """Create prompts with checkpoint_request and continuation templates."""
+        return PromptProvider(
+            gate_followup="Gate followup stub",
+            review_followup="Review followup stub",
+            idle_resume="Idle resume stub",
+            checkpoint_request="Please output your checkpoint.",
+            continuation="Continue from:\n{checkpoint}",
+        )
+
+    def make_high_pressure_result(
+        self, session_id: str, input_tokens: int = 180000, limit: int = 200000
+    ) -> ResultMessage:
+        """Create ResultMessage at or above threshold (default 90%)."""
+        return ResultMessage(
+            subtype="result",
+            duration_ms=100,
+            duration_api_ms=50,
+            is_error=False,
+            num_turns=1,
+            session_id=session_id,
+            result="done",
+            usage={
+                "input_tokens": input_tokens,
+                "output_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        )
+
+    def make_low_pressure_result(self, session_id: str) -> ResultMessage:
+        """Create ResultMessage below threshold."""
+        return ResultMessage(
+            subtype="result",
+            duration_ms=100,
+            duration_api_ms=50,
+            is_error=False,
+            num_turns=1,
+            session_id=session_id,
+            result="completed",
+            usage={
+                "input_tokens": 50000,
+                "output_tokens": 0,
+                "cache_read_input_tokens": 0,
+            },
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_restart_on_context_pressure(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Session restarts when context pressure exceeds threshold.
+
+        Verifies:
+        - ContextPressureError triggers restart
+        - Checkpoint is fetched and used in continuation prompt
+        - Fresh lifecycle starts on restart
+        """
+        # First call: high pressure triggers restart
+        # Second call (checkpoint fetch): return checkpoint response
+        # Third call: low pressure completes successfully
+        first_client = FakeSDKClient(
+            result_message=self.make_high_pressure_result("session-1")
+        )
+        # Checkpoint client returns AssistantMessage with text content
+        checkpoint_msg = AssistantMessage(
+            content=[TextBlock(text="<checkpoint>step 3 of 5</checkpoint>")],
+            model="test",
+        )
+        checkpoint_client = FakeSDKClient(
+            messages=[checkpoint_msg],
+            result_message=self.make_low_pressure_result("session-1-chk"),
+        )
+        second_client = FakeSDKClient(
+            result_message=self.make_low_pressure_result("session-2")
+        )
+
+        # Factory returns different clients per create() call
+        factory = SequencedSDKClientFactory(
+            [
+                first_client,
+                checkpoint_client,
+                second_client,
+            ]
+        )
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=120,
+            prompts=self.make_prompts_with_continuation(),
+            review_enabled=False,
+            context_restart_threshold=0.90,
+            context_limit=200_000,
+        )
+
+        runner = AgentSessionRunner(
+            config=config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(
+            issue_id="restart-test",
+            prompt="Initial prompt",
+        )
+
+        output = await runner.run_session(input_data)
+
+        # Should complete successfully after restart
+        assert output.success is True
+        assert output.session_id == "session-2"
+
+        # Factory should have been called 3 times:
+        # 1. First run (triggers pressure error)
+        # 2. Checkpoint fetch
+        # 3. Second run (completes)
+        assert len(factory.create_calls) == 3
+
+        # The second client should receive continuation prompt with checkpoint
+        assert len(second_client.queries) >= 1
+        continuation_prompt = second_client.queries[0][0]
+        assert "step 3 of 5" in continuation_prompt
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_multiple_restarts_increment_continuation_count(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Multiple context pressure errors cause sequential restarts.
+
+        Verifies that continuation_count increments on each restart and
+        a fresh lifecycle is created for each iteration.
+        """
+        # Create clients: 2 high pressure, then success
+        # Checkpoint clients return AssistantMessage with text content
+        chk1_msg = AssistantMessage(
+            content=[TextBlock(text="<checkpoint>checkpoint-1</checkpoint>")],
+            model="test",
+        )
+        chk2_msg = AssistantMessage(
+            content=[TextBlock(text="<checkpoint>checkpoint-2</checkpoint>")],
+            model="test",
+        )
+        clients = [
+            FakeSDKClient(result_message=self.make_high_pressure_result("session-1")),
+            FakeSDKClient(  # checkpoint for session-1
+                messages=[chk1_msg],
+                result_message=self.make_low_pressure_result("session-1-chk"),
+            ),
+            FakeSDKClient(result_message=self.make_high_pressure_result("session-2")),
+            FakeSDKClient(  # checkpoint for session-2
+                messages=[chk2_msg],
+                result_message=self.make_low_pressure_result("session-2-chk"),
+            ),
+            FakeSDKClient(result_message=self.make_low_pressure_result("session-3")),
+        ]
+
+        factory = SequencedSDKClientFactory(clients)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=180,
+            prompts=self.make_prompts_with_continuation(),
+            review_enabled=False,
+            context_restart_threshold=0.90,
+            context_limit=200_000,
+        )
+
+        runner = AgentSessionRunner(
+            config=config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(
+            issue_id="multi-restart",
+            prompt="Initial prompt",
+        )
+
+        output = await runner.run_session(input_data)
+
+        # Should complete on third session
+        assert output.success is True
+        assert output.session_id == "session-3"
+
+        # 5 client creations: 2 sessions + 2 checkpoints + 1 final
+        assert len(factory.create_calls) == 5
+
+        # Final session should receive continuation based on second checkpoint
+        final_client = clients[-1]
+        assert len(final_client.queries) >= 1
+        continuation_prompt = final_client.queries[0][0]
+        assert "checkpoint-2" in continuation_prompt
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_fresh_lifecycle_on_restart(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Each restart creates a fresh lifecycle in INITIAL state.
+
+        This prevents "Cannot start from state X" errors that would occur
+        if we reused a lifecycle that had already transitioned.
+        """
+        from src.domain.lifecycle import LifecycleState
+
+        lifecycle_start_calls: list[LifecycleState] = []
+
+        # Capture lifecycle states by patching _initialize_session output
+        original_init = AgentSessionRunner._initialize_session
+
+        def patched_init(
+            runner: AgentSessionRunner, input_data: AgentSessionInput
+        ) -> tuple[object, object]:
+            result = original_init(runner, input_data)
+            # _initialize_session returns (session_config, exec_state)
+            # exec_state has .lifecycle
+            _, exec_state = result
+            lifecycle_start_calls.append(exec_state.lifecycle._state)
+            return result
+
+        # Checkpoint client returns AssistantMessage with text content
+        chk_msg = AssistantMessage(
+            content=[TextBlock(text="checkpoint")],
+            model="test",
+        )
+        clients = [
+            FakeSDKClient(result_message=self.make_high_pressure_result("session-1")),
+            FakeSDKClient(  # checkpoint
+                messages=[chk_msg],
+                result_message=self.make_low_pressure_result("session-1-chk"),
+            ),
+            FakeSDKClient(result_message=self.make_low_pressure_result("session-2")),
+        ]
+
+        factory = SequencedSDKClientFactory(clients)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=120,
+            prompts=self.make_prompts_with_continuation(),
+            review_enabled=False,
+            context_restart_threshold=0.90,
+            context_limit=200_000,
+        )
+
+        runner = AgentSessionRunner(
+            config=config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        # Patch _initialize_session
+        AgentSessionRunner._initialize_session = patched_init  # type: ignore[method-assign]
+
+        try:
+            input_data = AgentSessionInput(
+                issue_id="fresh-lifecycle",
+                prompt="Initial prompt",
+            )
+
+            output = await runner.run_session(input_data)
+
+            # Should complete after restart
+            assert output.success is True
+
+            # Two lifecycles created: initial + restart
+            assert len(lifecycle_start_calls) == 2
+
+            # Both should start in INITIAL state
+            assert lifecycle_start_calls[0] == LifecycleState.INITIAL
+            assert lifecycle_start_calls[1] == LifecycleState.INITIAL
+        finally:
+            # Restore original method
+            AgentSessionRunner._initialize_session = original_init  # type: ignore[method-assign]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_checkpoint_without_tags_uses_full_response(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """When checkpoint has no <checkpoint> tags, full response is used."""
+        # Checkpoint client returns AssistantMessage with text but no tags
+        chk_msg = AssistantMessage(
+            content=[TextBlock(text="raw checkpoint text without tags")],
+            model="test",
+        )
+        clients = [
+            FakeSDKClient(result_message=self.make_high_pressure_result("session-1")),
+            FakeSDKClient(  # checkpoint without tags
+                messages=[chk_msg],
+                result_message=self.make_low_pressure_result("session-1-chk"),
+            ),
+            FakeSDKClient(result_message=self.make_low_pressure_result("session-2")),
+        ]
+
+        factory = SequencedSDKClientFactory(clients)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=120,
+            prompts=self.make_prompts_with_continuation(),
+            review_enabled=False,
+            context_restart_threshold=0.90,
+            context_limit=200_000,
+        )
+
+        runner = AgentSessionRunner(
+            config=config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        input_data = AgentSessionInput(
+            issue_id="no-tags",
+            prompt="Initial prompt",
+        )
+
+        output = await runner.run_session(input_data)
+
+        assert output.success is True
+
+        # Final client should receive full response as checkpoint
+        final_client = clients[-1]
+        assert len(final_client.queries) >= 1
+        continuation_prompt = final_client.queries[0][0]
+        assert "raw checkpoint text without tags" in continuation_prompt
