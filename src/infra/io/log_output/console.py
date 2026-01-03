@@ -406,6 +406,7 @@ KNOWN_ICONS: frozenset[str] = frozenset(
         "✓",  # Success
         "✗",  # Failure
         "⚠",  # Warning
+        "!",  # Warning (alternate)
         "⚙",  # Tool/processing
         "◐",  # Config/settings
         "◌",  # Ready/waiting
