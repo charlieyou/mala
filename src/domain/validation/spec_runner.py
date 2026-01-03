@@ -11,7 +11,6 @@ import json
 import os
 from typing import TYPE_CHECKING
 
-from src.infra.tools.env import get_cache_dir, get_lock_dir
 from .lint_cache import LintCache
 from .spec import ValidationArtifacts
 from .spec_executor import (
@@ -32,6 +31,8 @@ from .validation_gating import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from src.core.protocols import EnvConfigPort
 
     from .result import ValidationStepResult
     from .spec import (
@@ -72,6 +73,7 @@ class SpecValidationRunner:
         repo_path: Path,
         step_timeout_seconds: float | None = None,
         enable_lint_cache: bool = True,
+        env_config: EnvConfigPort | None = None,
     ):
         """Initialize the spec validation runner.
 
@@ -84,6 +86,7 @@ class SpecValidationRunner:
         self.repo_path = repo_path.resolve()
         self.step_timeout_seconds = step_timeout_seconds
         self.enable_lint_cache = enable_lint_cache
+        self.env_config = env_config
 
     async def run_spec(
         self,
@@ -150,6 +153,7 @@ class SpecValidationRunner:
                 context=context,
                 log_dir=log_dir,
                 step_timeout_seconds=self.step_timeout_seconds,
+                env_config=self.env_config,
             )
         except SetupError as e:
             # Return early failure for setup errors
@@ -190,8 +194,15 @@ class SpecValidationRunner:
         if not self.enable_lint_cache:
             return
         try:
+            if self.env_config is not None:
+                cache_dir = self.env_config.cache_dir
+            else:
+                # Fallback for legacy callers without env_config
+                from src.infra.tools.env import get_cache_dir
+
+                cache_dir = get_cache_dir()
             cache = LintCache(
-                cache_dir=get_cache_dir(),
+                cache_dir=cache_dir,
                 repo_path=self.repo_path,
             )
             cache.invalidate_all()
@@ -239,6 +250,7 @@ class SpecValidationRunner:
             env=env,
             baseline_percent=baseline_percent,
             yaml_coverage_config=spec.yaml_coverage_config,
+            env_config=self.env_config,
         )
         result = builder.build(builder_input)
 
@@ -322,6 +334,7 @@ class SpecValidationRunner:
             enable_lint_cache=self.enable_lint_cache,
             repo_path=self.repo_path,
             step_timeout_seconds=self.step_timeout_seconds,
+            env_config=self.env_config,
         )
         executor = SpecCommandExecutor(executor_config)
 
@@ -387,8 +400,15 @@ class SpecValidationRunner:
         run_id: str,
     ) -> dict[str, str]:
         """Build environment for spec-based validation."""
+        if self.env_config is not None:
+            lock_dir = str(self.env_config.lock_dir)
+        else:
+            # Fallback for legacy callers without env_config
+            from src.infra.tools.env import get_lock_dir
+
+            lock_dir = str(get_lock_dir())
         return {
             **os.environ,
-            "LOCK_DIR": str(get_lock_dir()),
+            "LOCK_DIR": lock_dir,
             "AGENT_ID": f"validator-{context.issue_id or run_id}",
         }

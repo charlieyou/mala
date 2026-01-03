@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING
 
 from src.infra.io.log_output.console import Colors, log
 from src.infra.tools.command_runner import CommandRunner
-from src.infra.tools.env import SCRIPTS_DIR, get_cache_dir
 
 from .helpers import format_step_output
 from .lint_cache import LintCache
@@ -30,6 +29,8 @@ from .spec import CommandKind
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
+
+    from src.core.protocols import EnvConfigPort
 
     from .spec import ValidationCommand
 
@@ -42,11 +43,13 @@ class ExecutorConfig:
         enable_lint_cache: Whether to enable lint caching for cacheable commands.
         repo_path: Path to the main repo (for lint cache storage).
         step_timeout_seconds: Optional timeout for individual command execution.
+        env_config: Environment configuration for paths (scripts, cache, etc.).
     """
 
     enable_lint_cache: bool = True
     repo_path: Path | None = None
     step_timeout_seconds: float | None = None
+    env_config: EnvConfigPort | None = None
 
 
 @dataclass
@@ -165,26 +168,32 @@ class SpecCommandExecutor:
         return output
 
     def _create_lint_cache(self, cwd: Path) -> LintCache | None:
-        """Create lint cache if enabled and repo_path is set.
+        """Create lint cache if enabled and paths available.
 
         Args:
-            cwd: Working directory for git commands (may be a worktree).
+            cwd: Working directory (passed to LintCache for git operations).
 
         Returns:
-            LintCache instance or None if disabled.
+            LintCache if enabled and paths available, None otherwise.
 
         Note:
-            Uses config.repo_path (the main repo) for stable cache keys across
-            runs, while cwd (which may be a per-run worktree) is used for git
-            state queries. This ensures cache hits when the same commit is
+            The lint cache is created fresh for each execution batch to ensure
+            correct git state detection, since the same batch may be
             validated in different worktrees.
         """
         if not self.config.enable_lint_cache:
             return None
         if self.config.repo_path is None:
             return None
+        if self.config.env_config is not None:
+            cache_dir = self.config.env_config.cache_dir
+        else:
+            # Fallback for legacy callers without env_config
+            from src.infra.tools.env import get_cache_dir
+
+            cache_dir = get_cache_dir()
         return LintCache(
-            cache_dir=get_cache_dir(),
+            cache_dir=cache_dir,
             repo_path=self.config.repo_path,
             git_cwd=cwd,
         )
@@ -275,7 +284,14 @@ class SpecCommandExecutor:
             # Shell mode: pass command string directly with shell=True
             # For mutex wrapping in shell mode, prepend the script path
             if cmd.use_test_mutex:
-                full_cmd = f"{SCRIPTS_DIR / 'test-mutex.sh'} {cmd.command}"
+                if self.config.env_config is not None:
+                    scripts_dir = self.config.env_config.scripts_dir
+                else:
+                    # Fallback for legacy callers without env_config
+                    from src.infra.tools.env import SCRIPTS_DIR
+
+                    scripts_dir = SCRIPTS_DIR
+                full_cmd = f"{scripts_dir / 'test-mutex.sh'} {cmd.command}"
             else:
                 full_cmd = cmd.command
             result = runner.run(full_cmd, env=env, shell=True)
@@ -306,7 +322,14 @@ class SpecCommandExecutor:
         Returns:
             Command prefixed with test-mutex.sh.
         """
-        return [str(SCRIPTS_DIR / "test-mutex.sh"), *cmd]
+        if self.config.env_config is not None:
+            scripts_dir = self.config.env_config.scripts_dir
+        else:
+            # Fallback for legacy callers without env_config
+            from src.infra.tools.env import SCRIPTS_DIR
+
+            scripts_dir = SCRIPTS_DIR
+        return [str(scripts_dir / "test-mutex.sh"), *cmd]
 
     def _write_file_flushed(self, path: Path, content: str) -> None:
         """Write content to a file with immediate flush to disk.

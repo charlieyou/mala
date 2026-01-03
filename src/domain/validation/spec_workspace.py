@@ -31,6 +31,8 @@ from .worktree import (
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from src.core.protocols import EnvConfigPort
+
     from .spec import ValidationContext, ValidationSpec
     from .worktree import WorktreeContext
 
@@ -84,6 +86,7 @@ def setup_workspace(
     context: ValidationContext,
     log_dir: Path | None,
     step_timeout_seconds: float | None,
+    env_config: EnvConfigPort | None = None,
 ) -> SpecRunWorkspace:
     """Set up workspace for a validation run.
 
@@ -99,6 +102,7 @@ def setup_workspace(
         context: Immutable context for the validation run.
         log_dir: Directory for logs/artifacts. Uses temp dir if None.
         step_timeout_seconds: Optional timeout for baseline refresh commands.
+        env_config: Environment configuration for paths.
 
     Returns:
         SpecRunWorkspace with all context needed for validation.
@@ -127,6 +131,7 @@ def setup_workspace(
             context.repo_path,
             coverage_config=spec.yaml_coverage_config,
             step_timeout_seconds=step_timeout_seconds,
+            env_config=env_config,
         )
         result = baseline_service.refresh_if_stale(spec)
         if not result.success:

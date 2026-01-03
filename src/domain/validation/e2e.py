@@ -21,7 +21,6 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.infra.io.config import _find_cerberus_bin_path
 from src.infra.tools.command_runner import CommandRunner
 from .helpers import (
     annotate_issue,
@@ -32,6 +31,8 @@ from .helpers import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from src.core.protocols import EnvConfigPort
 
 
 class E2EStatus(Enum):
@@ -123,13 +124,17 @@ class E2EConfig:
 class E2ERunner:
     """Orchestrates E2E validation using a fixture repository."""
 
-    def __init__(self, config: E2EConfig | None = None):
+    def __init__(
+        self, config: E2EConfig | None = None, env_config: EnvConfigPort | None = None
+    ):
         """Initialize the E2E runner.
 
         Args:
             config: E2E configuration. Uses defaults if None.
+            env_config: Environment configuration for finding cerberus bin path.
         """
         self.config = config or E2EConfig()
+        self.env_config = env_config
 
     def check_prereqs(self, env: Mapping[str, str] | None = None) -> E2EPrereqResult:
         """Check if all E2E prerequisites are met.
@@ -161,7 +166,13 @@ class E2ERunner:
             missing.append("bd CLI not found in PATH")
 
         # Check for Cerberus review-gate (required for E2E to test review flow)
-        cerberus_bin = _find_cerberus_bin_path(Path.home() / ".claude")
+        if self.env_config is not None:
+            cerberus_bin = self.env_config.find_cerberus_bin_path()
+        else:
+            # Fallback for legacy callers without env_config
+            from src.infra.io.config import _find_cerberus_bin_path
+
+            cerberus_bin = _find_cerberus_bin_path(Path.home() / ".claude")
         if cerberus_bin is None:
             missing.append(
                 "Cerberus review-gate not installed (check ~/.claude/plugins)"

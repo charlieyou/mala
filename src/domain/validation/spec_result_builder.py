@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
+    from src.core.protocols import EnvConfigPort
+
     from .config import YamlCoverageConfig
     from .e2e import E2EResult
     from .result import ValidationStepResult
@@ -56,6 +58,7 @@ class ResultBuilderInput:
         baseline_percent: Baseline coverage for "no decrease" mode.
         yaml_coverage_config: Coverage configuration from mala.yaml, or None to
             use spec-based coverage checking (legacy mode).
+        env_config: Environment configuration for paths.
     """
 
     spec: ValidationSpec
@@ -67,6 +70,7 @@ class ResultBuilderInput:
     env: Mapping[str, str]
     baseline_percent: float | None
     yaml_coverage_config: YamlCoverageConfig | None = None
+    env_config: EnvConfigPort | None = None
 
 
 class SpecResultBuilder:
@@ -117,6 +121,7 @@ class SpecResultBuilder:
             cwd=input.cwd,
             log_dir=input.log_dir,
             artifacts=input.artifacts,
+            env_config=input.env_config,
         )
         if e2e is not None and not e2e.passed and e2e.status != E2EStatus.SKIPPED:
             reason = e2e.failure_reason or "E2E failed"
@@ -288,6 +293,7 @@ class SpecResultBuilder:
         cwd: Path,
         log_dir: Path,
         artifacts: ValidationArtifacts,
+        env_config: EnvConfigPort | None = None,
     ) -> E2EResult | None:
         """Run E2E validation if enabled (only for run-level scope).
 
@@ -297,6 +303,7 @@ class SpecResultBuilder:
             cwd: Working directory.
             log_dir: Directory for logs.
             artifacts: Artifacts to update with fixture path.
+            env_config: Environment configuration for paths.
 
         Returns:
             E2EResult if E2E is enabled and scope is run-level, None otherwise.
@@ -306,7 +313,7 @@ class SpecResultBuilder:
         if not spec.e2e.enabled or spec.scope != ValidationScope.RUN_LEVEL:
             return None
 
-        e2e_result = self._run_e2e(spec.e2e, env, cwd, log_dir)
+        e2e_result = self._run_e2e(spec.e2e, env, cwd, log_dir, env_config)
         if e2e_result.fixture_path:
             artifacts.e2e_fixture_path = e2e_result.fixture_path
 
@@ -318,6 +325,7 @@ class SpecResultBuilder:
         env: Mapping[str, str],
         cwd: Path,
         log_dir: Path,
+        env_config: EnvConfigPort | None = None,
     ) -> E2EResult:
         """Run E2E validation using the E2ERunner.
 
@@ -326,6 +334,7 @@ class SpecResultBuilder:
             env: Environment variables.
             cwd: Working directory.
             log_dir: Directory for logs.
+            env_config: Environment configuration for paths.
 
         Returns:
             E2EResult with pass/fail status.
@@ -336,7 +345,7 @@ class SpecResultBuilder:
             keep_fixture=True,  # Keep for debugging
             timeout_seconds=1200.0,  # 20 min for E2E mala run (default 10 min was too short)
         )
-        runner = E2ERunner(runner_config)
+        runner = E2ERunner(runner_config, env_config=env_config)
         return runner.run(env=dict(env), cwd=cwd)
 
     def _build_failure_result(

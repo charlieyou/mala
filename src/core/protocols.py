@@ -826,3 +826,38 @@ class CommandRunnerPort(Protocol):
             CommandResultProtocol with execution details.
         """
         ...
+
+
+@runtime_checkable
+class EnvConfigPort(Protocol):
+    """Protocol for abstracting environment configuration.
+
+    Enables dependency injection of environment config into domain modules,
+    allowing the core layer to define the interface without depending on
+    the infrastructure implementation.
+
+    The canonical implementation is in src/infra/tools/env.py.
+    """
+
+    @property
+    def scripts_dir(self) -> Path:
+        """Path to the scripts directory (e.g., test-mutex.sh)."""
+        ...
+
+    @property
+    def cache_dir(self) -> Path:
+        """Path to the mala cache directory."""
+        ...
+
+    @property
+    def lock_dir(self) -> Path:
+        """Path to the lock directory for multi-agent coordination."""
+        ...
+
+    def find_cerberus_bin_path(self) -> Path | None:
+        """Find the cerberus plugin bin directory.
+
+        Returns:
+            Path to cerberus bin directory, or None if not found.
+        """
+        ...

@@ -27,6 +27,8 @@ from src.infra.tools.command_runner import run_command
 from .config import YamlCoverageConfig  # noqa: TC001 - used at runtime
 
 if TYPE_CHECKING:
+    from src.core.protocols import EnvConfigPort
+
     from .spec import ValidationSpec
 
 
@@ -428,6 +430,7 @@ class BaselineCoverageService:
         repo_path: Path,
         coverage_config: YamlCoverageConfig | None = None,
         step_timeout_seconds: float | None = None,
+        env_config: EnvConfigPort | None = None,
     ):
         """Initialize the baseline coverage service.
 
@@ -437,10 +440,12 @@ class BaselineCoverageService:
                 baseline refresh - if None or if command is None, refresh is unavailable.
             step_timeout_seconds: Optional fallback timeout for commands (used if
                 coverage_config.timeout is None).
+            env_config: Environment configuration for paths (lock_dir, etc.).
         """
         self.repo_path = repo_path.resolve()
         self.coverage_config = coverage_config
         self.step_timeout_seconds = step_timeout_seconds
+        self.env_config = env_config
 
     def refresh_if_stale(
         self,
@@ -543,7 +548,6 @@ class BaselineCoverageService:
             as non-None by the caller (refresh_if_stale).
         """
         from src.infra.tools.command_runner import CommandRunner
-        from src.infra.tools.env import get_lock_dir
         from .worktree import (
             WorktreeConfig,
             WorktreeState,
@@ -585,9 +589,15 @@ class BaselineCoverageService:
             # Build environment
             env = {
                 **os.environ,
-                "LOCK_DIR": str(get_lock_dir()),
                 "AGENT_ID": f"baseline-{run_id}",
             }
+            if self.env_config is not None:
+                env["LOCK_DIR"] = str(self.env_config.lock_dir)
+            else:
+                # Fallback for legacy callers without env_config
+                from src.infra.tools.env import get_lock_dir
+
+                env["LOCK_DIR"] = str(get_lock_dir())
 
             # Determine timeout: prefer coverage_config.timeout, then step_timeout_seconds, then default
             timeout = float(
