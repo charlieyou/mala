@@ -40,7 +40,7 @@ def get_default_validation_commands() -> PromptValidationCommands:
 
     return PromptValidationCommands(
         lint="RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff check .",
-        format="RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format .",
+        format="RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format --check .",
         typecheck="uvx ty check",
         test="uv run pytest -o cache_dir=/tmp/pytest-${AGENT_ID:-default}",
     )

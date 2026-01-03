@@ -103,7 +103,7 @@ commands:
         )
         assert (
             result.format
-            == "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format ."
+            == "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format --check ."
         )
         assert result.typecheck == "uvx ty check"
         assert (
