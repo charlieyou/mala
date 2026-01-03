@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols import CommandRunnerPort, EnvConfigPort, LoggerPort
+    from src.infra.io.event_sink import BaseEventSink
 
     from .spec import ValidationCommand
 
@@ -43,6 +44,7 @@ class ExecutorConfig:
         env_config: Environment configuration for paths (scripts, cache, etc.).
         command_runner: Command runner for executing commands.
         logger: Logger for console output (optional, defaults to no-op).
+        event_sink: Event sink for emitting validation step events (optional).
     """
 
     enable_lint_cache: bool = True
@@ -51,6 +53,7 @@ class ExecutorConfig:
     env_config: EnvConfigPort | None = None
     command_runner: CommandRunnerPort
     logger: LoggerPort | None = None
+    event_sink: BaseEventSink | None = None
 
 
 @dataclass
@@ -149,6 +152,10 @@ class SpecCommandExecutor:
             # Log command start to terminal
             self._log_message("▸", f"Running {cmd.name}...", "cyan")
 
+            # Emit event sink notification
+            if self.config.event_sink is not None:
+                self.config.event_sink.on_validation_step_running(cmd.name)
+
             # Execute the command
             step = self._run_command(cmd, input.cwd, input.env)
             output.steps.append(step)
@@ -232,6 +239,10 @@ class SpecCommandExecutor:
         self._log_message(
             "○", f"Skipping {cmd.name} (no changes since last check)", "cyan"
         )
+        if self.config.event_sink is not None:
+            self.config.event_sink.on_validation_step_skipped(
+                cmd.name, "no changes since last check"
+            )
         return ValidationStepResult(
             name=cmd.name,
             command=cmd.command,
@@ -391,6 +402,12 @@ class SpecCommandExecutor:
         )
         self._log_message("✓", f"{cmd.name} passed{duration_str}", "green")
 
+        # Emit event sink notification
+        if self.config.event_sink is not None:
+            self.config.event_sink.on_validation_step_passed(
+                cmd.name, step.duration_seconds
+            )
+
         # Mark command as passed in cache for cacheable commands
         if lint_cache is not None and cmd.kind in self.CACHEABLE_KINDS:
             lint_cache.mark_passed(cmd.name)
@@ -407,6 +424,10 @@ class SpecCommandExecutor:
             step: The step result.
         """
         self._log_message("✗", f"{cmd.name} failed (exit {step.returncode})", "red")
+
+        # Emit event sink notification
+        if self.config.event_sink is not None:
+            self.config.event_sink.on_validation_step_failed(cmd.name, step.returncode)
 
     def _format_failure_reason(
         self,
