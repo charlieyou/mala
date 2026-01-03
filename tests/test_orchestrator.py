@@ -4221,11 +4221,6 @@ class TestReviewUsesIssueCommits:
             patch.object(orchestrator, "quality_gate", mock_quality_gate),
             patch.object(orchestrator.gate_runner, "gate_checker", mock_quality_gate),
             patch.object(
-                orchestrator.async_gate_runner.gate_runner,
-                "gate_checker",
-                mock_quality_gate,
-            ),
-            patch.object(
                 orchestrator.beads,
                 "get_issue_description_async",
                 return_value="Test issue",

@@ -60,8 +60,6 @@ if TYPE_CHECKING:
     from src.infra.io.event_sink import MalaEventSink
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.orchestration.issue_result import IssueResult
-    from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
-    from src.pipeline.issue_finalizer import IssueFinalizer
 
 
 @dataclass
@@ -97,24 +95,6 @@ class WiringDependencies:
     # Mutable state references (shared with orchestrator)
     session_log_paths: dict[str, Path]
     review_log_paths: dict[str, str]
-
-
-@dataclass
-class PipelineComponents:
-    """Container for initialized pipeline components.
-
-    Returned by build_pipeline_components and attached to the orchestrator.
-    """
-
-    gate_runner: GateRunner
-    async_gate_runner: AsyncGateRunner
-    review_runner: ReviewRunner
-    run_coordinator: RunCoordinator
-    issue_coordinator: IssueExecutionCoordinator
-    issue_finalizer: IssueFinalizer
-    epic_verification_coordinator: EpicVerificationCoordinator
-    session_callback_factory: SessionCallbackFactory
-    session_config: AgentSessionConfig
 
 
 def build_gate_runner(deps: WiringDependencies) -> tuple[GateRunner, AsyncGateRunner]:
