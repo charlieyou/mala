@@ -379,7 +379,6 @@ def _handle_dry_run(
     Raises:
         typer.Exit: Always exits with code 0 after displaying.
     """
-    import asyncio
 
     async def _dry_run() -> None:
         beads = _lazy("BeadsClient")(repo_path)
