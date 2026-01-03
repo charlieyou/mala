@@ -5,9 +5,8 @@ This module centralizes prompt file loading to avoid duplication across modules.
 
 from __future__ import annotations
 
-import functools
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path  # noqa: TC003  # Used at runtime in load_prompts
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -50,48 +49,8 @@ def load_prompts(prompt_dir: Path) -> PromptProvider:
     )
 
 
-# Prompt directory - points to src/prompts/ where prompt files live
-_PROMPT_DIR = Path(__file__).parent.parent / "prompts"
-
-# File path constants
-GATE_FOLLOWUP_FILE = _PROMPT_DIR / "gate_followup.md"
-PROMPT_FILE = _PROMPT_DIR / "implementer_prompt.md"
-REVIEW_FOLLOWUP_FILE = _PROMPT_DIR / "review_followup.md"
-FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
-IDLE_RESUME_PROMPT_FILE = _PROMPT_DIR / "idle_resume.md"
-
-
-@functools.cache
-def get_gate_followup_prompt() -> str:
-    """Load gate follow-up prompt (cached on first use)."""
-    return GATE_FOLLOWUP_FILE.read_text()
-
-
-@functools.cache
-def get_implementer_prompt() -> str:
-    """Load implementer prompt template (cached on first use)."""
-    return PROMPT_FILE.read_text()
-
-
-@functools.cache
-def get_review_followup_prompt() -> str:
-    """Load review follow-up prompt (cached on first use)."""
-    return REVIEW_FOLLOWUP_FILE.read_text()
-
-
-@functools.cache
-def get_fixer_prompt() -> str:
-    """Load fixer prompt (cached on first use)."""
-    return FIXER_PROMPT_FILE.read_text()
-
-
-@functools.cache
-def get_idle_resume_prompt() -> str:
-    """Load idle resume prompt (cached on first use)."""
-    return IDLE_RESUME_PROMPT_FILE.read_text()
-
-
 def format_implementer_prompt(
+    implementer_prompt: str,
     issue_id: str,
     repo_path: Path,
     agent_id: str,
@@ -102,6 +61,7 @@ def format_implementer_prompt(
     """Format the implementer prompt with runtime values.
 
     Args:
+        implementer_prompt: The raw implementer prompt template.
         issue_id: The issue ID being implemented.
         repo_path: Path to the repository.
         agent_id: The agent ID for this session.
@@ -112,7 +72,7 @@ def format_implementer_prompt(
     Returns:
         Formatted prompt string.
     """
-    return get_implementer_prompt().format(
+    return implementer_prompt.format(
         issue_id=issue_id,
         repo_path=repo_path,
         lock_dir=lock_dir,
