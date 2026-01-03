@@ -74,36 +74,30 @@ lock-wait.sh utils.py 900 1000  # Wait up to 900s, poll every 1000ms
 4. **Once all locks acquired**, complete remaining implementation
 5. Handle edge cases, add tests if appropriate
 
-### 4. Quality Checks (Scoped to Your Changes)
+### 4. Quality Checks
 
-**Before committing, validate the files YOU touched.** This prevents detecting changes from other parallel agents. The full test suite runs later in an isolated worktree.
+**Before committing, run the validation commands.** The full test suite also runs later in an isolated worktree.
 
-**Track your changed files:**
+**Run validations:**
 ```bash
-# Get list of files you modified (staged + unstaged)
-CHANGED_FILES=$(git diff --name-only HEAD; git diff --cached --name-only)
-```
+# Lint check
+{lint_command}
 
-**Run scoped validations:**
-```bash
-# Lint only your changed files
-{lint_command} $CHANGED_FILES
+# Format check  
+{format_command}
 
-# Format only your changed files
-{format_command} $CHANGED_FILES
+# Type check
+{typecheck_command}
 
-# Type check only your changed files
-{typecheck_command} $CHANGED_FILES
-
-# Run tests (use isolated cache; disable global coverage threshold for scoped runs)
+# Run tests
 {test_command}
 ```
 
-**Note:** The orchestrator runs the FULL validation suite in an isolated worktree after your commit. You only need to validate your own changes here.
+**Note:** The orchestrator runs the FULL validation suite in an isolated worktree after your commit. The commands above are configured for the repository's toolchain.
 
-**All checks on your files must pass.** If any fail:
+**All checks must pass.** If any fail:
 - Fix the issues in YOUR code
-- Re-run the scoped checks
+- Re-run the checks
 - Do not commit until your changes pass
 
 **CRITICAL - No Gaming Validation:**

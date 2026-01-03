@@ -108,22 +108,34 @@ class TestPresetRegistryIntegration:
 
     @pytest.mark.integration
     def test_get_python_uv_preset(self, registry: PresetRegistry) -> None:
-        """get('python-uv') returns valid ValidationConfig."""
+        """get('python-uv') returns valid ValidationConfig with isolation flags."""
         config = registry.get("python-uv")
 
         assert isinstance(config, ValidationConfig)
         assert config.commands.setup is not None
         assert config.commands.setup.command == "uv sync"
         assert config.commands.test is not None
-        assert config.commands.test.command == "uv run pytest"
+        assert (
+            config.commands.test.command
+            == "uv run pytest --cache-dir=/tmp/pytest-${AGENT_ID:-default} --cov-fail-under=0"
+        )
         assert config.commands.lint is not None
-        assert config.commands.lint.command == "uvx ruff check ."
+        assert (
+            config.commands.lint.command
+            == "uvx ruff check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+        )
         assert config.commands.format is not None
-        assert config.commands.format.command == "uvx ruff format --check ."
+        assert (
+            config.commands.format.command
+            == "uvx ruff format --check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+        )
         assert config.commands.typecheck is not None
         assert config.commands.typecheck.command == "uvx ty check"
         assert config.commands.e2e is not None
-        assert config.commands.e2e.command == "uv run pytest -m e2e"
+        assert (
+            config.commands.e2e.command
+            == "uv run pytest -m e2e --cache-dir=/tmp/pytest-${AGENT_ID:-default}"
+        )
         assert "**/*.py" in config.code_patterns
         assert "pyproject.toml" in config.code_patterns
         assert "uv.lock" in config.setup_files

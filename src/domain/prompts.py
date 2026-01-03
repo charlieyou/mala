@@ -47,12 +47,13 @@ def build_prompt_validation_commands(repo_path: Path) -> PromptValidationCommand
     try:
         user_config = load_config(repo_path)
     except ConfigMissingError:
-        # No config file - return default Python/uv commands
+        # No config file - return default Python/uv commands with isolation flags
+        # for parallel agent runs ($AGENT_ID is set in the agent environment)
         return PromptValidationCommands(
-            lint="uvx ruff check .",
-            format="uvx ruff format .",
+            lint="uvx ruff check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}",
+            format="uvx ruff format . --cache-dir=/tmp/ruff-${AGENT_ID:-default}",
             typecheck="uvx ty check",
-            test="uv run pytest",
+            test="uv run pytest --cache-dir=/tmp/pytest-${AGENT_ID:-default} --cov-fail-under=0",
         )
 
     # Load and merge preset if specified

@@ -181,13 +181,19 @@ commands:
         assert config.commands.test is not None
         assert config.commands.test.command == "uv run pytest -v --slow"
 
-        # Other commands inherited from preset
+        # Other commands inherited from preset (with isolation flags)
         assert config.commands.setup is not None
         assert config.commands.setup.command == "uv sync"
         assert config.commands.lint is not None
-        assert config.commands.lint.command == "uvx ruff check ."
+        assert (
+            config.commands.lint.command
+            == "uvx ruff check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+        )
         assert config.commands.format is not None
-        assert config.commands.format.command == "uvx ruff format --check ."
+        assert (
+            config.commands.format.command
+            == "uvx ruff format --check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+        )
         assert config.commands.typecheck is not None
         assert config.commands.typecheck.command == "uvx ty check"
 

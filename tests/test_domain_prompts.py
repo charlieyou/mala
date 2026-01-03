@@ -91,14 +91,23 @@ commands:
         assert "ty check" in result.typecheck
 
     def test_missing_config_returns_defaults(self, tmp_path: Path) -> None:
-        """Missing mala.yaml returns default Python/uv commands."""
+        """Missing mala.yaml returns default Python/uv commands with isolation flags."""
         # No mala.yaml file exists
         result = build_prompt_validation_commands(tmp_path)
 
-        assert result.lint == "uvx ruff check ."
-        assert result.format == "uvx ruff format ."
+        # Default commands include isolation flags for parallel agent runs
+        assert (
+            result.lint == "uvx ruff check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+        )
+        assert (
+            result.format
+            == "uvx ruff format . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+        )
         assert result.typecheck == "uvx ty check"
-        assert result.test == "uv run pytest"
+        assert (
+            result.test
+            == "uv run pytest --cache-dir=/tmp/pytest-${AGENT_ID:-default} --cov-fail-under=0"
+        )
 
     def test_partial_commands_use_fallbacks(self, tmp_path: Path) -> None:
         """Partial commands config uses fallbacks for missing ones."""

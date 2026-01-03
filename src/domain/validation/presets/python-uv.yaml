@@ -1,12 +1,13 @@
 # Python project using uv package manager
 # Commands: uv sync, pytest, ruff check, ruff format --check, ty check
+# Note: Commands use $AGENT_ID for cache isolation in parallel agent runs
 commands:
   setup: "uv sync"
-  test: "uv run pytest"
-  lint: "uvx ruff check ."
-  format: "uvx ruff format --check ."
+  test: "uv run pytest --cache-dir=/tmp/pytest-${AGENT_ID:-default} --cov-fail-under=0"
+  lint: "uvx ruff check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
+  format: "uvx ruff format --check . --cache-dir=/tmp/ruff-${AGENT_ID:-default}"
   typecheck: "uvx ty check"
-  e2e: "uv run pytest -m e2e"
+  e2e: "uv run pytest -m e2e --cache-dir=/tmp/pytest-${AGENT_ID:-default}"
 
 code_patterns:
   - "**/*.py"
