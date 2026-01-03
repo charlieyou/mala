@@ -24,12 +24,12 @@ from src.orchestration.orchestrator import (
     MalaOrchestrator,
 )
 from src.orchestration.issue_result import IssueResult
-from src.orchestration.prompts import (
+from src.domain.prompts import (
     get_fixer_prompt as _get_fixer_prompt,
+    get_gate_followup_prompt as _get_gate_followup_prompt,
     get_implementer_prompt as _get_implementer_prompt,
     get_review_followup_prompt as _get_review_followup_prompt,
 )
-from src.domain.prompts import get_gate_followup_prompt as _get_gate_followup_prompt
 from src.infra.tools.command_runner import CommandResult
 
 from src.core.protocols import LogProvider

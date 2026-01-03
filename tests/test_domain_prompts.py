@@ -137,7 +137,7 @@ class TestPromptTemplateIntegration:
         self, tmp_path: Path
     ) -> None:
         """Implementer prompt renders correctly with Python validation commands."""
-        from src.orchestration.prompts import get_implementer_prompt
+        from src.domain.prompts import get_implementer_prompt
 
         mala_yaml = tmp_path / "mala.yaml"
         mala_yaml.write_text("preset: python-uv\n")
@@ -168,7 +168,7 @@ class TestPromptTemplateIntegration:
 
     def test_implementer_prompt_renders_with_go_commands(self, tmp_path: Path) -> None:
         """Implementer prompt renders correctly with Go validation commands."""
-        from src.orchestration.prompts import get_implementer_prompt
+        from src.domain.prompts import get_implementer_prompt
 
         mala_yaml = tmp_path / "mala.yaml"
         mala_yaml.write_text("preset: go\n")

@@ -21,7 +21,7 @@ from src.orchestration.gate_metadata import (
     build_gate_metadata,
     build_gate_metadata_from_logs,
 )
-from src.orchestration.prompts import (
+from src.domain.prompts import (
     get_fixer_prompt,
     get_implementer_prompt,
     get_review_followup_prompt,

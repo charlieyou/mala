@@ -54,7 +54,7 @@ from src.orchestration.orchestration_wiring import (
     build_session_config,
 )
 from src.orchestration.issue_result import IssueResult
-from src.orchestration.prompts import format_implementer_prompt
+from src.domain.prompts import format_implementer_prompt
 from src.orchestration.review_tracking import create_review_tracking_issues
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
 

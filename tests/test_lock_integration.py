@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.orchestration.prompts import get_implementer_prompt as _get_implementer_prompt
+from src.domain.prompts import get_implementer_prompt as _get_implementer_prompt
 from src.infra.hooks import make_stop_hook
 from src.infra.tools.env import SCRIPTS_DIR
 
