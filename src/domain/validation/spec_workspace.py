@@ -215,6 +215,7 @@ def workspace_context(
     context: ValidationContext,
     log_dir: Path | None,
     step_timeout_seconds: float | None,
+    env_config: EnvConfigPort | None = None,
 ) -> Generator[SpecRunWorkspace, None, None]:
     """Context manager for workspace setup and cleanup.
 
@@ -226,6 +227,7 @@ def workspace_context(
         context: Immutable context for the validation run.
         log_dir: Directory for logs/artifacts. Uses temp dir if None.
         step_timeout_seconds: Optional timeout for baseline refresh commands.
+        env_config: Environment configuration for paths.
 
     Yields:
         SpecRunWorkspace with all context needed for validation.
@@ -233,7 +235,9 @@ def workspace_context(
     Raises:
         SetupError: If baseline refresh or worktree creation fails.
     """
-    workspace = setup_workspace(spec, context, log_dir, step_timeout_seconds)
+    workspace = setup_workspace(
+        spec, context, log_dir, step_timeout_seconds, env_config
+    )
     validation_passed = False
     try:
         yield workspace
