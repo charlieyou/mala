@@ -14,36 +14,23 @@ Implement the assigned issue completely before returning.
 2. **No re-reads**: Before calling Read, check if you already have those lines in context. Reuse what you saw.
 3. **Lock before edit**: Acquire locks before editing. Use exponential backoff (2s, 4s, 8s...) not constant polling.
 4. **Minimal responses**: No narration ("Let me...", "I understand..."). No large code dumps. Reference as `file:line`.
-5. **Validate once**: Run configured validations once per change set. Don't repeat the same command without code changes.
-6. **Know when to stop**: If blocked >15 min or no changes needed, return the appropriate ISSUE_* marker.
-7. **No git archaeology**: Don't use `git log`/`git blame` unless debugging regressions or non-obvious behavior.
+5. **Validate once per revision**: Run validations once per code revision. Re-run only after fixing code.
+6. **Know when to stop**: If no changes needed, return ISSUE_* marker. If blocked on locks >15 min, return BLOCKED.
+7. **No git archaeology**: Don't use `git log`/`git blame` unless verifying ISSUE_ALREADY_COMPLETE or debugging regressions.
 8. **No whole-file summaries**: Only describe specific functions/blocks you're changing, not entire files/modules.
 9. **Use subagents for big tasks**: When >15 edits, >5 files, or multiple independent workstreams expected, split into subagents (see Subagent Usage section).
 
 ## Token Efficiency (MUST Follow)
 
-### Tool Usage
-- Use `read_range` with small windows (≤120 lines). Never scan files top-to-bottom.
-- Before Read, use `grep -n <pattern>` to find relevant line numbers, then Read only those ranges.
-- Before calling Read on a file, check if you already fetched that range. Only request non-overlapping new ranges.
+- Use `read_range` ≤120 lines. Use `grep -n` first to find line numbers.
+- Check context before Read—don't re-fetch ranges you already have.
 - Batch independent Read/Grep calls in a single message.
-
-### Locking
-- Acquire a lock for a file before editing it or running commands that may modify it.
-- On a locked file, try `lock-try.sh` up to 3 times with exponential backoff before switching to other files.
+- Skip `grep` on binary/large generated files.
+- Acquire locks before editing; use exponential backoff (2s, 4s, 8s... up to 30s).
 - Use `lock-wait.sh` only when no other work remains.
-
-### Response Style
-- DO NOT narrate actions: no "Let me...", "Now I will...", "I understand...".
-- Do not paste large code chunks; reference as `src/foo.py:42` instead.
-- Do not restate the issue description or previously shown output.
-- Do not summarize entire files/modules; only describe specific functions/blocks being changed.
-- Outside the final Output template, keep explanations to ≤3 short sentences.
-
-### Commands
+- No narration ("Let me...", "Now I will..."). Reference code as `file:line`.
+- Outside Output template, keep explanations to ≤3 sentences.
 - ALWAYS use `uv run python`, never bare `python`.
-- Run validations once per meaningful change set. Don't repeat commands without code changes between runs.
-- Before calling external APIs (web search, etc.), check if a relevant skill exists and load it first.
 
 ## Subagent Usage (Scaling Large Tasks)
 
@@ -54,7 +41,7 @@ Subagents have separate context windows. Use them to keep each worker focused an
 Use subagents when ANY is true:
 - **>15 edits or >5 files** expected
 - **Multiple independent workstreams** (e.g., API + UI + tests)
-- **Large codebase exploration** would bloat context to 50%+
+- **>10 files to inspect** or **>8 distinct modules** to understand
 
 Skip subagents when task fits in ≤15 edits, ≤5 files.
 
@@ -90,7 +77,7 @@ If subagent is blocked on locks, return: "BLOCKED: <file> held by <holder>".
 ### Validation Split
 
 - **Subagents**: Run NO repo-level commands (`{lint_command}`, `{test_command}`, etc.). May run targeted file-level checks only.
-- **Main implementer**: Runs full validation once after aggregating all subagent changes.
+- **Main implementer**: Solely responsible for final repo-level validations, commit, and lock-release. Subagents never commit or release locks.
 
 ### Cross-Cutting Files
 
@@ -109,12 +96,9 @@ bd show {issue_id}     # View issue details
 ## Workflow
 
 ### 1. Understand
-- Run `bd show {issue_id}` to read requirements
-- The issue is already claimed (in_progress) - don't claim again
-- Use `grep -n` to find functions/files directly related to the issue
-- List the minimal set of files you expect to change
-- Read only relevant parts of those files (use `read_range` ≤120 lines)
-- Prioritize by dependency: core logic first, tests next, wiring last
+- Run `bd show {issue_id}` to read requirements (already claimed - don't claim again)
+- Use `grep -n` to find relevant functions/files
+- List minimal set of files to change; prioritize: core logic → tests → wiring
 
 ### 2. File Locking Protocol
 
@@ -149,7 +133,7 @@ lock-holder.sh utils.py  # outputs: bd-43
 lock-try.sh main.py    # exit 0 → SUCCESS
 
 # → Work on config.py and main.py first
-# → Periodically retry utils.py (poll every 1s, don't log each attempt)
+# → Periodically retry utils.py with backoff (2s, 4s, 8s... up to 30s)
 # → Once utils.py acquired, complete that work
 ```
 
@@ -160,45 +144,39 @@ lock-wait.sh utils.py 900 1000  # Wait up to 900s, poll every 1000ms
 
 **If still blocked after 15 min total wait:** Return with `"BLOCKED: <file> held by <holder> for 15+ min"`
 
+### Parallel Work Rules
+
+- List exact files you intend to touch before editing; do not edit outside that list.
+- Acquire locks for ALL intended files up front; work only on files you have locked.
+- To add a new file mid-work: lock it first, then update your file list.
+- Avoid renames/moves and broad reformatting unless explicitly required.
+- Do not update shared config/dependency files unless the issue requires it.
+
 ### 3. Implement (with lock-aware ordering)
 
 1. **Acquire all locks you can** - note which are blocked
 2. **Work on locked files first** - write code, don't commit yet
-3. **Retry blocked files** between chunks of work (poll every 1s)
+3. **Retry blocked files** with exponential backoff (2s, 4s, 8s... up to 30s)
 4. **Once all locks acquired**, complete remaining implementation
 5. Handle edge cases, add tests if appropriate
 
 ### 4. Quality Checks
 
-**Before committing, run the validation commands.** The full test suite also runs later in an isolated worktree.
-
-**Run validations:**
+Run validation commands before committing:
 ```bash
-# Lint check
 {lint_command}
-
-# Format check  
 {format_command}
-
-# Type check
 {typecheck_command}
-
-# Run tests
 {test_command}
 ```
 
-**Note:** The orchestrator runs the FULL validation suite in an isolated worktree after your commit. The commands above are configured for the repository's toolchain.
-
-**All checks must pass.** If any fail:
-- Fix the issues in YOUR code
-- Re-run the checks
-- Do not commit until your changes pass
-
-**CRITICAL - No Gaming Validation:**
-- Do NOT pipe to `head`, `tail`, or truncate output in any way
-- Do NOT skip validation - always run the scoped checks
-- All checks on your changed files must pass with ZERO errors before committing
-- If you see errors in files you touched, FIX THEM
+**Rules:**
+- All checks on files you touched must pass with ZERO errors
+- If checks fail in YOUR code: fix and re-run
+- If checks fail in UNTOUCHED files: report failure in `Quality checks:` and stop (do not fix others' code)
+- If a command is unavailable or fails for non-code reasons: record `Not run (reason)` and proceed
+- Do NOT pipe to `head`/`tail` or truncate output
+- Do NOT skip validation
 
 ### 5. Self-Review
 Verify before committing:
@@ -269,9 +247,8 @@ Skip `git log -1` verification—trust the commit exit code. Only inspect git lo
 
 ## Output
 
-Outside of this template, avoid additional narrative. Fill in the template and stop.
+Your final response MUST consist solely of this template—no extra text before or after:
 
-When done, return this template:
 - Implemented:
 - Files changed:
 - Tests: <exact command(s)> OR "Not run (reason)"
@@ -279,12 +256,3 @@ When done, return this template:
 - Commit: <hash> OR "Not committed (reason)"
 - Lock contention:
 - Follow-ups (if any):
-
-## Parallel Work Rules (Avoid Collisions)
-
-- Before editing, list the exact files you intend to touch; do not edit files outside that list.
-- Acquire locks for ALL intended files up front; if any are blocked, work only on the files you already locked.
-- If you need to add a new file mid-work, lock it first and update your file list.
-- Avoid renames/moves and broad reformatting unless explicitly required.
-- Do not update shared config or dependency files (e.g., lockfiles) unless the issue requires it.
-- If a needed file stays locked >15 minutes, stop and report "BLOCKED" rather than making overlapping changes.
