@@ -843,9 +843,10 @@ def test_run_validation_flags_defaults(
     )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
-    with pytest.raises(typer.Exit):
+    with pytest.raises(typer.Exit) as excinfo:
         cli.run(repo_path=tmp_path)
 
+    assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
     assert DummyOrchestrator.last_orch_config.disable_validations is None
     assert DummyOrchestrator.last_orch_config.coverage_threshold is None
@@ -1485,6 +1486,136 @@ def test_dry_run_focus_mode_groups_by_epic(
     assert "task-2" in captured.out
     # Summary should show epic counts
     assert "By epic:" in captured.out
+
+
+# ============================================================================
+# Tests for _handle_dry_run helper function
+# ============================================================================
+
+
+class TestHandleDryRun:
+    """Tests for the _handle_dry_run helper function."""
+
+    def test_calls_beads_client_with_correct_repo_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """_handle_dry_run instantiates BeadsClient with repo_path."""
+        cli = _reload_cli(monkeypatch)
+
+        captured_path = None
+
+        class MockBeadsClient:
+            def __init__(self, path: Path) -> None:
+                nonlocal captured_path
+                captured_path = path
+
+            async def get_ready_issues_async(self, **kwargs: object) -> list[object]:
+                return []
+
+        monkeypatch.setattr(
+            src.orchestration.cli_support, "BeadsClient", MockBeadsClient
+        )
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cli._handle_dry_run(
+                repo_path=tmp_path,
+                epic=None,
+                only_ids=None,
+                wip=False,
+                focus=False,
+                orphans_only=False,
+            )
+
+        assert excinfo.value.exit_code == 0
+        assert captured_path == tmp_path
+
+    def test_passes_correct_filtering_params(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """_handle_dry_run passes all filtering params to get_ready_issues_async."""
+        cli = _reload_cli(monkeypatch)
+
+        DummyBeadsClient.last_kwargs = None
+        DummyBeadsClient.issues_to_return = []
+
+        monkeypatch.setattr(
+            src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
+        )
+
+        with pytest.raises(typer.Exit):
+            cli._handle_dry_run(
+                repo_path=tmp_path,
+                epic="my-epic",
+                only_ids={"id-1", "id-2"},
+                wip=True,
+                focus=True,
+                orphans_only=True,
+            )
+
+        assert DummyBeadsClient.last_kwargs is not None
+        assert DummyBeadsClient.last_kwargs["epic_id"] == "my-epic"
+        assert DummyBeadsClient.last_kwargs["only_ids"] == {"id-1", "id-2"}
+        assert DummyBeadsClient.last_kwargs["prioritize_wip"] is True
+        assert DummyBeadsClient.last_kwargs["focus"] is True
+        assert DummyBeadsClient.last_kwargs["orphans_only"] is True
+
+    def test_calls_display_dry_run_tasks(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """_handle_dry_run calls display_dry_run_tasks with fetched issues."""
+        cli = _reload_cli(monkeypatch)
+
+        mock_issues: list[dict[str, object]] = [{"id": "issue-1"}, {"id": "issue-2"}]
+        captured_issues = None
+        captured_focus = None
+
+        DummyBeadsClient.issues_to_return = mock_issues
+
+        def mock_display(issues: list[object], focus: bool = False) -> None:
+            nonlocal captured_issues, captured_focus
+            captured_issues = issues
+            captured_focus = focus
+
+        monkeypatch.setattr(
+            src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
+        )
+        monkeypatch.setattr(cli, "display_dry_run_tasks", mock_display)
+
+        with pytest.raises(typer.Exit):
+            cli._handle_dry_run(
+                repo_path=tmp_path,
+                epic=None,
+                only_ids=None,
+                wip=False,
+                focus=True,
+                orphans_only=False,
+            )
+
+        assert captured_issues == mock_issues
+        assert captured_focus is True
+
+    def test_raises_typer_exit_zero(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """_handle_dry_run always raises typer.Exit(0)."""
+        cli = _reload_cli(monkeypatch)
+
+        DummyBeadsClient.issues_to_return = []
+        monkeypatch.setattr(
+            src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
+        )
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cli._handle_dry_run(
+                repo_path=tmp_path,
+                epic=None,
+                only_ids=None,
+                wip=False,
+                focus=False,
+                orphans_only=False,
+            )
+
+        assert excinfo.value.exit_code == 0
 
 
 # ============================================================================

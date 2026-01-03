@@ -312,6 +312,44 @@ def _apply_config_overrides(
     return ConfigOverrideResult(resolved=resolved, updated_config=updated_config)
 
 
+def _handle_dry_run(
+    repo_path: Path,
+    epic: str | None,
+    only_ids: set[str] | None,
+    wip: bool,
+    focus: bool,
+    orphans_only: bool,
+) -> Never:
+    """Execute dry-run mode: display task order and exit.
+
+    Args:
+        repo_path: Path to the repository.
+        epic: Epic ID to filter by.
+        only_ids: Set of specific issue IDs to process.
+        wip: Whether to prioritize WIP issues.
+        focus: Whether focus mode is enabled.
+        orphans_only: Whether to only process orphan issues.
+
+    Raises:
+        typer.Exit: Always exits with code 0 after displaying.
+    """
+    import asyncio
+
+    async def _dry_run() -> None:
+        beads = _lazy("BeadsClient")(repo_path)
+        issues = await beads.get_ready_issues_async(
+            epic_id=epic,
+            only_ids=only_ids,
+            prioritize_wip=wip,
+            focus=focus,
+            orphans_only=orphans_only,
+        )
+        display_dry_run_tasks(issues, focus=focus)
+
+    asyncio.run(_dry_run())
+    raise typer.Exit(0)
+
+
 def _validate_run_args(
     only: str | None,
     disable_validations: str | None,
@@ -610,20 +648,14 @@ def run(
 
     # Handle dry-run mode: display task order and exit
     if dry_run:
-
-        async def _dry_run() -> None:
-            beads = _lazy("BeadsClient")(repo_path)
-            issues = await beads.get_ready_issues_async(
-                epic_id=epic,
-                only_ids=only_ids,
-                prioritize_wip=wip,
-                focus=focus,
-                orphans_only=orphans_only,
-            )
-            display_dry_run_tasks(issues, focus=focus)
-
-        asyncio.run(_dry_run())
-        raise typer.Exit(0)
+        _handle_dry_run(
+            repo_path=repo_path,
+            epic=epic,
+            only_ids=only_ids,
+            wip=wip,
+            focus=focus,
+            orphans_only=orphans_only,
+        )
 
     # Build cli_args for logging and metadata
     cli_args: dict[str, object] = {
