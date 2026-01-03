@@ -186,6 +186,11 @@ Just some content without tags
         text = "```xml\nJust some content\n  ```"
         assert extract_checkpoint(text) == "Just some content"
 
+    def test_fallback_strips_compact_code_block(self) -> None:
+        """Strips closing fence in compact blocks without trailing newline."""
+        text = "```text\ncontent```"
+        assert extract_checkpoint(text) == "content"
+
     def test_returns_full_text_for_empty_input(self) -> None:
         """Returns empty string for empty input."""
         assert extract_checkpoint("") == ""
