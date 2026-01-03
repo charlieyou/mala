@@ -865,10 +865,36 @@ def epic_verify(
 
 
 @app.command()
-def clean() -> None:
-    """Clean up locks and JSONL logs."""
+def clean(
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            "-f",
+            help="Force cleanup even if a mala instance is running",
+        ),
+    ] = False,
+) -> None:
+    """Clean up lock files.
+
+    Removes orphaned lock files from the lock directory. Use this when
+    a previous run left stale locks behind (e.g., after a crash).
+
+    If a mala instance is currently running, the command will exit early
+    unless --force is specified.
+    """
+    # Check for running instances
+    running = _lazy("get_running_instances")()
+    if running and not force:
+        log(
+            "⚠",
+            f"A mala instance is running (PID {running[0].pid}). "
+            "Use --force to clean anyway.",
+            Colors.YELLOW,
+        )
+        raise typer.Exit(1)
+
     cleaned_locks = 0
-    cleaned_logs = 0
 
     lock_dir = _lazy("get_lock_dir")()
     if lock_dir.exists():
@@ -878,22 +904,8 @@ def clean() -> None:
 
     if cleaned_locks:
         log("🧹", f"Removed {cleaned_locks} lock files", Colors.GREEN)
-
-    if get_runs_dir().exists():
-        # Use rglob to find run files in both legacy flat structure
-        # and new repo-segmented subdirectories
-        run_files = list(get_runs_dir().rglob("*.json"))
-        run_count = len(run_files)
-        if run_count > 0:
-            if typer.confirm(f"Remove {run_count} run metadata files?"):
-                for run_file in run_files:
-                    run_file.unlink()
-                    cleaned_logs += 1
-                # Also remove empty repo subdirectories
-                for subdir in get_runs_dir().iterdir():
-                    if subdir.is_dir() and not any(subdir.iterdir()):
-                        subdir.rmdir()
-                log("🧹", f"Removed {cleaned_logs} run metadata files", Colors.GREEN)
+    else:
+        log("○", "No lock files to clean", Colors.GRAY)
 
 
 @app.command()

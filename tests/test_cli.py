@@ -451,9 +451,8 @@ def test_epic_verify_invokes_verifier(
     }
 
 
-def test_clean_removes_locks_and_logs(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_clean_removes_locks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that clean removes lock files but not run metadata."""
     cli = _reload_cli(monkeypatch)
     lock_dir = tmp_path / "locks"
     run_dir = tmp_path / "runs"
@@ -476,12 +475,112 @@ def test_clean_removes_locks_and_logs(
     monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
     monkeypatch.setattr(cli, "log", _log)
-    monkeypatch.setattr(cli.typer, "confirm", lambda _msg: True)
+    # Mock no running instances
+    monkeypatch.setattr(
+        src.orchestration.cli_support, "get_running_instances", lambda: []
+    )
+    monkeypatch.setattr(cli, "_lazy_modules", {"get_running_instances": lambda: []})
 
     cli.clean()
 
+    # Locks should be removed
     assert not list(lock_dir.glob("*.lock"))
-    assert not list(run_dir.glob("*.json"))
+    # Run metadata should NOT be removed (clean no longer deletes logs)
+    assert len(list(run_dir.glob("*.json"))) == 2
+    assert logs
+
+
+def test_clean_exits_if_instance_running(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that clean exits early if a mala instance is running."""
+    cli = _reload_cli(monkeypatch)
+    lock_dir = tmp_path / "locks"
+    lock_dir.mkdir()
+    (lock_dir / "one.lock").write_text("agent")
+
+    logs: list[tuple[object, ...]] = []
+
+    def _log(*args: object, **_kwargs: object) -> None:
+        logs.append(args)
+
+    monkeypatch.setattr(src.orchestration.cli_support, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(cli, "log", _log)
+
+    # Mock a running instance
+    from src.infra.io.log_output.run_metadata import RunningInstance
+    from datetime import datetime
+
+    running_instance = RunningInstance(
+        run_id="test-run",
+        repo_path=tmp_path,
+        started_at=datetime.now(),
+        pid=12345,
+        max_agents=3,
+    )
+    monkeypatch.setattr(
+        src.orchestration.cli_support,
+        "get_running_instances",
+        lambda: [running_instance],
+    )
+    monkeypatch.setattr(
+        cli, "_lazy_modules", {"get_running_instances": lambda: [running_instance]}
+    )
+
+    with pytest.raises(typer.Exit) as exc_info:
+        cli.clean()
+
+    assert exc_info.value.exit_code == 1
+    # Lock should NOT be removed (exited early)
+    assert list(lock_dir.glob("*.lock"))
+    # Should have logged a warning
+    assert any("running" in str(log_entry).lower() for log_entry in logs)
+
+
+def test_clean_force_bypasses_running_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --force allows cleaning even when instance is running."""
+    cli = _reload_cli(monkeypatch)
+    lock_dir = tmp_path / "locks"
+    lock_dir.mkdir()
+    (lock_dir / "one.lock").write_text("agent")
+
+    logs: list[tuple[object, ...]] = []
+
+    def _log(*args: object, **_kwargs: object) -> None:
+        logs.append(args)
+
+    monkeypatch.setattr(src.orchestration.cli_support, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
+    monkeypatch.setattr(cli, "log", _log)
+
+    # Mock a running instance
+    from src.infra.io.log_output.run_metadata import RunningInstance
+    from datetime import datetime
+
+    running_instance = RunningInstance(
+        run_id="test-run",
+        repo_path=tmp_path,
+        started_at=datetime.now(),
+        pid=12345,
+        max_agents=3,
+    )
+    monkeypatch.setattr(
+        src.orchestration.cli_support,
+        "get_running_instances",
+        lambda: [running_instance],
+    )
+    monkeypatch.setattr(
+        cli, "_lazy_modules", {"get_running_instances": lambda: [running_instance]}
+    )
+
+    # With force=True, it should proceed
+    cli.clean(force=True)
+
+    # Lock should be removed despite running instance
+    assert not list(lock_dir.glob("*.lock"))
     assert logs
 
 
