@@ -182,11 +182,18 @@ Complete feature
         text = "   \n\t  "
         assert extract_checkpoint(text) == text
 
-    def test_handles_nested_tags_returns_outermost(self) -> None:
-        """Returns content of outermost checkpoint tags when nested."""
+    def test_handles_nested_tags_returns_first_match(self) -> None:
+        """Returns content of first complete checkpoint block (non-greedy)."""
         text = "<checkpoint>outer <checkpoint>inner</checkpoint> end</checkpoint>"
         result = extract_checkpoint(text)
-        assert result == "outer <checkpoint>inner</checkpoint> end"
+        # Non-greedy matching stops at first </checkpoint>
+        assert result == "outer <checkpoint>inner"
+
+    def test_multiple_blocks_returns_first(self) -> None:
+        """Returns content of first checkpoint block when multiple exist."""
+        text = "<checkpoint>first</checkpoint> text <checkpoint>second</checkpoint>"
+        result = extract_checkpoint(text)
+        assert result == "first"
 
     def test_preserves_whitespace_inside_checkpoint(self) -> None:
         """Preserves leading/trailing whitespace inside checkpoint content."""

@@ -146,12 +146,8 @@ def extract_checkpoint(text: str) -> str:
     Returns:
         Extracted checkpoint content, or full text if no tags found.
     """
-    # Strip markdown code block wrappers if present
-    stripped = re.sub(r"^\s*```\w*\s*", "", text)
-    stripped = re.sub(r"\s*```\s*$", "", stripped)
-
-    # Extract content between checkpoint tags (outermost match)
-    match = re.search(r"<checkpoint>(.*)</checkpoint>", stripped, re.DOTALL)
+    # Extract content between checkpoint tags (non-greedy to get first block only)
+    match = re.search(r"<checkpoint>(.*?)</checkpoint>", text, re.DOTALL)
     if match:
         return match.group(1)
 
