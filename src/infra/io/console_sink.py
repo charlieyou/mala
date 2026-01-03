@@ -139,7 +139,7 @@ class ConsoleEventSink(BaseEventSink):
         status_icon = "✓" if success else "✗"
         log_verbose(
             status_icon,
-            f"Agent {issue_id} completed in {duration_seconds:.1f}s: {summary}",
+            f"Agent {agent_id} completed in {duration_seconds:.1f}s: {summary}",
             agent_id=agent_id,
         )
 
