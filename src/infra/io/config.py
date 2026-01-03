@@ -28,6 +28,8 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from src.infra.tools.env import USER_CONFIG_DIR
+
 
 def parse_cerberus_args(raw: str | None, *, source: str) -> list[str]:
     if not raw or not raw.strip():
@@ -632,9 +634,14 @@ def build_resolved_config(
 
     braintrust_disabled_reason: str | None = None
     if not braintrust_enabled:
-        from src.infra.tools.env import USER_CONFIG_DIR
-
-        braintrust_disabled_reason = f"add BRAINTRUST_API_KEY to {USER_CONFIG_DIR}/.env"
+        if overrides.no_braintrust:
+            braintrust_disabled_reason = "--no-braintrust"
+        elif not base_config.braintrust_api_key:
+            braintrust_disabled_reason = (
+                f"add BRAINTRUST_API_KEY to {USER_CONFIG_DIR}/.env"
+            )
+        else:
+            braintrust_disabled_reason = "disabled by config"
 
     return ResolvedConfig(
         runs_dir=base_config.runs_dir,

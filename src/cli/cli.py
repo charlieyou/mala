@@ -524,12 +524,10 @@ def run(
 
     if cerberus_spawn_args is not None:
         try:
-            from src.infra.io.config import _parse_cerberus_args
+            from src.infra.io.config import parse_cerberus_args
 
             spawn_args = tuple(
-                _parse_cerberus_args(
-                    cerberus_spawn_args, source="--cerberus-spawn-args"
-                )
+                parse_cerberus_args(cerberus_spawn_args, source="--cerberus-spawn-args")
             )
         except ValueError as exc:
             log("✗", str(exc), Colors.RED)
@@ -538,10 +536,10 @@ def run(
 
     if cerberus_wait_args is not None:
         try:
-            from src.infra.io.config import _parse_cerberus_args
+            from src.infra.io.config import parse_cerberus_args
 
             wait_args = tuple(
-                _parse_cerberus_args(cerberus_wait_args, source="--cerberus-wait-args")
+                parse_cerberus_args(cerberus_wait_args, source="--cerberus-wait-args")
             )
         except ValueError as exc:
             log("✗", str(exc), Colors.RED)
@@ -550,9 +548,9 @@ def run(
 
     if cerberus_env is not None:
         try:
-            from src.infra.io.config import _normalize_cerberus_env, _parse_cerberus_env
+            from src.infra.io.config import _normalize_cerberus_env, parse_cerberus_env
 
-            env_map = _parse_cerberus_env(cerberus_env, source="--cerberus-env")
+            env_map = parse_cerberus_env(cerberus_env, source="--cerberus-env")
             config = replace(config, cerberus_env=_normalize_cerberus_env(env_map))
         except ValueError as exc:
             log("✗", str(exc), Colors.RED)
