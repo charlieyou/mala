@@ -56,6 +56,22 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+class _FixerPromptNotSet:
+    """Sentinel indicating fixer_prompt was not set.
+
+    Raises RuntimeError if used, preventing silent failures from empty prompts.
+    """
+
+    def format(self, **kwargs: object) -> str:
+        raise RuntimeError(
+            "fixer_prompt not configured. "
+            "Pass fixer_prompt to RunCoordinatorConfig or use build_run_coordinator()."
+        )
+
+
+_FIXER_PROMPT_NOT_SET = _FixerPromptNotSet()
+
+
 @dataclass
 class RunCoordinatorConfig:
     """Configuration for RunCoordinator.
@@ -74,7 +90,7 @@ class RunCoordinatorConfig:
     max_gate_retries: int = 3
     disable_validations: set[str] | None = None
     coverage_threshold: float | None = None
-    fixer_prompt: str = ""
+    fixer_prompt: str | _FixerPromptNotSet = _FIXER_PROMPT_NOT_SET
 
 
 @dataclass
