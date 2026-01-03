@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols import CommandRunnerPort, EnvConfigPort, LoggerPort
-    from src.infra.io.event_sink import BaseEventSink
+    from src.infra.io.event_protocol import MalaEventSink
 
     from .spec import ValidationCommand
 
@@ -53,7 +53,7 @@ class ExecutorConfig:
     env_config: EnvConfigPort | None = None
     command_runner: CommandRunnerPort
     logger: LoggerPort | None = None
-    event_sink: BaseEventSink | None = None
+    event_sink: MalaEventSink | None = None
 
 
 @dataclass
@@ -149,10 +149,7 @@ class SpecCommandExecutor:
             # Write start marker for debugging
             self._write_start_marker(input.log_dir, i, cmd, input.cwd)
 
-            # Log command start to terminal
-            self._log_message("▸", f"Running {cmd.name}...", "cyan")
-
-            # Emit event sink notification
+            # Emit event sink notification for command start
             if self.config.event_sink is not None:
                 self.config.event_sink.on_validation_step_running(cmd.name)
 
@@ -236,9 +233,6 @@ class SpecCommandExecutor:
         Returns:
             ValidationStepResult indicating the command was skipped.
         """
-        self._log_message(
-            "○", f"Skipping {cmd.name} (no changes since last check)", "cyan"
-        )
         if self.config.event_sink is not None:
             self.config.event_sink.on_validation_step_skipped(
                 cmd.name, "no changes since last check"
@@ -397,11 +391,6 @@ class SpecCommandExecutor:
             step: The step result.
             lint_cache: The lint cache to update (may be None).
         """
-        duration_str = (
-            f" ({step.duration_seconds:.1f}s)" if step.duration_seconds else ""
-        )
-        self._log_message("✓", f"{cmd.name} passed{duration_str}", "green")
-
         # Emit event sink notification
         if self.config.event_sink is not None:
             self.config.event_sink.on_validation_step_passed(
@@ -423,8 +412,6 @@ class SpecCommandExecutor:
             cmd: The command that failed.
             step: The step result.
         """
-        self._log_message("✗", f"{cmd.name} failed (exit {step.returncode})", "red")
-
         # Emit event sink notification
         if self.config.event_sink is not None:
             self.config.event_sink.on_validation_step_failed(cmd.name, step.returncode)
