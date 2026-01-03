@@ -181,6 +181,11 @@ Just some content without tags
 ```"""
         assert extract_checkpoint(text) == "Just some content without tags"
 
+    def test_fallback_strips_indented_closing_fence(self) -> None:
+        """Strips indented closing code fence in fallback mode."""
+        text = "```xml\nJust some content\n  ```"
+        assert extract_checkpoint(text) == "Just some content"
+
     def test_returns_full_text_for_empty_input(self) -> None:
         """Returns empty string for empty input."""
         assert extract_checkpoint("") == ""

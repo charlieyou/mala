@@ -151,7 +151,7 @@ def extract_checkpoint(text: str) -> str:
     if not start_match:
         # Fallback: strip code block wrappers and return
         stripped = re.sub(r"\A\s*```\w*[ \t]*\n?", "", text)
-        stripped = re.sub(r"\n?```[ \t]*\Z", "", stripped)
+        stripped = re.sub(r"\n[ \t]*```[ \t]*\Z", "", stripped)
         return stripped
 
     # Track nesting depth to find matching closing tag
