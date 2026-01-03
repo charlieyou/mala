@@ -420,32 +420,41 @@ class TestSpecValidationRunner:
 
         call_count = 0
 
-        def mock_popen_calls(cmd: list[str], **kwargs: object) -> MagicMock:
+        def mock_run(cmd: list[str] | str, **kwargs: object) -> MagicMock:
             nonlocal call_count
             call_count += 1
-            mock_proc = MagicMock()
-            mock_proc.pid = 12345
+            mock_result = MagicMock()
+            mock_result.duration_seconds = 0.1
             if call_count == 2:
-                mock_proc.communicate.return_value = ("", "command error")
-                mock_proc.returncode = 1
+                mock_result.ok = False
+                mock_result.returncode = 1
+                mock_result.stdout = ""
+                mock_result.stderr = "command error"
+                mock_result.timed_out = False
+                mock_result.stdout_tail.return_value = ""
+                mock_result.stderr_tail.return_value = "command error"
             else:
-                mock_proc.communicate.return_value = ("ok", "")
-                mock_proc.returncode = 0
-            return mock_proc
+                mock_result.ok = True
+                mock_result.returncode = 0
+                mock_result.stdout = "ok"
+                mock_result.stderr = ""
+                mock_result.timed_out = False
+                mock_result.stdout_tail.return_value = "ok"
+                mock_result.stderr_tail.return_value = ""
+            return mock_result
 
-        with patch(
-            "src.infra.tools.command_runner.subprocess.Popen",
-            side_effect=mock_popen_calls,
-        ):
-            env = runner._build_spec_env(context, "test-run")
-            with pytest.raises(CommandFailure) as exc_info:
-                runner._run_commands(spec, tmp_path, env, tmp_path, None)
+        mock_command_runner = MagicMock()
+        mock_command_runner.run.side_effect = mock_run
 
-            # Verify the exception contains the right data
-            assert len(exc_info.value.steps) == 2
-            assert exc_info.value.steps[0].ok is True
-            assert exc_info.value.steps[1].ok is False
-            assert "fail2 failed" in exc_info.value.reason
+        env = runner._build_spec_env(context, "test-run")
+        with pytest.raises(CommandFailure) as exc_info:
+            runner._run_commands(spec, tmp_path, env, tmp_path, mock_command_runner)
+
+        # Verify the exception contains the right data
+        assert len(exc_info.value.steps) == 2
+        assert exc_info.value.steps[0].ok is True
+        assert exc_info.value.steps[1].ok is False
+        assert "fail2 failed" in exc_info.value.reason
 
     def test_run_spec_allow_fail_continues(
         self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path

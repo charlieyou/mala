@@ -27,7 +27,15 @@ import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Protocol,
+    TypeVar,
+    cast,
+    runtime_checkable,
+)
 
 from src.infra.hooks import (
     FileReadCache,
@@ -65,6 +73,7 @@ if TYPE_CHECKING:
     from src.domain.lifecycle import (
         GateOutcome,
         RetryState,
+        ReviewIssue,
         ReviewOutcome,
         TransitionResult,
     )
@@ -527,7 +536,7 @@ def _emit_review_result_events(
         )
 
 
-def _count_blocking_issues(issues: list[ReviewIssueProtocol] | None) -> int:
+def _count_blocking_issues(issues: list[ReviewIssue] | None) -> int:
     """Count issues with priority <= 1 (P0 or P1).
 
     Args:

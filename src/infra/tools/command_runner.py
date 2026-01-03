@@ -26,6 +26,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from src.core.protocols import CommandRunnerPort
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
@@ -112,7 +114,7 @@ class CommandResult:
         return _tail(self.stderr, max_chars=max_chars, max_lines=max_lines)
 
 
-class CommandRunner:
+class CommandRunner(CommandRunnerPort):
     """Runs commands with standardized timeout and process-group handling.
 
     This class provides both sync and async execution methods with:
@@ -294,6 +296,7 @@ class CommandRunner:
         timeout: float | None = None,
         use_process_group: bool | None = None,
         shell: bool = False,
+        cwd: Path | None = None,
     ) -> CommandResult:
         """Run a command asynchronously.
 
@@ -315,11 +318,13 @@ class CommandRunner:
                 as False).
             shell: If True, run command through shell (cmd should be a string).
                 Defaults to False for backwards compatibility.
+            cwd: Override working directory for this command. If None, uses self.cwd.
 
         Returns:
             CommandResult with execution details.
         """
         effective_timeout = timeout if timeout is not None else self.timeout_seconds
+        effective_cwd = cwd if cwd is not None else self.cwd
         merged_env = self._merge_env(env)
 
         # Use process group on Unix for proper child termination (default behavior)
@@ -340,7 +345,7 @@ class CommandRunner:
                     cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    cwd=self.cwd,
+                    cwd=effective_cwd,
                     env=merged_env,
                     start_new_session=effective_use_process_group,
                 )
@@ -352,7 +357,7 @@ class CommandRunner:
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    cwd=self.cwd,
+                    cwd=effective_cwd,
                     env=merged_env,
                     start_new_session=effective_use_process_group,
                 )

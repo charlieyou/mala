@@ -805,6 +805,7 @@ class CommandResultProtocol(Protocol):
     stdout: str
     stderr: str
     timed_out: bool
+    duration_seconds: float
 
     def stdout_tail(self, max_chars: int = 800, max_lines: int = 20) -> str:
         """Get truncated stdout.
