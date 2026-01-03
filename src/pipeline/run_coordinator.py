@@ -43,7 +43,6 @@ from src.domain.validation.spec import (
 )
 from src.domain.validation.tool_name_extractor import extract_lint_tools_from_spec
 from src.domain.validation.spec_runner import SpecValidationRunner
-from src.domain.prompts import get_fixer_prompt
 
 if TYPE_CHECKING:
     from src.infra.io.event_protocol import MalaEventSink
@@ -67,6 +66,7 @@ class RunCoordinatorConfig:
         max_gate_retries: Maximum gate retry attempts.
         disable_validations: Set of validation names to disable.
         coverage_threshold: Optional coverage threshold override.
+        fixer_prompt: Template for the fixer agent prompt.
     """
 
     repo_path: Path
@@ -74,6 +74,7 @@ class RunCoordinatorConfig:
     max_gate_retries: int = 3
     disable_validations: set[str] | None = None
     coverage_threshold: float | None = None
+    fixer_prompt: str = ""
 
 
 @dataclass
@@ -377,7 +378,7 @@ class RunCoordinator:
         agent_id = f"fixer-{uuid.uuid4().hex[:8]}"
         self._active_fixer_ids.append(agent_id)
 
-        prompt = get_fixer_prompt().format(
+        prompt = self.config.fixer_prompt.format(
             attempt=attempt,
             max_attempts=self.config.max_gate_retries,
             failure_output=failure_output,

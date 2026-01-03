@@ -41,6 +41,7 @@ from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
 )
+from src.domain.prompts import get_fixer_prompt
 
 if TYPE_CHECKING:
     import asyncio
@@ -134,6 +135,7 @@ def build_run_coordinator(deps: WiringDependencies) -> RunCoordinator:
         max_gate_retries=deps.max_gate_retries,
         disable_validations=deps.disabled_validations,
         coverage_threshold=deps.coverage_threshold,
+        fixer_prompt=get_fixer_prompt(),
     )
     return RunCoordinator(
         config=config,
