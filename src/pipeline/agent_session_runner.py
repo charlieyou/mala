@@ -1134,19 +1134,9 @@ class AgentSessionRunner:
 
         # Emit gate passed events when first entering review
         # (review_attempt == 1 means gate just passed)
-        if (
-            lifecycle_ctx.retry_state.review_attempt == 1
-            and self.event_sink is not None
-        ):
-            self.event_sink.on_gate_passed(
-                input.issue_id,
-                issue_id=input.issue_id,
-            )
-            self.event_sink.on_validation_result(
-                input.issue_id,
-                passed=True,
-                issue_id=input.issue_id,
-            )
+        self._emit_gate_passed_events(
+            input.issue_id, lifecycle_ctx.retry_state.review_attempt
+        )
 
         # Check no-progress before running review
         if (
@@ -1323,6 +1313,24 @@ class AgentSessionRunner:
             cerberus_log_path=cerberus_review_log_path,
             transition_result=result,
         )
+
+    def _emit_gate_passed_events(self, issue_id: str, review_attempt: int) -> None:
+        """Emit gate passed events when first entering review.
+
+        Args:
+            issue_id: The issue identifier.
+            review_attempt: Current review attempt number.
+        """
+        if review_attempt == 1 and self.event_sink is not None:
+            self.event_sink.on_gate_passed(
+                issue_id,
+                issue_id=issue_id,
+            )
+            self.event_sink.on_validation_result(
+                issue_id,
+                passed=True,
+                issue_id=issue_id,
+            )
 
     async def _apply_retry_backoff(self, retry_count: int) -> None:
         """Apply backoff delay before an idle retry attempt.
