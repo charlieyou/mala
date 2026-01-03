@@ -516,63 +516,31 @@ def run(
     # Construct config from environment (orchestrator uses this for API keys and feature flags)
     config = _lazy("MalaConfig").from_env(validate=False)
 
-    # Apply CLI overrides to config (frozen dataclass requires replace)
-    from dataclasses import replace
+    # Build CLI overrides and resolve configuration
+    try:
+        from src.infra.io.config import CLIOverrides, build_resolved_config
 
-    if review_timeout is not None:
-        config = replace(config, review_timeout=review_timeout)
-
-    if cerberus_spawn_args is not None:
-        try:
-            from src.infra.io.config import parse_cerberus_args
-
-            spawn_args = tuple(
-                parse_cerberus_args(cerberus_spawn_args, source="--cerberus-spawn-args")
-            )
-        except ValueError as exc:
-            log("✗", str(exc), Colors.RED)
-            raise typer.Exit(1)
-        config = replace(config, cerberus_spawn_args=spawn_args)
-
-    if cerberus_wait_args is not None:
-        try:
-            from src.infra.io.config import parse_cerberus_args
-
-            wait_args = tuple(
-                parse_cerberus_args(cerberus_wait_args, source="--cerberus-wait-args")
-            )
-        except ValueError as exc:
-            log("✗", str(exc), Colors.RED)
-            raise typer.Exit(1)
-        config = replace(config, cerberus_wait_args=wait_args)
-
-    if cerberus_env is not None:
-        try:
-            from src.infra.io.config import _normalize_cerberus_env, parse_cerberus_env
-
-            env_map = parse_cerberus_env(cerberus_env, source="--cerberus-env")
-            config = replace(config, cerberus_env=_normalize_cerberus_env(env_map))
-        except ValueError as exc:
-            log("✗", str(exc), Colors.RED)
-            raise typer.Exit(1)
-
-    # Apply max_epic_verification_retries override if set
-    if max_epic_verification_retries is not None:
-        config = replace(
-            config, max_epic_verification_retries=max_epic_verification_retries
+        cli_overrides = CLIOverrides(
+            cerberus_spawn_args=cerberus_spawn_args,
+            cerberus_wait_args=cerberus_wait_args,
+            cerberus_env=cerberus_env,
+            review_timeout=review_timeout,
+            max_epic_verification_retries=max_epic_verification_retries,
+            no_morph=no_morph,
+            no_braintrust=not _braintrust_enabled,
+            disable_review="review" in (disable_set or set()),
         )
+        resolved = build_resolved_config(config, cli_overrides)
+    except ValueError as exc:
+        log("✗", str(exc), Colors.RED)
+        raise typer.Exit(1)
 
     # Record effective values for logging/metadata
-    cli_args["review_timeout"] = config.review_timeout
-    cli_args["cerberus_spawn_args"] = list(config.cerberus_spawn_args)
-    cli_args["cerberus_wait_args"] = list(config.cerberus_wait_args)
-    cli_args["cerberus_env"] = dict(config.cerberus_env)
-    cli_args["max_epic_verification_retries"] = config.max_epic_verification_retries
-
-    # Determine morph_enabled: disabled if --no-morph flag set, otherwise use config default
-    morph_enabled = (
-        False if no_morph else None
-    )  # None lets orchestrator use config default
+    cli_args["review_timeout"] = resolved.review_timeout
+    cli_args["cerberus_spawn_args"] = list(resolved.cerberus_spawn_args)
+    cli_args["cerberus_wait_args"] = list(resolved.cerberus_wait_args)
+    cli_args["cerberus_env"] = dict(resolved.cerberus_env)
+    cli_args["max_epic_verification_retries"] = resolved.max_epic_verification_retries
 
     # Build OrchestratorConfig for factory
     orch_config = _lazy("OrchestratorConfig")(
@@ -582,12 +550,12 @@ def run(
         max_issues=max_issues,
         epic_id=epic,
         only_ids=only_ids,
-        braintrust_enabled=_braintrust_enabled,
+        braintrust_enabled=resolved.braintrust_enabled,
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         disable_validations=disable_set,
         coverage_threshold=coverage_threshold,
-        morph_enabled=morph_enabled,
+        morph_enabled=resolved.morph_enabled,
         prioritize_wip=wip,
         focus=focus,
         cli_args=cli_args,
@@ -595,8 +563,18 @@ def run(
         orphans_only=orphans_only,
     )
 
-    # Use factory to create orchestrator
-    orchestrator = _lazy("create_orchestrator")(orch_config, mala_config=config)
+    # Use factory to create orchestrator - pass resolved config values via updated MalaConfig
+    from dataclasses import replace
+
+    updated_config = replace(
+        config,
+        review_timeout=resolved.review_timeout,
+        cerberus_spawn_args=resolved.cerberus_spawn_args,
+        cerberus_wait_args=resolved.cerberus_wait_args,
+        cerberus_env=resolved.cerberus_env,
+        max_epic_verification_retries=resolved.max_epic_verification_retries,
+    )
+    orchestrator = _lazy("create_orchestrator")(orch_config, mala_config=updated_config)
 
     success_count, total = asyncio.run(orchestrator.run())
     # Exit 0 if: no issues to process (no-op) OR at least one succeeded

@@ -465,7 +465,7 @@ class MalaConfig:
 
 @dataclass(frozen=True)
 class CLIOverrides:
-    """Raw CLI override values that need parsing before use.
+    """CLI override values that modify MalaConfig.
 
     This represents the raw string values from CLI arguments that will be
     parsed and merged with MalaConfig to produce a ResolvedConfig.
@@ -478,6 +478,7 @@ class CLIOverrides:
         max_epic_verification_retries: Override for max epic verification retries.
         no_morph: Whether --no-morph flag was passed.
         no_braintrust: Whether --no-braintrust flag was passed.
+        disable_review: Whether 'review' is in --disable-validations.
     """
 
     cerberus_spawn_args: str | None = None
@@ -487,6 +488,7 @@ class CLIOverrides:
     max_epic_verification_retries: int | None = None
     no_morph: bool = False
     no_braintrust: bool = False
+    disable_review: bool = False
 
 
 @dataclass(frozen=True)
@@ -621,6 +623,7 @@ def build_resolved_config(
     # Determine if features are enabled after CLI overrides
     morph_enabled = base_config.morph_enabled and not overrides.no_morph
     braintrust_enabled = base_config.braintrust_enabled and not overrides.no_braintrust
+    review_enabled = base_config.review_enabled and not overrides.disable_review
 
     # Compute disabled reasons
     morph_disabled_reason: str | None = None
@@ -628,7 +631,7 @@ def build_resolved_config(
         if overrides.no_morph:
             morph_disabled_reason = "--no-morph"
         elif not base_config.morph_api_key:
-            morph_disabled_reason = "MORPH_API_KEY not set"
+            morph_disabled_reason = f"add MORPH_API_KEY to {USER_CONFIG_DIR}/.env"
         else:
             morph_disabled_reason = "disabled by config"
 
@@ -651,7 +654,7 @@ def build_resolved_config(
         morph_api_key=base_config.morph_api_key,
         braintrust_enabled=braintrust_enabled,
         morph_enabled=morph_enabled,
-        review_enabled=base_config.review_enabled,
+        review_enabled=review_enabled,
         review_timeout=review_timeout,
         cerberus_bin_path=base_config.cerberus_bin_path,
         cerberus_spawn_args=spawn_args,
