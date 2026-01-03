@@ -171,55 +171,75 @@ class WaitForGraph:
     def detect_cycle(self) -> list[str] | None:
         """Detect a deadlock cycle in the wait-for graph.
 
-        Uses DFS from each waiting agent to find circular dependencies.
-        A cycle exists when following waits -> holds edges leads back to
-        a previously visited agent.
+        Uses single-pass DFS with three-color marking to achieve O(n) time
+        complexity where n is the number of waiting agents. Each agent is
+        fully processed at most once across all DFS starts.
+
+        Colors:
+        - WHITE (not in any set): unvisited
+        - GRAY (in path): currently being explored in this DFS path
+        - BLACK (in safe): fully explored, proven not to lead to a cycle
 
         Returns:
             List of agent IDs in the cycle if found, None otherwise.
             The cycle is returned in order of discovery (first agent
             is where the cycle was detected).
         """
+        safe: set[str] = set()  # BLACK: agents proven not in any cycle
+
         for start_agent in self._waits:
-            cycle = self._find_cycle_from(start_agent)
+            if start_agent in safe:
+                continue
+
+            cycle = self._find_cycle_from(start_agent, safe)
             if cycle:
                 return cycle
         return None
 
-    def _find_cycle_from(self, start_agent: str) -> list[str] | None:
+    def _find_cycle_from(self, start_agent: str, safe: set[str]) -> list[str] | None:
         """DFS from a single agent to find a cycle.
+
+        Updates the safe set with agents proven not to lead to a cycle.
 
         Args:
             start_agent: Agent to start searching from.
+            safe: Set of agents already proven not to lead to a cycle.
 
         Returns:
             Cycle path if found, None otherwise.
         """
-        visited: set[str] = set()
         path: list[str] = []
+        path_set: set[str] = set()  # GRAY: agents in current path
 
         current = start_agent
-        while current not in visited:
-            visited.add(current)
-            path.append(current)
+        while True:
+            if current in safe:
+                # Reached a node proven safe, entire path is safe
+                safe.update(path_set)
+                return None
+
+            if current in path_set:
+                # Found a cycle - extract it from the path
+                cycle_start_idx = path.index(current)
+                return path[cycle_start_idx:]
 
             # What lock is this agent waiting for?
             lock_waiting = self._waits.get(current)
             if lock_waiting is None:
-                # Agent not waiting for anything, no cycle through here
+                # Agent not waiting for anything, path is safe
+                safe.update(path_set)
                 return None
 
             # Who holds that lock?
             holder = self._holds.get(lock_waiting)
             if holder is None:
-                # Lock not held, no cycle
+                # Lock not held, path is safe
+                safe.update(path_set)
                 return None
 
+            path.append(current)
+            path_set.add(current)
             current = holder
-
-        # Found a cycle - extract it from the path
-        cycle_start_idx = path.index(current)
-        return path[cycle_start_idx:]
 
 
 class DeadlockMonitor:
