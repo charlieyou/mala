@@ -185,7 +185,7 @@ class ValidationSpec:
         Returns:
             Frozenset of lint tool names. Empty frozenset if no lint commands.
         """
-        from src.infra.hooks.tool_name_extractor import extract_tool_name
+        from src.core.tool_name_extractor import extract_tool_name
 
         lint_tools: set[str] = set()
         for cmd in self.commands:
@@ -457,7 +457,7 @@ def _build_commands_from_config(config: CommandsConfig) -> list[ValidationComman
     Returns:
         List of ValidationCommand instances.
     """
-    from src.infra.hooks.tool_name_extractor import extract_tool_name
+    from src.core.tool_name_extractor import extract_tool_name
 
     commands: list[ValidationCommand] = []
     cmds = config

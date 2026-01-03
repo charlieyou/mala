@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
+from src.core.tool_name_extractor import extract_tool_name
+
 from .validation.spec import (
     CommandKind,
     IssueResolution,
@@ -25,7 +27,6 @@ from .validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
-from src.infra.hooks.tool_name_extractor import extract_tool_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

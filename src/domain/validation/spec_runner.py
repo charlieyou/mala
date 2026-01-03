@@ -32,8 +32,12 @@ from .validation_gating import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort, LockManagerPort
-    from src.infra.io.event_protocol import MalaEventSink
+    from src.core.protocols import (
+        CommandRunnerPort,
+        EnvConfigPort,
+        LockManagerPort,
+        MalaEventSink,
+    )
 
     from .result import ValidationStepResult
     from .spec import (

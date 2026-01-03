@@ -27,8 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort
-    from src.infra.io.event_protocol import MalaEventSink  # Protocol, not impl
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort, MalaEventSink
 
     from .spec import ValidationCommand
 

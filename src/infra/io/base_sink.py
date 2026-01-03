@@ -6,7 +6,7 @@ methods, and NullEventSink for testing.
 
 from typing import Any
 
-from .event_protocol import EventRunConfig, MalaEventSink
+from src.core.protocols import EventRunConfig, MalaEventSink
 
 
 class BaseEventSink:

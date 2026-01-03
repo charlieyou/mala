@@ -7,8 +7,8 @@ using the log helpers from log_output/console.py.
 import re
 from typing import Any
 
+from src.core.protocols import EventRunConfig, MalaEventSink
 from src.infra.io.base_sink import BaseEventSink
-from src.infra.io.event_protocol import EventRunConfig, MalaEventSink
 from src.infra.io.log_output.console import (
     Colors,
     log,
