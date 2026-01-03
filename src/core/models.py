@@ -107,7 +107,6 @@ class EpicVerificationResult:
         verified_count: Number of epics verified.
         passed_count: Number that passed verification.
         failed_count: Number that failed verification.
-        human_review_count: Number flagged for human review.
         verdicts: Mapping of epic_id to its verdict.
         remediation_issues_created: Issue IDs created for remediation.
     """
@@ -115,7 +114,6 @@ class EpicVerificationResult:
     verified_count: int
     passed_count: int
     failed_count: int
-    human_review_count: int
     verdicts: dict[str, EpicVerdict]
     remediation_issues_created: list[str]
 

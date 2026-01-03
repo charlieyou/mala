@@ -3235,7 +3235,6 @@ class TestEpicClosureAfterChildCompletion:
                 verified_count=1,
                 passed_count=1,  # Simulates epic was verified and closed
                 failed_count=0,
-                human_review_count=0,
                 verdicts={},
                 remediation_issues_created=[],
             )
@@ -3415,7 +3414,6 @@ class TestEpicClosureAfterChildCompletion:
                 verified_count=1,
                 passed_count=1,
                 failed_count=0,
-                human_review_count=0,
                 verdicts={},
                 remediation_issues_created=[],
             )
@@ -3525,7 +3523,6 @@ class TestEpicClosureAfterChildCompletion:
                 verified_count=1,
                 passed_count=1,
                 failed_count=0,
-                human_review_count=0,
                 verdicts={},
                 remediation_issues_created=[],
             )

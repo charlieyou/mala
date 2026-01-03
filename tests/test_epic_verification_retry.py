@@ -56,7 +56,6 @@ def mock_epic_verifier() -> MagicMock:
             verified_count=1,
             passed_count=1,
             failed_count=0,
-            human_review_count=0,
             verdicts={
                 "epic-1": EpicVerdict(
                     passed=True,
@@ -164,7 +163,6 @@ class TestEpicVerificationRetryLoop:
                     verified_count=1,
                     passed_count=0,
                     failed_count=1,
-                    human_review_count=0,
                     verdicts={},
                     remediation_issues_created=["rem-1", "rem-2"],
                 ),
@@ -172,7 +170,6 @@ class TestEpicVerificationRetryLoop:
                     verified_count=1,
                     passed_count=1,
                     failed_count=0,
-                    human_review_count=0,
                     verdicts={},
                     remediation_issues_created=[],
                 ),
@@ -220,7 +217,6 @@ class TestEpicVerificationRetryLoop:
                 verified_count=1,
                 passed_count=0,
                 failed_count=1,
-                human_review_count=0,
                 verdicts={},
                 remediation_issues_created=["rem-1"],
             )
@@ -270,7 +266,6 @@ class TestEpicVerificationRetryLoop:
                 verified_count=1,
                 passed_count=0,
                 failed_count=1,
-                human_review_count=0,
                 verdicts={},
                 remediation_issues_created=[],  # No remediation issues
             )
@@ -510,7 +505,6 @@ class TestEpicNotEligible:
                 verified_count=0,  # Epic not eligible - children still open
                 passed_count=0,
                 failed_count=0,
-                human_review_count=0,
                 verdicts={},
                 remediation_issues_created=[],
             )

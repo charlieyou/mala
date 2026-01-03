@@ -3,7 +3,6 @@
 Tests the EpicVerifier class and ClaudeEpicVerificationModel including:
 - Spec path extraction from descriptions
 - Remediation issue creation with deduplication
-- Human review issue creation
 - Lock usage for sequential epic processing
 """
 
@@ -578,7 +577,6 @@ class TestVerifyAndCloseEligible:
         result = await verifier.verify_and_close_eligible()
 
         # Low confidence no longer triggers human review - just passes/closes
-        assert result.human_review_count == 0
         assert result.passed_count == 1
         mock_beads.close_async.assert_called_with("epic-1")
 
@@ -1080,7 +1078,6 @@ class TestModelErrorHandling:
         result = await verifier.verify_and_close_eligible()
 
         # Model error results in passed=False verdict, which triggers failure
-        assert result.human_review_count == 0
         assert result.failed_count == 1
         mock_beads.close_async.assert_not_called()
 

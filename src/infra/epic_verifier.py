@@ -437,7 +437,6 @@ class EpicVerifier:
         verified_count = 0
         passed_count = 0
         failed_count = 0
-        human_review_count = 0
 
         for epic_id in eligible_epics:
             is_override = epic_id in human_override_epic_ids
@@ -453,13 +452,11 @@ class EpicVerifier:
             verified_count += result.verified_count
             passed_count += result.passed_count
             failed_count += result.failed_count
-            human_review_count += result.human_review_count
 
         return EpicVerificationResult(
             verified_count=verified_count,
             passed_count=passed_count,
             failed_count=failed_count,
-            human_review_count=human_review_count,
             verdicts=all_verdicts,
             remediation_issues_created=all_remediation_issues,
         )
@@ -672,7 +669,6 @@ class EpicVerifier:
         remediation_issues: list[str] = []
         passed_count = 0
         failed_count = 0
-        human_review_count = 0
         verified_count = 0
 
         if require_eligible and not await self._is_epic_eligible(epic_id):
@@ -680,7 +676,6 @@ class EpicVerifier:
                 verified_count=0,
                 passed_count=0,
                 failed_count=0,
-                human_review_count=0,
                 verdicts={},
                 remediation_issues_created=[],
             )
@@ -720,7 +715,6 @@ class EpicVerifier:
                 verified_count=verified_count,
                 passed_count=passed_count,
                 failed_count=failed_count,
-                human_review_count=human_review_count,
                 verdicts=verdicts,
                 remediation_issues_created=remediation_issues,
             )
@@ -733,7 +727,6 @@ class EpicVerifier:
                     verified_count=0,
                     passed_count=0,
                     failed_count=0,
-                    human_review_count=0,
                     verdicts={},
                     remediation_issues_created=[],
                 )
@@ -790,7 +783,6 @@ class EpicVerifier:
             verified_count=verified_count,
             passed_count=passed_count,
             failed_count=failed_count,
-            human_review_count=human_review_count,
             verdicts=verdicts,
             remediation_issues_created=remediation_issues,
         )
