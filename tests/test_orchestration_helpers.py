@@ -27,7 +27,12 @@ from src.orchestration.prompts import (
     get_implementer_prompt,
     get_review_followup_prompt,
 )
-from src.orchestration.review_tracking import create_review_tracking_issues
+from src.orchestration.review_tracking import (
+    _extract_existing_fingerprints,
+    _get_finding_fingerprint,
+    _update_header_count,
+    create_review_tracking_issues,
+)
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
 
 if TYPE_CHECKING:
@@ -317,6 +322,180 @@ class FakeEventSink:
         self.warnings.append(message)
 
 
+class TestGetFindingFingerprint:
+    """Test _get_finding_fingerprint function."""
+
+    def test_returns_hex_hash(self) -> None:
+        """Should return a 16-character hex hash."""
+        issue = FakeReviewIssue(
+            file="src/foo.py",
+            line_start=10,
+            line_end=20,
+            priority=2,
+            title="Test finding",
+            body="Body text",
+            reviewer="claude",
+        )
+        result = _get_finding_fingerprint(issue)
+        assert len(result) == 16
+        assert all(c in "0123456789abcdef" for c in result)
+
+    def test_same_input_same_hash(self) -> None:
+        """Same issue data should produce same fingerprint."""
+        issue1 = FakeReviewIssue(
+            file="src/foo.py",
+            line_start=10,
+            line_end=20,
+            priority=2,
+            title="Test finding",
+            body="Body text",
+            reviewer="claude",
+        )
+        issue2 = FakeReviewIssue(
+            file="src/foo.py",
+            line_start=10,
+            line_end=20,
+            priority=3,  # Different priority shouldn't affect fingerprint
+            title="Test finding",
+            body="Different body",  # Different body shouldn't affect fingerprint
+            reviewer="gemini",  # Different reviewer shouldn't affect fingerprint
+        )
+        assert _get_finding_fingerprint(issue1) == _get_finding_fingerprint(issue2)
+
+    def test_different_location_different_hash(self) -> None:
+        """Different file/line should produce different fingerprint."""
+        issue1 = FakeReviewIssue(
+            file="src/foo.py",
+            line_start=10,
+            line_end=20,
+            priority=2,
+            title="Test finding",
+            body="Body",
+            reviewer="claude",
+        )
+        issue2 = FakeReviewIssue(
+            file="src/bar.py",
+            line_start=10,
+            line_end=20,
+            priority=2,
+            title="Test finding",
+            body="Body",
+            reviewer="claude",
+        )
+        assert _get_finding_fingerprint(issue1) != _get_finding_fingerprint(issue2)
+
+    def test_handles_special_characters_in_title(self) -> None:
+        """Should handle special characters like --> in title."""
+        issue = FakeReviewIssue(
+            file="src/foo.py",
+            line_start=10,
+            line_end=20,
+            priority=2,
+            title="Code contains --> which could break regex",
+            body="Body",
+            reviewer="claude",
+        )
+        result = _get_finding_fingerprint(issue)
+        # Should still produce valid hex hash
+        assert len(result) == 16
+        assert all(c in "0123456789abcdef" for c in result)
+
+
+class TestExtractExistingFingerprints:
+    """Test _extract_existing_fingerprints function."""
+
+    def test_extracts_hex_fingerprints(self) -> None:
+        """Should extract hex fingerprints from HTML comments."""
+        description = """## Review Findings
+        
+Some content here.
+
+<!-- fp:abc123def456789a -->
+<!-- fp:1234567890abcdef -->
+"""
+        result = _extract_existing_fingerprints(description)
+        assert result == {"abc123def456789a", "1234567890abcdef"}
+
+    def test_empty_description(self) -> None:
+        """Should return empty set for description without fingerprints."""
+        result = _extract_existing_fingerprints("No fingerprints here")
+        assert result == set()
+
+    def test_ignores_non_hex_content(self) -> None:
+        """Should not match non-hex content in comments."""
+        description = """
+<!-- fp:abc123def456789a -->
+<!-- fp:file.py:10:20:title -->
+<!-- not a fingerprint -->
+"""
+        result = _extract_existing_fingerprints(description)
+        # Only the hex fingerprint should match
+        assert result == {"abc123def456789a"}
+
+    def test_ignores_arrow_in_content(self) -> None:
+        """Should not be confused by --> appearing in content."""
+        description = """
+Some text with --> arrows.
+<!-- fp:abc123def456789a -->
+More text with --> here.
+"""
+        result = _extract_existing_fingerprints(description)
+        assert result == {"abc123def456789a"}
+
+
+class TestUpdateHeaderCount:
+    """Test _update_header_count function."""
+
+    def test_updates_plural_count(self) -> None:
+        """Should update count in header with plural form."""
+        description = (
+            "This issue consolidates 5 non-blocking findings from code review."
+        )
+        result = _update_header_count(description, 7)
+        assert (
+            result
+            == "This issue consolidates 7 non-blocking findings from code review."
+        )
+
+    def test_updates_singular_count(self) -> None:
+        """Should handle singular form correctly."""
+        description = (
+            "This issue consolidates 5 non-blocking findings from code review."
+        )
+        result = _update_header_count(description, 1)
+        assert (
+            result == "This issue consolidates 1 non-blocking finding from code review."
+        )
+
+    def test_singular_to_plural(self) -> None:
+        """Should convert from singular to plural."""
+        description = "This issue consolidates 1 non-blocking finding from code review."
+        result = _update_header_count(description, 3)
+        assert (
+            result
+            == "This issue consolidates 3 non-blocking findings from code review."
+        )
+
+    def test_does_not_match_similar_text_in_body(self) -> None:
+        """Should not replace similar patterns in finding body."""
+        description = """This issue consolidates 2 non-blocking findings from code review.
+
+### Finding 1: Found 3 non-blocking findings in this file
+
+This finding reports that there are 3 non-blocking findings elsewhere.
+"""
+        result = _update_header_count(description, 5)
+        # Only the header should change, not the body
+        assert "consolidates 5 non-blocking findings" in result
+        assert "Found 3 non-blocking findings in this file" in result
+
+    def test_no_match_returns_unchanged(self) -> None:
+        """Should return unchanged if pattern not found."""
+        description = "No matching pattern here."
+        result = _update_header_count(description, 5)
+        assert result == description
+
+
 class TestCreateReviewTrackingIssues:
     """Test create_review_tracking_issues function."""
 
@@ -421,9 +600,11 @@ class TestCreateReviewTrackingIssues:
         # Pre-populate existing tracking issue for this source
         import hashlib
 
-        # Content-based dedup tag embedded in description
-        fingerprint = "src/foo.py:10:10:Consider refactoring"
-        content_hash = hashlib.sha256(fingerprint.encode()).hexdigest()[:12]
+        # Content-based dedup tag - fingerprints are now hex hashes
+        content = "src/foo.py:10:10:Consider refactoring"
+        individual_fp = hashlib.sha256(content.encode()).hexdigest()[:16]
+        # Batch dedup uses sorted individual fingerprints
+        content_hash = hashlib.sha256(individual_fp.encode()).hexdigest()[:12]
         dedup_tag = f"review_finding:{content_hash}"
 
         beads.existing_tags["source:bd-test-3"] = "existing-issue-1"

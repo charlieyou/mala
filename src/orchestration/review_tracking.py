@@ -16,8 +16,12 @@ if TYPE_CHECKING:
 
 
 def _get_finding_fingerprint(issue: ReviewIssueProtocol) -> str:
-    """Generate a unique fingerprint for a single finding."""
-    return f"{issue.file}:{issue.line_start}:{issue.line_end}:{issue.title}"
+    """Generate a unique fingerprint for a single finding.
+
+    Returns a hex hash to ensure safe regex matching (no special characters).
+    """
+    content = f"{issue.file}:{issue.line_start}:{issue.line_end}:{issue.title}"
+    return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
 def _build_findings_section(
@@ -75,21 +79,24 @@ def _build_findings_section(
 def _extract_existing_fingerprints(description: str) -> set[str]:
     """Extract individual finding fingerprints from existing description.
 
-    Fingerprints are stored as HTML comments: <!-- fp:file:line_start:line_end:title -->
+    Fingerprints are stored as HTML comments: <!-- fp:hex_hash -->
+    We use a hex hash to avoid issues with special characters in titles.
     """
-    pattern = r"<!-- fp:(.+?) -->"
+    # Match hex hashes only (safe pattern that won't be confused by content)
+    pattern = r"<!-- fp:([a-f0-9]+) -->"
     return set(re.findall(pattern, description))
 
 
 def _update_header_count(description: str, new_count: int) -> str:
     """Update the finding count in the description header using regex.
 
-    Handles both singular and plural forms.
+    Handles both singular and plural forms. Targets the specific header pattern
+    to avoid matching similar text in finding bodies.
     """
     plural_s = "s" if new_count != 1 else ""
-    # Match "N non-blocking finding" or "N non-blocking findings"
-    pattern = r"\d+ non-blocking findings?"
-    replacement = f"{new_count} non-blocking finding{plural_s}"
+    # Match specifically "consolidates N non-blocking finding(s)" to avoid false matches
+    pattern = r"consolidates \d+ non-blocking findings?"
+    replacement = f"consolidates {new_count} non-blocking finding{plural_s}"
     return re.sub(pattern, replacement, description)
 
 
@@ -204,11 +211,16 @@ async def create_review_tracking_issues(
             return
 
         # Update title and priority (Finding 3)
-        await beads.update_issue_async(
+        title_update_success = await beads.update_issue_async(
             existing_id,
             title=new_title,
             priority=f"P{final_highest}",
         )
+        if not title_update_success:
+            event_sink.on_warning(
+                f"Failed to update title/priority for tracking issue {existing_id}",
+                agent_id=source_issue_id,
+            )
 
         event_sink.on_warning(
             f"Appended {len(unique_issues)} finding{'s' if len(unique_issues) > 1 else ''} to tracking issue {existing_id}",
