@@ -162,6 +162,8 @@ class MalaOrchestrator:
         self.cli_args = orch_config.cli_args
         self.epic_override_ids = orch_config.epic_override_ids or set()
         self.review_disabled_reason = derived.review_disabled_reason
+        self.morph_disabled_reason = derived.morph_disabled_reason
+        self.braintrust_disabled_reason = derived.braintrust_disabled_reason
         self._init_runtime_state()
         self.log_provider = log_provider
         self.quality_gate = gate_checker
@@ -723,7 +725,8 @@ class MalaOrchestrator:
             prioritize_wip=self.prioritize_wip,
             orphans_only=self.orphans_only,
             cli_args=self.cli_args,
-            mala_config=self._mala_config,
+            morph_disabled_reason=self.morph_disabled_reason,
+            braintrust_disabled_reason=self.braintrust_disabled_reason,
         )
         self.event_sink.on_run_started(run_config)
 

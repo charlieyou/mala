@@ -16,7 +16,6 @@ import pytest
 
 from src.domain.quality_gate import GateResult, ValidationEvidence
 from src.domain.validation.spec import CommandKind
-from src.infra.io.config import MalaConfig
 from src.orchestration.gate_metadata import (
     GateMetadata,
     build_gate_metadata,
@@ -746,13 +745,6 @@ class TestBuildEventRunConfig:
 
     def test_basic_config(self, tmp_path: Path) -> None:
         """Should build basic EventRunConfig."""
-        mala_config = MalaConfig(
-            runs_dir=tmp_path / "runs",
-            lock_dir=tmp_path / "locks",
-            claude_config_dir=tmp_path / ".claude",
-            morph_api_key="test-key",
-        )
-
         config = build_event_run_config(
             repo_path=tmp_path,
             max_agents=4,
@@ -769,7 +761,8 @@ class TestBuildEventRunConfig:
             prioritize_wip=False,
             orphans_only=False,
             cli_args={"verbose": True},
-            mala_config=mala_config,
+            morph_disabled_reason=None,
+            braintrust_disabled_reason=None,
         )
 
         assert config.repo_path == str(tmp_path)
@@ -788,13 +781,6 @@ class TestBuildEventRunConfig:
 
     def test_morph_disabled_no_key(self, tmp_path: Path) -> None:
         """Should set morph_disabled_reason when key missing."""
-        mala_config = MalaConfig(
-            runs_dir=tmp_path / "runs",
-            lock_dir=tmp_path / "locks",
-            claude_config_dir=tmp_path / ".claude",
-            morph_api_key=None,
-        )
-
         config = build_event_run_config(
             repo_path=tmp_path,
             max_agents=4,
@@ -811,7 +797,8 @@ class TestBuildEventRunConfig:
             prioritize_wip=False,
             orphans_only=False,
             cli_args=None,
-            mala_config=mala_config,
+            morph_disabled_reason="MORPH_API_KEY not set",
+            braintrust_disabled_reason=None,
         )
 
         assert config.morph_enabled is False
@@ -819,13 +806,6 @@ class TestBuildEventRunConfig:
 
     def test_morph_disabled_by_cli(self, tmp_path: Path) -> None:
         """Should set morph_disabled_reason when --no-morph used."""
-        mala_config = MalaConfig(
-            runs_dir=tmp_path / "runs",
-            lock_dir=tmp_path / "locks",
-            claude_config_dir=tmp_path / ".claude",
-            morph_api_key="test-key",
-        )
-
         config = build_event_run_config(
             repo_path=tmp_path,
             max_agents=4,
@@ -842,7 +822,8 @@ class TestBuildEventRunConfig:
             prioritize_wip=False,
             orphans_only=False,
             cli_args={"no_morph": True},
-            mala_config=mala_config,
+            morph_disabled_reason="--no-morph",
+            braintrust_disabled_reason=None,
         )
 
         assert config.morph_enabled is False

@@ -110,3 +110,5 @@ class _DerivedConfig:
     morph_enabled: bool
     disabled_validations: set[str]
     review_disabled_reason: str | None = None
+    morph_disabled_reason: str | None = None
+    braintrust_disabled_reason: str | None = None

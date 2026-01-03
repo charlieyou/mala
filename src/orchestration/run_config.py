@@ -9,14 +9,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.infra.mcp import MORPH_DISALLOWED_TOOLS
-from src.infra.tools.env import USER_CONFIG_DIR
 from src.infra.io.event_protocol import EventRunConfig
 from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from src.infra.io.config import MalaConfig
 
 
 def build_event_run_config(
@@ -35,7 +32,8 @@ def build_event_run_config(
     prioritize_wip: bool,
     orphans_only: bool,
     cli_args: dict[str, object] | None,
-    mala_config: MalaConfig,
+    morph_disabled_reason: str | None,
+    braintrust_disabled_reason: str | None,
 ) -> EventRunConfig:
     """Build EventRunConfig for on_run_started event.
 
@@ -55,26 +53,12 @@ def build_event_run_config(
         prioritize_wip: Whether to prioritize in-progress issues.
         orphans_only: Whether to only process issues without parent epic.
         cli_args: CLI arguments for logging.
-        mala_config: MalaConfig for API key checks.
+        morph_disabled_reason: Pre-computed reason morph is disabled (if any).
+        braintrust_disabled_reason: Pre-computed reason braintrust is disabled (if any).
 
     Returns:
         EventRunConfig for the run.
     """
-    # Compute morph disabled reason
-    morph_disabled_reason: str | None = None
-    if not morph_enabled:
-        if cli_args and cli_args.get("no_morph"):
-            morph_disabled_reason = "--no-morph"
-        elif not mala_config.morph_api_key:
-            morph_disabled_reason = "MORPH_API_KEY not set"
-        else:
-            morph_disabled_reason = "disabled by config"
-
-    # Compute braintrust disabled reason
-    braintrust_disabled_reason: str | None = None
-    if not braintrust_enabled:
-        braintrust_disabled_reason = f"add BRAINTRUST_API_KEY to {USER_CONFIG_DIR}/.env"
-
     return EventRunConfig(
         repo_path=str(repo_path),
         max_agents=max_agents,
