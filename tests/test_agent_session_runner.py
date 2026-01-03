@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any, Self, cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -2495,6 +2495,195 @@ class TestBuildSessionOutput:
         assert output.low_priority_review_issues is not None
         assert len(output.low_priority_review_issues) == 1
         assert output.low_priority_review_issues[0].title == "Minor style issue"
+
+
+class TestEmitReviewResultEvents:
+    """Unit tests for _emit_review_result_events helper.
+
+    Tests the isolated event emission logic extracted from _handle_review_effect.
+    """
+
+    @pytest.fixture
+    def fake_sink(self) -> FakeEventSink:
+        """Create a fake event sink for testing."""
+        return FakeEventSink()
+
+    @pytest.fixture
+    def input_data(self) -> AgentSessionInput:
+        """Create test input."""
+        return AgentSessionInput(issue_id="test-123", prompt="Test")
+
+    @pytest.mark.unit
+    def test_complete_success_emits_review_passed(
+        self, fake_sink: FakeEventSink, input_data: AgentSessionInput
+    ) -> None:
+        """COMPLETE_SUCCESS should emit on_review_passed event."""
+        from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
+        from src.infra.clients.cerberus_review import ReviewResult
+        from src.pipeline.agent_session_runner import _emit_review_result_events
+
+        result = TransitionResult(
+            state=LifecycleState.RUNNING_REVIEW, effect=Effect.COMPLETE_SUCCESS
+        )
+        review_result = ReviewResult(passed=True, issues=[], parse_error=None)
+        lifecycle_ctx = MagicMock()
+        lifecycle_ctx.retry_state.review_attempt = 1
+
+        _emit_review_result_events(
+            fake_sink,  # type: ignore[arg-type]
+            input_data,
+            result,
+            review_result,
+            lifecycle_ctx,
+            max_review_retries=3,
+        )
+
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_review_passed" in event_names
+        review_passed = next(e for e in fake_sink.events if e[0] == "on_review_passed")
+        assert review_passed[1][0] == "test-123"
+
+    @pytest.mark.unit
+    def test_run_review_emits_warning(
+        self, fake_sink: FakeEventSink, input_data: AgentSessionInput
+    ) -> None:
+        """RUN_REVIEW (parse error) should emit on_warning event."""
+        from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
+        from src.infra.clients.cerberus_review import ReviewResult
+        from src.pipeline.agent_session_runner import _emit_review_result_events
+
+        result = TransitionResult(
+            state=LifecycleState.RUNNING_REVIEW, effect=Effect.RUN_REVIEW
+        )
+        review_result = ReviewResult(
+            passed=False, issues=[], parse_error="JSON decode error"
+        )
+        lifecycle_ctx = MagicMock()
+        lifecycle_ctx.retry_state.review_attempt = 1
+
+        _emit_review_result_events(
+            fake_sink,  # type: ignore[arg-type]
+            input_data,
+            result,
+            review_result,
+            lifecycle_ctx,
+            max_review_retries=3,
+        )
+
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_warning" in event_names
+        warning = next(e for e in fake_sink.events if e[0] == "on_warning")
+        assert "JSON decode error" in warning[1][0]
+
+    @pytest.mark.unit
+    def test_send_review_retry_emits_retry_event(
+        self, fake_sink: FakeEventSink, input_data: AgentSessionInput
+    ) -> None:
+        """SEND_REVIEW_RETRY should emit on_review_retry with blocking count."""
+        from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
+        from src.infra.clients.cerberus_review import ReviewIssue, ReviewResult
+        from src.pipeline.agent_session_runner import _emit_review_result_events
+
+        result = TransitionResult(
+            state=LifecycleState.RUNNING_REVIEW, effect=Effect.SEND_REVIEW_RETRY
+        )
+        # 2 blocking issues (priority 0 and 1), 1 non-blocking (priority 2)
+        review_result = ReviewResult(
+            passed=False,
+            issues=[
+                ReviewIssue(
+                    title="Critical",
+                    body="desc",
+                    reviewer="test",
+                    file="f.py",
+                    line_start=1,
+                    line_end=1,
+                    priority=0,
+                ),
+                ReviewIssue(
+                    title="Blocking",
+                    body="desc",
+                    reviewer="test",
+                    file="f.py",
+                    line_start=2,
+                    line_end=2,
+                    priority=1,
+                ),
+                ReviewIssue(
+                    title="Minor",
+                    body="desc",
+                    reviewer="test",
+                    file="f.py",
+                    line_start=3,
+                    line_end=3,
+                    priority=2,
+                ),
+            ],
+            parse_error=None,
+        )
+        lifecycle_ctx = MagicMock()
+        lifecycle_ctx.retry_state.review_attempt = 2
+
+        _emit_review_result_events(
+            fake_sink,  # type: ignore[arg-type]
+            input_data,
+            result,
+            review_result,
+            lifecycle_ctx,
+            max_review_retries=3,
+        )
+
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_review_retry" in event_names
+        retry_event = next(e for e in fake_sink.events if e[0] == "on_review_retry")
+        assert retry_event[1][0] == "test-123"  # agent_id
+        assert retry_event[1][1] == 2  # attempt
+        assert retry_event[1][2] == 3  # max_attempts
+        assert retry_event[2]["error_count"] == 2  # 2 blocking issues
+
+    @pytest.mark.unit
+    def test_no_events_when_sink_is_none(self, input_data: AgentSessionInput) -> None:
+        """Should not raise when event_sink is None."""
+        from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
+        from src.infra.clients.cerberus_review import ReviewResult
+        from src.pipeline.agent_session_runner import _emit_review_result_events
+
+        result = TransitionResult(
+            state=LifecycleState.RUNNING_REVIEW, effect=Effect.COMPLETE_SUCCESS
+        )
+        review_result = ReviewResult(passed=True, issues=[], parse_error=None)
+        lifecycle_ctx = MagicMock()
+
+        # Should not raise
+        _emit_review_result_events(
+            None, input_data, result, review_result, lifecycle_ctx, 3
+        )
+
+    @pytest.mark.unit
+    def test_complete_failure_emits_no_events(
+        self, fake_sink: FakeEventSink, input_data: AgentSessionInput
+    ) -> None:
+        """COMPLETE_FAILURE should not emit any events."""
+        from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
+        from src.infra.clients.cerberus_review import ReviewResult
+        from src.pipeline.agent_session_runner import _emit_review_result_events
+
+        result = TransitionResult(
+            state=LifecycleState.RUNNING_REVIEW, effect=Effect.COMPLETE_FAILURE
+        )
+        review_result = ReviewResult(passed=False, issues=[], parse_error=None)
+        lifecycle_ctx = MagicMock()
+
+        _emit_review_result_events(
+            fake_sink,  # type: ignore[arg-type]
+            input_data,
+            result,
+            review_result,
+            lifecycle_ctx,
+            max_review_retries=3,
+        )
+
+        assert len(fake_sink.events) == 0
 
 
 class TestHandleGateCheck:

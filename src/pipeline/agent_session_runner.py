@@ -434,6 +434,66 @@ class ReviewEffectResult:
     """Lifecycle transition result, None only for no-progress early exit."""
 
 
+def _emit_review_result_events(
+    event_sink: MalaEventSink | None,
+    input: AgentSessionInput,
+    result: TransitionResult,
+    review_result: ReviewOutcome,
+    lifecycle_ctx: LifecycleContext,
+    max_review_retries: int,
+) -> None:
+    """Emit events based on review result transition.
+
+    Handles event emission for:
+    - COMPLETE_SUCCESS: on_review_passed
+    - RUN_REVIEW (parse error): on_warning
+    - SEND_REVIEW_RETRY: on_review_retry with blocking_count
+    """
+    if event_sink is None:
+        return
+
+    if result.effect == Effect.COMPLETE_SUCCESS:
+        event_sink.on_review_passed(
+            input.issue_id,
+            issue_id=input.issue_id,
+        )
+        return
+
+    if result.effect == Effect.RUN_REVIEW:
+        event_sink.on_warning(
+            f"Review tool error: {review_result.parse_error}; retrying",
+            agent_id=input.issue_id,
+        )
+        return
+
+    if result.effect == Effect.SEND_REVIEW_RETRY:
+        blocking_count = (
+            sum(
+                1
+                for i in review_result.issues
+                if i.priority is not None and i.priority <= 1
+            )
+            if review_result.issues
+            else 0
+        )
+        logger.debug(
+            "Session %s: SEND_REVIEW_RETRY triggered "
+            "(attempt %d/%d, %d blocking issues)",
+            input.issue_id,
+            lifecycle_ctx.retry_state.review_attempt,
+            max_review_retries,
+            blocking_count,
+        )
+        event_sink.on_review_retry(
+            input.issue_id,
+            lifecycle_ctx.retry_state.review_attempt,
+            max_review_retries,
+            error_count=blocking_count or None,
+            parse_error=review_result.parse_error,
+            issue_id=input.issue_id,
+        )
+
+
 @dataclass
 class AgentSessionRunner:
     """Runs agent sessions with lifecycle management.
@@ -1179,12 +1239,17 @@ class AgentSessionRunner:
 
         result = lifecycle.on_review_result(lifecycle_ctx, review_result, new_offset)
 
+        # Emit appropriate events based on transition result
+        _emit_review_result_events(
+            self.event_sink,
+            input,
+            result,
+            review_result,
+            lifecycle_ctx,
+            self.config.max_review_retries,
+        )
+
         if result.effect == Effect.COMPLETE_SUCCESS:
-            if self.event_sink is not None:
-                self.event_sink.on_review_passed(
-                    input.issue_id,
-                    issue_id=input.issue_id,
-                )
             return ReviewEffectResult(
                 pending_query=None,
                 should_break=True,
@@ -1203,11 +1268,6 @@ class AgentSessionRunner:
         # parse_error retry: lifecycle returns RUN_REVIEW to re-run
         # review without prompting agent (no code changes needed)
         if result.effect == Effect.RUN_REVIEW:
-            if self.event_sink is not None:
-                self.event_sink.on_warning(
-                    f"Review tool error: {review_result.parse_error}; retrying",
-                    agent_id=input.issue_id,
-                )
             return ReviewEffectResult(
                 pending_query=None,
                 should_break=False,
@@ -1216,36 +1276,6 @@ class AgentSessionRunner:
             )  # continue (re-run review)
 
         if result.effect == Effect.SEND_REVIEW_RETRY:
-            # Log review retry trigger
-            blocking_count = (
-                sum(
-                    1
-                    for i in review_result.issues
-                    if i.priority is not None and i.priority <= 1
-                )
-                if review_result.issues
-                else 0
-            )
-            logger.debug(
-                "Session %s: SEND_REVIEW_RETRY triggered "
-                "(attempt %d/%d, %d blocking issues)",
-                input.issue_id,
-                lifecycle_ctx.retry_state.review_attempt,
-                self.config.max_review_retries,
-                blocking_count,
-            )
-
-            # Emit review retry event
-            if self.event_sink is not None:
-                self.event_sink.on_review_retry(
-                    input.issue_id,
-                    lifecycle_ctx.retry_state.review_attempt,
-                    self.config.max_review_retries,
-                    error_count=blocking_count or None,
-                    parse_error=review_result.parse_error,
-                    issue_id=input.issue_id,
-                )
-
             # Build follow-up prompt for legitimate review issues
             from src.infra.clients.cerberus_review import format_review_issues
 
