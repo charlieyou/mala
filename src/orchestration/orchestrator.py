@@ -643,15 +643,16 @@ class MalaOrchestrator:
             review_log_path=self.review_log_paths.get(issue_id),
         )
 
+        # Track failed issues before finalize to ensure they're recorded
+        # even if finalize raises (e.g., mark_needs_followup callback fails)
+        if not result.success:
+            self.failed_issues.add(issue_id)
+
         # Delegate to finalizer
         await self.issue_finalizer.finalize(finalize_input)
 
         # Update tracking state (active_tasks is updated by mark_completed in finalize_callback)
         self.completed.append(result)
-
-        # Track failed issues
-        if not result.success:
-            self.failed_issues.add(issue_id)
 
         # Cleanup session paths
         self._cleanup_session_paths(issue_id)
