@@ -146,9 +146,11 @@ lock-wait.sh utils.py 900 1000  # Wait up to 900s, poll every 1000ms
 
 ### 5. Self-Review
 Verify before committing:
-- Does the code satisfy ALL requirements from the issue?
-- Are edge cases handled?
-- Does the code follow existing project patterns?
+- [ ] Requirements from issue satisfied
+- [ ] Edge cases handled
+- [ ] Code follows existing project patterns
+- [ ] Lint/format/type checks run and passing
+- [ ] Tests run (or justified reason to skip)
 
 If issues found, fix them and re-run quality checks.
 

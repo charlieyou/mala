@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 # Tools replaced by MorphLLM MCP (use disallowed_tools parameter, not hooks)
 MORPH_DISALLOWED_TOOLS: list[str] = ["Edit", "Grep"]
 
+# Tools disabled for mala agents to reduce token waste
+MALA_DISALLOWED_TOOLS: list[str] = ["TodoWrite"]
+
 
 def get_mcp_servers(
     repo_path: Path, morph_api_key: str | None = None, morph_enabled: bool = True
@@ -63,4 +66,7 @@ def get_disallowed_tools(morph_enabled: bool) -> list[str]:
     Returns:
         List of tool names that should be disallowed. Empty if Morph is disabled.
     """
-    return list(MORPH_DISALLOWED_TOOLS) if morph_enabled else []
+    tools = list(MALA_DISALLOWED_TOOLS)  # Always disable mala-specific tools
+    if morph_enabled:
+        tools.extend(MORPH_DISALLOWED_TOOLS)
+    return tools

@@ -385,8 +385,12 @@ class TestMorphEnabledGating:
         )
 
         assert orchestrator.morph_enabled is False
-        # When morph is disabled, built-in tools should be allowed
-        assert get_disallowed_tools(orchestrator.morph_enabled) == []
+        # When morph is disabled, only mala-specific tools should be disallowed
+        # (not Morph-replaced tools like Edit/Grep)
+        disallowed = get_disallowed_tools(orchestrator.morph_enabled)
+        assert "Edit" not in disallowed
+        assert "Grep" not in disallowed
+        assert "TodoWrite" in disallowed  # Always disabled for mala agents
 
     def test_edit_blocked_when_morph_enabled(self) -> None:
         """Edit should be blocked when morph_enabled=True (normal case)."""
