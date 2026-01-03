@@ -276,7 +276,7 @@ Key modules:
 - `epic_verifier.py` — AI-powered epic acceptance verification
 - `issue_manager.py` — Issue filtering, sorting, dependency resolution
 - `telemetry.py` — Span abstraction (pure protocol)
-- `mcp.py` — MCP server configuration for MorphLLM tooling
+- `mcp.py` — MCP server configuration and disallowed tools
 
 ### `src/pipeline` — Agent Execution
 
@@ -342,7 +342,7 @@ Developer-facing shell scripts bundled with the package. Not part of the core ru
 
 - `AgentSessionRunner` (`src/pipeline/agent_session_runner.py`)
   - Wraps Claude SDK session lifecycle with streaming and idle-timeout recovery.
-  - Uses tool hooks for locking, dangerous command blocking, lint cache, and morph tool enforcement.
+  - Uses tool hooks for locking, dangerous command blocking, and lint cache.
   - Key methods:
     - `run_session()`: main session runner; streams SDK responses, drives lifecycle.
     - `_build_hooks()`: configures PreToolUse hooks (locking, lint cache, safety).
@@ -476,13 +476,7 @@ Clean-room validation in isolated git worktrees:
 /tmp/mala-worktrees/{run_id}/{issue_id}/{attempt}/
 ```
 
-### 9) MCP Tooling (Optional)
-
-When MorphLLM is enabled (`MORPH_API_KEY` set):
-- Agents route editing/search through MorphLLM MCP (`infra.mcp`)
-- Built-in Edit/Grep tools are disabled to enforce lock-aware MCP operations
-
-### 10) Telemetry
+### 9) Telemetry
 
 Agent sessions emit spans through a `TelemetryProvider` abstraction:
 - Protocol defined in `infra.telemetry`

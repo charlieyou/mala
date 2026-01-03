@@ -104,7 +104,6 @@ markers = [
     "unit: fast, isolated tests (default)",
     "integration: tests that exercise multiple components or real tools locally",
     "e2e: end-to-end tests that require real CLI/API auth",
-    "morph: marks tests requiring MORPH_API_KEY",
 ]
 
 [dependency-groups]

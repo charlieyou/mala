@@ -659,7 +659,7 @@ class TestRepoNamespaceIntegration:
         result = run_lock_script("lock-try.sh", ["config.py"], env, cwd=str(repo_path))
         assert result.returncode == 0, f"Lock failed: {result.stderr}"
 
-        # Python hook receives absolute path (like MorphLLM MCP does)
+        # Python hook receives absolute path
         absolute_path = str(repo_path / "config.py")
 
         # Python should find the same lock (with namespace)

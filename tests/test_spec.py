@@ -160,11 +160,11 @@ class TestE2EConfig:
             enabled=True,
             fixture_root=Path("/tmp/fixtures"),
             command=["mala", "run"],
-            required_env=["MORPH_API_KEY"],
+            required_env=["ANTHROPIC_API_KEY"],
         )
         assert config.fixture_root == Path("/tmp/fixtures")
         assert config.command == ["mala", "run"]
-        assert config.required_env == ["MORPH_API_KEY"]
+        assert config.required_env == ["ANTHROPIC_API_KEY"]
 
 
 class TestValidationArtifacts:

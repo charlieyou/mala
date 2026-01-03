@@ -103,7 +103,6 @@ class E2EConfig:
     Attributes:
         enabled: Whether E2E is enabled.
         skip_if_no_keys: Deprecated, kept for backward compatibility.
-            MORPH_API_KEY is no longer a hard prereq for E2E validation.
         keep_fixture: Keep fixture repo after completion (for debugging).
         timeout_seconds: Timeout for the mala run command (default 300s/5min).
         max_agents: Maximum agents for the mala run.
@@ -149,11 +148,6 @@ class E2ERunner:
 
         Returns:
             E2EPrereqResult with details about missing prerequisites.
-
-        Note:
-            MORPH_API_KEY is NOT checked here - it's not a hard prerequisite
-            for E2E validation. Morph-specific tests will skip when the key
-            is missing, but the overall E2E validation can still run.
         """
         import os
 
@@ -184,10 +178,6 @@ class E2ERunner:
             )
         elif not (cerberus_bin / "review-gate").exists():
             missing.append(f"review-gate binary not found at {cerberus_bin}")
-
-        # Note: MORPH_API_KEY is intentionally NOT checked here.
-        # E2E validation should not fail just because the key is missing.
-        # Morph-specific tests will skip when the key is absent.
 
         if missing:
             return E2EPrereqResult(ok=False, missing=missing, can_skip=False)

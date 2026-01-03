@@ -84,14 +84,6 @@ def test_quiet_summary_file_tools() -> None:
     summary = console._get_quiet_summary("Read", "", {"file_path": "/path/to/file.py"})
     assert summary == "/path/to/file.py"
 
-    # Edit tool with path (Morph edit)
-    summary = console._get_quiet_summary(
-        "mcp__morphllm__edit_file",
-        "",
-        {"path": "/path/to/edited.py", "code_edit": "..."},
-    )
-    assert summary == "/path/to/edited.py"
-
     # Glob with pattern
     summary = console._get_quiet_summary("Glob", "", {"pattern": "**/*.py"})
     assert summary == "**/*.py"

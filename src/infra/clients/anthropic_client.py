@@ -3,7 +3,6 @@
 This module provides a centralized way to create Anthropic clients with:
 - Consistent configuration from MalaConfig (api_key, base_url)
 - Automatic Braintrust wrapping for observability when available
-- MorphLLM routing when base_url is configured
 
 Usage:
     from src.infra.clients.anthropic_client import create_anthropic_client
@@ -38,7 +37,7 @@ def create_anthropic_client(
     """Create an Anthropic client with consistent configuration and tracing.
 
     This factory function centralizes Anthropic client creation to ensure:
-    1. Configuration is applied consistently (api_key, base_url for MorphLLM)
+    1. Configuration is applied consistently (api_key, base_url)
     2. Braintrust tracing is automatically enabled when available
     3. Error handling and telemetry work uniformly across components
 
@@ -46,7 +45,7 @@ def create_anthropic_client(
         api_key: Anthropic API key. If not provided, the client will use
             the ANTHROPIC_API_KEY environment variable.
         base_url: Optional base URL for API requests. Use this to route
-            requests through MorphLLM or other proxies.
+            requests through proxies.
         timeout: Optional timeout in seconds for API requests.
 
     Returns:
@@ -65,7 +64,7 @@ def create_anthropic_client(
         # With explicit configuration
         client = create_anthropic_client(
             api_key="sk-...",
-            base_url="https://morph.example.com/v1",
+            base_url="https://proxy.example.com/v1",
             timeout=60.0,
         )
 

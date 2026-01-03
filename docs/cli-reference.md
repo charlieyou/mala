@@ -23,7 +23,6 @@
 | `--focus/--no-focus` | focus | Group tasks by epic for focused work; `--no-focus` uses priority-only ordering |
 | `--dry-run` | false | Preview task order without processing |
 | `--verbose`, `-v` | false | Enable verbose output; shows full tool arguments |
-| `--no-morph` | false | Disable MorphLLM routing; use built-in tools directly |
 | `--epic-override` | - | Comma-separated epic IDs to close without verification (human bypass) |
 
 ### Disable Validation Flags
@@ -44,7 +43,7 @@ mala uses a global config directory at `~/.config/mala/`:
 
 ```
 ~/.config/mala/
-├── .env          # API keys (ANTHROPIC_API_KEY, MORPH_API_KEY, BRAINTRUST_API_KEY)
+├── .env          # API keys (ANTHROPIC_API_KEY, BRAINTRUST_API_KEY)
 └── logs/         # JSONL session logs
 ```
 
@@ -84,31 +83,6 @@ To enable Braintrust tracing for agent sessions, add your API key to the global 
 
 ```bash
 echo "BRAINTRUST_API_KEY=your-key" >> ~/.config/mala/.env
-```
-
-## MorphLLM MCP (Optional)
-
-MorphLLM MCP provides enhanced editing and search tools (`edit_file`, `warpgrep_codebase_search`)
-for agents. It is **optional** and enabled when `MORPH_API_KEY` is present.
-
-**When enabled** (MORPH_API_KEY set and `--no-morph` not specified):
-- MCP server is launched via `npx -y @morphllm/morphmcp`
-- Agents use MCP tools (prefixed as `mcp__morphllm__*`)
-- Built-in `Edit` and `Grep` tools are blocked to enforce MCP usage
-
-**When disabled** (MORPH_API_KEY not set or `--no-morph` flag used):
-- No MCP server is configured
-- Agents use built-in `Edit` and `Grep` tools (both lock-enforced)
-- Startup logs show "morph: disabled"
-
-To enable MorphLLM:
-```bash
-echo "MORPH_API_KEY=your-key" >> ~/.config/mala/.env
-```
-
-To temporarily disable MorphLLM (useful for debugging or cost control):
-```bash
-mala run --no-morph /path/to/repo
 ```
 
 ## Logs

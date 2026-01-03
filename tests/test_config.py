@@ -83,7 +83,6 @@ class TestMalaConfigFromEnv:
         monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
         monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
         monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
-        monkeypatch.delenv("MORPH_API_KEY", raising=False)
 
         config = MalaConfig.from_env()
 

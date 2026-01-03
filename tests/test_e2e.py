@@ -42,13 +42,13 @@ class TestE2EPrereqResult:
     def test_failed_result_with_missing(self) -> None:
         result = E2EPrereqResult(
             ok=False,
-            missing=["mala CLI not found", "MORPH_API_KEY not set"],
+            missing=["mala CLI not found", "bd CLI not found"],
         )
         assert result.ok is False
         reason = result.failure_reason()
         assert reason is not None
         assert "mala CLI not found" in reason
-        assert "MORPH_API_KEY not set" in reason
+        assert "bd CLI not found" in reason
 
     def test_failed_result_empty_missing(self) -> None:
         result = E2EPrereqResult(ok=False, missing=[])
@@ -56,7 +56,7 @@ class TestE2EPrereqResult:
 
     def test_can_skip_flag(self) -> None:
         result = E2EPrereqResult(
-            ok=False, missing=["MORPH_API_KEY not set"], can_skip=True
+            ok=False, missing=["optional prereq missing"], can_skip=True
         )
         assert result.can_skip is True
 
@@ -85,12 +85,12 @@ class TestE2EResult:
         result = E2EResult(
             passed=True,  # Skipped counts as "not failed"
             status=E2EStatus.SKIPPED,
-            failure_reason="MORPH_API_KEY not set",
+            failure_reason="optional prereq missing",
         )
         assert result.passed is True
         assert result.status == E2EStatus.SKIPPED
         assert "skipped" in result.short_summary()
-        assert "MORPH_API_KEY" in result.short_summary()
+        assert "optional prereq" in result.short_summary()
 
     def test_failed_no_reason(self) -> None:
         result = E2EResult(passed=False, status=E2EStatus.FAILED)
@@ -167,7 +167,6 @@ class TestE2ERunnerRun:
             (tmp_path / "fixture").mkdir()
             (tmp_path / "fixture" / "tests").mkdir()
 
-            # Run WITHOUT MORPH_API_KEY - should still work
             result = runner.run(env={}, cwd=tmp_path)
             assert result.passed is True
             assert result.status == E2EStatus.PASSED
@@ -573,7 +572,6 @@ class TestCheckE2EPrereqsLegacy:
 
     def test_returns_none_when_ok(self) -> None:
         with patch("shutil.which", return_value="/usr/bin/fake"):
-            # MORPH_API_KEY is not required for prereqs to pass
             result = check_e2e_prereqs({})
             assert result is None
 

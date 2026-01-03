@@ -70,7 +70,6 @@ EDIT_TOOLS = frozenset(
         "Edit",
         "Write",
         "NotebookEdit",
-        "mcp__morphllm__edit_file",
     }
 )
 
@@ -82,7 +81,6 @@ FILE_TOOLS = frozenset(
         "NotebookEdit",
         "Read",
         "Glob",
-        "mcp__morphllm__edit_file",
     }
 )
 
