@@ -13,7 +13,7 @@ Usage:
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -281,8 +281,6 @@ def _apply_config_overrides(
     Raises:
         typer.Exit: If any override parsing fails.
     """
-    from dataclasses import replace
-
     from src.infra.io.config import CLIOverrides, build_resolved_config
 
     cli_overrides = CLIOverrides(
