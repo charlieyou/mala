@@ -93,6 +93,7 @@ class TestBuildContinuationPrompt:
 
     def test_formats_checkpoint_into_template(self) -> None:
         """build_continuation_prompt inserts checkpoint into template."""
+        template = "Continue from checkpoint:\n{checkpoint}\n\nEnd continuation."
         checkpoint = """<checkpoint>
 ## Goal
 Complete the feature implementation.
@@ -100,28 +101,28 @@ Complete the feature implementation.
 ## Completed Work
 - Added main.py:10 function
 </checkpoint>"""
-        result = build_continuation_prompt(checkpoint)
+        result = build_continuation_prompt(template, checkpoint)
         assert checkpoint in result
         assert "{checkpoint}" not in result
         assert "continuation" in result.lower()
 
     def test_handles_curly_braces_in_checkpoint(self) -> None:
         """build_continuation_prompt handles curly braces in checkpoint text."""
+        template = "Checkpoint: {checkpoint}"
         checkpoint = """## Code snippet
 ```python
 data = {"key": "value", "nested": {}}
 ```"""
-        result = build_continuation_prompt(checkpoint)
+        result = build_continuation_prompt(template, checkpoint)
         assert checkpoint in result
         assert "{checkpoint}" not in result
         # Verify the braces are preserved exactly
         assert '{"key": "value"' in result
 
-    def test_uses_custom_prompt_dir(self, tmp_path: Path) -> None:
-        """build_continuation_prompt uses custom prompt_dir when provided."""
-        prompt_file = tmp_path / "continuation.md"
-        prompt_file.write_text("Custom template: {checkpoint}")
-        result = build_continuation_prompt("test content", prompt_dir=tmp_path)
+    def test_replaces_placeholder_in_template(self) -> None:
+        """build_continuation_prompt replaces {checkpoint} with content."""
+        template = "Custom template: {checkpoint}"
+        result = build_continuation_prompt(template, "test content")
         assert result == "Custom template: test content"
 
 

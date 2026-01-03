@@ -155,22 +155,19 @@ def extract_checkpoint(text: str) -> str:
     return text
 
 
-def build_continuation_prompt(
-    checkpoint_text: str, prompt_dir: Path | None = None
-) -> str:
+def build_continuation_prompt(continuation_template: str, checkpoint_text: str) -> str:
     """Build a continuation prompt with checkpoint context.
 
     Args:
+        continuation_template: The continuation prompt template from PromptProvider.
         checkpoint_text: The checkpoint block from the previous session.
-        prompt_dir: Directory containing prompt files. Defaults to src/prompts.
 
     Returns:
         Formatted continuation prompt with checkpoint embedded.
     """
-    template = load_prompt("continuation", prompt_dir)
     # Use str.replace instead of str.format to avoid KeyError if checkpoint
     # contains curly braces (e.g., JSON or code snippets)
-    return template.replace("{checkpoint}", checkpoint_text)
+    return continuation_template.replace("{checkpoint}", checkpoint_text)
 
 
 def build_prompt_validation_commands(repo_path: Path) -> PromptValidationCommands:
