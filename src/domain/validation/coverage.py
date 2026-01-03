@@ -33,6 +33,30 @@ if TYPE_CHECKING:
     from .spec import ValidationSpec
 
 
+def _infer_coverage_base_command(original_cmd: list[str]) -> list[str]:
+    """Infer the coverage base command from the original coverage command.
+
+    Determines whether to use 'coverage', 'uv run coverage', or 'python -m coverage'
+    based on how the original command invoked pytest.
+
+    Args:
+        original_cmd: The original coverage command (e.g., ['uv', 'run', 'pytest', ...])
+
+    Returns:
+        Base command for running coverage subcommands like 'combine' or 'xml'.
+    """
+    if len(original_cmd) >= 3 and original_cmd[0] == "uv" and original_cmd[1] == "run":
+        return ["uv", "run", "coverage"]
+    elif (
+        len(original_cmd) >= 3
+        and original_cmd[1] == "-m"
+        and original_cmd[2] == "pytest"
+    ):
+        return [original_cmd[0], "-m", "coverage"]
+    else:
+        return ["coverage"]
+
+
 class CoverageStatus(Enum):
     """Status of coverage parsing/validation."""
 
@@ -710,6 +734,83 @@ class BaselineCoverageService:
             # Release lock through the abstraction
             lock_mgr.release_lock(_BASELINE_LOCK_FILE, agent_id, repo_namespace)
 
+    def _run_coverage_with_fallback(
+        self,
+        runner: CommandRunnerPort,
+        coverage_cmd: list[str],
+        coverage_file: Path,
+        worktree_path: Path,
+        env: dict[str, str],
+    ) -> Path | str:
+        """Run coverage command and fallback to combine if XML not generated.
+
+        Args:
+            runner: Command runner for executing coverage commands.
+            coverage_cmd: The rewritten coverage command to run.
+            coverage_file: Path to expected coverage XML file (relative to worktree).
+            worktree_path: Path to the worktree directory.
+            env: Environment variables for command execution.
+
+        Returns:
+            Path to coverage XML on success, or error string on failure.
+        """
+        # Run coverage command - we ignore the exit code because tests may fail
+        # but still generate a valid coverage.xml baseline
+        coverage_result = runner.run(coverage_cmd, env=env, cwd=worktree_path)
+
+        worktree_coverage = worktree_path / coverage_file
+        if worktree_coverage.exists():
+            return worktree_coverage
+
+        # Fallback: combine coverage data if coverage command didn't emit XML
+        coverage_data = [
+            path
+            for path in worktree_path.glob(".coverage*")
+            if path.is_file() and not path.name.endswith(".xml")
+        ]
+
+        combine_result = None
+        xml_result = None
+
+        if coverage_data:
+            coverage_base = _infer_coverage_base_command(coverage_cmd)
+
+            combine_result = runner.run(
+                [*coverage_base, "combine"],
+                env=env,
+                cwd=worktree_path,
+            )
+            if combine_result.returncode == 0:
+                xml_result = runner.run(
+                    [*coverage_base, "xml", "-o", str(worktree_coverage)],
+                    env=env,
+                    cwd=worktree_path,
+                )
+
+        if worktree_coverage.exists():
+            return worktree_coverage
+
+        # Build detailed error message
+        details: list[str] = []
+        if coverage_result.timed_out:
+            details.append("coverage command timed out")
+        elif coverage_result.returncode != 0:
+            details.append(f"coverage command exited {coverage_result.returncode}")
+        cmd_tail = coverage_result.stderr_tail() or coverage_result.stdout_tail()
+        if cmd_tail:
+            details.append(f"command output: {cmd_tail}")
+        if combine_result is not None and combine_result.returncode != 0:
+            combine_tail = combine_result.stderr_tail() or combine_result.stdout_tail()
+            if combine_tail:
+                details.append(f"coverage combine failed: {combine_tail}")
+        if xml_result is not None and xml_result.returncode != 0:
+            xml_tail = xml_result.stderr_tail() or xml_result.stdout_tail()
+            if xml_tail:
+                details.append(f"coverage xml failed: {xml_tail}")
+
+        detail_msg = f" ({'; '.join(details)})" if details else ""
+        return f"No {coverage_file} generated during baseline refresh" + detail_msg
+
     def _run_refresh(
         self,
         spec: ValidationSpec,
@@ -773,98 +874,20 @@ class BaselineCoverageService:
                 # - Remove fail-under threshold
                 # - Normalize marker expression (no e2e)
                 # - Set output path for XML coverage
-                coverage_file = self.coverage_config.file
-                new_coverage_cmd = rewrite_coverage_command(
-                    coverage_command, coverage_file
-                )
-
-                # Run coverage command - we ignore the exit code because tests may fail
-                # but still generate a valid coverage.xml baseline
-                coverage_result = runner.run(
-                    new_coverage_cmd, env=env, cwd=worktree_path
-                )
-
-                # Check for coverage file in worktree (use configured file path)
                 coverage_file = Path(self.coverage_config.file)
-                worktree_coverage = worktree_path / coverage_file
-                if not worktree_coverage.exists():
-                    # Fallback: combine coverage data if coverage command didn't emit XML
-                    coverage_data = [
-                        path
-                        for path in worktree_path.glob(".coverage*")
-                        if path.is_file() and not path.name.endswith(".xml")
-                    ]
+                new_coverage_cmd = rewrite_coverage_command(
+                    coverage_command, str(coverage_file)
+                )
 
-                    combine_result = None
-                    xml_result = None
+                # Run coverage with fallback to combine
+                result = self._run_coverage_with_fallback(
+                    runner, new_coverage_cmd, coverage_file, worktree_path, env
+                )
 
-                    if coverage_data:
-                        # Use the same invocation style as the coverage command when possible.
-                        if (
-                            len(new_coverage_cmd) >= 3
-                            and new_coverage_cmd[0] == "uv"
-                            and new_coverage_cmd[1] == "run"
-                        ):
-                            coverage_base = ["uv", "run", "coverage"]
-                        elif (
-                            len(new_coverage_cmd) >= 3
-                            and new_coverage_cmd[1] == "-m"
-                            and new_coverage_cmd[2] == "pytest"
-                        ):
-                            coverage_base = [new_coverage_cmd[0], "-m", "coverage"]
-                        else:
-                            coverage_base = ["coverage"]
+                if isinstance(result, str):
+                    return BaselineRefreshResult.fail(result)
 
-                        combine_result = runner.run(
-                            [*coverage_base, "combine"],
-                            env=env,
-                            cwd=worktree_path,
-                        )
-                        if combine_result.returncode == 0:
-                            xml_result = runner.run(
-                                [*coverage_base, "xml", "-o", str(worktree_coverage)],
-                                env=env,
-                                cwd=worktree_path,
-                            )
-
-                    if not worktree_coverage.exists():
-                        details: list[str] = []
-                        if coverage_result.timed_out:
-                            details.append("coverage command timed out")
-                        elif coverage_result.returncode != 0:
-                            details.append(
-                                f"coverage command exited {coverage_result.returncode}"
-                            )
-                        cmd_tail = (
-                            coverage_result.stderr_tail()
-                            or coverage_result.stdout_tail()
-                        )
-                        if cmd_tail:
-                            details.append(f"command output: {cmd_tail}")
-                        if (
-                            combine_result is not None
-                            and combine_result.returncode != 0
-                        ):
-                            combine_tail = (
-                                combine_result.stderr_tail()
-                                or combine_result.stdout_tail()
-                            )
-                            if combine_tail:
-                                details.append(
-                                    f"coverage combine failed: {combine_tail}"
-                                )
-                        if xml_result is not None and xml_result.returncode != 0:
-                            xml_tail = (
-                                xml_result.stderr_tail() or xml_result.stdout_tail()
-                            )
-                            if xml_tail:
-                                details.append(f"coverage xml failed: {xml_tail}")
-
-                        detail_msg = f" ({'; '.join(details)})" if details else ""
-                        return BaselineRefreshResult.fail(
-                            f"No {coverage_file} generated during baseline refresh"
-                            + detail_msg
-                        )
+                worktree_coverage = result
 
                 # Atomic rename to main repo
                 temp_coverage = baseline_path.with_suffix(".xml.tmp")
