@@ -10,7 +10,7 @@ from src.domain.validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
-from src.domain.validation.tool_name_extractor import extract_lint_tools_from_spec
+from src.infra.tool_name_extractor import extract_lint_tools_from_spec
 from src.domain.prompts import (
     build_prompt_validation_commands,
     format_implementer_prompt,
