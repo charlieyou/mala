@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from src.domain.deadlock import LockEventType
 from src.infra.hooks.deadlock import (
+    _extract_all_lock_paths,
     _extract_lock_path,
     _get_exit_code,
     make_lock_event_hook,
@@ -42,6 +43,7 @@ def make_context(agent_id: str = "test-agent") -> HookContext:
     return cast("HookContext", {"agent_id": agent_id})
 
 
+@pytest.mark.unit
 class TestExtractLockPath:
     """Tests for _extract_lock_path helper."""
 
@@ -82,7 +84,67 @@ class TestExtractLockPath:
         result = _extract_lock_path("cd /foo && lock-try.sh bar.py")
         assert result == ("try", "bar.py")
 
+    def test_trailing_shell_operators_not_captured(self) -> None:
+        """Shell operators after path should not be captured."""
+        result = _extract_lock_path("lock-try.sh file.py && echo done")
+        assert result == ("try", "file.py")
 
+        result = _extract_lock_path("lock-release.sh file.py || exit 1")
+        assert result == ("release", "file.py")
+
+        result = _extract_lock_path("lock-try.sh file.py; ls")
+        assert result == ("try", "file.py")
+
+    def test_quoted_paths_stripped(self) -> None:
+        """Shell quotes around paths should be stripped."""
+        result = _extract_lock_path('lock-try.sh "file.py"')
+        assert result == ("try", "file.py")
+
+        result = _extract_lock_path("lock-try.sh 'file.py'")
+        assert result == ("try", "file.py")
+
+        result = _extract_lock_path('lock-try.sh "/path/with spaces/file.py"')
+        assert result == ("try", "/path/with spaces/file.py")
+
+    def test_lock_wait_with_spaces_quoted(self) -> None:
+        """lock-wait.sh with quoted path containing spaces."""
+        result = _extract_lock_path('lock-wait.sh "/path/with spaces/file.py" 300')
+        assert result == ("wait", "/path/with spaces/file.py")
+
+
+@pytest.mark.unit
+class TestExtractAllLockPaths:
+    """Tests for _extract_all_lock_paths helper."""
+
+    def test_single_command(self) -> None:
+        """Extract single lock command."""
+        result = _extract_all_lock_paths("lock-try.sh /path/to/file.py")
+        assert result == [("try", "/path/to/file.py")]
+
+    def test_multiple_commands(self) -> None:
+        """Extract multiple lock commands from batched bash."""
+        cmd = "lock-try.sh a.py && lock-try.sh b.py && lock-try.sh c.py"
+        result = _extract_all_lock_paths(cmd)
+        assert result == [("try", "a.py"), ("try", "b.py"), ("try", "c.py")]
+
+    def test_mixed_command_types(self) -> None:
+        """Extract mixed lock command types."""
+        cmd = "lock-try.sh a.py && lock-release.sh b.py"
+        result = _extract_all_lock_paths(cmd)
+        assert result == [("try", "a.py"), ("release", "b.py")]
+
+    def test_multiline_commands(self) -> None:
+        """Extract commands from multiline bash."""
+        cmd = "lock-try.sh a.py\nlock-try.sh b.py"
+        result = _extract_all_lock_paths(cmd)
+        assert result == [("try", "a.py"), ("try", "b.py")]
+
+    def test_no_lock_commands(self) -> None:
+        """Return empty list for non-lock commands."""
+        assert _extract_all_lock_paths("ls -la") == []
+
+
+@pytest.mark.unit
 class TestGetExitCode:
     """Tests for _get_exit_code helper."""
 

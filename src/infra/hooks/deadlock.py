@@ -28,13 +28,49 @@ from src.infra.tools.locking import canonicalize_path
 logger = logging.getLogger(__name__)
 
 # Patterns for lock commands
-_LOCK_TRY_PATTERN = re.compile(r"lock-try\.sh\s+(.+)")
-_LOCK_WAIT_PATTERN = re.compile(r"lock-wait\.sh\s+(\S+)")
-_LOCK_RELEASE_PATTERN = re.compile(r"lock-release\.sh\s+(.+)")
+# Capture quoted paths (double or single) OR unquoted paths (stop at shell operators)
+# Unquoted: [^\s;&|]+ matches non-whitespace excluding shell operators ; & |
+_PATH_PATTERN = r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|[^\s;&|]+'
+_LOCK_TRY_PATTERN = re.compile(rf"lock-try\.sh\s+({_PATH_PATTERN})")
+_LOCK_WAIT_PATTERN = re.compile(rf"lock-wait\.sh\s+({_PATH_PATTERN})")
+_LOCK_RELEASE_PATTERN = re.compile(rf"lock-release\.sh\s+({_PATH_PATTERN})")
+
+
+def _strip_quotes(path: str) -> str:
+    """Remove surrounding shell quotes from a path."""
+    path = path.strip()
+    if len(path) >= 2:
+        if (path.startswith('"') and path.endswith('"')) or (
+            path.startswith("'") and path.endswith("'")
+        ):
+            return path[1:-1]
+    return path
+
+
+def _extract_all_lock_paths(command: str) -> list[tuple[str, str]]:
+    """Extract all lock commands from a bash command string.
+
+    Args:
+        command: The bash command string (may contain multiple commands).
+
+    Returns:
+        List of (command_type, file_path) tuples for each lock command found.
+        command_type is one of "try", "wait", "release".
+    """
+    results: list[tuple[str, str]] = []
+
+    for match in _LOCK_TRY_PATTERN.finditer(command):
+        results.append(("try", _strip_quotes(match.group(1))))
+    for match in _LOCK_WAIT_PATTERN.finditer(command):
+        results.append(("wait", _strip_quotes(match.group(1))))
+    for match in _LOCK_RELEASE_PATTERN.finditer(command):
+        results.append(("release", _strip_quotes(match.group(1))))
+
+    return results
 
 
 def _extract_lock_path(command: str) -> tuple[str, str] | None:
-    """Extract lock command type and file path from a bash command.
+    """Extract first lock command type and file path from a bash command.
 
     Args:
         command: The bash command string.
@@ -43,14 +79,8 @@ def _extract_lock_path(command: str) -> tuple[str, str] | None:
         Tuple of (command_type, file_path) if a lock command is found,
         None otherwise. command_type is one of "try", "wait", "release".
     """
-    # Try each pattern in order
-    if match := _LOCK_TRY_PATTERN.search(command):
-        return ("try", match.group(1).strip())
-    if match := _LOCK_WAIT_PATTERN.search(command):
-        return ("wait", match.group(1).strip())
-    if match := _LOCK_RELEASE_PATTERN.search(command):
-        return ("release", match.group(1).strip())
-    return None
+    results = _extract_all_lock_paths(command)
+    return results[0] if results else None
 
 
 def _get_exit_code(tool_result: str) -> int | None:
@@ -112,12 +142,10 @@ def make_lock_event_hook(
         if not command:
             return {}
 
-        # Check if this is a lock command
-        lock_info = _extract_lock_path(command)
-        if lock_info is None:
+        # Extract all lock commands from the bash call
+        lock_infos = _extract_all_lock_paths(command)
+        if not lock_infos:
             return {}
-
-        cmd_type, raw_path = lock_info
 
         # Get exit code from tool result
         tool_result = hook_input.get("tool_result", "")
@@ -130,51 +158,58 @@ def make_lock_event_hook(
         # Handle error exit codes (2 = script error)
         if exit_code == 2:
             logger.warning(
-                "Lock command error: %s (exit code 2), path=%s",
-                cmd_type,
-                raw_path,
+                "Lock command error (exit code 2), command=%s",
+                command,
             )
             return {}
 
-        # Canonicalize the path
-        try:
-            lock_path = canonicalize_path(raw_path, repo_namespace)
-        except Exception:
-            logger.warning("Failed to canonicalize lock path: %s", raw_path)
-            return {}
+        # Process each lock command found
+        # For batched commands with exit 0, all succeeded
+        # For single command, exit code determines event type
+        is_single_command = len(lock_infos) == 1
 
-        # Determine event type based on command and exit code
-        event_type: LockEventType | None = None
+        for cmd_type, raw_path in lock_infos:
+            # Canonicalize the path
+            try:
+                lock_path = canonicalize_path(raw_path, repo_namespace)
+            except Exception:
+                logger.warning("Failed to canonicalize lock path: %s", raw_path)
+                continue
 
-        if cmd_type == "try":
-            if exit_code == 0:
-                event_type = LockEventType.ACQUIRED
-            elif exit_code == 1:
-                event_type = LockEventType.WAITING
-        elif cmd_type == "wait":
-            if exit_code == 0:
-                event_type = LockEventType.ACQUIRED
-            # exit_code 1 means timeout - no event (agent will retry or abort)
-        elif cmd_type == "release":
-            if exit_code == 0:
-                event_type = LockEventType.RELEASED
+            # Determine event type based on command and exit code
+            event_type: LockEventType | None = None
 
-        if event_type is None:
-            return {}
+            if cmd_type == "try":
+                if exit_code == 0:
+                    event_type = LockEventType.ACQUIRED
+                elif exit_code == 1 and is_single_command:
+                    # Only emit WAITING for single-command case
+                    # (for batched, we can't tell which command had contention)
+                    event_type = LockEventType.WAITING
+            elif cmd_type == "wait":
+                if exit_code == 0:
+                    event_type = LockEventType.ACQUIRED
+                # exit_code 1 means timeout - no event (agent will retry or abort)
+            elif cmd_type == "release":
+                if exit_code == 0:
+                    event_type = LockEventType.RELEASED
 
-        # Create and emit the event
-        event = LockEvent(
-            event_type=event_type,
-            agent_id=agent_id,
-            lock_path=lock_path,
-            timestamp=time.time(),
-        )
+            if event_type is None:
+                continue
 
-        # Call emit_event (may be sync or async)
-        result = emit_event(event)
-        if result is not None:
-            # It's a coroutine, await it
-            await result
+            # Create and emit the event
+            event = LockEvent(
+                event_type=event_type,
+                agent_id=agent_id,
+                lock_path=lock_path,
+                timestamp=time.time(),
+            )
+
+            # Call emit_event (may be sync or async)
+            result = emit_event(event)
+            if result is not None:
+                # It's a coroutine, await it
+                await result
 
         return {}
 
