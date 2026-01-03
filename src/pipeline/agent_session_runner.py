@@ -1231,6 +1231,24 @@ class AgentSessionRunner:
 
         return None, False, cerberus_review_log_path, result
 
+    async def _apply_retry_backoff(self, retry_count: int) -> None:
+        """Apply backoff delay before an idle retry attempt.
+
+        Args:
+            retry_count: Current retry count (1-based).
+        """
+        if self.config.idle_retry_backoff:
+            backoff_idx = min(
+                retry_count - 1,
+                len(self.config.idle_retry_backoff) - 1,
+            )
+            backoff = self.config.idle_retry_backoff[backoff_idx]
+        else:
+            backoff = 0.0
+        if backoff > 0:
+            logger.info(f"Idle retry {retry_count}: waiting {backoff}s")
+            await asyncio.sleep(backoff)
+
     async def _run_message_iteration(
         self,
         query: str,
@@ -1279,19 +1297,7 @@ class AgentSessionRunner:
         while pending_query is not None:
             # Backoff before retry (not on first attempt)
             if state.idle_retry_count > 0:
-                if self.config.idle_retry_backoff:
-                    backoff_idx = min(
-                        state.idle_retry_count - 1,
-                        len(self.config.idle_retry_backoff) - 1,
-                    )
-                    backoff = self.config.idle_retry_backoff[backoff_idx]
-                else:
-                    backoff = 0.0
-                if backoff > 0:
-                    logger.info(
-                        f"Idle retry {state.idle_retry_count}: waiting {backoff}s"
-                    )
-                    await asyncio.sleep(backoff)
+                await self._apply_retry_backoff(state.idle_retry_count)
 
             # Create client for this attempt
             if self.sdk_client_factory is not None:
