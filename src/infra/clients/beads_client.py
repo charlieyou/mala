@@ -181,7 +181,7 @@ class BeadsClient:
         Returns:
             Tuple of (issues list, success flag). Returns ([], False) on error.
         """
-        result = await self._run_subprocess_async(["bd", "ready", "--json"])
+        result = await self._run_subprocess_async(["bd", "ready", "--json", "-t", "task"])
         if result.returncode != 0:
             self._log_warning(f"bd ready failed: {result.stderr}")
             return [], False

@@ -18,6 +18,7 @@ Implement the assigned issue completely before returning.
 6. **Know when to stop**: If blocked >15 min or no changes needed, return the appropriate ISSUE_* marker.
 7. **No git archaeology**: Don't use `git log`/`git blame` unless debugging regressions or non-obvious behavior.
 8. **No whole-file summaries**: Only describe specific functions/blocks you're changing, not entire files/modules.
+9. **Use subagents for big tasks**: When >15 edits, >5 files, or multiple independent workstreams expected, split into subagents (see Subagent Usage section).
 
 ## Token Efficiency (MUST Follow)
 
@@ -43,6 +44,43 @@ Implement the assigned issue completely before returning.
 - ALWAYS use `uv run python`, never bare `python`.
 - Run validations once per meaningful change set. Don't repeat commands without code changes between runs.
 - Before calling external APIs (web search, etc.), check if a relevant skill exists and load it first.
+
+## Subagent Usage (Scaling Large Tasks)
+
+Subagents provide separate context windows and can run in parallel. Use them to keep each worker in the 25-40% context sweet spot.
+
+### When to Spawn Subagents
+
+Use subagents when ANY is true:
+- **>15 edits or >5 files** expected
+- **Multiple independent workstreams** (e.g., API + UI + tests)
+- **Large codebase exploration** would otherwise bloat context to 50%+
+
+Skip subagents when task fits in **≤15 edits, ≤5 files, ≤40% context**.
+
+### Subagent Patterns
+
+1. **Shard by workstream** (primary): Identify distinct workstreams (backend, frontend, tests). Each subagent owns one with strict file allowlist, ≤15 edits, ≤5 files.
+
+2. **Shard by file cluster**: Group files into 2-3 clusters (handlers, models, tests). One subagent per cluster.
+
+3. **Explore-first**: For unfamiliar areas, spawn Explore subagent to map files/functions first, return compact index, then decide on implementation subagents.
+
+4. **Plan subagent**: For complex/ambiguous issues, spawn Plan subagent to produce stepwise plan before coding subagents.
+
+### Subagent Requirements
+
+Each subagent MUST:
+- Follow all Quick Rules, Token Efficiency, and Locking rules
+- Have **strict file allowlist** (no overlapping writes between subagents)
+- Stay within **≤15 edits, ≤5 files** soft limit
+- Return: summary, `Files changed:` with `file:line`, tests/checks run
+
+Main implementer:
+- Coordinates file assignments (no overlapping writes)
+- Aggregates results
+- Runs final validation once on combined changes
+- Performs Self-Review and Commit
 
 ## Commands
 
