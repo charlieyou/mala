@@ -332,6 +332,15 @@ class MalaEventSink(Protocol):
         """
         ...
 
+    def on_review_warning(self, message: str, agent_id: str | None = None) -> None:
+        """Called for review-related warnings (e.g., verdict mismatch).
+
+        Args:
+            message: Warning message.
+            agent_id: Associated agent (if any).
+        """
+        ...
+
     # -------------------------------------------------------------------------
     # Fixer agent events
     # -------------------------------------------------------------------------
@@ -848,6 +857,9 @@ class BaseEventSink:
         parse_error: str | None = None,
         issue_id: str | None = None,
     ) -> None:
+        pass
+
+    def on_review_warning(self, message: str, agent_id: str | None = None) -> None:
         pass
 
     # -------------------------------------------------------------------------
@@ -1440,6 +1452,10 @@ class ConsoleEventSink(BaseEventSink):
             agent_id=agent_id,
             issue_id=issue_id,
         )
+
+    def on_review_warning(self, message: str, agent_id: str | None = None) -> None:
+        """Log review-related warning."""
+        log("!", message, Colors.YELLOW, agent_id=agent_id)
 
     # -------------------------------------------------------------------------
     # Fixer agent events
