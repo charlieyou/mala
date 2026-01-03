@@ -23,6 +23,8 @@ from src.infra.tools.command_runner import CommandRunner
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from src.infra.io.event_sink import MalaEventSink
+
 
 @dataclass
 class ReviewIssue:
@@ -71,6 +73,7 @@ class DefaultReviewer:
     spawn_args: tuple[str, ...] = field(default_factory=tuple)
     wait_args: tuple[str, ...] = field(default_factory=tuple)
     env: dict[str, str] = field(default_factory=dict)
+    event_sink: MalaEventSink | None = None
 
     def _review_gate_bin(self) -> str:
         if self.bin_path is not None:
@@ -190,13 +193,10 @@ class DefaultReviewer:
             Tuple of (success, error_detail). If success is False, error_detail
             contains the stderr/stdout from the failed resolve command.
         """
-        from src.infra.io.log_output.console import Colors, log
-
-        log(
-            "→",
-            "Resolving stale gate from previous attempt",
-            color=Colors.YELLOW,
-        )
+        if self.event_sink is not None:
+            self.event_sink.on_review_warning(
+                "Resolving stale gate from previous attempt"
+            )
         resolve_cmd = [
             self._review_gate_bin(),
             "resolve",
@@ -396,6 +396,7 @@ class DefaultReviewer:
             wait_result.stdout,
             wait_result.stderr,
             review_log_path=review_log_path,
+            event_sink=self.event_sink,
         )
 
 
@@ -493,6 +494,7 @@ def map_exit_code_to_result(
     stdout: str,
     stderr: str,
     review_log_path: Path | None = None,
+    event_sink: MalaEventSink | None = None,
 ) -> ReviewResult:
     """Map Cerberus review-gate exit code to ReviewResult.
 
@@ -509,6 +511,7 @@ def map_exit_code_to_result(
         stdout: Stdout from the command (JSON output).
         stderr: Stderr from the command (error messages).
         review_log_path: Optional path to review session logs.
+        event_sink: Optional event sink for emitting warnings.
 
     Returns:
         ReviewResult with appropriate fields set.
@@ -585,15 +588,13 @@ def map_exit_code_to_result(
 
     # Warn if exit code and JSON verdict disagree
     if json_passed != exit_passed:
-        from src.infra.io.log_output.console import Colors, log
-
-        log(
-            "!",
+        message = (
             f"Exit code ({exit_code}) and JSON verdict "
             f"({'PASS' if json_passed else 'FAIL'}) disagree; "
-            f"fail-closed: requiring both to pass",
-            color=Colors.YELLOW,
+            f"fail-closed: requiring both to pass"
         )
+        if event_sink is not None:
+            event_sink.on_review_warning(message)
 
     # Security: fail-closed - BOTH exit code AND JSON verdict must pass
     # This prevents a review from passing when the consensus verdict is

@@ -11,7 +11,9 @@ Tests the cerberus_review integration including:
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from src.infra.clients.cerberus_review import (
     DefaultReviewer,
@@ -23,8 +25,26 @@ from src.infra.clients.cerberus_review import (
     parse_cerberus_json,
 )
 
+if TYPE_CHECKING:
+    from src.infra.io.event_sink import MalaEventSink
+
 # Path to golden files captured from real Cerberus output
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "cerberus"
+
+
+@dataclass
+class MockEventSink:
+    """Mock event sink for testing event emissions."""
+
+    warnings: list[str] = field(default_factory=list)
+
+    def on_review_warning(
+        self,
+        message: str,
+        agent_id: str | None = None,
+        issue_id: str | None = None,
+    ) -> None:
+        self.warnings.append(message)
 
 
 def _make_valid_response(
@@ -398,50 +418,57 @@ class TestMapExitCodeToResult:
 
         assert result.review_log_path == log_path
 
-    def test_exit_0_with_json_fail_fails_closed(self, capsys: object) -> None:
+    def test_exit_0_with_json_fail_fails_closed(self) -> None:
         """Exit code 0 but JSON verdict FAIL should fail (fail-closed security)."""
         # Exit code 0 but JSON says FAIL - should FAIL (fail-closed)
+        sink = MockEventSink()
         output = _make_valid_response(verdict="FAIL")
-        result = map_exit_code_to_result(0, output, "")
+        result = map_exit_code_to_result(
+            0, output, "", event_sink=cast("MalaEventSink", sink)
+        )
 
         # Fail-closed: review must fail because JSON verdict is not PASS
         assert result.passed is False
         assert result.parse_error is None
         assert result.fatal_error is False
 
-        # Check that warning was logged (capsys captures stdout)
-        captured = capsys.readouterr()  # type: ignore[attr-defined]
-        assert "disagree" in captured.out
-        assert "FAIL" in captured.out
-        assert "fail-closed" in captured.out
+        # Check that warning was emitted to event sink
+        assert len(sink.warnings) == 1
+        assert "disagree" in sink.warnings[0]
+        assert "FAIL" in sink.warnings[0]
+        assert "fail-closed" in sink.warnings[0]
 
-    def test_exit_1_with_json_pass_fails_closed(self, capsys: object) -> None:
+    def test_exit_1_with_json_pass_fails_closed(self) -> None:
         """Exit code 1 but JSON verdict PASS should fail (fail-closed security)."""
         # Exit code 1 but JSON says PASS - should FAIL (fail-closed)
+        sink = MockEventSink()
         output = _make_valid_response(verdict="PASS")
-        result = map_exit_code_to_result(1, output, "")
+        result = map_exit_code_to_result(
+            1, output, "", event_sink=cast("MalaEventSink", sink)
+        )
 
         # Fail-closed: review must fail because exit code is not 0
         assert result.passed is False
         assert result.parse_error is None
         assert result.fatal_error is False
 
-        # Check that warning was logged
-        captured = capsys.readouterr()  # type: ignore[attr-defined]
-        assert "disagree" in captured.out
-        assert "PASS" in captured.out
-        assert "fail-closed" in captured.out
+        # Check that warning was emitted to event sink
+        assert len(sink.warnings) == 1
+        assert "disagree" in sink.warnings[0]
+        assert "PASS" in sink.warnings[0]
+        assert "fail-closed" in sink.warnings[0]
 
-    def test_no_warning_when_exit_code_and_verdict_agree(self, capsys: object) -> None:
+    def test_no_warning_when_exit_code_and_verdict_agree(self) -> None:
         """No warning when exit code and JSON verdict agree."""
         # Exit code 0 and JSON says PASS - should not warn
+        sink = MockEventSink()
         output = _make_valid_response(verdict="PASS")
-        result = map_exit_code_to_result(0, output, "")
+        result = map_exit_code_to_result(
+            0, output, "", event_sink=cast("MalaEventSink", sink)
+        )
 
         assert result.passed is True
-
-        captured = capsys.readouterr()  # type: ignore[attr-defined]
-        assert "disagree" not in captured.out
+        assert len(sink.warnings) == 0
 
     def test_exit_0_with_needs_work_fails_closed(self) -> None:
         """Exit code 0 with NEEDS_WORK verdict should fail (fail-closed security)."""
