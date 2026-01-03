@@ -12,6 +12,7 @@ Key types:
 - YamlCoverageConfig: Coverage settings (named to avoid collision with spec.CoverageConfig)
 - CommandsConfig: All validation commands (setup, test, lint, format, typecheck, e2e)
 - ValidationConfig: Top-level configuration with preset, commands, coverage, patterns
+- PromptValidationCommands: Validation commands formatted for prompt templates
 """
 
 from __future__ import annotations
@@ -454,4 +455,57 @@ class ValidationConfig:
                 self.commands.typecheck,
                 self.commands.e2e,
             ]
+        )
+
+
+@dataclass(frozen=True)
+class PromptValidationCommands:
+    """Validation commands formatted for use in prompt templates.
+
+    This dataclass holds the actual command strings to be substituted into
+    prompt templates like implementer_prompt.md and gate_followup.md.
+    Commands that are not configured will use fallback messages.
+
+    Attributes:
+        lint: Lint command string (e.g., "uvx ruff check ." or "golangci-lint run")
+        format: Format command string (e.g., "uvx ruff format ." or "gofmt -l .")
+        typecheck: Type check command string (e.g., "uvx ty check" or "go vet ./...")
+        test: Test command string (e.g., "uv run pytest" or "go test ./...")
+    """
+
+    lint: str
+    format: str
+    typecheck: str
+    test: str
+
+    # Default fallback message for unconfigured commands
+    _NOT_CONFIGURED = "echo 'No {kind} command configured'"
+
+    @classmethod
+    def from_validation_config(
+        cls, config: ValidationConfig
+    ) -> PromptValidationCommands:
+        """Build PromptValidationCommands from a merged ValidationConfig.
+
+        Args:
+            config: The merged ValidationConfig (after preset merging).
+
+        Returns:
+            PromptValidationCommands with command strings for prompt templates.
+        """
+        cmds = config.commands
+
+        return cls(
+            lint=cmds.lint.command
+            if cmds.lint
+            else cls._NOT_CONFIGURED.format(kind="lint"),
+            format=cmds.format.command
+            if cmds.format
+            else cls._NOT_CONFIGURED.format(kind="format"),
+            typecheck=cmds.typecheck.command
+            if cmds.typecheck
+            else cls._NOT_CONFIGURED.format(kind="typecheck"),
+            test=cmds.test.command
+            if cmds.test
+            else cls._NOT_CONFIGURED.format(kind="test"),
         )

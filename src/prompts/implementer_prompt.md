@@ -86,17 +86,17 @@ CHANGED_FILES=$(git diff --name-only HEAD; git diff --cached --name-only)
 
 **Run scoped validations:**
 ```bash
-# Lint only your changed Python files
-uvx ruff check $CHANGED_FILES --cache-dir=/tmp/ruff-$AGENT_ID
+# Lint only your changed files
+{lint_command} $CHANGED_FILES
 
 # Format only your changed files
-uvx ruff format $CHANGED_FILES
+{format_command} $CHANGED_FILES
 
 # Type check only your changed files
-uvx ty check $CHANGED_FILES
+{typecheck_command} $CHANGED_FILES
 
 # Run tests (use isolated cache; disable global coverage threshold for scoped runs)
-uv run pytest -o cache_dir=/tmp/pytest-$AGENT_ID --cov-fail-under=0
+{test_command}
 ```
 
 **Note:** The orchestrator runs the FULL validation suite in an isolated worktree after your commit. You only need to validate your own changes here.

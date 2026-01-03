@@ -11,6 +11,7 @@ from src.domain.validation.spec import (
     build_validation_spec,
 )
 from src.domain.validation.tool_name_extractor import extract_lint_tools_from_spec
+from src.domain.prompts import build_prompt_validation_commands
 from src.infra.git_utils import (
     get_baseline_for_issue,
     get_git_branch_async,
@@ -207,6 +208,9 @@ class MalaOrchestrator:
         )  # Guard against re-entrant verification
         self.per_issue_spec: ValidationSpec | None = None
         self._lint_tools: frozenset[str] | None = None
+        self._prompt_validation_commands = build_prompt_validation_commands(
+            self.repo_path
+        )
 
     def _init_pipeline_runners(self) -> None:
         """Initialize pipeline runner components."""
@@ -823,6 +827,10 @@ class MalaOrchestrator:
             lock_dir=get_lock_dir(),
             scripts_dir=SCRIPTS_DIR,
             agent_id=temp_agent_id,
+            lint_command=self._prompt_validation_commands.lint,
+            format_command=self._prompt_validation_commands.format,
+            typecheck_command=self._prompt_validation_commands.typecheck,
+            test_command=self._prompt_validation_commands.test,
         )
 
         review_enabled = self._is_review_enabled()
@@ -835,6 +843,7 @@ class MalaOrchestrator:
             morph_api_key=self._config.morph_api_key,
             review_enabled=review_enabled,
             lint_tools=self._lint_tools,
+            prompt_validation_commands=self._prompt_validation_commands,
         )
         session_input = AgentSessionInput(
             issue_id=issue_id,

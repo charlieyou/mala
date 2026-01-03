@@ -118,7 +118,17 @@ class TestPromptTemplate:
         placeholders = set(re.findall(r"\{(\w+)\}", _get_implementer_prompt()))
 
         # These are the keys passed to format() in run_implementer
-        expected_keys = {"issue_id", "repo_path", "lock_dir", "scripts_dir", "agent_id"}
+        expected_keys = {
+            "issue_id",
+            "repo_path",
+            "lock_dir",
+            "scripts_dir",
+            "agent_id",
+            "lint_command",
+            "format_command",
+            "typecheck_command",
+            "test_command",
+        }
 
         assert placeholders == expected_keys, (
             f"Mismatch: template has {placeholders}, format expects {expected_keys}"

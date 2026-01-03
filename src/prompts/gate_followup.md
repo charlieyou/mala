@@ -6,10 +6,10 @@ The quality gate check failed with the following issues:
 **Required actions:**
 1. Fix ALL issues causing validation failures - including pre-existing errors in files you didn't touch
 2. Re-run the full validation suite on the ENTIRE codebase:
-   - `uv run pytest`
-   - `uvx ruff check .`
-   - `uvx ruff format .`
-   - `uvx ty check`
+   - `{test_command}`
+   - `{lint_command}`
+   - `{format_command}`
+   - `{typecheck_command}`
 3. Commit your changes with message: `bd-{issue_id}: <description>`
 
 **CRITICAL:** Do NOT scope checks to only your modified files. The validation runs on the entire codebase. Fix ALL errors you see, even if you didn't introduce them. Do NOT use `git blame` to decide whether to fix an error.

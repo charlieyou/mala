@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from src.core.models import IssueResolution
     from src.core.protocols import ReviewIssueProtocol
     from src.infra.telemetry import TelemetrySpan
+    from src.domain.validation.config import PromptValidationCommands
 
 
 # Module-level logger for idle retry messages
@@ -300,6 +301,8 @@ class AgentSessionConfig:
             disable timeout entirely.
         lint_tools: Set of lint tool names for LintCache. If None, uses default
             lint tools. Populated from ValidationSpec commands.
+        prompt_validation_commands: Validation commands for prompt templates.
+            If None, uses default Python/uv commands.
     """
 
     repo_path: Path
@@ -314,6 +317,7 @@ class AgentSessionConfig:
     max_idle_retries: int = 2
     idle_retry_backoff: tuple[float, ...] = (0.0, 5.0, 15.0)
     lint_tools: frozenset[str] | None = None
+    prompt_validation_commands: PromptValidationCommands | None = None
 
 
 @dataclass
@@ -978,11 +982,17 @@ class AgentSessionRunner:
                 )
             # Build follow-up prompt
             failure_text = "\n".join(f"- {r}" for r in gate_result.failure_reasons)
+            # Get validation commands or use defaults
+            cmds = self.config.prompt_validation_commands
             pending_query = _get_gate_followup_prompt().format(
                 attempt=lifecycle_ctx.retry_state.gate_attempt,
                 max_attempts=self.config.max_gate_retries,
                 failure_reasons=failure_text,
                 issue_id=input.issue_id,
+                lint_command=cmds.lint if cmds else "uvx ruff check .",
+                format_command=cmds.format if cmds else "uvx ruff format .",
+                typecheck_command=cmds.typecheck if cmds else "uvx ty check",
+                test_command=cmds.test if cmds else "uv run pytest",
             )
             return pending_query, False, result  # continue with retry
 

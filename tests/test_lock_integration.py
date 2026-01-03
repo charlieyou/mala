@@ -131,6 +131,10 @@ class TestPromptTemplateIntegration:
             lock_dir=lock_env,
             scripts_dir=SCRIPTS_DIR,
             agent_id="bd-99-test1234",
+            lint_command="uvx ruff check .",
+            format_command="uvx ruff format .",
+            typecheck_command="uvx ty check",
+            test_command="uv run pytest",
         )
         # Verify the formatted values appear in the prompt
         assert str(lock_env) in prompt

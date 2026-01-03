@@ -15,6 +15,7 @@ from src.domain.validation.config import (
     CommandsConfig,
     ConfigError,
     PresetNotFoundError,
+    PromptValidationCommands,
     ValidationConfig,
     YamlCoverageConfig,
 )
@@ -450,3 +451,60 @@ class TestPresetNotFoundError:
         error = PresetNotFoundError("test")
         assert isinstance(error, ConfigError)
         assert isinstance(error, Exception)
+
+
+class TestPromptValidationCommands:
+    """Tests for PromptValidationCommands dataclass."""
+
+    def test_from_validation_config_full_commands(self) -> None:
+        """Full config creates PromptValidationCommands with all commands."""
+        config = ValidationConfig.from_dict(
+            {
+                "commands": {
+                    "lint": "golangci-lint run",
+                    "format": 'test -z "$(gofmt -l .)"',
+                    "typecheck": "go vet ./...",
+                    "test": "go test ./...",
+                }
+            }
+        )
+        prompt_cmds = PromptValidationCommands.from_validation_config(config)
+        assert prompt_cmds.lint == "golangci-lint run"
+        assert prompt_cmds.format == 'test -z "$(gofmt -l .)"'
+        assert prompt_cmds.typecheck == "go vet ./..."
+        assert prompt_cmds.test == "go test ./..."
+
+    def test_from_validation_config_missing_commands_use_fallbacks(self) -> None:
+        """Missing commands use fallback messages."""
+        config = ValidationConfig.from_dict(
+            {
+                "commands": {
+                    "test": "pytest",
+                }
+            }
+        )
+        prompt_cmds = PromptValidationCommands.from_validation_config(config)
+        assert prompt_cmds.test == "pytest"
+        assert "No lint command configured" in prompt_cmds.lint
+        assert "No format command configured" in prompt_cmds.format
+        assert "No typecheck command configured" in prompt_cmds.typecheck
+
+    def test_from_validation_config_no_commands(self) -> None:
+        """Empty commands config uses all fallbacks."""
+        config = ValidationConfig.from_dict({})
+        prompt_cmds = PromptValidationCommands.from_validation_config(config)
+        assert "No lint command configured" in prompt_cmds.lint
+        assert "No format command configured" in prompt_cmds.format
+        assert "No typecheck command configured" in prompt_cmds.typecheck
+        assert "No test command configured" in prompt_cmds.test
+
+    def test_immutable(self) -> None:
+        """PromptValidationCommands is frozen and cannot be modified."""
+        prompt_cmds = PromptValidationCommands(
+            lint="ruff check .",
+            format="ruff format .",
+            typecheck="ty check",
+            test="pytest",
+        )
+        with pytest.raises(AttributeError):
+            prompt_cmds.lint = "other"  # type: ignore[misc]
