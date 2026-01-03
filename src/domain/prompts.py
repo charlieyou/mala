@@ -6,7 +6,7 @@ This module centralizes prompt file loading to avoid duplication across modules.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path  # noqa: TC003  # Used at runtime in load_prompts
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -103,6 +103,35 @@ def get_default_validation_commands() -> PromptValidationCommands:
         typecheck="uvx ty check",
         test="uv run pytest -o cache_dir=/tmp/pytest-${AGENT_ID:-default}",
     )
+
+
+def load_prompt(name: str) -> str:
+    """Load a single prompt template by name.
+
+    Args:
+        name: Name of the prompt (without .md extension).
+
+    Returns:
+        The prompt template content.
+
+    Raises:
+        FileNotFoundError: If the prompt file doesn't exist.
+    """
+    prompt_dir = Path(__file__).parent.parent / "prompts"
+    return (prompt_dir / f"{name}.md").read_text()
+
+
+def build_continuation_prompt(checkpoint_text: str) -> str:
+    """Build a continuation prompt with checkpoint context.
+
+    Args:
+        checkpoint_text: The checkpoint block from the previous session.
+
+    Returns:
+        Formatted continuation prompt with checkpoint embedded.
+    """
+    template = load_prompt("continuation")
+    return template.format(checkpoint=checkpoint_text)
 
 
 def build_prompt_validation_commands(repo_path: Path) -> PromptValidationCommands:

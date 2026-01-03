@@ -7,39 +7,93 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pytest  # noqa: F401  # pytest imported for fixtures
+import pytest
 
 from src.domain.prompts import (
+    PromptProvider,
+    build_continuation_prompt,
     build_prompt_validation_commands,
-    get_gate_followup_prompt,
+    load_prompt,
+    load_prompts,
 )
+from src.infra.tools.env import PROMPTS_DIR
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
-class TestGetGateFollowupPrompt:
-    """Tests for get_gate_followup_prompt function."""
+class TestLoadPrompts:
+    """Tests for load_prompts function."""
 
-    def test_returns_string(self) -> None:
-        """get_gate_followup_prompt returns a non-empty string."""
-        result = get_gate_followup_prompt()
-        assert isinstance(result, str)
-        assert len(result) > 0
+    def test_returns_prompt_provider(self) -> None:
+        """load_prompts returns a PromptProvider with all prompts."""
+        result = load_prompts(PROMPTS_DIR)
+        assert isinstance(result, PromptProvider)
+        assert isinstance(result.implementer_prompt, str)
+        assert isinstance(result.review_followup_prompt, str)
+        assert isinstance(result.gate_followup_prompt, str)
+        assert isinstance(result.fixer_prompt, str)
+        assert isinstance(result.idle_resume_prompt, str)
 
-    def test_contains_template_placeholders(self) -> None:
+    def test_gate_followup_contains_template_placeholders(self) -> None:
         """Gate followup prompt contains expected placeholders."""
-        result = get_gate_followup_prompt()
+        result = load_prompts(PROMPTS_DIR)
         # Check for placeholders that should be in the template
-        assert "{attempt}" in result
-        assert "{max_attempts}" in result
-        assert "{failure_reasons}" in result
-        assert "{issue_id}" in result
+        assert "{attempt}" in result.gate_followup_prompt
+        assert "{max_attempts}" in result.gate_followup_prompt
+        assert "{failure_reasons}" in result.gate_followup_prompt
+        assert "{issue_id}" in result.gate_followup_prompt
         # Check for validation command placeholders
-        assert "{lint_command}" in result
-        assert "{format_command}" in result
-        assert "{typecheck_command}" in result
-        assert "{test_command}" in result
+        assert "{lint_command}" in result.gate_followup_prompt
+        assert "{format_command}" in result.gate_followup_prompt
+        assert "{typecheck_command}" in result.gate_followup_prompt
+        assert "{test_command}" in result.gate_followup_prompt
+
+    def test_raises_on_missing_prompt_dir(self, tmp_path: Path) -> None:
+        """load_prompts raises FileNotFoundError for missing directory."""
+        with pytest.raises(FileNotFoundError):
+            load_prompts(tmp_path / "nonexistent")
+
+
+class TestLoadPrompt:
+    """Tests for load_prompt function."""
+
+    def test_loads_checkpoint_request(self) -> None:
+        """load_prompt loads checkpoint_request.md correctly."""
+        content = load_prompt("checkpoint_request")
+        assert "<checkpoint>" in content
+        assert "## Goal" in content
+        assert "## Completed Work" in content
+        assert "## Remaining Tasks" in content
+
+    def test_loads_continuation(self) -> None:
+        """load_prompt loads continuation.md correctly."""
+        content = load_prompt("continuation")
+        assert "{checkpoint}" in content
+        assert "continuation" in content.lower()
+
+    def test_raises_on_missing_prompt(self) -> None:
+        """load_prompt raises FileNotFoundError for missing prompt."""
+        with pytest.raises(FileNotFoundError):
+            load_prompt("nonexistent_prompt")
+
+
+class TestBuildContinuationPrompt:
+    """Tests for build_continuation_prompt function."""
+
+    def test_formats_checkpoint_into_template(self) -> None:
+        """build_continuation_prompt inserts checkpoint into template."""
+        checkpoint = """<checkpoint>
+## Goal
+Complete the feature implementation.
+
+## Completed Work
+- Added main.py:10 function
+</checkpoint>"""
+        result = build_continuation_prompt(checkpoint)
+        assert checkpoint in result
+        assert "{checkpoint}" not in result
+        assert "continuation" in result.lower()
 
 
 class TestBuildPromptValidationCommands:
@@ -137,13 +191,13 @@ class TestPromptTemplateIntegration:
         self, tmp_path: Path
     ) -> None:
         """Implementer prompt renders correctly with Python validation commands."""
-        from src.domain.prompts import get_implementer_prompt
+        prompts = load_prompts(PROMPTS_DIR)
 
         mala_yaml = tmp_path / "mala.yaml"
         mala_yaml.write_text("preset: python-uv\n")
 
         cmds = build_prompt_validation_commands(tmp_path)
-        prompt = get_implementer_prompt().format(
+        prompt = prompts.implementer_prompt.format(
             issue_id="test-123",
             repo_path=tmp_path,
             lock_dir="/tmp/locks",
@@ -168,13 +222,13 @@ class TestPromptTemplateIntegration:
 
     def test_implementer_prompt_renders_with_go_commands(self, tmp_path: Path) -> None:
         """Implementer prompt renders correctly with Go validation commands."""
-        from src.domain.prompts import get_implementer_prompt
+        prompts = load_prompts(PROMPTS_DIR)
 
         mala_yaml = tmp_path / "mala.yaml"
         mala_yaml.write_text("preset: go\n")
 
         cmds = build_prompt_validation_commands(tmp_path)
-        prompt = get_implementer_prompt().format(
+        prompt = prompts.implementer_prompt.format(
             issue_id="test-123",
             repo_path=tmp_path,
             lock_dir="/tmp/locks",
@@ -196,11 +250,13 @@ class TestPromptTemplateIntegration:
 
     def test_gate_followup_renders_with_commands(self, tmp_path: Path) -> None:
         """Gate followup prompt renders correctly with validation commands."""
+        prompts = load_prompts(PROMPTS_DIR)
+
         mala_yaml = tmp_path / "mala.yaml"
         mala_yaml.write_text("preset: go\n")
 
         cmds = build_prompt_validation_commands(tmp_path)
-        prompt = get_gate_followup_prompt().format(
+        prompt = prompts.gate_followup_prompt.format(
             attempt=1,
             max_attempts=3,
             failure_reasons="- lint failed\n- tests failed",
