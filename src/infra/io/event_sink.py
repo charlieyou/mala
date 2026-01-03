@@ -1093,7 +1093,16 @@ class ConsoleEventSink(BaseEventSink):
         log("●", "mala orchestrator", Colors.MAGENTA)
         log("◐", f"repo: {config.repo_path}", Colors.MUTED)
 
-        # Format settings
+        self._log_limits(config)
+        self._log_review_config(config)
+        self._log_filters(config)
+        self._log_braintrust_config(config)
+        self._log_morph_config(config)
+        self._log_cli_args(config)
+        print()
+
+    def _log_limits(self, config: EventRunConfig) -> None:
+        """Log limit-related settings (max-issues, max-agents, timeout, gate-retries)."""
         limit_str = (
             str(config.max_issues) if config.max_issues is not None else "unlimited"
         )
@@ -1108,7 +1117,8 @@ class ConsoleEventSink(BaseEventSink):
         )
         log("◐", f"gate-retries: {config.max_gate_retries}", Colors.MUTED)
 
-        # Cerberus review
+    def _log_review_config(self, config: EventRunConfig) -> None:
+        """Log Cerberus review configuration."""
         if config.review_enabled:
             log(
                 "◐",
@@ -1122,7 +1132,8 @@ class ConsoleEventSink(BaseEventSink):
                 Colors.YELLOW,
             )
 
-        # Filters
+    def _log_filters(self, config: EventRunConfig) -> None:
+        """Log filter settings (epic_id, only_ids, prioritize_wip, orphans_only)."""
         if config.epic_id:
             log("◐", f"epic filter: {config.epic_id}", Colors.CYAN)
         if config.only_ids:
@@ -1140,7 +1151,8 @@ class ConsoleEventSink(BaseEventSink):
                 Colors.CYAN,
             )
 
-        # Braintrust
+    def _log_braintrust_config(self, config: EventRunConfig) -> None:
+        """Log Braintrust configuration."""
         if config.braintrust_enabled:
             log("◐", "braintrust: enabled (LLM spans auto-traced)", Colors.CYAN)
         elif config.braintrust_disabled_reason:
@@ -1150,7 +1162,8 @@ class ConsoleEventSink(BaseEventSink):
                 Colors.MUTED,
             )
 
-        # Morph
+    def _log_morph_config(self, config: EventRunConfig) -> None:
+        """Log Morph configuration."""
         if config.morph_enabled:
             log(
                 "◐",
@@ -1166,52 +1179,51 @@ class ConsoleEventSink(BaseEventSink):
         elif config.morph_disabled_reason:
             log("◐", f"morph: disabled ({config.morph_disabled_reason})", Colors.MUTED)
 
-        # CLI args
-        if config.cli_args:
-            cli_parts = []
-            if config.cli_args.get("disable_validations"):
-                cli_parts.append(
-                    f"--disable-validations={config.cli_args['disable_validations']}"
-                )
-            if config.cli_args.get("coverage_threshold") is not None:
-                cli_parts.append(
-                    f"--coverage-threshold={config.cli_args['coverage_threshold']}"
-                )
-            if config.cli_args.get("wip"):
-                cli_parts.append("--wip")
-            if config.cli_args.get("max_issues") is not None:
-                cli_parts.append(f"--max-issues={config.cli_args['max_issues']}")
-            if config.cli_args.get("max_gate_retries") is not None:
-                cli_parts.append(
-                    f"--max-gate-retries={config.cli_args['max_gate_retries']}"
-                )
-            if config.cli_args.get("max_review_retries") is not None:
-                cli_parts.append(
-                    f"--max-review-retries={config.cli_args['max_review_retries']}"
-                )
-            if config.cli_args.get("review_timeout") is not None:
-                cli_parts.append(
-                    f"--review-timeout={config.cli_args['review_timeout']}"
-                )
-            spawn_args = config.cli_args.get("cerberus_spawn_args")
-            if isinstance(spawn_args, list) and spawn_args:
-                spawn_strs = [arg for arg in spawn_args if isinstance(arg, str)]
-                if spawn_strs:
-                    cli_parts.append(f"--cerberus-spawn-args={' '.join(spawn_strs)}")
-            wait_args = config.cli_args.get("cerberus_wait_args")
-            if isinstance(wait_args, list) and wait_args:
-                wait_strs = [arg for arg in wait_args if isinstance(arg, str)]
-                if wait_strs:
-                    cli_parts.append(f"--cerberus-wait-args={' '.join(wait_strs)}")
-            env_vars = config.cli_args.get("cerberus_env")
-            if isinstance(env_vars, dict) and env_vars:
-                env_str = ",".join(f"{key}={value}" for key, value in env_vars.items())
-                cli_parts.append(f"--cerberus-env={env_str}")
-            if config.cli_args.get("braintrust"):
-                cli_parts.append("--braintrust")
-            if cli_parts:
-                log("◐", f"cli: {' '.join(cli_parts)}", Colors.MUTED)
-        print()
+    def _log_cli_args(self, config: EventRunConfig) -> None:
+        """Log CLI argument reconstruction."""
+        if not config.cli_args:
+            return
+        cli_parts = []
+        if config.cli_args.get("disable_validations"):
+            cli_parts.append(
+                f"--disable-validations={config.cli_args['disable_validations']}"
+            )
+        if config.cli_args.get("coverage_threshold") is not None:
+            cli_parts.append(
+                f"--coverage-threshold={config.cli_args['coverage_threshold']}"
+            )
+        if config.cli_args.get("wip"):
+            cli_parts.append("--wip")
+        if config.cli_args.get("max_issues") is not None:
+            cli_parts.append(f"--max-issues={config.cli_args['max_issues']}")
+        if config.cli_args.get("max_gate_retries") is not None:
+            cli_parts.append(
+                f"--max-gate-retries={config.cli_args['max_gate_retries']}"
+            )
+        if config.cli_args.get("max_review_retries") is not None:
+            cli_parts.append(
+                f"--max-review-retries={config.cli_args['max_review_retries']}"
+            )
+        if config.cli_args.get("review_timeout") is not None:
+            cli_parts.append(f"--review-timeout={config.cli_args['review_timeout']}")
+        spawn_args = config.cli_args.get("cerberus_spawn_args")
+        if isinstance(spawn_args, list) and spawn_args:
+            spawn_strs = [arg for arg in spawn_args if isinstance(arg, str)]
+            if spawn_strs:
+                cli_parts.append(f"--cerberus-spawn-args={' '.join(spawn_strs)}")
+        wait_args = config.cli_args.get("cerberus_wait_args")
+        if isinstance(wait_args, list) and wait_args:
+            wait_strs = [arg for arg in wait_args if isinstance(arg, str)]
+            if wait_strs:
+                cli_parts.append(f"--cerberus-wait-args={' '.join(wait_strs)}")
+        env_vars = config.cli_args.get("cerberus_env")
+        if isinstance(env_vars, dict) and env_vars:
+            env_str = ",".join(f"{key}={value}" for key, value in env_vars.items())
+            cli_parts.append(f"--cerberus-env={env_str}")
+        if config.cli_args.get("braintrust"):
+            cli_parts.append("--braintrust")
+        if cli_parts:
+            log("◐", f"cli: {' '.join(cli_parts)}", Colors.MUTED)
 
     def on_run_completed(
         self,
