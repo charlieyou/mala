@@ -6,7 +6,8 @@ with fixture XML files for pass/fail/invalid cases.
 
 import os
 from pathlib import Path
-from unittest.mock import patch
+from collections.abc import Callable
+from unittest.mock import Mock
 
 from src.infra.tools.command_runner import CommandResult
 from src.domain.validation.config import YamlCoverageConfig
@@ -21,6 +22,15 @@ from src.domain.validation.coverage import (
     parse_and_check_coverage,
     parse_coverage_xml,
 )
+
+
+def make_mock_runner(
+    run_fn: Callable[[list[str]], CommandResult],
+) -> Mock:
+    """Create a mock CommandRunnerPort with a custom run function."""
+    mock = Mock()
+    mock.run = run_fn
+    return mock
 
 
 # Fixture XML content for different test cases
@@ -606,17 +616,16 @@ class TestIsBaselineStale:
         report.write_text(VALID_COVERAGE_XML_90_PERCENT)
 
         # Mock git status to return dirty
-        mock_result = CommandResult(
-            command=["git", "status", "--porcelain"],
-            returncode=0,
-            stdout="M src/app.py\n",
-            stderr="",
-        )
+        def mock_run(args: list[str]) -> CommandResult:
+            return CommandResult(
+                command=args,
+                returncode=0,
+                stdout="M src/app.py\n",
+                stderr="",
+            )
 
-        with patch(
-            "src.domain.validation.coverage.run_command", return_value=mock_result
-        ):
-            result = is_baseline_stale(report, tmp_path)
+        mock_runner = make_mock_runner(mock_run)
+        result = is_baseline_stale(report, tmp_path, command_runner=mock_runner)
 
         assert result is True
 
@@ -631,7 +640,7 @@ class TestIsBaselineStale:
         os.utime(report, (old_time, old_time))
 
         # Mock git commands
-        def mock_run(args: list[str], **_kwargs: object) -> CommandResult:
+        def mock_run(args: list[str]) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
@@ -641,8 +650,8 @@ class TestIsBaselineStale:
                 )
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.coverage.run_command", side_effect=mock_run):
-            result = is_baseline_stale(report, tmp_path)
+        mock_runner = make_mock_runner(mock_run)
+        result = is_baseline_stale(report, tmp_path, command_runner=mock_runner)
 
         assert result is True
 
@@ -657,7 +666,7 @@ class TestIsBaselineStale:
         os.utime(report, (future_time, future_time))
 
         # Mock git commands
-        def mock_run(args: list[str], **_kwargs: object) -> CommandResult:
+        def mock_run(args: list[str]) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
@@ -667,8 +676,8 @@ class TestIsBaselineStale:
                 )
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.coverage.run_command", side_effect=mock_run):
-            result = is_baseline_stale(report, tmp_path)
+        mock_runner = make_mock_runner(mock_run)
+        result = is_baseline_stale(report, tmp_path, command_runner=mock_runner)
 
         assert result is False
 
@@ -679,16 +688,16 @@ class TestIsBaselineStale:
         report.write_text(VALID_COVERAGE_XML_90_PERCENT)
 
         # Mock git to fail (return non-zero exit code)
-        mock_result = CommandResult(
-            command=["git", "status", "--porcelain"],
-            returncode=128,
-            stdout="",
-            stderr="fatal: not a git repository",
-        )
-        with patch(
-            "src.domain.validation.coverage.run_command", return_value=mock_result
-        ):
-            result = is_baseline_stale(report, tmp_path)
+        def mock_run(args: list[str]) -> CommandResult:
+            return CommandResult(
+                command=args,
+                returncode=128,
+                stdout="",
+                stderr="fatal: not a git repository",
+            )
+
+        mock_runner = make_mock_runner(mock_run)
+        result = is_baseline_stale(report, tmp_path, command_runner=mock_runner)
 
         assert result is True
 
@@ -699,7 +708,7 @@ class TestIsBaselineStale:
         report.write_text(VALID_COVERAGE_XML_90_PERCENT)
 
         # Mock git commands - status clean but log returns empty
-        def mock_run(args: list[str], **_kwargs: object) -> CommandResult:
+        def mock_run(args: list[str]) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
@@ -707,8 +716,8 @@ class TestIsBaselineStale:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.coverage.run_command", side_effect=mock_run):
-            result = is_baseline_stale(report, tmp_path)
+        mock_runner = make_mock_runner(mock_run)
+        result = is_baseline_stale(report, tmp_path, command_runner=mock_runner)
 
         assert result is True
 
@@ -805,7 +814,7 @@ class TestNoDecreaseMode:
         os.utime(report, (old_time, old_time))
 
         # Mock a recent commit
-        def mock_run(args: list[str], **_kwargs: object) -> CommandResult:
+        def mock_run(args: list[str]) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
@@ -815,8 +824,8 @@ class TestNoDecreaseMode:
                 )
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.coverage.run_command", side_effect=mock_run):
-            assert is_baseline_stale(report, tmp_path) is True
+        mock_runner = make_mock_runner(mock_run)
+        assert is_baseline_stale(report, tmp_path, command_runner=mock_runner) is True
 
     def test_fresh_baseline_not_stale_after_commit(self, tmp_path: Path) -> None:
         """Baseline should not be stale when it's newer than the last commit."""
@@ -828,7 +837,7 @@ class TestNoDecreaseMode:
         os.utime(report, (future_time, future_time))
 
         # Mock an old commit
-        def mock_run(args: list[str], **_kwargs: object) -> CommandResult:
+        def mock_run(args: list[str]) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
@@ -838,8 +847,8 @@ class TestNoDecreaseMode:
                 )
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.coverage.run_command", side_effect=mock_run):
-            assert is_baseline_stale(report, tmp_path) is False
+        mock_runner = make_mock_runner(mock_run)
+        assert is_baseline_stale(report, tmp_path, command_runner=mock_runner) is False
 
     def test_explicit_threshold_overrides_baseline(self, tmp_path: Path) -> None:
         """When an explicit threshold is provided, baseline is not used."""
@@ -1116,13 +1125,9 @@ class TestBaselineCoverageService:
             threshold=85.0,
             command="uv run pytest --cov",
         )
-        service = BaselineCoverageService(repo_path=tmp_path, coverage_config=config)
-
-        # Mock spec
-        mock_spec = MagicMock()
 
         # Mock git commands to indicate clean repo
-        def mock_run(args: list[str], **_kwargs: object) -> CommandResult:
+        def mock_run(args: list[str]) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
@@ -1132,8 +1137,15 @@ class TestBaselineCoverageService:
                 )
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
-        with patch("src.domain.validation.coverage.run_command", side_effect=mock_run):
-            result = service.refresh_if_stale(mock_spec)
+        mock_runner = make_mock_runner(mock_run)
+        service = BaselineCoverageService(
+            repo_path=tmp_path, coverage_config=config, command_runner=mock_runner
+        )
+
+        # Mock spec
+        mock_spec = MagicMock()
+
+        result = service.refresh_if_stale(mock_spec)
 
         # Should return existing baseline without refresh
         assert result.success is True

@@ -22,12 +22,10 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.infra.tools.command_runner import run_command
-
 from .config import YamlCoverageConfig  # noqa: TC001 - used at runtime
 
 if TYPE_CHECKING:
-    from src.core.protocols import EnvConfigPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort
 
     from .spec import ValidationSpec
 
@@ -315,7 +313,11 @@ def get_baseline_coverage(report_path: Path) -> float | None:
     return result.percent
 
 
-def is_baseline_stale(report_path: Path, repo_path: Path) -> bool:
+def is_baseline_stale(
+    report_path: Path,
+    repo_path: Path,
+    command_runner: CommandRunnerPort | None = None,
+) -> bool:
     """Check if the coverage baseline file is stale and needs refresh.
 
     A baseline is considered stale if:
@@ -327,6 +329,8 @@ def is_baseline_stale(report_path: Path, repo_path: Path) -> bool:
     Args:
         report_path: Path to the coverage.xml baseline file.
         repo_path: Path to the git repository root.
+        command_runner: Optional CommandRunnerPort for running git commands.
+            If not provided, creates a CommandRunner with repo_path as cwd.
 
     Returns:
         True if baseline is stale or doesn't exist, False if baseline is fresh.
@@ -335,12 +339,17 @@ def is_baseline_stale(report_path: Path, repo_path: Path) -> bool:
     if not report_path.exists():
         return True
 
+    # Use injected runner or create default
+    if command_runner is not None:
+        runner = command_runner
+    else:
+        from src.infra.tools.command_runner import CommandRunner
+
+        runner = CommandRunner(cwd=repo_path)
+
     try:
         # Check for dirty working tree
-        dirty_result = run_command(
-            ["git", "status", "--porcelain"],
-            cwd=repo_path,
-        )
+        dirty_result = runner.run(["git", "status", "--porcelain"])
         if not dirty_result.ok:
             # Git command failed - treat as stale
             return True
@@ -349,10 +358,7 @@ def is_baseline_stale(report_path: Path, repo_path: Path) -> bool:
             return True
 
         # Get last commit timestamp (Unix epoch seconds)
-        commit_time_result = run_command(
-            ["git", "log", "-1", "--format=%ct"],
-            cwd=repo_path,
-        )
+        commit_time_result = runner.run(["git", "log", "-1", "--format=%ct"])
         if not commit_time_result.ok:
             # Git command failed - treat as stale
             return True
@@ -431,6 +437,7 @@ class BaselineCoverageService:
         coverage_config: YamlCoverageConfig | None = None,
         step_timeout_seconds: float | None = None,
         env_config: EnvConfigPort | None = None,
+        command_runner: CommandRunnerPort | None = None,
     ):
         """Initialize the baseline coverage service.
 
@@ -441,11 +448,14 @@ class BaselineCoverageService:
             step_timeout_seconds: Optional fallback timeout for commands (used if
                 coverage_config.timeout is None).
             env_config: Environment configuration for paths (lock_dir, etc.).
+            command_runner: Optional CommandRunnerPort for running commands.
+                If not provided, creates a CommandRunner as needed.
         """
         self.repo_path = repo_path.resolve()
         self.coverage_config = coverage_config
         self.step_timeout_seconds = step_timeout_seconds
         self.env_config = env_config
+        self.command_runner = command_runner
 
     def refresh_if_stale(
         self,
@@ -483,7 +493,9 @@ class BaselineCoverageService:
             baseline_path = self.repo_path / coverage_file
 
         # Check if baseline is fresh (no refresh needed)
-        if not is_baseline_stale(baseline_path, self.repo_path):
+        if not is_baseline_stale(
+            baseline_path, self.repo_path, command_runner=self.command_runner
+        ):
             try:
                 baseline = get_baseline_coverage(baseline_path)
                 if baseline is not None:
@@ -513,7 +525,9 @@ class BaselineCoverageService:
 
         # Lock acquired - double-check if still stale (another agent may have refreshed)
         try:
-            if not is_baseline_stale(baseline_path, self.repo_path):
+            if not is_baseline_stale(
+                baseline_path, self.repo_path, command_runner=self.command_runner
+            ):
                 try:
                     baseline = get_baseline_coverage(baseline_path)
                     if baseline is not None:
@@ -547,7 +561,6 @@ class BaselineCoverageService:
             assumes coverage_config and coverage_config.command are validated
             as non-None by the caller (refresh_if_stale).
         """
-        from src.infra.tools.command_runner import CommandRunner
         from .worktree import (
             WorktreeConfig,
             WorktreeState,
@@ -603,6 +616,12 @@ class BaselineCoverageService:
             timeout = float(
                 self.coverage_config.timeout or self.step_timeout_seconds or 300.0
             )
+
+            # Create runner for worktree context
+            # We create a new runner here because it needs the worktree path as cwd,
+            # which is different from the main repo path
+            from src.infra.tools.command_runner import CommandRunner
+
             runner = CommandRunner(cwd=worktree_path, timeout_seconds=timeout)
 
             # Run uv sync first to install dependencies

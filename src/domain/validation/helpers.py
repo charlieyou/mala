@@ -8,8 +8,10 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from src.infra.tools.command_runner import run_command
+if TYPE_CHECKING:
+    from src.core.protocols import CommandRunnerPort
 
 
 def tail(text: str, max_chars: int = 800, max_lines: int = 20) -> str:
@@ -198,15 +200,28 @@ def write_fixture_repo(repo_path: Path) -> None:
         _generate_fixture_programmatically(repo_path)
 
 
-def init_fixture_repo(repo_path: Path) -> str | None:
+def init_fixture_repo(
+    repo_path: Path,
+    command_runner: CommandRunnerPort | None = None,
+) -> str | None:
     """Initialize a fixture repository with git and beads.
 
     Args:
         repo_path: Path to the fixture repository.
+        command_runner: Optional CommandRunnerPort for running commands.
+            If not provided, creates a CommandRunner with repo_path as cwd.
 
     Returns:
         Error message if initialization failed, None on success.
     """
+    # Use injected runner or create default
+    if command_runner is not None:
+        runner = command_runner
+    else:
+        from src.infra.tools.command_runner import CommandRunner
+
+        runner = CommandRunner(cwd=repo_path)
+
     for cmd in (
         ["git", "init"],
         ["git", "config", "user.email", "mala-e2e@example.com"],
@@ -216,7 +231,7 @@ def init_fixture_repo(repo_path: Path) -> str | None:
         ["bd", "init"],
         ["bd", "create", "Fix failing add() test", "-p", "1"],
     ):
-        result = run_command(cmd, cwd=repo_path)
+        result = runner.run(cmd)
         if not result.ok:
             stderr = result.stderr.strip()
             reason = (
@@ -228,16 +243,29 @@ def init_fixture_repo(repo_path: Path) -> str | None:
     return None
 
 
-def get_ready_issue_id(repo_path: Path) -> str | None:
+def get_ready_issue_id(
+    repo_path: Path,
+    command_runner: CommandRunnerPort | None = None,
+) -> str | None:
     """Get the first ready issue ID from a repository.
 
     Args:
         repo_path: Path to the repository.
+        command_runner: Optional CommandRunnerPort for running commands.
+            If not provided, creates a CommandRunner with repo_path as cwd.
 
     Returns:
         Issue ID if found, None otherwise.
     """
-    result = run_command(["bd", "ready", "--json"], cwd=repo_path)
+    # Use injected runner or create default
+    if command_runner is not None:
+        runner = command_runner
+    else:
+        from src.infra.tools.command_runner import CommandRunner
+
+        runner = CommandRunner(cwd=repo_path)
+
+    result = runner.run(["bd", "ready", "--json"])
     if not result.ok:
         return None
     try:
@@ -251,13 +279,27 @@ def get_ready_issue_id(repo_path: Path) -> str | None:
     return None
 
 
-def annotate_issue(repo_path: Path, issue_id: str) -> None:
+def annotate_issue(
+    repo_path: Path,
+    issue_id: str,
+    command_runner: CommandRunnerPort | None = None,
+) -> None:
     """Add test plan notes to an issue.
 
     Args:
         repo_path: Path to the repository.
         issue_id: Issue ID to annotate.
+        command_runner: Optional CommandRunnerPort for running commands.
+            If not provided, creates a CommandRunner with repo_path as cwd.
     """
+    # Use injected runner or create default
+    if command_runner is not None:
+        runner = command_runner
+    else:
+        from src.infra.tools.command_runner import CommandRunner
+
+        runner = CommandRunner(cwd=repo_path)
+
     notes = "\n".join(
         [
             "Context:",
@@ -271,7 +313,4 @@ def annotate_issue(repo_path: Path, issue_id: str) -> None:
             "- uv run pytest",
         ]
     )
-    run_command(
-        ["bd", "update", issue_id, "--notes", notes],
-        cwd=repo_path,
-    )
+    runner.run(["bd", "update", issue_id, "--notes", notes])

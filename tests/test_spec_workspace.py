@@ -306,7 +306,7 @@ class TestSetupWorkspaceBaseline:
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
         with patch(
-            "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+            "src.domain.validation.coverage.is_baseline_stale", return_value=False
         ):
             workspace = setup_workspace(
                 spec=spec,
@@ -422,7 +422,7 @@ class TestSetupWorkspaceErrors:
 
         with (
             patch(
-                "src.domain.validation.coverage.run_command", side_effect=mock_git_run
+                "src.domain.validation.coverage.is_baseline_stale", return_value=False
             ),
             patch(
                 "src.domain.validation.worktree.create_worktree",
