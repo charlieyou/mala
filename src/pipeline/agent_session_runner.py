@@ -441,6 +441,7 @@ def _emit_review_result_events(
     review_result: ReviewOutcome,
     lifecycle_ctx: LifecycleContext,
     max_review_retries: int,
+    blocking_count: int,
 ) -> None:
     """Emit events based on review result transition.
 
@@ -460,22 +461,14 @@ def _emit_review_result_events(
         return
 
     if result.effect == Effect.RUN_REVIEW:
+        error_detail = review_result.parse_error or "unknown error"
         event_sink.on_warning(
-            f"Review tool error: {review_result.parse_error}; retrying",
+            f"Review tool error: {error_detail}; retrying",
             agent_id=input.issue_id,
         )
         return
 
     if result.effect == Effect.SEND_REVIEW_RETRY:
-        blocking_count = (
-            sum(
-                1
-                for i in review_result.issues
-                if i.priority is not None and i.priority <= 1
-            )
-            if review_result.issues
-            else 0
-        )
         logger.debug(
             "Session %s: SEND_REVIEW_RETRY triggered "
             "(attempt %d/%d, %d blocking issues)",
@@ -1247,6 +1240,7 @@ class AgentSessionRunner:
             review_result,
             lifecycle_ctx,
             self.config.max_review_retries,
+            blocking,
         )
 
         if result.effect == Effect.COMPLETE_SUCCESS:

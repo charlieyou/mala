@@ -2536,6 +2536,7 @@ class TestEmitReviewResultEvents:
             review_result,
             lifecycle_ctx,
             max_review_retries=3,
+            blocking_count=0,
         )
 
         event_names = [e[0] for e in fake_sink.events]
@@ -2568,6 +2569,7 @@ class TestEmitReviewResultEvents:
             review_result,
             lifecycle_ctx,
             max_review_retries=3,
+            blocking_count=0,
         )
 
         event_names = [e[0] for e in fake_sink.events]
@@ -2631,6 +2633,7 @@ class TestEmitReviewResultEvents:
             review_result,
             lifecycle_ctx,
             max_review_retries=3,
+            blocking_count=2,
         )
 
         event_names = [e[0] for e in fake_sink.events]
@@ -2656,7 +2659,7 @@ class TestEmitReviewResultEvents:
 
         # Should not raise
         _emit_review_result_events(
-            None, input_data, result, review_result, lifecycle_ctx, 3
+            None, input_data, result, review_result, lifecycle_ctx, 3, 0
         )
 
     @pytest.mark.unit
@@ -2681,6 +2684,7 @@ class TestEmitReviewResultEvents:
             review_result,
             lifecycle_ctx,
             max_review_retries=3,
+            blocking_count=0,
         )
 
         assert len(fake_sink.events) == 0
