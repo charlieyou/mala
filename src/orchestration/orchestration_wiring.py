@@ -266,6 +266,8 @@ def build_session_config(
         gate_followup=deps.prompts.gate_followup_prompt,
         review_followup=deps.prompts.review_followup_prompt,
         idle_resume=deps.prompts.idle_resume_prompt,
+        checkpoint_request=deps.prompts.checkpoint_request_prompt,
+        continuation=deps.prompts.continuation_prompt,
     )
     return AgentSessionConfig(
         repo_path=deps.repo_path,
