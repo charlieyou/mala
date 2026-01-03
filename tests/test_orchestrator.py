@@ -1837,9 +1837,7 @@ class TestSubprocessTerminationOnTimeout:
     """Test that timed-out subprocesses are properly terminated."""
 
     @pytest.mark.asyncio
-    async def test_subprocess_terminated_on_timeout(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    async def test_subprocess_terminated_on_timeout(self, tmp_path: Path) -> None:
         """When a subprocess times out, it should be terminated, not left running."""
         from src.infra.clients.beads_client import BeadsClient
 
@@ -1863,9 +1861,7 @@ class TestSubprocessTerminationOnTimeout:
         assert "timed out" in warnings[0]
 
     @pytest.mark.asyncio
-    async def test_subprocess_killed_if_terminate_fails(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    async def test_subprocess_killed_if_terminate_fails(self, tmp_path: Path) -> None:
         """If SIGTERM doesn't work, subprocess should be killed with SIGKILL."""
         from src.infra.clients.beads_client import BeadsClient
 
@@ -1883,9 +1879,7 @@ class TestSubprocessTerminationOnTimeout:
         assert result.stderr == "timeout"
 
     @pytest.mark.asyncio
-    async def test_successful_command_not_affected(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    async def test_successful_command_not_affected(self, tmp_path: Path) -> None:
         """Fast commands should complete normally without being terminated."""
         from src.infra.clients.beads_client import BeadsClient
 
@@ -1898,9 +1892,7 @@ class TestSubprocessTerminationOnTimeout:
         assert result.stderr == ""
 
     @pytest.mark.asyncio
-    async def test_command_stderr_captured(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    async def test_command_stderr_captured(self, tmp_path: Path) -> None:
         """stderr from commands should be captured correctly."""
         from src.infra.clients.beads_client import BeadsClient
 
@@ -1917,9 +1909,7 @@ class TestSubprocessTerminationOnTimeout:
     @pytest.mark.skipif(
         sys.platform == "win32", reason="Process groups not supported on Windows"
     )
-    async def test_child_processes_killed_on_timeout(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    async def test_child_processes_killed_on_timeout(self, tmp_path: Path) -> None:
         """Child processes spawned by the command should also be killed on timeout."""
         import os
 
@@ -4312,18 +4302,14 @@ class TestRunSync:
 class TestGetMcpServers:
     """Test get_mcp_servers function."""
 
-    def test_returns_empty_when_morph_disabled(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    def test_returns_empty_when_morph_disabled(self, tmp_path: Path) -> None:
         """get_mcp_servers returns empty dict when morph_enabled=False."""
         from src.infra.mcp import get_mcp_servers
 
         result = get_mcp_servers(tmp_path, morph_enabled=False)
         assert result == {}
 
-    def test_returns_config_when_api_key_set(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    def test_returns_config_when_api_key_set(self, tmp_path: Path) -> None:
         """get_mcp_servers returns config when morph_api_key is provided."""
         from src.infra.mcp import get_mcp_servers
 
@@ -4332,9 +4318,7 @@ class TestGetMcpServers:
         assert "morphllm" in result
         assert result["morphllm"]["env"]["MORPH_API_KEY"] == "test-key"
 
-    def test_raises_error_when_api_key_missing(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    def test_raises_error_when_api_key_missing(self, tmp_path: Path) -> None:
         """get_mcp_servers raises ValueError when morph_api_key missing but morph_enabled=True."""
         from src.infra.mcp import get_mcp_servers
 
@@ -4473,9 +4457,7 @@ class TestEventSinkIntegration:
 class TestOrchestratorFactory:
     """Tests for create_orchestrator() factory function."""
 
-    def test_create_orchestrator_with_minimal_config(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    def test_create_orchestrator_with_minimal_config(self, tmp_path: Path) -> None:
         """create_orchestrator works with just repo_path."""
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig
@@ -4487,9 +4469,7 @@ class TestOrchestratorFactory:
         assert orchestrator.max_agents is None
         assert orchestrator.max_issues is None
 
-    def test_create_orchestrator_with_full_config(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    def test_create_orchestrator_with_full_config(self, tmp_path: Path) -> None:
         """create_orchestrator respects all config options."""
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig
@@ -4522,9 +4502,7 @@ class TestOrchestratorFactory:
         assert orchestrator.prioritize_wip is True
         assert orchestrator.focus is False
 
-    def test_create_orchestrator_with_custom_mala_config(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    def test_create_orchestrator_with_custom_mala_config(self, tmp_path: Path) -> None:
         """create_orchestrator uses provided MalaConfig."""
         from dataclasses import replace
 
@@ -4542,9 +4520,7 @@ class TestOrchestratorFactory:
         # Verify mala_config was used
         assert orchestrator._mala_config.review_timeout == 999
 
-    def test_create_orchestrator_with_custom_dependencies(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    def test_create_orchestrator_with_custom_dependencies(self, tmp_path: Path) -> None:
         """create_orchestrator uses provided dependencies."""
         from src.infra.io.event_sink import NullEventSink
         from src.orchestration.factory import create_orchestrator
@@ -4558,9 +4534,7 @@ class TestOrchestratorFactory:
 
         assert orchestrator.event_sink is custom_sink
 
-    def test_create_orchestrator_timeout_defaults_to_60(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
+    def test_create_orchestrator_timeout_defaults_to_60(self, tmp_path: Path) -> None:
         """Default timeout is 60 minutes when not specified."""
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import (
@@ -4574,7 +4548,7 @@ class TestOrchestratorFactory:
         assert orchestrator.timeout_seconds == DEFAULT_AGENT_TIMEOUT_MINUTES * 60
 
     def test_create_orchestrator_zero_timeout_uses_default(
-        self, tmp_path: Path, log_provider: LogProvider
+        self, tmp_path: Path
     ) -> None:
         """Timeout of 0 is treated as falsy and uses default."""
         from src.orchestration.factory import create_orchestrator
