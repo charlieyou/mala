@@ -3413,3 +3413,68 @@ class TestRunLifecycleLoop:
         states_emitted = [e[1][1] for e in lifecycle_events]
         assert "PROCESSING" in states_emitted
         assert "AWAITING_LOG" in states_emitted
+
+
+class TestBuildReviewRetryPrompt:
+    """Unit tests for _build_review_retry_prompt helper.
+
+    Tests the isolated prompt building logic for review retries.
+    """
+
+    @pytest.mark.unit
+    def test_builds_prompt_with_issues(self, tmp_path: Path) -> None:
+        """Should build prompt with formatted issues."""
+        from src.infra.clients.cerberus_review import ReviewIssue
+        from src.pipeline.agent_session_runner import _build_review_retry_prompt
+
+        # Create a mock review result with issues
+        review_result = MagicMock()
+        review_result.issues = [
+            ReviewIssue(
+                file="src/test.py",
+                line_start=10,
+                line_end=10,
+                priority=0,
+                title="Test issue",
+                body="Test description",
+                reviewer="test",
+            )
+        ]
+
+        lifecycle_ctx = MagicMock()
+        lifecycle_ctx.retry_state.review_attempt = 2
+
+        prompt = _build_review_retry_prompt(
+            review_result,
+            lifecycle_ctx,
+            issue_id="test-123",
+            repo_path=tmp_path,
+            max_review_retries=3,
+        )
+
+        # Verify prompt contains key elements
+        assert "test-123" in prompt
+        assert "2" in prompt  # attempt number
+        assert "3" in prompt  # max attempts
+        assert "Test issue" in prompt  # issue title
+
+    @pytest.mark.unit
+    def test_returns_string(self, tmp_path: Path) -> None:
+        """Should return a string prompt."""
+        from src.pipeline.agent_session_runner import _build_review_retry_prompt
+
+        review_result = MagicMock()
+        review_result.issues = []
+        lifecycle_ctx = MagicMock()
+        lifecycle_ctx.retry_state.review_attempt = 1
+
+        prompt = _build_review_retry_prompt(
+            review_result,
+            lifecycle_ctx,
+            issue_id="test-456",
+            repo_path=tmp_path,
+            max_review_retries=5,
+        )
+
+        assert isinstance(prompt, str)
+        assert len(prompt) > 0

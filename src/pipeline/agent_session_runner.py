@@ -52,6 +52,7 @@ from src.domain.prompts import (
     get_default_validation_commands as _get_default_validation_commands,
     get_gate_followup_prompt as _get_gate_followup_prompt,
 )
+from src.infra.clients.cerberus_review import format_review_issues
 from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 
 if TYPE_CHECKING:
@@ -485,6 +486,37 @@ def _emit_review_result_events(
             parse_error=review_result.parse_error,
             issue_id=input.issue_id,
         )
+
+
+def _build_review_retry_prompt(
+    review_result: ReviewOutcome,
+    lifecycle_ctx: LifecycleContext,
+    issue_id: str,
+    repo_path: Path,
+    max_review_retries: int,
+) -> str:
+    """Build the follow-up prompt for review retry.
+
+    Args:
+        review_result: The review outcome with issues to address.
+        lifecycle_ctx: Lifecycle context with retry state.
+        issue_id: The issue identifier.
+        repo_path: Repository path for formatting issue paths.
+        max_review_retries: Maximum number of review retries.
+
+    Returns:
+        Formatted prompt string for the agent to address review issues.
+    """
+    review_issues_text = format_review_issues(
+        review_result.issues,  # type: ignore[arg-type]
+        base_path=repo_path,
+    )
+    return _get_review_followup_prompt().format(
+        attempt=lifecycle_ctx.retry_state.review_attempt,
+        max_attempts=max_review_retries,
+        review_issues=review_issues_text,
+        issue_id=issue_id,
+    )
 
 
 @dataclass
@@ -1271,17 +1303,12 @@ class AgentSessionRunner:
 
         if result.effect == Effect.SEND_REVIEW_RETRY:
             # Build follow-up prompt for legitimate review issues
-            from src.infra.clients.cerberus_review import format_review_issues
-
-            review_issues_text = format_review_issues(
-                review_result.issues,  # type: ignore[arg-type]
-                base_path=self.config.repo_path,
-            )
-            pending_query = _get_review_followup_prompt().format(
-                attempt=lifecycle_ctx.retry_state.review_attempt,
-                max_attempts=self.config.max_review_retries,
-                review_issues=review_issues_text,
-                issue_id=input.issue_id,
+            pending_query = _build_review_retry_prompt(
+                review_result,
+                lifecycle_ctx,
+                input.issue_id,
+                self.config.repo_path,
+                self.config.max_review_retries,
             )
             return ReviewEffectResult(
                 pending_query=pending_query,
