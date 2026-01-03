@@ -1880,6 +1880,8 @@ class TestApplyConfigOverrides:
             disable_review=False,
         )
 
+        assert result.resolved is not None
+        assert result.updated_config is not None
         assert result.resolved.review_timeout == 1200
         assert result.resolved.max_epic_verification_retries == 3
         assert result.updated_config.review_timeout == 1200
@@ -1907,6 +1909,8 @@ class TestApplyConfigOverrides:
             disable_review=False,
         )
 
+        assert result.resolved is not None
+        assert result.updated_config is not None
         assert result.resolved.review_timeout == 600
         assert result.updated_config.review_timeout == 600
 
@@ -1932,6 +1936,8 @@ class TestApplyConfigOverrides:
             disable_review=False,
         )
 
+        assert result.resolved is not None
+        assert result.updated_config is not None
         assert result.resolved.max_epic_verification_retries == 10
         assert result.updated_config.max_epic_verification_retries == 10
 
@@ -1956,6 +1962,8 @@ class TestApplyConfigOverrides:
             disable_review=False,
         )
 
+        assert result.resolved is not None
+        assert result.updated_config is not None
         assert result.resolved.cerberus_spawn_args == (
             "--model",
             "opus",
@@ -1990,6 +1998,8 @@ class TestApplyConfigOverrides:
             disable_review=False,
         )
 
+        assert result.resolved is not None
+        assert result.updated_config is not None
         assert result.resolved.cerberus_wait_args == ("--poll-interval", "5")
         assert result.updated_config.cerberus_wait_args == ("--poll-interval", "5")
 
@@ -2014,6 +2024,8 @@ class TestApplyConfigOverrides:
             disable_review=False,
         )
 
+        assert result.resolved is not None
+        assert result.updated_config is not None
         assert result.resolved.cerberus_env == (("BAZ", "qux"), ("FOO", "bar"))
         assert result.updated_config.cerberus_env == (("BAZ", "qux"), ("FOO", "bar"))
 

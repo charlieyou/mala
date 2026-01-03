@@ -3217,7 +3217,7 @@ class TestLogProviderInjection:
                     return []
                 result: list[tuple[str, str]] = []
                 for block in message.content:
-                    if hasattr(block, "name") and block.name == "Bash":
+                    if isinstance(block, ToolUseBlock) and block.name == "Bash":
                         cmd = (
                             block.input.get("command", "")
                             if isinstance(block.input, dict)
