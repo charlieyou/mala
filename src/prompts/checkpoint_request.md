@@ -23,4 +23,4 @@ Output a `<checkpoint>` block with these sections:
 </checkpoint>
 ```
 
-Output the checkpoint now, then continue working until context is exhausted.
+After outputting this checkpoint, STOP.
