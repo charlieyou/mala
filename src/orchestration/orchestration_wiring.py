@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from src.infra.io.log_output.console import is_verbose_enabled
-from src.pipeline.agent_session_runner import AgentSessionConfig
+from src.pipeline.agent_session_runner import AgentSessionConfig, PromptProvider
 from src.pipeline.gate_runner import (
     AsyncGateRunner,
     GateRunner,
@@ -41,7 +41,12 @@ from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
 )
-from src.domain.prompts import get_fixer_prompt
+from src.domain.prompts import (
+    get_fixer_prompt,
+    get_gate_followup_prompt,
+    get_idle_resume_prompt,
+    get_review_followup_prompt,
+)
 
 if TYPE_CHECKING:
     import asyncio

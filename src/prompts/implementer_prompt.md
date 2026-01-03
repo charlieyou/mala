@@ -26,8 +26,9 @@ Implement the assigned issue completely before returning.
 - Check context before Read—don't re-fetch ranges you already have.
 - Batch independent Read/Grep calls in a single message.
 - Skip `grep` on binary/large generated files.
-- Acquire locks before editing; use exponential backoff (2s, 4s, 8s... up to 30s).
-- Use `lock-wait.sh` only when no other work remains.
+- **Lock retry budget**: Max 3 `lock-try.sh` retries per file (2s/4s/8s gaps). Then either work on other files, run ONE `lock-wait.sh` (≥300s), or return BLOCKED.
+- **No consecutive lock calls**: Never issue two lock-related bash commands without doing other work (read/grep/edit/test) in between.
+- **Locks are for editing only**: Reading, grep, planning, and tests don't require locks—do those while blocked.
 - No narration ("Let me...", "Now I will..."). Reference code as `file:line`.
 - Outside Output template, keep explanations to ≤3 sentences.
 - ALWAYS use `uv run python`, never bare `python`.
@@ -114,35 +115,36 @@ Lock scripts are pre-configured in your environment (LOCK_DIR, AGENT_ID, REPO_NA
 | `lock-release.sh <file>` | Release a specific lock |
 | `lock-release-all.sh` | Release all your locks |
 
-**Acquisition strategy - work on other files while waiting:**
+**Acquisition strategy - mandatory protocol:**
 
-1. Try to acquire locks for ALL files you need
-2. For files you couldn't lock immediately:
-   - Note who holds each lock
-   - Use exponential backoff when polling (2s, 4s, 8s, up to 30s). Only log when starting to wait and when acquired.
-   - **While waiting, work on files you DO have locked**
-3. Track cumulative wait time per file. Give up after 15 minutes total.
+1. Try `lock-try.sh` for ALL files you need (batch in one message if possible)
+2. For blocked files, note the holder and **immediately work on locked files first**
+3. Retry budget per blocked file: max 3 retries with 2s/4s/8s gaps
+4. Between EVERY retry, do concrete work (edit locked file, grep, read, run tests)
+5. After 3 retries exhausted: run ONE `lock-wait.sh <file> 300` (5 min) or return BLOCKED
+
+**Hard rules:**
+- **No consecutive lock commands**: Every lock-related bash call must be separated by non-lock work
+- **`lock-wait.sh` is single-shot**: Run at most once per file. If it times out, return BLOCKED—do not loop
+- **15 min total cap**: Track cumulative wait. After 15 min on any file, return BLOCKED
 
 **Example workflow:**
 ```bash
 # Need: [config.py, utils.py, main.py]
 
 lock-try.sh config.py  # exit 0 → SUCCESS
-lock-try.sh utils.py   # exit 1 → BLOCKED
-lock-holder.sh utils.py  # outputs: bd-43
+lock-try.sh utils.py   # exit 1 → BLOCKED (holder: bd-43)
 lock-try.sh main.py    # exit 0 → SUCCESS
 
-# → Work on config.py and main.py first
-# → Periodically retry utils.py with backoff (2s, 4s, 8s... up to 30s)
-# → Once utils.py acquired, complete that work
+# → Edit config.py (non-lock work)
+# → Retry 1: lock-try.sh utils.py (2s gap)
+# → Edit main.py (non-lock work)  
+# → Retry 2: lock-try.sh utils.py (4s gap)
+# → Run grep/read for planning (non-lock work)
+# → Retry 3: lock-try.sh utils.py (8s gap)
+# → If still blocked: lock-wait.sh utils.py 300
+# → If timeout: return "BLOCKED: utils.py held by bd-43"
 ```
-
-**When you have nothing else to work on:** Use `lock-wait.sh` to block until lock acquired:
-```bash
-lock-wait.sh utils.py 900 1000  # Wait up to 900s, poll every 1000ms
-```
-
-**If still blocked after 15 min total wait:** Return with `"BLOCKED: <file> held by <holder> for 15+ min"`
 
 ### Parallel Work Rules
 
@@ -154,11 +156,12 @@ lock-wait.sh utils.py 900 1000  # Wait up to 900s, poll every 1000ms
 
 ### 3. Implement (with lock-aware ordering)
 
-1. **Acquire all locks you can** - note which are blocked
+1. **Acquire all locks you can** - note which are blocked and who holds them
 2. **Work on locked files first** - write code, don't commit yet
-3. **Retry blocked files** with exponential backoff (2s, 4s, 8s... up to 30s)
-4. **Once all locks acquired**, complete remaining implementation
-5. Handle edge cases, add tests if appropriate
+3. **Retry blocked files** following the retry budget (max 3 tries, non-lock work between each)
+4. **If retries exhausted**: one `lock-wait.sh` call OR return BLOCKED (see Acquisition strategy)
+5. **Once all locks acquired**, complete remaining implementation
+6. Handle edge cases, add tests if appropriate
 
 ### 4. Quality Checks
 

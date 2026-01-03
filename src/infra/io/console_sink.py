@@ -98,16 +98,16 @@ class ConsoleEventSink(BaseEventSink):
         abort_reason: str | None = None,
     ) -> None:
         status_icon = "✓" if success_count == total_count else "✗"
-        status = f"[DONE] {status_icon} {success_count}/{total_count} issues completed"
+        status = f"DONE {status_icon} {success_count}/{total_count} issues completed"
         if abort_reason:
             status += f" (aborted: {abort_reason})"
         log("→", status, agent_id="run")
         if run_validation_passed:
-            log("✓", "[RUN VALIDATION] passed", agent_id="run")
+            log("✓", "RUN VALIDATION passed", agent_id="run")
         else:
             log(
                 "✗",
-                f"[RUN VALIDATION] {Colors.RED}failed{Colors.RESET}",
+                f"RUN VALIDATION {Colors.RED}failed{Colors.RESET}",
                 agent_id="run",
             )
 
@@ -144,7 +144,7 @@ class ConsoleEventSink(BaseEventSink):
         )
 
     def on_claim_failed(self, agent_id: str, issue_id: str) -> None:
-        log("○", f"[SKIP] {issue_id} already claimed", agent_id=agent_id)
+        log("○", f"SKIP {issue_id} already claimed", agent_id=agent_id)
 
     # -------------------------------------------------------------------------
     # SDK message streaming
@@ -173,11 +173,11 @@ class ConsoleEventSink(BaseEventSink):
         max_attempts: int,
         issue_id: str | None = None,
     ) -> None:
-        scope = f" ({issue_id})" if issue_id else ""
         log(
             "→",
-            f"[GATE{scope}] Attempt {attempt}/{max_attempts}",
+            f"GATE Attempt {attempt}/{max_attempts}",
             agent_id=agent_id or "run",
+            issue_id=issue_id,
         )
 
     def on_gate_passed(
@@ -185,8 +185,7 @@ class ConsoleEventSink(BaseEventSink):
         agent_id: str | None,
         issue_id: str | None = None,
     ) -> None:
-        scope = f" ({issue_id})" if issue_id else ""
-        log("✓", f"[GATE{scope}] passed", agent_id=agent_id or "run")
+        log("✓", "GATE passed", agent_id=agent_id or "run", issue_id=issue_id)
 
     def on_gate_failed(
         self,
@@ -195,11 +194,11 @@ class ConsoleEventSink(BaseEventSink):
         max_attempts: int,
         issue_id: str | None = None,
     ) -> None:
-        scope = f" ({issue_id})" if issue_id else ""
         log(
             "✗",
-            f"[GATE{scope}] {Colors.RED}failed{Colors.RESET} ({attempt}/{max_attempts})",
+            f"GATE {Colors.RED}failed{Colors.RESET} ({attempt}/{max_attempts})",
             agent_id=agent_id or "run",
+            issue_id=issue_id,
         )
 
     def on_gate_retry(
@@ -209,8 +208,7 @@ class ConsoleEventSink(BaseEventSink):
         max_attempts: int,
         issue_id: str | None = None,
     ) -> None:
-        scope = f" ({issue_id})" if issue_id else ""
-        log("→", f"[GATE{scope}] Retry {attempt}/{max_attempts}", agent_id=agent_id)
+        log("→", f"GATE Retry {attempt}/{max_attempts}", agent_id=agent_id, issue_id=issue_id)
 
     def on_gate_result(
         self,
@@ -219,12 +217,17 @@ class ConsoleEventSink(BaseEventSink):
         failure_reasons: list[str] | None = None,
         issue_id: str | None = None,
     ) -> None:
-        # Primary pass/fail is logged by on_gate_passed/on_gate_failed.
-        # Only log failure details here if there are specific reasons to show.
-        if not passed and failure_reasons:
-            scope = f" ({issue_id})" if issue_id else ""
+        if passed:
+            log("✓", "GATE all checks passed", agent_id=agent_id or "run", issue_id=issue_id)
+        elif failure_reasons:
+            log(
+                "✗",
+                f"GATE {Colors.RED}{len(failure_reasons)} checks failed{Colors.RESET}",
+                agent_id=agent_id or "run",
+                issue_id=issue_id,
+            )
             for reason in failure_reasons:
-                log("→", f"  [GATE{scope}] - {reason}", agent_id=agent_id or "run")
+                log("→", f"  - {reason}", agent_id=agent_id or "run", issue_id=issue_id)
 
     # -------------------------------------------------------------------------
     # Codex review events
@@ -237,16 +240,14 @@ class ConsoleEventSink(BaseEventSink):
         max_attempts: int,
         issue_id: str | None = None,
     ) -> None:
-        scope = f" ({issue_id})" if issue_id else ""
-        log("→", f"[REVIEW{scope}] Attempt {attempt}/{max_attempts}", agent_id=agent_id)
+        log("→", f"REVIEW Attempt {attempt}/{max_attempts}", agent_id=agent_id, issue_id=issue_id)
 
     def on_review_passed(
         self,
         agent_id: str,
         issue_id: str | None = None,
     ) -> None:
-        scope = f" ({issue_id})" if issue_id else ""
-        log("✓", f"[REVIEW{scope}] approved", agent_id=agent_id)
+        log("✓", "REVIEW approved", agent_id=agent_id, issue_id=issue_id)
 
     def on_review_retry(
         self,
@@ -257,7 +258,6 @@ class ConsoleEventSink(BaseEventSink):
         parse_error: str | None = None,
         issue_id: str | None = None,
     ) -> None:
-        scope = f" ({issue_id})" if issue_id else ""
         details = ""
         if error_count is not None:
             details = f" ({error_count} errors)"
@@ -265,8 +265,9 @@ class ConsoleEventSink(BaseEventSink):
             details = f" (parse error: {parse_error})"
         log(
             "→",
-            f"[REVIEW{scope}] Retry {attempt}/{max_attempts}{details}",
+            f"REVIEW Retry {attempt}/{max_attempts}{details}",
             agent_id=agent_id,
+            issue_id=issue_id,
         )
 
     def on_review_warning(
@@ -275,11 +276,11 @@ class ConsoleEventSink(BaseEventSink):
         agent_id: str | None = None,
         issue_id: str | None = None,
     ) -> None:
-        scope = f" ({issue_id})" if issue_id else ""
         log(
             "⚠",
-            f"[REVIEW{scope}] {Colors.YELLOW}{message}{Colors.RESET}",
+            f"REVIEW {Colors.YELLOW}{message}{Colors.RESET}",
             agent_id=agent_id or "run",
+            issue_id=issue_id,
         )
 
     # -------------------------------------------------------------------------
@@ -291,20 +292,20 @@ class ConsoleEventSink(BaseEventSink):
         attempt: int,
         max_attempts: int,
     ) -> None:
-        log("→", f"[FIXER] Attempt {attempt}/{max_attempts}", agent_id="fixer")
+        log("→", f"FIXER Attempt {attempt}/{max_attempts}", agent_id="fixer")
 
     def on_fixer_completed(self, result: str) -> None:
-        log("✓", f"[FIXER] {result}", agent_id="fixer")
+        log("✓", f"FIXER {result}", agent_id="fixer")
 
     def on_fixer_failed(self, reason: str) -> None:
-        log("✗", f"[FIXER] {Colors.RED}{reason}{Colors.RESET}", agent_id="fixer")
+        log("✗", f"FIXER {Colors.RED}{reason}{Colors.RESET}", agent_id="fixer")
 
     # -------------------------------------------------------------------------
     # Issue lifecycle
     # -------------------------------------------------------------------------
 
     def on_issue_closed(self, agent_id: str, issue_id: str) -> None:
-        log("→", f"[CLOSE] {issue_id}", agent_id=agent_id)
+        log("→", f"CLOSE {issue_id}", agent_id=agent_id)
 
     def on_issue_completed(
         self,
@@ -322,15 +323,14 @@ class ConsoleEventSink(BaseEventSink):
         )
 
     def on_epic_closed(self, agent_id: str) -> None:
-        log("→", "[EPIC] Closed", agent_id=agent_id)
+        log("→", "EPIC Closed", agent_id=agent_id)
 
     def on_validation_started(
         self,
         agent_id: str,
         issue_id: str | None = None,
     ) -> None:
-        scope = f" ({issue_id})" if issue_id else ""
-        log("→", f"[VALIDATE{scope}] Starting validation", agent_id=agent_id)
+        log("→", "VALIDATE Starting validation", agent_id=agent_id, issue_id=issue_id)
 
     def on_validation_result(
         self,
@@ -338,16 +338,15 @@ class ConsoleEventSink(BaseEventSink):
         passed: bool,
         issue_id: str | None = None,
     ) -> None:
-        scope = f" ({issue_id})" if issue_id else ""
         status_icon = "✓" if passed else "✗"
-        log(status_icon, f"[VALIDATE{scope}]", agent_id=agent_id)
+        log(status_icon, "VALIDATE", agent_id=agent_id, issue_id=issue_id)
 
     def on_validation_step_running(
         self,
         step_name: str,
         agent_id: str | None = None,
     ) -> None:
-        log("▸", f"  [{step_name}] running...", agent_id=agent_id or "run")
+        log("▸", f"  {step_name} running...", agent_id=agent_id or "run")
 
     def on_validation_step_skipped(
         self,
@@ -357,7 +356,7 @@ class ConsoleEventSink(BaseEventSink):
     ) -> None:
         log(
             "○",
-            f"  [{step_name}] {Colors.YELLOW}skipped: {reason}{Colors.RESET}",
+            f"  {step_name} {Colors.YELLOW}skipped: {reason}{Colors.RESET}",
             agent_id=agent_id or "run",
         )
 
@@ -369,7 +368,7 @@ class ConsoleEventSink(BaseEventSink):
     ) -> None:
         log(
             "✓",
-            f"  [{step_name}] ({duration_seconds:.1f}s)",
+            f"  {step_name} ({duration_seconds:.1f}s)",
             agent_id=agent_id or "run",
         )
 
@@ -381,7 +380,7 @@ class ConsoleEventSink(BaseEventSink):
     ) -> None:
         log(
             "✗",
-            f"  [{step_name}] {Colors.RED}exit {exit_code}{Colors.RESET}",
+            f"  {step_name} {Colors.RED}exit {exit_code}{Colors.RESET}",
             agent_id=agent_id or "run",
         )
 
@@ -406,7 +405,7 @@ class ConsoleEventSink(BaseEventSink):
         log("→", f"Released {count} locks", agent_id="run")
 
     def on_issues_committed(self) -> None:
-        log("→", "[COMMIT] Issues committed", agent_id="run")
+        log("→", "COMMIT Issues committed", agent_id="run")
 
     def on_run_metadata_saved(self, path: str) -> None:
         log("◦", f"Run metadata saved to {path}", agent_id="run")
@@ -415,22 +414,22 @@ class ConsoleEventSink(BaseEventSink):
         log_verbose("◦", "Run-level validation disabled", agent_id="run")
 
     def on_abort_requested(self, reason: str) -> None:
-        log("⚠", f"{Colors.YELLOW}[ABORT] {reason}{Colors.RESET}", agent_id="run")
+        log("⚠", f"{Colors.YELLOW}ABORT {reason}{Colors.RESET}", agent_id="run")
 
     def on_tasks_aborting(self, count: int, reason: str) -> None:
-        log("→", f"[ABORT] Cancelling {count} tasks: {reason}", agent_id="run")
+        log("→", f"ABORT Cancelling {count} tasks: {reason}", agent_id="run")
 
     # -------------------------------------------------------------------------
     # Epic verification lifecycle
     # -------------------------------------------------------------------------
 
     def on_epic_verification_started(self, epic_id: str) -> None:
-        log("→", f"[VERIFY] Starting verification for {epic_id}", agent_id="epic")
+        log("→", f"VERIFY Starting verification for {epic_id}", agent_id="epic")
 
     def on_epic_verification_passed(self, epic_id: str, confidence: float) -> None:
         log(
             "✓",
-            f"[VERIFY] {epic_id} passed (confidence: {confidence:.0%})",
+            f"VERIFY {epic_id} passed (confidence: {confidence:.0%})",
             agent_id="epic",
         )
 
@@ -442,7 +441,7 @@ class ConsoleEventSink(BaseEventSink):
     ) -> None:
         log(
             "✗",
-            f"[VERIFY] {Colors.RED}{epic_id}: {unmet_count} criteria unmet{Colors.RESET}",
+            f"VERIFY {Colors.RED}{epic_id}: {unmet_count} criteria unmet{Colors.RESET}",
             agent_id="epic",
         )
         for issue_id in remediation_ids:
@@ -456,7 +455,7 @@ class ConsoleEventSink(BaseEventSink):
     ) -> None:
         log(
             "?",
-            f"[VERIFY] {Colors.YELLOW}{epic_id} needs human review: {reason}{Colors.RESET}",
+            f"VERIFY {Colors.YELLOW}{epic_id} needs human review: {reason}{Colors.RESET}",
             agent_id="epic",
         )
         log("→", f"  → Review issue: {review_issue_id}", agent_id="epic")
@@ -468,25 +467,25 @@ class ConsoleEventSink(BaseEventSink):
         criterion: str,
     ) -> None:
         truncated = truncate_text(criterion, 80)
-        log("→", f"[REMEDIATE] {epic_id} → {issue_id}: {truncated}", agent_id="epic")
+        log("→", f"REMEDIATE {epic_id} → {issue_id}: {truncated}", agent_id="epic")
 
     # -------------------------------------------------------------------------
     # Pipeline module events
     # -------------------------------------------------------------------------
 
     def on_lifecycle_state(self, agent_id: str, state: str) -> None:
-        log_verbose("◦", f"[LIFECYCLE] {state}", agent_id=agent_id)
+        log_verbose("◦", f"LIFECYCLE {state}", agent_id=agent_id)
 
     def on_log_waiting(self, agent_id: str) -> None:
-        log_verbose("◦", "[LOG] Waiting for session log...", agent_id=agent_id)
+        log_verbose("◦", "LOG Waiting for session log...", agent_id=agent_id)
 
     def on_log_ready(self, agent_id: str) -> None:
-        log_verbose("◦", "[LOG] Session log ready", agent_id=agent_id)
+        log_verbose("◦", "LOG Session log ready", agent_id=agent_id)
 
     def on_review_skipped_no_progress(self, agent_id: str) -> None:
         log(
             "⚠",
-            f"[REVIEW] {Colors.YELLOW}Skipped (no code changes){Colors.RESET}",
+            f"REVIEW {Colors.YELLOW}Skipped (no code changes){Colors.RESET}",
             agent_id=agent_id,
         )
 

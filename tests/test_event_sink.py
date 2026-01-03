@@ -693,8 +693,8 @@ class TestConsoleEventSink:
         call_args = mock_log.call_args
         # Check the message contains "Starting validation..."
         assert "Starting validation" in call_args[0][1]
-        # Check issue_id is in the message
-        assert "issue-123" in call_args[0][1]
+        # Check issue_id is passed as kwarg
+        assert call_args.kwargs.get("issue_id") == "issue-123"
 
     @patch("src.infra.io.console_sink.log")
     def test_on_gate_started_uses_log_not_verbose(self, mock_log: MagicMock) -> None:
@@ -707,7 +707,7 @@ class TestConsoleEventSink:
         call_args = mock_log.call_args
         assert "GATE" in call_args[0][1]
         assert "1/3" in call_args[0][1]
-        assert "issue-123" in call_args[0][1]
+        assert call_args.kwargs.get("issue_id") == "issue-123"
 
     @patch("src.infra.io.console_sink.log")
     def test_on_review_started_uses_log_not_verbose(self, mock_log: MagicMock) -> None:
@@ -720,83 +720,83 @@ class TestConsoleEventSink:
         call_args = mock_log.call_args
         assert "REVIEW" in call_args[0][1]
         assert "1/2" in call_args[0][1]
-        assert "issue-123" in call_args[0][1]
+        assert call_args.kwargs.get("issue_id") == "issue-123"
 
     @patch("src.infra.io.console_sink.log")
     def test_gate_passed_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_gate_passed includes issue_id in message."""
+        """on_gate_passed passes issue_id as kwarg."""
         sink = ConsoleEventSink()
         sink.on_gate_passed("agent-1", issue_id="issue-456")
 
         mock_log.assert_called_once()
-        assert "issue-456" in mock_log.call_args[0][1]
+        assert mock_log.call_args.kwargs.get("issue_id") == "issue-456"
 
     @patch("src.infra.io.console_sink.log")
     def test_gate_failed_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_gate_failed includes issue_id in message."""
+        """on_gate_failed passes issue_id as kwarg."""
         sink = ConsoleEventSink()
         sink.on_gate_failed("agent-1", 3, 3, issue_id="issue-789")
 
         mock_log.assert_called_once()
-        assert "issue-789" in mock_log.call_args[0][1]
+        assert mock_log.call_args.kwargs.get("issue_id") == "issue-789"
 
     @patch("src.infra.io.console_sink.log")
     def test_gate_retry_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_gate_retry includes issue_id in message."""
+        """on_gate_retry passes issue_id as kwarg."""
         sink = ConsoleEventSink()
         sink.on_gate_retry("agent-1", 2, 3, issue_id="issue-abc")
 
         mock_log.assert_called_once()
-        assert "issue-abc" in mock_log.call_args[0][1]
+        assert mock_log.call_args.kwargs.get("issue_id") == "issue-abc"
 
     @patch("src.infra.io.console_sink.log")
     def test_review_passed_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_review_passed includes issue_id in message."""
+        """on_review_passed passes issue_id as kwarg."""
         sink = ConsoleEventSink()
         sink.on_review_passed("agent-1", issue_id="issue-def")
 
         mock_log.assert_called_once()
-        assert "issue-def" in mock_log.call_args[0][1]
+        assert mock_log.call_args.kwargs.get("issue_id") == "issue-def"
 
     @patch("src.infra.io.console_sink.log")
     def test_review_retry_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_review_retry includes issue_id in message."""
+        """on_review_retry passes issue_id as kwarg."""
         sink = ConsoleEventSink()
         sink.on_review_retry("agent-1", 2, 2, error_count=5, issue_id="issue-ghi")
 
         mock_log.assert_called_once()
-        assert "issue-ghi" in mock_log.call_args[0][1]
+        assert mock_log.call_args.kwargs.get("issue_id") == "issue-ghi"
 
     @patch("src.infra.io.console_sink.log")
     def test_validation_result_failed_passes_issue_id(
         self, mock_log: MagicMock
     ) -> None:
-        """on_validation_result (failed) includes issue_id in message."""
+        """on_validation_result (failed) passes issue_id as kwarg."""
         sink = ConsoleEventSink()
         sink.on_validation_result("agent-1", passed=False, issue_id="issue-jkl")
 
         mock_log.assert_called_once()
-        assert "issue-jkl" in mock_log.call_args[0][1]
+        assert mock_log.call_args.kwargs.get("issue_id") == "issue-jkl"
 
     @patch("src.infra.io.console_sink.log")
     def test_gate_result_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_gate_result includes issue_id in failure reason messages."""
+        """on_gate_result passes issue_id as kwarg."""
         sink = ConsoleEventSink()
         sink.on_gate_result(
             "agent-1", passed=False, failure_reasons=["lint"], issue_id="issue-mno"
         )
 
-        # Only logs failure reasons now (main pass/fail is logged by on_gate_passed/failed)
-        assert mock_log.call_count == 1
-        assert "issue-mno" in mock_log.call_args[0][1]
+        # Logs both failure summary and each failure reason
+        assert mock_log.call_count == 2
+        assert mock_log.call_args_list[0].kwargs.get("issue_id") == "issue-mno"
 
     @patch("src.infra.io.console_sink.log")
     def test_validation_result_passed_passes_issue_id(
         self, mock_log: MagicMock
     ) -> None:
-        """on_validation_result (passed) includes issue_id in message."""
+        """on_validation_result (passed) passes issue_id as kwarg."""
         sink = ConsoleEventSink()
         sink.on_validation_result("agent-1", passed=True, issue_id="issue-pqr")
 
         mock_log.assert_called_once()
-        assert "issue-pqr" in mock_log.call_args[0][1]
+        assert mock_log.call_args.kwargs.get("issue_id") == "issue-pqr"

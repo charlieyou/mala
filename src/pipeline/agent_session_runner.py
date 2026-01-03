@@ -56,9 +56,6 @@ from src.domain.lifecycle import (
 )
 from src.domain.prompts import (
     get_default_validation_commands as _get_default_validation_commands,
-    get_gate_followup_prompt as _get_gate_followup_prompt,
-    get_review_followup_prompt as _get_review_followup_prompt,
-    get_idle_resume_prompt as _get_idle_resume_prompt,
 )
 from src.infra.clients.cerberus_review import format_review_issues, ReviewResult
 from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
@@ -316,6 +313,24 @@ class SessionExecutionState:
 
 
 @dataclass
+class PromptProvider:
+    """Provider for session prompts, injected at construction time.
+
+    Holds prompt templates loaded from files. This keeps file I/O at the
+    orchestration boundary and allows tests to inject custom prompts.
+
+    Attributes:
+        gate_followup: Template for gate failure follow-up prompts.
+        review_followup: Template for review issues follow-up prompts.
+        idle_resume: Template for idle timeout resume prompts.
+    """
+
+    gate_followup: str
+    review_followup: str
+    idle_resume: str
+
+
+@dataclass
 class AgentSessionConfig:
     """Configuration for agent session execution.
 
@@ -324,6 +339,7 @@ class AgentSessionConfig:
     Attributes:
         repo_path: Path to the repository.
         timeout_seconds: Session timeout in seconds.
+        prompts: Provider for session prompts (gate, review, idle resume).
         max_gate_retries: Maximum gate retry attempts.
         max_review_retries: Maximum review retry attempts.
         review_enabled: Whether Cerberus external review is enabled.
@@ -343,6 +359,7 @@ class AgentSessionConfig:
 
     repo_path: Path
     timeout_seconds: int
+    prompts: PromptProvider
     max_gate_retries: int = 3
     max_review_retries: int = 3
     review_enabled: bool = True
@@ -592,6 +609,7 @@ def _build_review_retry_prompt(
     issue_id: str,
     repo_path: Path,
     max_review_retries: int,
+    review_followup_template: str,
 ) -> str:
     """Build the follow-up prompt for review retry.
 
@@ -601,6 +619,7 @@ def _build_review_retry_prompt(
         issue_id: The issue identifier.
         repo_path: Repository path for formatting issue paths.
         max_review_retries: Maximum number of review retries.
+        review_followup_template: Template for review follow-up prompts.
 
     Returns:
         Formatted prompt string for the agent to address review issues.
@@ -609,7 +628,7 @@ def _build_review_retry_prompt(
         review_result.issues,  # type: ignore[arg-type]
         base_path=repo_path,
     )
-    return _get_review_followup_prompt().format(
+    return review_followup_template.format(
         attempt=lifecycle_ctx.retry_state.review_attempt,
         max_attempts=max_review_retries,
         review_issues=review_issues_text,
@@ -1177,7 +1196,7 @@ class AgentSessionRunner:
                 self.config.prompt_validation_commands
                 or _get_default_validation_commands()
             )
-            pending_query = _get_gate_followup_prompt().format(
+            pending_query = self.config.prompts.gate_followup.format(
                 attempt=lifecycle_ctx.retry_state.gate_attempt,
                 max_attempts=self.config.max_gate_retries,
                 failure_reasons=failure_text,
@@ -1381,6 +1400,7 @@ class AgentSessionRunner:
                 input.issue_id,
                 self.config.repo_path,
                 self.config.max_review_retries,
+                self.config.prompts.review_followup,
             )
 
         return _make_review_effect_result(
@@ -1460,7 +1480,7 @@ class AgentSessionRunner:
 
         if resume_id is not None:
             state.pending_session_id = resume_id
-            pending_query = _get_idle_resume_prompt().format(issue_id=issue_id)
+            pending_query = self.config.prompts.idle_resume.format(issue_id=issue_id)
             logger.info(
                 f"Session {issue_id}: retrying with resume "
                 f"(session_id={resume_id[:8]}..., "
