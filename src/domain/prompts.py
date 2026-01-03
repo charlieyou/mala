@@ -137,8 +137,8 @@ def extract_checkpoint(text: str) -> str:
     """Extract checkpoint block from agent response text.
 
     Looks for content between <checkpoint> and </checkpoint> tags.
-    Handles markdown code block wrappers (```xml, ```markdown, etc.).
-    Returns full text as fallback if no tags found.
+    For nested tags, returns the outermost checkpoint content.
+    Returns full text as fallback if no tags found (stripping code block wrappers).
 
     Args:
         text: Raw agent response text.
@@ -146,13 +146,40 @@ def extract_checkpoint(text: str) -> str:
     Returns:
         Extracted checkpoint content, or full text if no tags found.
     """
-    # Extract content between checkpoint tags (non-greedy to get first block only)
-    match = re.search(r"<checkpoint>(.*?)</checkpoint>", text, re.DOTALL)
-    if match:
-        return match.group(1)
+    # Find first opening tag
+    start_match = re.search(r"<checkpoint>", text)
+    if not start_match:
+        # Fallback: strip code block wrappers and return
+        stripped = re.sub(r"^```\w*\n?", "", text)
+        stripped = re.sub(r"\n?```$", "", stripped)
+        return stripped
 
-    # Fallback: return full original text
-    return text
+    # Track nesting depth to find matching closing tag
+    start_pos = start_match.end()
+    depth = 1
+    pos = start_pos
+
+    while depth > 0 and pos < len(text):
+        next_open = text.find("<checkpoint>", pos)
+        next_close = text.find("</checkpoint>", pos)
+
+        if next_close == -1:
+            # No more closing tags, return from start to end
+            break
+
+        if next_open != -1 and next_open < next_close:
+            # Found nested opening tag
+            depth += 1
+            pos = next_open + len("<checkpoint>")
+        else:
+            # Found closing tag
+            depth -= 1
+            if depth == 0:
+                return text[start_pos:next_close]
+            pos = next_close + len("</checkpoint>")
+
+    # No proper closing found, return from start to end
+    return text[start_pos:]
 
 
 def build_continuation_prompt(continuation_template: str, checkpoint_text: str) -> str:

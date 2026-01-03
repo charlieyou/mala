@@ -148,22 +148,22 @@ Complete feature
         assert "## Completed Work" in result
         assert "Added main.py:10" in result
 
-    def test_strips_xml_code_block_wrapper(self) -> None:
-        """Strips ```xml wrapper before extracting checkpoint."""
+    def test_extracts_from_xml_code_block_wrapper(self) -> None:
+        """Extracts checkpoint from content wrapped in ```xml block."""
         text = """```xml
 <checkpoint>content inside</checkpoint>
 ```"""
         assert extract_checkpoint(text) == "content inside"
 
-    def test_strips_markdown_code_block_wrapper(self) -> None:
-        """Strips ```markdown wrapper before extracting checkpoint."""
+    def test_extracts_from_markdown_code_block_wrapper(self) -> None:
+        """Extracts checkpoint from content wrapped in ```markdown block."""
         text = """```markdown
 <checkpoint>wrapped content</checkpoint>
 ```"""
         assert extract_checkpoint(text) == "wrapped content"
 
-    def test_strips_plain_code_block_wrapper(self) -> None:
-        """Strips ``` wrapper without language before extracting checkpoint."""
+    def test_extracts_from_plain_code_block_wrapper(self) -> None:
+        """Extracts checkpoint from content wrapped in ``` block."""
         text = """```
 <checkpoint>plain wrapped</checkpoint>
 ```"""
@@ -174,6 +174,13 @@ Complete feature
         text = "No checkpoint here, just plain text."
         assert extract_checkpoint(text) == text
 
+    def test_fallback_strips_code_block_wrapper(self) -> None:
+        """Strips code block wrapper in fallback when no checkpoint tags."""
+        text = """```xml
+Just some content without tags
+```"""
+        assert extract_checkpoint(text) == "Just some content without tags"
+
     def test_returns_full_text_for_empty_input(self) -> None:
         """Returns empty string for empty input."""
         assert extract_checkpoint("") == ""
@@ -183,12 +190,12 @@ Complete feature
         text = "   \n\t  "
         assert extract_checkpoint(text) == text
 
-    def test_handles_nested_tags_returns_first_match(self) -> None:
-        """Returns content of first complete checkpoint block (non-greedy)."""
+    def test_handles_nested_tags_returns_outermost(self) -> None:
+        """Returns outermost checkpoint content when tags are nested."""
         text = "<checkpoint>outer <checkpoint>inner</checkpoint> end</checkpoint>"
         result = extract_checkpoint(text)
-        # Non-greedy matching stops at first </checkpoint>
-        assert result == "outer <checkpoint>inner"
+        # Depth tracking returns full outermost block
+        assert result == "outer <checkpoint>inner</checkpoint> end"
 
     def test_multiple_blocks_returns_first(self) -> None:
         """Returns content of first checkpoint block when multiple exist."""
@@ -202,9 +209,9 @@ Complete feature
         assert extract_checkpoint(text) == "  spaced content  "
 
     def test_handles_malformed_opening_tag_only(self) -> None:
-        """Returns full text if only opening tag present."""
+        """Returns content after opening tag if no closing tag present."""
         text = "<checkpoint>unclosed content"
-        assert extract_checkpoint(text) == text
+        assert extract_checkpoint(text) == "unclosed content"
 
     def test_handles_malformed_closing_tag_only(self) -> None:
         """Returns full text if only closing tag present."""
