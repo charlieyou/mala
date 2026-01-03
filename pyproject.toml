@@ -26,6 +26,10 @@ packages = ["src"]
 artifacts = ["src/scripts/*.sh"]
 include = ["src/domain/validation/presets/*.yaml"]
 
+[tool.ty.src]
+# Exclude test fixtures (standalone test projects with their own structure)
+exclude = ["tests/fixtures/*"]
+
 [tool.ty.environment]
 root = ["."]
 
