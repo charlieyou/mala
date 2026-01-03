@@ -60,6 +60,7 @@ GATE_FOLLOWUP_FILE = _PROMPT_DIR / "gate_followup.md"
 PROMPT_FILE = _PROMPT_DIR / "implementer_prompt.md"
 REVIEW_FOLLOWUP_FILE = _PROMPT_DIR / "review_followup.md"
 FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
+IDLE_RESUME_PROMPT_FILE = _PROMPT_DIR / "idle_resume.md"
 
 
 @functools.cache
@@ -84,6 +85,12 @@ def get_review_followup_prompt() -> str:
 def get_fixer_prompt() -> str:
     """Load fixer prompt (cached on first use)."""
     return FIXER_PROMPT_FILE.read_text()
+
+
+@functools.cache
+def get_idle_resume_prompt() -> str:
+    """Load idle resume prompt (cached on first use)."""
+    return IDLE_RESUME_PROMPT_FILE.read_text()
 
 
 def format_implementer_prompt(

@@ -11,7 +11,10 @@ from src.domain.validation.spec import (
     build_validation_spec,
 )
 from src.domain.validation.tool_name_extractor import extract_lint_tools_from_spec
-from src.domain.prompts import build_prompt_validation_commands
+from src.domain.prompts import (
+    build_prompt_validation_commands,
+    format_implementer_prompt,
+)
 from src.infra.git_utils import (
     get_baseline_for_issue,
     get_git_branch_async,
@@ -54,7 +57,6 @@ from src.orchestration.orchestration_wiring import (
     build_session_config,
 )
 from src.orchestration.issue_result import IssueResult
-from src.domain.prompts import format_implementer_prompt
 from src.orchestration.review_tracking import create_review_tracking_issues
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
 

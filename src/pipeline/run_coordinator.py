@@ -18,11 +18,9 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
-import functools
 import os
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.infra.hooks import (
@@ -45,6 +43,7 @@ from src.domain.validation.spec import (
 )
 from src.domain.validation.tool_name_extractor import extract_lint_tools_from_spec
 from src.domain.validation.spec_runner import SpecValidationRunner
+from src.domain.prompts import get_fixer_prompt
 
 if TYPE_CHECKING:
     from src.infra.io.event_protocol import MalaEventSink
@@ -55,17 +54,7 @@ if TYPE_CHECKING:
     from src.core.protocols import GateChecker
     from src.domain.validation.result import ValidationResult
     from src.domain.validation.spec import ValidationSpec
-
-
-# Prompt file paths
-_PROMPT_DIR = Path(__file__).parent.parent / "prompts"
-FIXER_PROMPT_FILE = _PROMPT_DIR / "fixer.md"
-
-
-@functools.cache
-def _get_fixer_prompt() -> str:
-    """Load fixer prompt (cached on first use)."""
-    return FIXER_PROMPT_FILE.read_text()
+    from pathlib import Path
 
 
 @dataclass
@@ -388,7 +377,7 @@ class RunCoordinator:
         agent_id = f"fixer-{uuid.uuid4().hex[:8]}"
         self._active_fixer_ids.append(agent_id)
 
-        prompt = _get_fixer_prompt().format(
+        prompt = get_fixer_prompt().format(
             attempt=attempt,
             max_attempts=self.config.max_gate_retries,
             failure_output=failure_output,

@@ -19,7 +19,6 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 import os
 import time
@@ -58,6 +57,8 @@ from src.domain.lifecycle import (
 from src.domain.prompts import (
     get_default_validation_commands as _get_default_validation_commands,
     get_gate_followup_prompt as _get_gate_followup_prompt,
+    get_review_followup_prompt as _get_review_followup_prompt,
+    get_idle_resume_prompt as _get_idle_resume_prompt,
 )
 from src.infra.clients.cerberus_review import format_review_issues, ReviewResult
 from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
@@ -85,25 +86,8 @@ if TYPE_CHECKING:
 # Module-level logger for idle retry messages
 logger = logging.getLogger(__name__)
 
-# Prompt file paths
-_PROMPT_DIR = Path(__file__).parent.parent / "prompts"
-REVIEW_FOLLOWUP_FILE = _PROMPT_DIR / "review_followup.md"
-IDLE_RESUME_PROMPT_FILE = _PROMPT_DIR / "idle_resume.md"
-
 # Timeout for disconnect() call
 DISCONNECT_TIMEOUT = 10.0
-
-
-@functools.cache
-def _get_review_followup_prompt() -> str:
-    """Load review follow-up prompt (cached on first use)."""
-    return REVIEW_FOLLOWUP_FILE.read_text()
-
-
-@functools.cache
-def _get_idle_resume_prompt() -> str:
-    """Load idle resume prompt (cached on first use)."""
-    return IDLE_RESUME_PROMPT_FILE.read_text()
 
 
 class IdleTimeoutError(Exception):
