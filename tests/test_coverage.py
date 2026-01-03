@@ -25,7 +25,7 @@ from src.domain.validation.coverage import (
 
 
 def make_mock_runner(
-    run_fn: Callable[[list[str]], CommandResult],
+    run_fn: Callable[..., CommandResult],
 ) -> Mock:
     """Create a mock CommandRunnerPort with a custom run function."""
     mock = Mock()
@@ -616,7 +616,7 @@ class TestIsBaselineStale:
         report.write_text(VALID_COVERAGE_XML_90_PERCENT)
 
         # Mock git status to return dirty
-        def mock_run(args: list[str]) -> CommandResult:
+        def mock_run(args: list[str], **kwargs: object) -> CommandResult:
             return CommandResult(
                 command=args,
                 returncode=0,
@@ -640,7 +640,7 @@ class TestIsBaselineStale:
         os.utime(report, (old_time, old_time))
 
         # Mock git commands
-        def mock_run(args: list[str]) -> CommandResult:
+        def mock_run(args: list[str], **kwargs: object) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
@@ -666,7 +666,7 @@ class TestIsBaselineStale:
         os.utime(report, (future_time, future_time))
 
         # Mock git commands
-        def mock_run(args: list[str]) -> CommandResult:
+        def mock_run(args: list[str], **kwargs: object) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
@@ -688,7 +688,7 @@ class TestIsBaselineStale:
         report.write_text(VALID_COVERAGE_XML_90_PERCENT)
 
         # Mock git to fail (return non-zero exit code)
-        def mock_run(args: list[str]) -> CommandResult:
+        def mock_run(args: list[str], **kwargs: object) -> CommandResult:
             return CommandResult(
                 command=args,
                 returncode=128,
@@ -708,7 +708,7 @@ class TestIsBaselineStale:
         report.write_text(VALID_COVERAGE_XML_90_PERCENT)
 
         # Mock git commands - status clean but log returns empty
-        def mock_run(args: list[str]) -> CommandResult:
+        def mock_run(args: list[str], **kwargs: object) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
@@ -814,7 +814,7 @@ class TestNoDecreaseMode:
         os.utime(report, (old_time, old_time))
 
         # Mock a recent commit
-        def mock_run(args: list[str]) -> CommandResult:
+        def mock_run(args: list[str], **kwargs: object) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
@@ -837,7 +837,7 @@ class TestNoDecreaseMode:
         os.utime(report, (future_time, future_time))
 
         # Mock an old commit
-        def mock_run(args: list[str]) -> CommandResult:
+        def mock_run(args: list[str], **kwargs: object) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
@@ -1127,7 +1127,7 @@ class TestBaselineCoverageService:
         )
 
         # Mock git commands to indicate clean repo
-        def mock_run(args: list[str]) -> CommandResult:
+        def mock_run(args: list[str], **kwargs: object) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:

@@ -349,7 +349,7 @@ def is_baseline_stale(
 
     try:
         # Check for dirty working tree
-        dirty_result = runner.run(["git", "status", "--porcelain"])
+        dirty_result = runner.run(["git", "status", "--porcelain"], cwd=repo_path)
         if not dirty_result.ok:
             # Git command failed - treat as stale
             return True
@@ -358,7 +358,9 @@ def is_baseline_stale(
             return True
 
         # Get last commit timestamp (Unix epoch seconds)
-        commit_time_result = runner.run(["git", "log", "-1", "--format=%ct"])
+        commit_time_result = runner.run(
+            ["git", "log", "-1", "--format=%ct"], cwd=repo_path
+        )
         if not commit_time_result.ok:
             # Git command failed - treat as stale
             return True
@@ -583,6 +585,14 @@ class BaselineCoverageService:
 
         worktree_ctx = None
         try:
+            # Use injected runner or create one for worktree creation
+            from src.infra.tools.command_runner import CommandRunner
+
+            if self.command_runner is not None:
+                worktree_runner = self.command_runner
+            else:
+                worktree_runner = CommandRunner(cwd=self.repo_path)
+
             worktree_ctx = create_worktree(
                 repo_path=self.repo_path,
                 commit_sha="HEAD",
@@ -590,6 +600,7 @@ class BaselineCoverageService:
                 run_id=run_id,
                 issue_id="baseline",
                 attempt=1,
+                command_runner=worktree_runner,
             )
 
             if worktree_ctx.state == WorktreeState.FAILED:
@@ -618,14 +629,20 @@ class BaselineCoverageService:
             )
 
             # Create runner for worktree context
-            # We create a new runner here because it needs the worktree path as cwd,
-            # which is different from the main repo path
-            from src.infra.tools.command_runner import CommandRunner
+            # Use injected runner if available (for testability), otherwise create one.
+            # Pass cwd=worktree_path to run() calls since the worktree path differs
+            # from the main repo path.
+            if self.command_runner is not None:
+                runner = self.command_runner
+            else:
+                from src.infra.tools.command_runner import CommandRunner
 
-            runner = CommandRunner(cwd=worktree_path, timeout_seconds=timeout)
+                runner = CommandRunner(cwd=worktree_path, timeout_seconds=timeout)
 
             # Run uv sync first to install dependencies
-            sync_result = runner.run(["uv", "sync", "--all-extras"], env=env)
+            sync_result = runner.run(
+                ["uv", "sync", "--all-extras"], env=env, cwd=worktree_path
+            )
             if sync_result.returncode != 0:
                 return BaselineRefreshResult.fail(
                     f"uv sync failed during baseline refresh: {sync_result.stderr}"
@@ -703,7 +720,7 @@ class BaselineCoverageService:
 
             # Run coverage command - we ignore the exit code because tests may fail
             # but still generate a valid coverage.xml baseline
-            coverage_result = runner.run(new_coverage_cmd, env=env)
+            coverage_result = runner.run(new_coverage_cmd, env=env, cwd=worktree_path)
 
             # Check for coverage file in worktree (use configured file path)
             coverage_file = Path(self.coverage_config.file)
@@ -739,11 +756,13 @@ class BaselineCoverageService:
                     combine_result = runner.run(
                         [*coverage_base, "combine"],
                         env=env,
+                        cwd=worktree_path,
                     )
                     if combine_result.returncode == 0:
                         xml_result = runner.run(
                             [*coverage_base, "xml", "-o", str(worktree_coverage)],
                             env=env,
+                            cwd=worktree_path,
                         )
 
                 if not worktree_coverage.exists():
