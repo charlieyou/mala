@@ -238,6 +238,7 @@ class SpecValidationRunner:
             log_dir=log_dir,
             env=env,
             baseline_percent=baseline_percent,
+            yaml_coverage_config=spec.yaml_coverage_config,
         )
         result = builder.build(builder_input)
 
