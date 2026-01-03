@@ -4168,7 +4168,7 @@ class TestReviewUsesIssueCommits:
                 return_value=None,
             ),
             patch(
-                "src.orchestration.orchestrator.get_issue_commits_async",
+                "src.infra.git_utils.get_issue_commits_async",
                 return_value=issue_commits,
             ),
             patch.object(orchestrator.review_runner, "code_reviewer", mock_reviewer),

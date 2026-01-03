@@ -16,7 +16,6 @@ from src.infra.git_utils import (
     get_baseline_for_issue,
     get_git_branch_async,
     get_git_commit_async,
-    get_issue_commits_async,
 )
 from src.infra.clients.cerberus_review import DefaultReviewer
 from src.infra.io.log_output.console import (
@@ -39,7 +38,6 @@ from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
     AgentSessionRunner,
-    SessionCallbacks,
 )
 from src.pipeline.gate_runner import (
     GateRunner,
@@ -53,11 +51,10 @@ from src.pipeline.issue_finalizer import (
     IssueFinalizer,
 )
 from src.pipeline.review_runner import (
-    NoProgressInput,
-    ReviewInput,
     ReviewRunner,
     ReviewRunnerConfig,
 )
+from src.pipeline.session_callback_factory import SessionCallbackFactory
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
@@ -81,17 +78,16 @@ if TYPE_CHECKING:
         GateResultProtocol,
         IssueProvider,
         LogProvider,
-        ReviewResultProtocol,
     )
     from src.domain.lifecycle import RetryState
     from src.domain.quality_gate import GateResult
     from src.domain.validation.spec import ValidationSpec
-    from src.infra.clients.cerberus_review import ReviewResult
     from src.infra.epic_verifier import EpicVerifier
     from src.infra.io.config import MalaConfig
     from src.infra.io.event_sink import MalaEventSink
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.infra.telemetry import TelemetryProvider
+    from src.pipeline.agent_session_runner import SessionCallbacks
 
     from .types import OrchestratorConfig, _DerivedConfig
 
@@ -280,6 +276,20 @@ class MalaOrchestrator:
             per_issue_spec=None,  # Set later when spec is built
         )
 
+        # SessionCallbackFactory
+        self.session_callback_factory = SessionCallbackFactory(
+            gate_async_runner=self,
+            review_runner=self.review_runner,
+            log_provider=self.log_provider,
+            event_sink=self.event_sink,
+            quality_gate=self.quality_gate,
+            repo_path=self.repo_path,
+            session_log_paths=self.session_log_paths,
+            review_log_paths=self.review_log_paths,
+            get_per_issue_spec=lambda: self.per_issue_spec,
+            is_verbose=is_verbose_enabled,
+        )
+
     def _create_finalizer_callbacks(self) -> IssueFinalizeCallbacks:
         """Create callbacks for IssueFinalizer.
 
@@ -448,6 +458,19 @@ class MalaOrchestrator:
         return await asyncio.to_thread(
             self._run_quality_gate_sync, issue_id, log_path, retry_state
         )
+
+    async def run_gate_async(
+        self,
+        issue_id: str,
+        log_path: Path,
+        retry_state: RetryState,
+    ) -> tuple[GateResult | GateResultProtocol, int]:
+        """Run quality gate check asynchronously (GateAsyncRunner protocol).
+
+        This method satisfies the GateAsyncRunner protocol used by
+        SessionCallbackFactory to wire gate checks into session callbacks.
+        """
+        return await self._run_quality_gate_async(issue_id, log_path, retry_state)
 
     async def _check_epic_closure(
         self, issue_id: str, run_metadata: RunMetadata
@@ -707,84 +730,17 @@ class MalaOrchestrator:
     def _build_session_callbacks(self, issue_id: str) -> SessionCallbacks:
         """Build callbacks for session operations.
 
+        Delegates to SessionCallbackFactory for callback construction.
+
         Args:
             issue_id: The issue ID for tracking state.
 
         Returns:
             SessionCallbacks with gate, review, and logging callbacks.
         """
-
-        async def on_gate_check(
-            issue_id: str, log_path: Path, retry_state: RetryState
-        ) -> tuple[GateResult | GateResultProtocol, int]:
-            return await self._run_quality_gate_async(issue_id, log_path, retry_state)
-
-        async def on_review_check(
-            issue_id: str,
-            issue_desc: str | None,
-            baseline: str | None,
-            session_id: str | None,
-            retry_state: RetryState,
-        ) -> ReviewResult | ReviewResultProtocol:
-            current_head = await get_git_commit_async(self.repo_path)
-            self.review_runner.config.capture_session_log = is_verbose_enabled()
-            commit_shas = await get_issue_commits_async(
-                self.repo_path,
-                issue_id,
-                since_timestamp=retry_state.baseline_timestamp,
-            )
-            review_input = ReviewInput(
-                issue_id=issue_id,
-                repo_path=self.repo_path,
-                commit_sha=current_head,
-                issue_description=issue_desc,
-                baseline_commit=baseline,
-                commit_shas=commit_shas or None,
-                claude_session_id=session_id,
-            )
-            output = await self.review_runner.run_review(review_input)
-            if output.session_log_path:
-                self.review_log_paths[issue_id] = output.session_log_path
-            return output.result
-
-        def on_review_no_progress(
-            log_path: Path,
-            log_offset: int,
-            prev_commit: str | None,
-            curr_commit: str | None,
-        ) -> bool:
-            no_progress_input = NoProgressInput(
-                log_path=log_path,
-                log_offset=log_offset,
-                previous_commit_hash=prev_commit,
-                current_commit_hash=curr_commit,
-                spec=self.per_issue_spec,
-            )
-            return self.review_runner.check_no_progress(no_progress_input)
-
-        def get_log_path(session_id: str) -> Path:
-            log_path = self.log_provider.get_log_path(self.repo_path, session_id)
-            self.session_log_paths[issue_id] = log_path
-            return log_path
-
-        def get_log_offset(log_path: Path, start_offset: int) -> int:
-            return self.quality_gate.get_log_end_offset(log_path, start_offset)
-
-        def on_tool_use(agent_id: str, tool_name: str, arguments: dict | None) -> None:
-            self.event_sink.on_tool_use(agent_id, tool_name, arguments=arguments)
-
-        def on_agent_text(agent_id: str, text: str) -> None:
-            self.event_sink.on_agent_text(agent_id, text)
-
-        return SessionCallbacks(
-            on_gate_check=on_gate_check,
-            on_review_check=on_review_check,
-            on_review_no_progress=on_review_no_progress,
-            get_log_path=get_log_path,
-            get_log_offset=get_log_offset,
+        return self.session_callback_factory.build(
+            issue_id=issue_id,
             on_abort=self._request_abort,
-            on_tool_use=on_tool_use,
-            on_agent_text=on_agent_text,
         )
 
     async def run_implementer(self, issue_id: str) -> IssueResult:

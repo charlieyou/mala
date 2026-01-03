@@ -44,6 +44,7 @@ from src.pipeline.run_coordinator import (
     RunLevelValidationOutput,
     SpecResultBuilder,
 )
+from src.pipeline.session_callback_factory import SessionCallbackFactory
 
 __all__ = [
     "AgentSessionConfig",
@@ -67,6 +68,7 @@ __all__ = [
     "RunLevelValidationOutput",
     "SDKClientFactory",
     "SDKClientProtocol",
+    "SessionCallbackFactory",
     "SessionCallbacks",
     "SpecResultBuilder",
 ]
