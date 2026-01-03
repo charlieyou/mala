@@ -25,6 +25,8 @@ def _reload_cli(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
         # Reset internal state so bootstrap can run again
         cli_mod._bootstrapped = False  # type: ignore[attr-defined]
         cli_mod._braintrust_enabled = False  # type: ignore[attr-defined]
+        # Clear lazy-loaded modules cache so env changes take effect
+        cli_mod._lazy_modules.clear()  # type: ignore[attr-defined]
         return importlib.reload(cli_mod)
     return importlib.import_module("src.cli.cli")
 
@@ -649,10 +651,20 @@ def test_status_with_running_instance(
     )
 
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    # Patch both cli_support and underlying modules
-    monkeypatch.setattr(src.orchestration.cli_support, "get_lock_dir", lambda: lock_dir)
-    monkeypatch.setattr(src.infra.tools.locking, "get_lock_dir", lambda: lock_dir)
     monkeypatch.setattr(cli, "get_runs_dir", lambda: run_dir)
+
+    # Create mock get_all_locks that reads from our test lock_dir
+    def mock_get_all_locks() -> dict[str, list[str]]:
+        locks_by_agent: dict[str, list[str]] = {}
+        for lock in lock_dir.glob("*.lock"):
+            agent_id = lock.read_text().strip()
+            if agent_id not in locks_by_agent:
+                locks_by_agent[agent_id] = []
+            locks_by_agent[agent_id].append(lock.stem)
+        return locks_by_agent
+
+    # Inject into lazy modules cache so cli.status() uses it
+    cli._lazy_modules["get_all_locks"] = mock_get_all_locks
     # Patch get_running_instances_for_dir in cli_support where cli imports from
     monkeypatch.setattr(
         src.orchestration.cli_support,
@@ -672,7 +684,7 @@ def test_status_with_running_instance(
     assert str(tmp_path) in output
     assert "max-agents: 3" in output
     assert "pid: 12345" in output
-    assert "active locks" in output
+    assert "active lock" in output  # "active lock(s)"
     assert "run metadata files" in output
 
 

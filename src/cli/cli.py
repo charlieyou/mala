@@ -39,6 +39,7 @@ _LAZY_NAMES = frozenset(
         "MalaOrchestrator",
         "OrchestratorConfig",
         "create_orchestrator",
+        "get_all_locks",
         "get_lock_dir",
         "get_running_instances",
         "get_running_instances_for_dir",
@@ -977,22 +978,19 @@ def status(
         log("○", f"config: {config_env} (not found)", Colors.MUTED)
     print()
 
-    # Check locks (show all locks, not filtered by directory)
-    lock_dir = _lazy("get_lock_dir")()
-    if lock_dir.exists():
-        locks = list(lock_dir.glob("*.lock"))
-        if locks:
-            log("⚠", f"{len(locks)} active locks", Colors.YELLOW)
-            for lock in locks[:5]:
-                try:
-                    holder = lock.read_text().strip() if lock.is_file() else "unknown"
-                except OSError:
-                    holder = "unknown"
-                print(f"    {Colors.MUTED}{lock.stem} → {holder}{Colors.RESET}")
-            if len(locks) > 5:
-                print(f"    {Colors.MUTED}... and {len(locks) - 5} more{Colors.RESET}")
-        else:
-            log("○", "No active locks", Colors.GRAY)
+    # Check locks (show all locks grouped by agent)
+    locks_by_agent = _lazy("get_all_locks")()
+    if locks_by_agent:
+        total_locks = sum(len(files) for files in locks_by_agent.values())
+        log(
+            "⚠",
+            f"{total_locks} active lock(s) held by {len(locks_by_agent)} agent(s)",
+            Colors.YELLOW,
+        )
+        for agent_id, files in sorted(locks_by_agent.items()):
+            print(f"    {Colors.CYAN}{agent_id}{Colors.RESET}")
+            for filepath in sorted(files):
+                print(f"      {Colors.MUTED}{filepath}{Colors.RESET}")
     else:
         log("○", "No active locks", Colors.GRAY)
 
@@ -1106,6 +1104,10 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from ..orchestration.factory import create_orchestrator
 
         _lazy_modules[name] = create_orchestrator
+    elif name == "get_all_locks":
+        from ..infra.tools.locking import get_all_locks
+
+        _lazy_modules[name] = get_all_locks
     elif name == "get_lock_dir":
         from ..orchestration.cli_support import get_lock_dir
 

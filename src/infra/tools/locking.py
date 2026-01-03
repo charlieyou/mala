@@ -10,7 +10,13 @@ from pathlib import Path
 
 from .env import get_lock_dir
 
-__all__ = ["LockManager", "get_lock_dir", "lock_path"]
+__all__ = [
+    "LockManager",
+    "get_all_locks",
+    "get_lock_dir",
+    "lock_path",
+    "parse_lock_file",
+]
 
 
 def _get_lock_dir() -> Path:
@@ -186,6 +192,8 @@ def release_all_locks() -> None:
     lock_dir = _get_lock_dir()
     if lock_dir.exists():
         for lock in lock_dir.glob("*.lock"):
+            # Also remove companion .meta file
+            lock.with_suffix(".meta").unlink(missing_ok=True)
             lock.unlink(missing_ok=True)
 
 
@@ -210,6 +218,8 @@ def release_run_locks(agent_ids: list[str]) -> int:
     for lock in lock_dir.glob("*.lock"):
         try:
             if lock.is_file() and lock.read_text().strip() in agent_set:
+                # Also remove companion .meta file
+                lock.with_suffix(".meta").unlink(missing_ok=True)
                 lock.unlink()
                 released += 1
         except OSError:
@@ -244,6 +254,9 @@ def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) ->
         fd, tmp_path = tempfile.mkstemp(
             prefix=f".locktmp.{agent_id}.", dir=lock_dir, text=True
         )
+        # Write only agent_id to lock file for backward compatibility
+        # Old code uses .strip() on entire file, so single line is required
+        canonical = _canonicalize_path(filepath, repo_namespace)
         os.write(fd, f"{agent_id}\n".encode())
         os.close(fd)
 
@@ -251,6 +264,9 @@ def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) ->
         try:
             os.link(tmp_path, lp)
             os.unlink(tmp_path)
+            # Write meta file after successful lock acquisition
+            meta_path = lp.with_suffix(".meta")
+            meta_path.write_text(f"{canonical}\n")
             return True
         except OSError:
             os.unlink(tmp_path)
@@ -329,6 +345,8 @@ def release_lock(
     if holder != agent_id:
         return False
     lp = lock_path(filepath, repo_namespace)
+    # Also remove companion .meta file
+    lp.with_suffix(".meta").unlink(missing_ok=True)
     lp.unlink(missing_ok=True)
     return True
 
@@ -352,6 +370,52 @@ def get_lock_holder(filepath: str, repo_namespace: str | None = None) -> str | N
     return None
 
 
+def parse_lock_file(lock_file: Path) -> tuple[str, str | None] | None:
+    """Parse a lock file to get agent_id and original filepath.
+
+    Args:
+        lock_file: Path to the lock file (.lock file).
+
+    Returns:
+        Tuple of (agent_id, filepath) or None if file cannot be read.
+        filepath may be None for legacy lock files without a .meta file.
+    """
+    try:
+        agent_id = lock_file.read_text().strip()
+        if not agent_id:
+            return None
+        # Read filepath from companion .meta file
+        meta_file = lock_file.with_suffix(".meta")
+        filepath = meta_file.read_text().strip() if meta_file.exists() else None
+        return (agent_id, filepath)
+    except OSError:
+        return None
+
+
+def get_all_locks() -> dict[str, list[str]]:
+    """Get all active locks grouped by agent ID.
+
+    Returns:
+        Dictionary mapping agent_id -> list of locked filepaths.
+        Filepaths may be the hash stem for legacy locks without filepath info.
+    """
+    lock_dir = _get_lock_dir()
+    if not lock_dir.exists():
+        return {}
+
+    locks_by_agent: dict[str, list[str]] = {}
+    for lock in lock_dir.glob("*.lock"):
+        parsed = parse_lock_file(lock)
+        if parsed:
+            agent_id, filepath = parsed
+            if agent_id not in locks_by_agent:
+                locks_by_agent[agent_id] = []
+            # Use filepath if available, else fall back to hash stem
+            locks_by_agent[agent_id].append(filepath or lock.stem)
+
+    return locks_by_agent
+
+
 def cleanup_agent_locks(agent_id: str) -> int:
     """Remove locks held by a specific agent (crash/timeout cleanup).
 
@@ -368,6 +432,8 @@ def cleanup_agent_locks(agent_id: str) -> int:
     for lock in _get_lock_dir().glob("*.lock"):
         try:
             if lock.is_file() and lock.read_text().strip() == agent_id:
+                # Also remove companion .meta file
+                lock.with_suffix(".meta").unlink(missing_ok=True)
                 lock.unlink()
                 cleaned += 1
         except OSError:
@@ -528,6 +594,8 @@ def _cli_main() -> int:
         holder = get_lock_holder(filepath, repo_namespace)
         if holder == agent_id:
             lp = lock_path(filepath, repo_namespace)
+            # Also remove companion .meta file
+            lp.with_suffix(".meta").unlink(missing_ok=True)
             lp.unlink(missing_ok=True)
         return 0
 
