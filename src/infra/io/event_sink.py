@@ -436,6 +436,64 @@ class MalaEventSink(Protocol):
         """
         ...
 
+    def on_validation_step_running(
+        self,
+        step_name: str,
+        agent_id: str | None = None,
+    ) -> None:
+        """Called when a validation step starts.
+
+        Args:
+            step_name: Name of the validation step (e.g., "ruff", "pytest").
+            agent_id: Associated agent (if any).
+        """
+        ...
+
+    def on_validation_step_skipped(
+        self,
+        step_name: str,
+        reason: str,
+        agent_id: str | None = None,
+    ) -> None:
+        """Called when a validation step is skipped.
+
+        Args:
+            step_name: Name of the validation step.
+            reason: Reason for skipping (e.g., "cache hit", "no changes").
+            agent_id: Associated agent (if any).
+        """
+        ...
+
+    def on_validation_step_passed(
+        self,
+        step_name: str,
+        duration_seconds: float,
+        agent_id: str | None = None,
+    ) -> None:
+        """Called when a validation step succeeds.
+
+        Args:
+            step_name: Name of the validation step.
+            duration_seconds: Time taken to complete the step.
+            agent_id: Associated agent (if any).
+        """
+        ...
+
+    def on_validation_step_failed(
+        self,
+        step_name: str,
+        exit_code: int,
+        agent_id: str | None = None,
+    ) -> None:
+        """Called when a validation step fails.
+
+        Args:
+            step_name: Name of the validation step.
+            exit_code: Exit code from the step.
+            agent_id: Associated agent (if any).
+        """
+        ...
+
     # -------------------------------------------------------------------------
     # Warnings and diagnostics
     # -------------------------------------------------------------------------
@@ -844,6 +902,37 @@ class BaseEventSink:
     ) -> None:
         pass
 
+    def on_validation_step_running(
+        self,
+        step_name: str,
+        agent_id: str | None = None,
+    ) -> None:
+        pass
+
+    def on_validation_step_skipped(
+        self,
+        step_name: str,
+        reason: str,
+        agent_id: str | None = None,
+    ) -> None:
+        pass
+
+    def on_validation_step_passed(
+        self,
+        step_name: str,
+        duration_seconds: float,
+        agent_id: str | None = None,
+    ) -> None:
+        pass
+
+    def on_validation_step_failed(
+        self,
+        step_name: str,
+        exit_code: int,
+        agent_id: str | None = None,
+    ) -> None:
+        pass
+
     # -------------------------------------------------------------------------
     # Warnings and diagnostics
     # -------------------------------------------------------------------------
@@ -1235,7 +1324,14 @@ class ConsoleEventSink(BaseEventSink):
         max_attempts: int,
         issue_id: str | None = None,
     ) -> None:
-        """Log quality gate failed after all retries."""
+        """Log quality gate failed after all retries.
+
+        Args:
+            agent_id: Agent ID (None for run-level gate).
+            attempt: Final attempt number.
+            max_attempts: Maximum retry attempts.
+            issue_id: Issue being validated (for display).
+        """
         scope = "Run-level gate" if agent_id is None else "Gate"
         log(
             "✗",
@@ -1435,6 +1531,51 @@ class ConsoleEventSink(BaseEventSink):
                 agent_id=agent_id,
                 issue_id=issue_id,
             )
+
+    def on_validation_step_running(
+        self,
+        step_name: str,
+        agent_id: str | None = None,
+    ) -> None:
+        """Log validation step start."""
+        log("▸", f"{step_name} running...", Colors.CYAN, agent_id=agent_id)
+
+    def on_validation_step_skipped(
+        self,
+        step_name: str,
+        reason: str,
+        agent_id: str | None = None,
+    ) -> None:
+        """Log validation step skipped."""
+        log("○", f"{step_name} skipped: {reason}", Colors.CYAN, agent_id=agent_id)
+
+    def on_validation_step_passed(
+        self,
+        step_name: str,
+        duration_seconds: float,
+        agent_id: str | None = None,
+    ) -> None:
+        """Log validation step success."""
+        log(
+            "✓",
+            f"{step_name} passed ({duration_seconds:.1f}s)",
+            Colors.GREEN,
+            agent_id=agent_id,
+        )
+
+    def on_validation_step_failed(
+        self,
+        step_name: str,
+        exit_code: int,
+        agent_id: str | None = None,
+    ) -> None:
+        """Log validation step failure."""
+        log(
+            "✗",
+            f"{step_name} failed (exit {exit_code})",
+            Colors.RED,
+            agent_id=agent_id,
+        )
 
     # -------------------------------------------------------------------------
     # Warnings and diagnostics
