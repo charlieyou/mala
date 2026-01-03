@@ -479,8 +479,8 @@ class ReviewEffectResult:
     cerberus_log_path: str | None
     """Path to Cerberus review log file, if captured."""
 
-    transition_result: TransitionResult | None
-    """Lifecycle transition result, None only for no-progress early exit."""
+    transition_result: TransitionResult
+    """Lifecycle transition result."""
 
 
 def _emit_review_result_events(
@@ -1285,8 +1285,7 @@ class AgentSessionRunner:
 
         Returns:
             ReviewEffectResult with pending_query, should_break, cerberus_log_path,
-            and transition_result. transition_result is None only for no-progress
-            early exit.
+            and transition_result.
         """
         cerberus_review_log_path: str | None = None
 
