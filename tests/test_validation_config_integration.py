@@ -23,7 +23,7 @@ from src.domain.validation.config import ConfigError
 from src.domain.validation.config_loader import load_config
 from src.domain.validation.config_merger import merge_configs
 from src.domain.validation.preset_registry import PresetRegistry
-from src.infra.hooks.tool_name_extractor import extract_tool_name
+from src.core.tool_name_extractor import extract_tool_name
 from src.domain.validation.validation_gating import (
     should_invalidate_lint_cache,
     should_trigger_validation,

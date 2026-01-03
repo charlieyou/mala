@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from src.infra.hooks.tool_name_extractor import extract_tool_name
+from src.core.tool_name_extractor import extract_tool_name
 
 
 class TestExtractToolName:

@@ -477,11 +477,11 @@ Deadlock prevention via ordered acquisition:
 ┌──────────────────────────┴───────────────────────────────────────────────┐
 │                           AGENT PROCESS                                   │
 │  ┌─────────────────────────────────────────────────────────────────────┐ │
-│  │ PreToolUse Hook (lock enforcement + event emission)                  │ │
+│  │ PostToolUse Hook (lock event emission based on exit code)           │ │
 │  │                                                                      │ │
-│  │ on Bash(lock-try.sh file):                                          │ │
-│  │   result = run_lock_try(file)                                       │ │
-│  │   if result == success:                                             │ │
+│  │ on Bash(lock-try.sh file) completed:                                │ │
+│  │   exit_code = get_exit_code(tool_result)                            │ │
+│  │   if exit_code == 0:                                                │ │
 │  │     emit LockEvent(type=ACQUIRED, agent_id, file)                   │ │
 │  │   else:                                                             │ │
 │  │     emit LockEvent(type=WAITING, agent_id, file)                    │ │
@@ -530,7 +530,7 @@ class WaitForGraph:
     Edges:
     - agent --holds--> lock (tracked in `holds`)
     - agent --waits_for--> lock (tracked in `waits_for`)
-    - lock --held_by--> agent (inverse of holds, computed)
+    - lock --held_by--> agent (tracked in `held_by` for O(1) lookup)
     """
     holds: dict[str, set[str]] = field(default_factory=dict)
     # agent_id -> set of lock paths held
@@ -538,11 +538,15 @@ class WaitForGraph:
     waits_for: dict[str, str | None] = field(default_factory=dict)
     # agent_id -> lock path waiting for (None if not waiting)
 
+    held_by: dict[str, str] = field(default_factory=dict)
+    # lock_path -> agent_id (inverse of holds for O(1) lookup)
+
     def add_hold(self, agent_id: str, lock_path: str) -> None:
         """Record that agent acquired a lock."""
         if agent_id not in self.holds:
             self.holds[agent_id] = set()
         self.holds[agent_id].add(lock_path)
+        self.held_by[lock_path] = agent_id
         # Clear wait status since they got the lock
         self.waits_for[agent_id] = None
 
@@ -554,18 +558,20 @@ class WaitForGraph:
         """Record that agent released a lock."""
         if agent_id in self.holds:
             self.holds[agent_id].discard(lock_path)
+        if self.held_by.get(lock_path) == agent_id:
+            del self.held_by[lock_path]
 
     def remove_agent(self, agent_id: str) -> None:
         """Remove all state for an agent (on termination)."""
+        # Remove from held_by inverse mapping
+        for lock_path in self.holds.get(agent_id, set()):
+            self.held_by.pop(lock_path, None)
         self.holds.pop(agent_id, None)
         self.waits_for.pop(agent_id, None)
 
     def get_holder(self, lock_path: str) -> str | None:
-        """Return agent_id holding the lock, or None."""
-        for agent_id, locks in self.holds.items():
-            if lock_path in locks:
-                return agent_id
-        return None
+        """Return agent_id holding the lock, or None. O(1) via inverse mapping."""
+        return self.held_by.get(lock_path)
 
     def detect_cycle(self) -> list[str] | None:
         """Detect deadlock cycle using DFS.
@@ -655,8 +661,8 @@ class DeadlockMonitor:
         if cycle is None:
             return
 
-        # Select victim: youngest agent in cycle
-        victim_id = min(cycle, key=lambda a: self.agent_start_times.get(a, 0))
+        # Select victim: youngest agent in cycle (highest start time = most recent)
+        victim_id = max(cycle, key=lambda a: self.agent_start_times.get(a, 0))
         victim_issue_id = self.agent_to_issue.get(victim_id, "unknown")
 
         blocked_on = self.graph.waits_for.get(victim_id, "unknown")
@@ -681,6 +687,7 @@ class DeadlockMonitor:
 def make_lock_event_hook(
     agent_id: str,
     emit_event: Callable[[LockEvent], None],
+    get_held_locks: Callable[[str], set[str]],  # agent_id -> lock paths
 ) -> PostToolUseHook:
     """Create a PostToolUse hook that emits lock events."""
 
@@ -716,8 +723,10 @@ def make_lock_event_hook(
 
         # Detect lock-release-all.sh
         elif "lock-release-all.sh" in command:
-            # All locks released - orchestrator handles via unregister_agent
-            pass
+            # Release all locks held by this agent to avoid stale graph state
+            # (agent may release all locks without terminating)
+            for lock_path in list(get_held_locks(agent_id)):
+                emit_event(LockEvent(LockEventType.RELEASED, agent_id, lock_path))
 
         return {}
 
