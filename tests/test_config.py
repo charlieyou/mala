@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from src.infra.io.config import ConfigurationError, MalaConfig
+from src.infra.io.config import (
+    CLIOverrides,
+    ConfigurationError,
+    MalaConfig,
+    build_resolved_config,
+)
 
 
 class TestMalaConfigDefaults:
@@ -393,3 +398,361 @@ class TestMalaConfigImmutability:
         # Should be hashable
         config_set = {config1, config2}
         assert len(config_set) == 2
+
+
+class TestBuildResolvedConfig:
+    """Tests for build_resolved_config() function."""
+
+    def test_base_config_only_no_overrides(self, tmp_path: Path) -> None:
+        """build_resolved_config with only base config, no CLI overrides."""
+        base = MalaConfig(
+            runs_dir=tmp_path / "runs",
+            lock_dir=tmp_path / "locks",
+            claude_config_dir=tmp_path / "claude",
+            braintrust_api_key="bt-key",
+            morph_api_key="morph-key",
+        )
+        resolved = build_resolved_config(base, None)
+
+        assert resolved.runs_dir == tmp_path / "runs"
+        assert resolved.lock_dir == tmp_path / "locks"
+        assert resolved.claude_config_dir == tmp_path / "claude"
+        assert resolved.braintrust_api_key == "bt-key"
+        assert resolved.morph_api_key == "morph-key"
+        assert resolved.braintrust_enabled is True
+        assert resolved.morph_enabled is True
+        assert resolved.morph_disabled_reason is None
+        assert resolved.braintrust_disabled_reason is None
+
+    def test_cli_overrides_only_default_base(self) -> None:
+        """build_resolved_config with default base and CLI overrides."""
+        base = MalaConfig()
+        overrides = CLIOverrides(
+            cerberus_spawn_args="--mode fast",
+            review_timeout=600,
+        )
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.cerberus_spawn_args == ("--mode", "fast")
+        assert resolved.review_timeout == 600
+
+    def test_cli_overrides_take_precedence(self, tmp_path: Path) -> None:
+        """CLI overrides win over base config values."""
+        base = MalaConfig(
+            runs_dir=tmp_path,
+            cerberus_spawn_args=("--base", "arg"),
+            cerberus_env=(("BASE_KEY", "base_value"),),
+            review_timeout=300,
+        )
+        overrides = CLIOverrides(
+            cerberus_spawn_args="--cli arg",
+            cerberus_env='{"CLI_KEY": "cli_value"}',
+            review_timeout=900,
+        )
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.cerberus_spawn_args == ("--cli", "arg")
+        assert dict(resolved.cerberus_env) == {"CLI_KEY": "cli_value"}
+        assert resolved.review_timeout == 900
+
+    def test_base_config_used_when_override_is_none(self, tmp_path: Path) -> None:
+        """Base config values used when corresponding override is None."""
+        base = MalaConfig(
+            runs_dir=tmp_path,
+            cerberus_spawn_args=("--base",),
+            cerberus_wait_args=("--wait-base",),
+            cerberus_env=(("KEY", "val"),),
+            review_timeout=450,
+            max_epic_verification_retries=5,
+        )
+        overrides = CLIOverrides()  # All None
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.cerberus_spawn_args == ("--base",)
+        assert resolved.cerberus_wait_args == ("--wait-base",)
+        assert resolved.cerberus_env == (("KEY", "val"),)
+        assert resolved.review_timeout == 450
+        assert resolved.max_epic_verification_retries == 5
+
+
+class TestCerberusArgsParsing:
+    """Tests for cerberus_spawn_args and cerberus_wait_args parsing."""
+
+    def test_simple_args(self) -> None:
+        """Parse simple space-separated args."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_spawn_args="--foo bar --flag")
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_spawn_args == ("--foo", "bar", "--flag")
+
+    def test_quoted_args_with_spaces(self) -> None:
+        """Parse args with quoted strings containing spaces."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_spawn_args='--message "hello world"')
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_spawn_args == ("--message", "hello world")
+
+    def test_escaped_quotes(self) -> None:
+        """Parse args with escaped quotes."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_spawn_args='--msg "it\'s fine"')
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_spawn_args == ("--msg", "it's fine")
+
+    def test_empty_string_gives_empty_tuple(self) -> None:
+        """Empty string produces empty tuple."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_spawn_args="")
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_spawn_args == ()
+
+    def test_whitespace_only_gives_empty_tuple(self) -> None:
+        """Whitespace-only string produces empty tuple."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_spawn_args="   ")
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_spawn_args == ()
+
+    def test_wait_args_parsed_same_as_spawn_args(self) -> None:
+        """cerberus_wait_args uses same parsing as spawn_args."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_wait_args='--timeout 60 --msg "wait"')
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_wait_args == ("--timeout", "60", "--msg", "wait")
+
+    def test_invalid_quotes_raises_value_error(self) -> None:
+        """Unbalanced quotes raise ValueError with CLI source."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_spawn_args='"unclosed')
+        with pytest.raises(ValueError) as exc_info:
+            build_resolved_config(base, overrides)
+        assert "CLI" in str(exc_info.value)
+
+
+class TestCerberusEnvParsing:
+    """Tests for cerberus_env parsing (JSON and KEY=VALUE formats)."""
+
+    def test_json_format_simple(self) -> None:
+        """Parse JSON object format."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env='{"FOO": "bar", "BAZ": "qux"}')
+        resolved = build_resolved_config(base, overrides)
+        assert dict(resolved.cerberus_env) == {"BAZ": "qux", "FOO": "bar"}
+
+    def test_json_format_with_numbers(self) -> None:
+        """JSON values converted to strings."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env='{"NUM": 42, "BOOL": true}')
+        resolved = build_resolved_config(base, overrides)
+        assert dict(resolved.cerberus_env) == {"BOOL": "True", "NUM": "42"}
+
+    def test_comma_separated_kv_format(self) -> None:
+        """Parse comma-separated KEY=VALUE format."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="FOO=bar,BAZ=qux")
+        resolved = build_resolved_config(base, overrides)
+        assert dict(resolved.cerberus_env) == {"BAZ": "qux", "FOO": "bar"}
+
+    def test_kv_format_with_equals_in_value(self) -> None:
+        """Values can contain equals signs."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="URL=http://host?a=1")
+        resolved = build_resolved_config(base, overrides)
+        assert dict(resolved.cerberus_env) == {"URL": "http://host?a=1"}
+
+    def test_empty_string_gives_empty_tuple(self) -> None:
+        """Empty string produces empty tuple."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="")
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_env == ()
+
+    def test_whitespace_only_gives_empty_tuple(self) -> None:
+        """Whitespace-only string produces empty tuple."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="   ")
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_env == ()
+
+    def test_invalid_json_raises_value_error(self) -> None:
+        """Invalid JSON raises ValueError with clear message."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env='{"invalid": }')
+        with pytest.raises(ValueError) as exc_info:
+            build_resolved_config(base, overrides)
+        assert "CLI" in str(exc_info.value)
+        assert "JSON" in str(exc_info.value)
+
+    def test_json_non_object_raises_value_error(self) -> None:
+        """JSON array raises ValueError."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env='["array", "not", "object"]')
+        with pytest.raises(ValueError) as exc_info:
+            build_resolved_config(base, overrides)
+        # Array starting with [ is parsed as KEY=VALUE format, not JSON
+        assert "KEY=VALUE" in str(exc_info.value)
+
+    def test_kv_missing_equals_raises_value_error(self) -> None:
+        """KEY=VALUE format without equals raises ValueError."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="INVALID_ENTRY")
+        with pytest.raises(ValueError) as exc_info:
+            build_resolved_config(base, overrides)
+        assert "KEY=VALUE" in str(exc_info.value)
+
+    def test_kv_empty_key_raises_value_error(self) -> None:
+        """Empty key in KEY=VALUE raises ValueError."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="=value")
+        with pytest.raises(ValueError) as exc_info:
+            build_resolved_config(base, overrides)
+        assert "empty key" in str(exc_info.value).lower()
+
+
+class TestDerivedDisabledReasons:
+    """Tests for morph_disabled_reason and braintrust_disabled_reason derivation."""
+
+    def test_morph_disabled_reason_no_morph_flag(self) -> None:
+        """--no-morph flag sets morph_disabled_reason."""
+        base = MalaConfig(morph_api_key="key")  # Would be enabled otherwise
+        overrides = CLIOverrides(no_morph=True)
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.morph_enabled is False
+        assert resolved.morph_disabled_reason == "--no-morph"
+
+    def test_morph_disabled_reason_missing_api_key(self) -> None:
+        """Missing MORPH_API_KEY sets appropriate disabled reason."""
+        base = MalaConfig(morph_api_key=None)  # No API key
+        resolved = build_resolved_config(base, None)
+
+        assert resolved.morph_enabled is False
+        assert resolved.morph_disabled_reason is not None
+        assert "MORPH_API_KEY" in resolved.morph_disabled_reason
+
+    def test_morph_disabled_reason_config_disabled(self) -> None:
+        """Config with morph_enabled=False and no API key shows disabled by config."""
+        # MalaConfig auto-enables when API key present, so to test "disabled by config"
+        # we need enabled=True but no API key, which triggers validation error.
+        # The "disabled by config" path is hit when base_config.morph_enabled is False
+        # (due to no API key) and no CLI flag was passed.
+        base = MalaConfig(morph_api_key=None, morph_enabled=False)
+        resolved = build_resolved_config(base, None)
+
+        assert resolved.morph_enabled is False
+        # With no API key and enabled=False, reason is "missing API key" not "disabled by config"
+        assert resolved.morph_disabled_reason is not None
+        assert "MORPH_API_KEY" in resolved.morph_disabled_reason
+
+    def test_morph_enabled_has_no_disabled_reason(self) -> None:
+        """Enabled morph has None disabled_reason."""
+        base = MalaConfig(morph_api_key="key")
+        resolved = build_resolved_config(base, None)
+
+        assert resolved.morph_enabled is True
+        assert resolved.morph_disabled_reason is None
+
+    def test_braintrust_disabled_reason_no_braintrust_flag(self) -> None:
+        """--no-braintrust flag sets braintrust_disabled_reason."""
+        base = MalaConfig(braintrust_api_key="key")
+        overrides = CLIOverrides(no_braintrust=True)
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.braintrust_enabled is False
+        assert resolved.braintrust_disabled_reason == "--no-braintrust"
+
+    def test_braintrust_disabled_reason_missing_api_key(self) -> None:
+        """Missing BRAINTRUST_API_KEY sets appropriate disabled reason."""
+        base = MalaConfig(braintrust_api_key=None)
+        resolved = build_resolved_config(base, None)
+
+        assert resolved.braintrust_enabled is False
+        assert resolved.braintrust_disabled_reason is not None
+        assert "BRAINTRUST_API_KEY" in resolved.braintrust_disabled_reason
+
+    def test_braintrust_disabled_reason_config_disabled(self) -> None:
+        """Config with braintrust_enabled=False and no API key shows disabled by config."""
+        base = MalaConfig(braintrust_api_key=None, braintrust_enabled=False)
+        resolved = build_resolved_config(base, None)
+
+        assert resolved.braintrust_enabled is False
+        # With no API key and enabled=False, reason is "missing API key"
+        assert resolved.braintrust_disabled_reason is not None
+        assert "BRAINTRUST_API_KEY" in resolved.braintrust_disabled_reason
+
+    def test_braintrust_enabled_has_no_disabled_reason(self) -> None:
+        """Enabled braintrust has None disabled_reason."""
+        base = MalaConfig(braintrust_api_key="key")
+        resolved = build_resolved_config(base, None)
+
+        assert resolved.braintrust_enabled is True
+        assert resolved.braintrust_disabled_reason is None
+
+
+class TestResolvedConfigImmutability:
+    """Tests for ResolvedConfig frozen dataclass behavior."""
+
+    def test_resolved_config_is_frozen(self) -> None:
+        """ResolvedConfig is immutable after creation."""
+        base = MalaConfig()
+        resolved = build_resolved_config(base, None)
+
+        with pytest.raises(AttributeError):
+            resolved.runs_dir = Path("/new")  # type: ignore[misc]
+
+    def test_resolved_config_is_hashable(self) -> None:
+        """ResolvedConfig can be used in sets."""
+        base1 = MalaConfig(morph_api_key="key1")
+        base2 = MalaConfig(morph_api_key="key2")
+        resolved1 = build_resolved_config(base1, None)
+        resolved2 = build_resolved_config(base2, None)
+
+        config_set = {resolved1, resolved2}
+        assert len(config_set) == 2
+
+
+class TestBuildResolvedConfigIdempotency:
+    """Tests for idempotent and deterministic behavior."""
+
+    def test_same_inputs_same_outputs(self, tmp_path: Path) -> None:
+        """Same inputs produce identical outputs."""
+        base = MalaConfig(
+            runs_dir=tmp_path,
+            morph_api_key="key",
+            cerberus_spawn_args=("--arg",),
+        )
+        overrides = CLIOverrides(cerberus_env="FOO=bar")
+
+        resolved1 = build_resolved_config(base, overrides)
+        resolved2 = build_resolved_config(base, overrides)
+
+        assert resolved1 == resolved2
+
+    def test_env_ordering_is_stable(self) -> None:
+        """cerberus_env is sorted for stable ordering."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="Z=1,A=2,M=3")
+        resolved = build_resolved_config(base, overrides)
+
+        # Should be sorted alphabetically
+        assert resolved.cerberus_env == (("A", "2"), ("M", "3"), ("Z", "1"))
+
+
+class TestBuildResolvedConfigReviewEnabled:
+    """Tests for review_enabled derivation."""
+
+    def test_review_disabled_by_cli_flag(self) -> None:
+        """--disable-validations review disables review."""
+        base = MalaConfig()  # review_enabled=True by default
+        overrides = CLIOverrides(disable_review=True)
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.review_enabled is False
+
+    def test_review_enabled_when_not_disabled(self) -> None:
+        """review remains enabled when not disabled."""
+        base = MalaConfig()
+        overrides = CLIOverrides(disable_review=False)
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.review_enabled is True
