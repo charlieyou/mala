@@ -1485,3 +1485,211 @@ def test_dry_run_focus_mode_groups_by_epic(
     assert "task-2" in captured.out
     # Summary should show epic counts
     assert "By epic:" in captured.out
+
+
+# ============================================================================
+# Tests for _validate_run_args helper function
+# ============================================================================
+
+
+class TestValidateRunArgs:
+    """Tests for the _validate_run_args helper function."""
+
+    def test_valid_inputs_returns_parsed_values(self, tmp_path: Path) -> None:
+        """Valid inputs return expected parsed ValidatedRunArgs."""
+        from src.cli.cli import _validate_run_args
+
+        result = _validate_run_args(
+            only="issue-1, issue-2",
+            disable_validations="coverage, e2e",
+            coverage_threshold=80.0,
+            epic=None,
+            orphans_only=False,
+            epic_override="epic-a, epic-b",
+            repo_path=tmp_path,
+        )
+
+        assert result.only_ids == {"issue-1", "issue-2"}
+        assert result.disable_set == {"coverage", "e2e"}
+        assert result.epic_override_ids == {"epic-a", "epic-b"}
+
+    def test_none_inputs_returns_none_values(self, tmp_path: Path) -> None:
+        """None inputs return None for parsed values."""
+        from src.cli.cli import _validate_run_args
+
+        result = _validate_run_args(
+            only=None,
+            disable_validations=None,
+            coverage_threshold=None,
+            epic=None,
+            orphans_only=False,
+            epic_override=None,
+            repo_path=tmp_path,
+        )
+
+        assert result.only_ids is None
+        assert result.disable_set is None
+        assert result.epic_override_ids is None
+
+    def test_invalid_only_empty_raises_exit(self, tmp_path: Path) -> None:
+        """Empty --only value (whitespace only) raises Exit(1)."""
+        from src.cli.cli import _validate_run_args
+
+        with pytest.raises(typer.Exit) as excinfo:
+            _validate_run_args(
+                only="  ,  ,  ",
+                disable_validations=None,
+                coverage_threshold=None,
+                epic=None,
+                orphans_only=False,
+                epic_override=None,
+                repo_path=tmp_path,
+            )
+        assert excinfo.value.exit_code == 1
+
+    def test_invalid_disable_validations_empty_raises_exit(
+        self, tmp_path: Path
+    ) -> None:
+        """Empty --disable-validations value raises Exit(1)."""
+        from src.cli.cli import _validate_run_args
+
+        with pytest.raises(typer.Exit) as excinfo:
+            _validate_run_args(
+                only=None,
+                disable_validations="  ,  ",
+                coverage_threshold=None,
+                epic=None,
+                orphans_only=False,
+                epic_override=None,
+                repo_path=tmp_path,
+            )
+        assert excinfo.value.exit_code == 1
+
+    def test_unknown_disable_validation_value_raises_exit(self, tmp_path: Path) -> None:
+        """Unknown --disable-validations value raises Exit(1)."""
+        from src.cli.cli import _validate_run_args
+
+        with pytest.raises(typer.Exit) as excinfo:
+            _validate_run_args(
+                only=None,
+                disable_validations="coverage, unknown-value",
+                coverage_threshold=None,
+                epic=None,
+                orphans_only=False,
+                epic_override=None,
+                repo_path=tmp_path,
+            )
+        assert excinfo.value.exit_code == 1
+
+    def test_coverage_threshold_negative_raises_exit(self, tmp_path: Path) -> None:
+        """Negative coverage threshold raises Exit(1)."""
+        from src.cli.cli import _validate_run_args
+
+        with pytest.raises(typer.Exit) as excinfo:
+            _validate_run_args(
+                only=None,
+                disable_validations=None,
+                coverage_threshold=-5.0,
+                epic=None,
+                orphans_only=False,
+                epic_override=None,
+                repo_path=tmp_path,
+            )
+        assert excinfo.value.exit_code == 1
+
+    def test_coverage_threshold_over_100_raises_exit(self, tmp_path: Path) -> None:
+        """Coverage threshold over 100 raises Exit(1)."""
+        from src.cli.cli import _validate_run_args
+
+        with pytest.raises(typer.Exit) as excinfo:
+            _validate_run_args(
+                only=None,
+                disable_validations=None,
+                coverage_threshold=150.0,
+                epic=None,
+                orphans_only=False,
+                epic_override=None,
+                repo_path=tmp_path,
+            )
+        assert excinfo.value.exit_code == 1
+
+    def test_epic_and_orphans_only_mutually_exclusive(self, tmp_path: Path) -> None:
+        """--epic and --orphans-only together raise Exit(1)."""
+        from src.cli.cli import _validate_run_args
+
+        with pytest.raises(typer.Exit) as excinfo:
+            _validate_run_args(
+                only=None,
+                disable_validations=None,
+                coverage_threshold=None,
+                epic="some-epic",
+                orphans_only=True,
+                epic_override=None,
+                repo_path=tmp_path,
+            )
+        assert excinfo.value.exit_code == 1
+
+    def test_invalid_epic_override_empty_raises_exit(self, tmp_path: Path) -> None:
+        """Empty --epic-override value raises Exit(1)."""
+        from src.cli.cli import _validate_run_args
+
+        with pytest.raises(typer.Exit) as excinfo:
+            _validate_run_args(
+                only=None,
+                disable_validations=None,
+                coverage_threshold=None,
+                epic=None,
+                orphans_only=False,
+                epic_override="  ,  ,  ",
+                repo_path=tmp_path,
+            )
+        assert excinfo.value.exit_code == 1
+
+    def test_nonexistent_repo_path_raises_exit(self, tmp_path: Path) -> None:
+        """Non-existent repo_path raises Exit(1)."""
+        from src.cli.cli import _validate_run_args
+
+        nonexistent = tmp_path / "does-not-exist"
+        with pytest.raises(typer.Exit) as excinfo:
+            _validate_run_args(
+                only=None,
+                disable_validations=None,
+                coverage_threshold=None,
+                epic=None,
+                orphans_only=False,
+                epic_override=None,
+                repo_path=nonexistent,
+            )
+        assert excinfo.value.exit_code == 1
+
+    def test_coverage_threshold_boundary_zero_valid(self, tmp_path: Path) -> None:
+        """Coverage threshold of 0 is valid."""
+        from src.cli.cli import _validate_run_args
+
+        result = _validate_run_args(
+            only=None,
+            disable_validations=None,
+            coverage_threshold=0.0,
+            epic=None,
+            orphans_only=False,
+            epic_override=None,
+            repo_path=tmp_path,
+        )
+        # No exception raised
+        assert result.only_ids is None
+
+    def test_coverage_threshold_boundary_100_valid(self, tmp_path: Path) -> None:
+        """Coverage threshold of 100 is valid."""
+        from src.cli.cli import _validate_run_args
+
+        result = _validate_run_args(
+            only=None,
+            disable_validations=None,
+            coverage_threshold=100.0,
+            epic=None,
+            orphans_only=False,
+            epic_override=None,
+            repo_path=tmp_path,
+        )
+        # No exception raised
+        assert result.only_ids is None

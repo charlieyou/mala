@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -230,6 +231,120 @@ VALID_DISABLE_VALUES = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class ValidatedRunArgs:
+    """Validated and parsed CLI arguments for the run command."""
+
+    only_ids: set[str] | None
+    disable_set: set[str] | None
+    epic_override_ids: set[str] | None
+
+
+def _validate_run_args(
+    only: str | None,
+    disable_validations: str | None,
+    coverage_threshold: float | None,
+    epic: str | None,
+    orphans_only: bool,
+    epic_override: str | None,
+    repo_path: Path,
+) -> ValidatedRunArgs:
+    """Validate and parse CLI arguments, raising typer.Exit(1) on errors.
+
+    Args:
+        only: Comma-separated issue IDs to process (--only flag)
+        disable_validations: Comma-separated validation names to disable
+        coverage_threshold: Coverage threshold percentage (0-100)
+        epic: Epic ID to filter by
+        orphans_only: Whether to only process orphan issues
+        epic_override: Comma-separated epic IDs to override
+        repo_path: Path to the repository (must exist)
+
+    Returns:
+        ValidatedRunArgs with parsed values
+
+    Raises:
+        typer.Exit: If any validation fails
+    """
+    # Parse --only flag into a set of issue IDs
+    only_ids: set[str] | None = None
+    if only:
+        only_ids = {
+            issue_id.strip() for issue_id in only.split(",") if issue_id.strip()
+        }
+        if not only_ids:
+            log("✗", "Invalid --only value: no valid issue IDs found", Colors.RED)
+            raise typer.Exit(1)
+
+    # Parse --disable-validations flag into a set
+    disable_set: set[str] | None = None
+    if disable_validations:
+        disable_set = {
+            val.strip() for val in disable_validations.split(",") if val.strip()
+        }
+        if not disable_set:
+            log(
+                "✗",
+                "Invalid --disable-validations value: no valid values found",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+        # Validate against known values
+        unknown = disable_set - VALID_DISABLE_VALUES
+        if unknown:
+            log(
+                "✗",
+                f"Unknown --disable-validations value(s): {', '.join(sorted(unknown))}. "
+                f"Valid values: {', '.join(sorted(VALID_DISABLE_VALUES))}",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+
+    # Validate coverage threshold range
+    if coverage_threshold is not None and not 0 <= coverage_threshold <= 100:
+        log(
+            "✗",
+            f"Invalid --coverage-threshold value: {coverage_threshold}. Must be between 0 and 100.",
+            Colors.RED,
+        )
+        raise typer.Exit(1)
+
+    # Validate --epic and --orphans-only are mutually exclusive
+    if epic and orphans_only:
+        log(
+            "✗",
+            "--epic and --orphans-only are mutually exclusive. "
+            "--epic filters to children of an epic, while --orphans-only filters to issues without a parent epic.",
+            Colors.RED,
+        )
+        raise typer.Exit(1)
+
+    # Parse --epic-override flag into a set of epic IDs
+    epic_override_ids: set[str] | None = None
+    if epic_override:
+        epic_override_ids = {
+            eid.strip() for eid in epic_override.split(",") if eid.strip()
+        }
+        if not epic_override_ids:
+            log(
+                "✗",
+                "Invalid --epic-override value: no valid epic IDs found",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+
+    # Validate repo_path exists
+    if not repo_path.exists():
+        log("✗", f"Repository not found: {repo_path}", Colors.RED)
+        raise typer.Exit(1)
+
+    return ValidatedRunArgs(
+        only_ids=only_ids,
+        disable_set=disable_set,
+        epic_override_ids=epic_override_ids,
+    )
+
+
 app = typer.Typer(
     name="mala",
     help="Parallel issue processing with Claude Agent SDK",
@@ -404,79 +519,22 @@ def run(
 
     repo_path = repo_path.resolve()
 
-    # Parse --only flag into a set of issue IDs
-    only_ids: set[str] | None = None
-    if only:
-        only_ids = {
-            issue_id.strip() for issue_id in only.split(",") if issue_id.strip()
-        }
-        if not only_ids:
-            log("✗", "Invalid --only value: no valid issue IDs found", Colors.RED)
-            raise typer.Exit(1)
-
-    # Parse --disable-validations flag into a set
-    disable_set: set[str] | None = None
-    if disable_validations:
-        disable_set = {
-            val.strip() for val in disable_validations.split(",") if val.strip()
-        }
-        if not disable_set:
-            log(
-                "✗",
-                "Invalid --disable-validations value: no valid values found",
-                Colors.RED,
-            )
-            raise typer.Exit(1)
-        # Validate against known values
-        unknown = disable_set - VALID_DISABLE_VALUES
-        if unknown:
-            log(
-                "✗",
-                f"Unknown --disable-validations value(s): {', '.join(sorted(unknown))}. "
-                f"Valid values: {', '.join(sorted(VALID_DISABLE_VALUES))}",
-                Colors.RED,
-            )
-            raise typer.Exit(1)
-
-    # Validate coverage threshold range
-    if coverage_threshold is not None and not 0 <= coverage_threshold <= 100:
-        log(
-            "✗",
-            f"Invalid --coverage-threshold value: {coverage_threshold}. Must be between 0 and 100.",
-            Colors.RED,
-        )
-        raise typer.Exit(1)
-
-    # Validate --epic and --orphans-only are mutually exclusive
-    if epic and orphans_only:
-        log(
-            "✗",
-            "--epic and --orphans-only are mutually exclusive. "
-            "--epic filters to children of an epic, while --orphans-only filters to issues without a parent epic.",
-            Colors.RED,
-        )
-        raise typer.Exit(1)
-
-    # Parse --epic-override flag into a set of epic IDs
-    epic_override_ids: set[str] | None = None
-    if epic_override:
-        epic_override_ids = {
-            eid.strip() for eid in epic_override.split(",") if eid.strip()
-        }
-        if not epic_override_ids:
-            log(
-                "✗",
-                "Invalid --epic-override value: no valid epic IDs found",
-                Colors.RED,
-            )
-            raise typer.Exit(1)
+    # Validate and parse CLI arguments
+    validated = _validate_run_args(
+        only=only,
+        disable_validations=disable_validations,
+        coverage_threshold=coverage_threshold,
+        epic=epic,
+        orphans_only=orphans_only,
+        epic_override=epic_override,
+        repo_path=repo_path,
+    )
+    only_ids = validated.only_ids
+    disable_set = validated.disable_set
+    epic_override_ids = validated.epic_override_ids
 
     # Ensure user config directory exists
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-
-    if not repo_path.exists():
-        log("✗", f"Repository not found: {repo_path}", Colors.RED)
-        raise typer.Exit(1)
 
     # Handle dry-run mode: display task order and exit
     if dry_run:
