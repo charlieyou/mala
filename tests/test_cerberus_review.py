@@ -11,7 +11,6 @@ Tests the cerberus_review integration including:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -24,6 +23,7 @@ from src.infra.clients.cerberus_review import (
     map_exit_code_to_result,
     parse_cerberus_json,
 )
+from src.infra.io.event_sink import BaseEventSink
 
 if TYPE_CHECKING:
     from src.infra.io.event_sink import MalaEventSink
@@ -32,11 +32,16 @@ if TYPE_CHECKING:
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "cerberus"
 
 
-@dataclass
-class MockEventSink:
-    """Mock event sink for testing event emissions."""
+class MockEventSink(BaseEventSink):
+    """Mock event sink for testing event emissions.
 
-    warnings: list[str] = field(default_factory=list)
+    Inherits from BaseEventSink to get no-op implementations for all
+    MalaEventSink methods, preventing AttributeError if tested code
+    emits additional events.
+    """
+
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
 
     def on_review_warning(
         self,

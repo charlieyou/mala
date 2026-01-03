@@ -12,6 +12,7 @@ The adapter includes DefaultReviewer for CLI execution in the repo_path.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from dataclasses import dataclass, field
@@ -595,6 +596,9 @@ def map_exit_code_to_result(
         )
         if event_sink is not None:
             event_sink.on_review_warning(message)
+        else:
+            # Always log this critical diagnostic even without event_sink
+            logging.warning(message)
 
     # Security: fail-closed - BOTH exit code AND JSON verdict must pass
     # This prevents a review from passing when the consensus verdict is
