@@ -1,13 +1,14 @@
 """Extract human-readable tool names from shell commands.
 
-This is a local copy for use in infra.hooks to avoid importing from
-src.domain.validation (which would violate the Hooks isolated contract).
-
 This module provides a utility function to extract the primary tool name from
-complex shell commands for use in lint caching and messaging. For example:
+complex shell commands for use in quality gate messaging, lint caching, and
+logging. For example:
 - "npx eslint ." -> "eslint"
 - "uvx ruff check ." -> "ruff"
 - "uv run pytest" -> "pytest"
+
+This module is intentionally placed in hooks to avoid architecture violations.
+It has no dependencies on domain/pipeline/orchestration layers.
 """
 
 from __future__ import annotations
@@ -325,7 +326,7 @@ def extract_tool_name(command: str) -> str:
     """Extract human-readable tool name from a shell command.
 
     This function extracts the primary tool name from complex shell commands
-    for use in lint caching and messaging.
+    for use in quality gate messaging and logging.
 
     Algorithm:
     1. Handle shell operators (&&, ||, |, ;) by trying each segment

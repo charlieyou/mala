@@ -185,7 +185,7 @@ class ValidationSpec:
         Returns:
             Frozenset of lint tool names. Empty frozenset if no lint commands.
         """
-        from src.infra.tool_name_extractor import extract_tool_name
+        from src.infra.hooks.tool_name_extractor import extract_tool_name
 
         lint_tools: set[str] = set()
         for cmd in self.commands:
@@ -457,7 +457,7 @@ def _build_commands_from_config(config: CommandsConfig) -> list[ValidationComman
     Returns:
         List of ValidationCommand instances.
     """
-    from src.domain.validation.tool_name_extractor import extract_tool_name
+    from src.infra.hooks.tool_name_extractor import extract_tool_name
 
     commands: list[ValidationCommand] = []
     cmds = config
@@ -557,3 +557,26 @@ def _tool_name_to_pattern(tool_name: str) -> str:
     # Escape special regex characters in the tool name
     escaped = re.escape(tool_name)
     return rf"\b{escaped}\b"
+
+
+def extract_lint_tools_from_spec(spec: ValidationSpec | None) -> frozenset[str] | None:
+    """Extract lint tool names from a ValidationSpec.
+
+    Extracts tool names from commands with LINT, FORMAT, or TYPECHECK kinds.
+    These are the tools that LintCache should recognize and cache.
+
+    This is a convenience wrapper around ValidationSpec.extract_lint_tools()
+    that handles None specs.
+
+    Args:
+        spec: The ValidationSpec to extract from. If None, returns None.
+
+    Returns:
+        Frozenset of lint tool names, or None if spec is None or has no
+        lint commands (allowing LintCache to use defaults).
+    """
+    if spec is None:
+        return None
+
+    lint_tools = spec.extract_lint_tools()
+    return lint_tools if lint_tools else None

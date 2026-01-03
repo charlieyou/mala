@@ -25,7 +25,7 @@ from .validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
-from src.infra.tool_name_extractor import extract_tool_name
+from src.infra.hooks.tool_name_extractor import extract_tool_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
