@@ -485,7 +485,7 @@ class TestConsoleEventSink:
 
     @patch("src.infra.io.event_sink.log")
     def test_on_run_started_logs(self, mock_log: MagicMock) -> None:
-        """on_run_started calls log with run configuration."""
+        """on_run_started logs run configuration."""
         sink = ConsoleEventSink()
         config = EventRunConfig(
             repo_path="/tmp/repo",
@@ -497,9 +497,9 @@ class TestConsoleEventSink:
         )
         sink.on_run_started(config)
         assert mock_log.called
-        # Verify one of the log calls contains the repo path
+        # Verify log was called with run started message
         all_call_args = [str(call) for call in mock_log.call_args_list]
-        assert any("/tmp/repo" in args for args in all_call_args)
+        assert any("START" in args for args in all_call_args)
 
     @patch("src.infra.io.event_sink.log_tool")
     def test_on_tool_use_delegates_to_log_tool(self, mock_log_tool: MagicMock) -> None:
@@ -577,15 +577,14 @@ class TestConsoleEventSink:
 
     @patch("src.infra.io.event_sink.log")
     def test_on_abort_requested_logs_fatal_error(self, mock_log: MagicMock) -> None:
-        """on_abort_requested logs fatal error with abort message."""
+        """on_abort_requested logs abort message."""
         sink = ConsoleEventSink()
         sink.on_abort_requested("Database connection lost")
 
         mock_log.assert_called_once()
         call_args = mock_log.call_args
-        assert "Fatal error" in call_args[0][1]
+        assert "ABORT" in call_args[0][1]
         assert "Database connection lost" in call_args[0][1]
-        assert "Aborting run" in call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_on_tasks_aborting_logs_count_and_reason(self, mock_log: MagicMock) -> None:
@@ -596,7 +595,6 @@ class TestConsoleEventSink:
         mock_log.assert_called_once()
         call_args = mock_log.call_args
         assert "5" in call_args[0][1]
-        assert "active task" in call_args[0][1]
         assert "Timeout exceeded" in call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
@@ -609,7 +607,7 @@ class TestConsoleEventSink:
 
         mock_log.assert_called_once()
         call_args = mock_log.call_args
-        assert "Verifying epic" in call_args[0][1]
+        assert "VERIFY" in call_args[0][1]
         assert "epic-123" in call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
@@ -623,7 +621,7 @@ class TestConsoleEventSink:
         mock_log.assert_called_once()
         call_args = mock_log.call_args
         assert "epic-123" in call_args[0][1]
-        assert "verified" in call_args[0][1]
+        assert "passed" in call_args[0][1]
         assert "95%" in call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
@@ -634,12 +632,11 @@ class TestConsoleEventSink:
         sink = ConsoleEventSink()
         sink.on_epic_verification_failed("epic-123", 2, ["issue-1", "issue-2"])
 
-        mock_log.assert_called_once()
-        call_args = mock_log.call_args
-        assert "epic-123" in call_args[0][1]
-        assert "2 unmet criteria" in call_args[0][1]
-        assert "issue-1" in call_args[0][1]
-        assert "issue-2" in call_args[0][1]
+        # Called once for the main message, plus once per remediation issue
+        assert mock_log.call_count == 3
+        first_call = mock_log.call_args_list[0]
+        assert "epic-123" in first_call[0][1]
+        assert "2" in first_call[0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_on_epic_verification_human_review_logs_reason(
@@ -649,49 +646,49 @@ class TestConsoleEventSink:
         sink = ConsoleEventSink()
         sink.on_epic_verification_human_review("epic-123", "Low confidence", "review-1")
 
-        mock_log.assert_called_once()
-        call_args = mock_log.call_args
-        assert "epic-123" in call_args[0][1]
-        assert "human review" in call_args[0][1]
-        assert "Low confidence" in call_args[0][1]
-        assert "review-1" in call_args[0][1]
+        # Called twice: once for main message, once for review issue
+        assert mock_log.call_count == 2
+        first_call = mock_log.call_args_list[0]
+        assert "epic-123" in first_call[0][1]
+        assert "human review" in first_call[0][1]
+        assert "Low confidence" in first_call[0][1]
 
-    @patch("src.infra.io.event_sink.log_verbose")
+    @patch("src.infra.io.event_sink.log")
     def test_on_epic_remediation_created_logs_criterion(
-        self, mock_log_verbose: MagicMock
+        self, mock_log: MagicMock
     ) -> None:
         """on_epic_remediation_created logs issue id and truncated criterion."""
         sink = ConsoleEventSink()
         long_criterion = "A" * 100  # Long text to test truncation
         sink.on_epic_remediation_created("epic-123", "issue-1", long_criterion)
 
-        mock_log_verbose.assert_called_once()
-        call_args = mock_log_verbose.call_args
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
         assert "epic-123" in call_args[0][1]
         assert "issue-1" in call_args[0][1]
-        # Should be truncated (60 chars + ...)
+        # Should be truncated (80 chars + ...)
         assert "..." in call_args[0][1]
 
-    @patch("src.infra.io.event_sink.log_verbose")
+    @patch("src.infra.io.event_sink.log")
     def test_on_epic_remediation_created_short_criterion_not_truncated(
-        self, mock_log_verbose: MagicMock
+        self, mock_log: MagicMock
     ) -> None:
         """on_epic_remediation_created does not truncate short criterion."""
         sink = ConsoleEventSink()
         short_criterion = "Short criterion text"
         sink.on_epic_remediation_created("epic-123", "issue-1", short_criterion)
 
-        mock_log_verbose.assert_called_once()
-        call_args = mock_log_verbose.call_args
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
         assert short_criterion in call_args[0][1]
-        # Short text should not have "..." appended unless it's cut off
+        # Short text should not have "..." appended
         assert "..." not in call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_validation_started_logs_message_with_issue_id(
         self, mock_log: MagicMock
     ) -> None:
-        """on_validation_started logs with issue_id parameter."""
+        """on_validation_started logs with issue_id in message."""
         sink = ConsoleEventSink()
         sink.on_validation_started("agent-1", issue_id="issue-123")
 
@@ -699,8 +696,8 @@ class TestConsoleEventSink:
         call_args = mock_log.call_args
         # Check the message contains "Starting validation..."
         assert "Starting validation" in call_args[0][1]
-        # Check issue_id is passed as a keyword argument
-        assert call_args.kwargs.get("issue_id") == "issue-123"
+        # Check issue_id is in the message
+        assert "issue-123" in call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_on_gate_started_uses_log_not_verbose(self, mock_log: MagicMock) -> None:
@@ -711,9 +708,9 @@ class TestConsoleEventSink:
         # log() should be called (not log_verbose which wouldn't call log unless verbose)
         mock_log.assert_called_once()
         call_args = mock_log.call_args
-        assert "Quality gate" in call_args[0][1]
-        assert "attempt 1/3" in call_args[0][1]
-        assert call_args.kwargs.get("issue_id") == "issue-123"
+        assert "GATE" in call_args[0][1]
+        assert "1/3" in call_args[0][1]
+        assert "issue-123" in call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_on_review_started_uses_log_not_verbose(self, mock_log: MagicMock) -> None:
@@ -724,84 +721,85 @@ class TestConsoleEventSink:
         # log() should be called (not log_verbose which wouldn't call log unless verbose)
         mock_log.assert_called_once()
         call_args = mock_log.call_args
-        assert "Review" in call_args[0][1]
-        assert "attempt 1/2" in call_args[0][1]
-        assert call_args.kwargs.get("issue_id") == "issue-123"
+        assert "REVIEW" in call_args[0][1]
+        assert "1/2" in call_args[0][1]
+        assert "issue-123" in call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_gate_passed_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_gate_passed passes issue_id to log()."""
+        """on_gate_passed includes issue_id in message."""
         sink = ConsoleEventSink()
         sink.on_gate_passed("agent-1", issue_id="issue-456")
 
         mock_log.assert_called_once()
-        assert mock_log.call_args.kwargs.get("issue_id") == "issue-456"
+        assert "issue-456" in mock_log.call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_gate_failed_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_gate_failed passes issue_id to log()."""
+        """on_gate_failed includes issue_id in message."""
         sink = ConsoleEventSink()
         sink.on_gate_failed("agent-1", 3, 3, issue_id="issue-789")
 
         mock_log.assert_called_once()
-        assert mock_log.call_args.kwargs.get("issue_id") == "issue-789"
+        assert "issue-789" in mock_log.call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_gate_retry_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_gate_retry passes issue_id to log()."""
+        """on_gate_retry includes issue_id in message."""
         sink = ConsoleEventSink()
         sink.on_gate_retry("agent-1", 2, 3, issue_id="issue-abc")
 
         mock_log.assert_called_once()
-        assert mock_log.call_args.kwargs.get("issue_id") == "issue-abc"
+        assert "issue-abc" in mock_log.call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_review_passed_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_review_passed passes issue_id to log()."""
+        """on_review_passed includes issue_id in message."""
         sink = ConsoleEventSink()
         sink.on_review_passed("agent-1", issue_id="issue-def")
 
         mock_log.assert_called_once()
-        assert mock_log.call_args.kwargs.get("issue_id") == "issue-def"
+        assert "issue-def" in mock_log.call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_review_retry_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_review_retry passes issue_id to log()."""
+        """on_review_retry includes issue_id in message."""
         sink = ConsoleEventSink()
         sink.on_review_retry("agent-1", 2, 2, error_count=5, issue_id="issue-ghi")
 
         mock_log.assert_called_once()
-        assert mock_log.call_args.kwargs.get("issue_id") == "issue-ghi"
+        assert "issue-ghi" in mock_log.call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_validation_result_failed_passes_issue_id(
         self, mock_log: MagicMock
     ) -> None:
-        """on_validation_result (failed) passes issue_id to log()."""
+        """on_validation_result (failed) includes issue_id in message."""
         sink = ConsoleEventSink()
         sink.on_validation_result("agent-1", passed=False, issue_id="issue-jkl")
 
         mock_log.assert_called_once()
-        assert mock_log.call_args.kwargs.get("issue_id") == "issue-jkl"
+        assert "issue-jkl" in mock_log.call_args[0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_gate_result_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_gate_result passes issue_id to log()."""
+        """on_gate_result includes issue_id in message."""
         sink = ConsoleEventSink()
         sink.on_gate_result(
             "agent-1", passed=False, failure_reasons=["lint"], issue_id="issue-mno"
         )
 
-        mock_log.assert_called_once()
-        assert mock_log.call_args.kwargs.get("issue_id") == "issue-mno"
+        # Called twice: once for main message, once for failure reason
+        assert mock_log.call_count == 2
+        assert "issue-mno" in mock_log.call_args_list[0][0][1]
 
     @patch("src.infra.io.event_sink.log")
     def test_validation_result_passed_passes_issue_id(
         self, mock_log: MagicMock
     ) -> None:
-        """on_validation_result (passed) passes issue_id to log()."""
+        """on_validation_result (passed) includes issue_id in message."""
         sink = ConsoleEventSink()
         sink.on_validation_result("agent-1", passed=True, issue_id="issue-pqr")
 
         mock_log.assert_called_once()
-        assert mock_log.call_args.kwargs.get("issue_id") == "issue-pqr"
+        assert "issue-pqr" in mock_log.call_args[0][1]
