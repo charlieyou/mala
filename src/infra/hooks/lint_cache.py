@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from .dangerous_commands import PreToolUseHook
 
-from src.domain.validation.tool_name_extractor import extract_tool_name
+from .tool_name_extractor import extract_tool_name
 
 from ..tools.command_runner import run_command
 from .dangerous_commands import BASH_TOOL_NAMES
