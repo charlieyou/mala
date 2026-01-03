@@ -466,19 +466,20 @@ class MalaOrchestrator:
         if not result.success:
             self.failed_issues.add(issue_id)
 
-        # Delegate to finalizer
-        await self.issue_finalizer.finalize(finalize_input)
+        # Delegate to finalizer, ensuring cleanup happens even if finalize raises
+        try:
+            await self.issue_finalizer.finalize(finalize_input)
+        finally:
+            # Update tracking state (active_tasks is updated by mark_completed in finalize_callback)
+            self.completed.append(result)
 
-        # Update tracking state (active_tasks is updated by mark_completed in finalize_callback)
-        self.completed.append(result)
+            # Cleanup session paths and gate result
+            self._cleanup_session_paths(issue_id)
+            self.async_gate_runner.clear_gate_result(issue_id)
 
-        # Cleanup session paths and gate result
-        self._cleanup_session_paths(issue_id)
-        self.async_gate_runner.clear_gate_result(issue_id)
-
-        # Remove agent_id from tracking now that finalization is complete
-        # (deferred from run_implementer.finally to keep it available for get_agent_id callback)
-        self.agent_ids.pop(issue_id, None)
+            # Remove agent_id from tracking now that finalization is complete
+            # (deferred from run_implementer.finally to keep it available for get_agent_id callback)
+            self.agent_ids.pop(issue_id, None)
 
     async def _abort_active_tasks(self, run_metadata: RunMetadata) -> None:
         """Cancel active tasks and mark them as failed.
