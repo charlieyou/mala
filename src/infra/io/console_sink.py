@@ -40,6 +40,15 @@ class ConsoleEventSink(BaseEventSink):
 
     def on_run_started(self, config: EventRunConfig) -> None:
         log("→", "[START] Run started", agent_id="run")
+        log("◦", f"Repository: {config.repo_path}", agent_id="run")
+        if config.epic_id:
+            log("◦", f"Epic: {config.epic_id}", agent_id="run")
+        if config.only_ids:
+            log("◦", f"Issues: {', '.join(config.only_ids)}", agent_id="run")
+        if config.prioritize_wip:
+            log("◦", "Mode: prioritize WIP", agent_id="run")
+        if config.orphans_only:
+            log("◦", "Mode: orphans only", agent_id="run")
         log_verbose("◦", f"Parallelism: {config.max_agents}", agent_id="run")
         self._log_limits(config)
         self._log_review_config(config)
@@ -126,10 +135,11 @@ class ConsoleEventSink(BaseEventSink):
         duration_seconds: float,
         summary: str,
     ) -> None:
+        # Use verbose logging since on_issue_completed provides similar info
         status_icon = "✓" if success else "✗"
-        log(
+        log_verbose(
             status_icon,
-            f"Completed {issue_id} in {duration_seconds:.1f}s: {summary}",
+            f"Agent {issue_id} completed in {duration_seconds:.1f}s: {summary}",
             agent_id=agent_id,
         )
 
@@ -209,17 +219,12 @@ class ConsoleEventSink(BaseEventSink):
         failure_reasons: list[str] | None = None,
         issue_id: str | None = None,
     ) -> None:
-        scope = f" ({issue_id})" if issue_id else ""
-        if passed:
-            log("✓", f"[GATE{scope}] all checks passed", agent_id=agent_id or "run")
-        elif failure_reasons:
-            log(
-                "✗",
-                f"[GATE{scope}] {Colors.RED}{len(failure_reasons)} checks failed{Colors.RESET}",
-                agent_id=agent_id or "run",
-            )
+        # Primary pass/fail is logged by on_gate_passed/on_gate_failed.
+        # Only log failure details here if there are specific reasons to show.
+        if not passed and failure_reasons:
+            scope = f" ({issue_id})" if issue_id else ""
             for reason in failure_reasons:
-                log("→", f"  - {reason}", agent_id=agent_id or "run")
+                log("→", f"  [GATE{scope}] - {reason}", agent_id=agent_id or "run")
 
     # -------------------------------------------------------------------------
     # Codex review events
@@ -404,7 +409,7 @@ class ConsoleEventSink(BaseEventSink):
         log("→", "[COMMIT] Issues committed", agent_id="run")
 
     def on_run_metadata_saved(self, path: str) -> None:
-        log_verbose("◦", f"Run metadata saved to {path}", agent_id="run")
+        log("◦", f"Run metadata saved to {path}", agent_id="run")
 
     def on_run_level_validation_disabled(self) -> None:
         log_verbose("◦", "Run-level validation disabled", agent_id="run")

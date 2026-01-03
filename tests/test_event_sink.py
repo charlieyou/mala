@@ -2,12 +2,9 @@
 
 from unittest.mock import MagicMock, patch
 
+from src.infra.io.base_sink import BaseEventSink, NullEventSink
+from src.infra.io.console_sink import ConsoleEventSink
 from src.infra.io.event_protocol import EventRunConfig, MalaEventSink
-from src.infra.io.event_sink import (
-    BaseEventSink,
-    NullEventSink,
-    ConsoleEventSink,
-)
 
 
 class TestEventRunConfig:
@@ -783,15 +780,15 @@ class TestConsoleEventSink:
 
     @patch("src.infra.io.console_sink.log")
     def test_gate_result_passes_issue_id(self, mock_log: MagicMock) -> None:
-        """on_gate_result includes issue_id in message."""
+        """on_gate_result includes issue_id in failure reason messages."""
         sink = ConsoleEventSink()
         sink.on_gate_result(
             "agent-1", passed=False, failure_reasons=["lint"], issue_id="issue-mno"
         )
 
-        # Called twice: once for main message, once for failure reason
-        assert mock_log.call_count == 2
-        assert "issue-mno" in mock_log.call_args_list[0][0][1]
+        # Only logs failure reasons now (main pass/fail is logged by on_gate_passed/failed)
+        assert mock_log.call_count == 1
+        assert "issue-mno" in mock_log.call_args[0][1]
 
     @patch("src.infra.io.console_sink.log")
     def test_validation_result_passed_passes_issue_id(

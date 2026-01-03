@@ -352,7 +352,7 @@ class TestOrchestratorCleanup:
         self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Orchestrator cleans up locks when agent crashes/times out."""
-        from src.infra.io.event_sink import NullEventSink
+        from src.infra.io.base_sink import NullEventSink
         from src.orchestration.orchestrator import MalaOrchestrator
 
         agent_id = "bd-crashed-agent"
