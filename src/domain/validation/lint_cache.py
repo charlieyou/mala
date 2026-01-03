@@ -25,13 +25,15 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.infra.tools.command_runner import run_command
-
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from src.core.protocols import CommandRunnerPort
 
-def _run_git_command(args: list[str], cwd: Path) -> str | None:
+
+def _run_git_command(
+    args: list[str], cwd: Path, command_runner: CommandRunnerPort
+) -> str | None:
     """Run a git command and return stdout, or None on failure.
 
     This is a separate function to make it easy to mock in tests without
@@ -40,11 +42,12 @@ def _run_git_command(args: list[str], cwd: Path) -> str | None:
     Args:
         args: Git command arguments (without 'git' prefix).
         cwd: Working directory.
+        command_runner: Command runner for executing the git command.
 
     Returns:
         stdout as a string, or None if the command failed.
     """
-    result = run_command(["git", *args], cwd=cwd, timeout_seconds=5.0)
+    result = command_runner.run(["git", *args], cwd=cwd, timeout=5.0)
     if result.ok:
         return result.stdout.strip()
     return None
@@ -139,6 +142,7 @@ class LintCache:
         self,
         cache_dir: Path,
         repo_path: Path,
+        command_runner: CommandRunnerPort,
         git_cwd: Path | None = None,
     ) -> None:
         """Initialize the lint cache.
@@ -146,12 +150,14 @@ class LintCache:
         Args:
             cache_dir: Directory to store the cache file.
             repo_path: Path to the git repository (used for cache key stability).
+            command_runner: Command runner for executing git commands.
             git_cwd: Working directory for git commands. If None, uses repo_path.
                 This allows using a stable repo_path for cache keys while running
                 git commands in a per-run worktree.
         """
         self.cache_dir = cache_dir
         self.repo_path = repo_path
+        self._command_runner = command_runner
         self._git_cwd = git_cwd if git_cwd is not None else repo_path
         self._cache_file = cache_dir / "lint_cache.json"
         self._entries: dict[str, dict[str, str | bool | None]] = {}
@@ -194,7 +200,9 @@ class LintCache:
         """
         # Get HEAD SHA
         try:
-            head_sha = _run_git_command(["rev-parse", "HEAD"], self._git_cwd)
+            head_sha = _run_git_command(
+                ["rev-parse", "HEAD"], self._git_cwd, self._command_runner
+            )
             if head_sha is None:
                 # Not a git repo, no commits, or subprocess mocked - can't cache
                 return None
@@ -204,7 +212,9 @@ class LintCache:
 
         # Check for uncommitted changes
         try:
-            status_output = _run_git_command(["status", "--porcelain"], self._git_cwd)
+            status_output = _run_git_command(
+                ["status", "--porcelain"], self._git_cwd, self._command_runner
+            )
             if status_output is None:
                 # Can't determine state - don't cache
                 return None
@@ -234,7 +244,9 @@ class LintCache:
 
         # Get staged + unstaged diff (captures tracked file changes)
         try:
-            diff = _run_git_command(["diff", "HEAD"], self._git_cwd)
+            diff = _run_git_command(
+                ["diff", "HEAD"], self._git_cwd, self._command_runner
+            )
             if diff is None:
                 diff = ""
         except Exception:
@@ -244,7 +256,9 @@ class LintCache:
         # Get untracked files and include their contents in the hash
         try:
             untracked_output = _run_git_command(
-                ["ls-files", "--others", "--exclude-standard"], self._git_cwd
+                ["ls-files", "--others", "--exclude-standard"],
+                self._git_cwd,
+                self._command_runner,
             )
             if untracked_output:
                 untracked_files = untracked_output.split("\n")

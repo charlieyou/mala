@@ -18,12 +18,6 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
-from src.infra.io.session_log_parser import (
-    FileSystemLogProvider,
-    JsonlEntry,
-    SessionLogParser,
-)
-
 from .validation.spec import (
     CommandKind,
     IssueResolution,
@@ -40,6 +34,7 @@ if TYPE_CHECKING:
     from src.core.protocols import (
         CommandRunnerPort,
         IssueResolutionProtocol,
+        JsonlEntryProtocol,
         LogProvider,
         ValidationEvidenceProtocol,
     )
@@ -47,11 +42,9 @@ if TYPE_CHECKING:
     from .validation.spec import ValidationSpec
 
 
-# Re-export JsonlEntry for backward compatibility
 __all__ = [
     "CommitResult",
     "GateResult",
-    "JsonlEntry",
     "QualityGate",
     "ValidationEvidence",
 ]
@@ -293,7 +286,7 @@ class QualityGate:
 
         Args:
             repo_path: Path to the repository for git operations.
-            log_provider: Optional LogProvider for reading session logs.
+            log_provider: LogProvider for reading session logs.
                 If not provided, uses FileSystemLogProvider (filesystem access).
             command_runner: Optional CommandRunnerPort for running git commands.
                 If not provided, creates a CommandRunner with repo_path as cwd.
@@ -303,6 +296,8 @@ class QualityGate:
         if log_provider is not None:
             self._log_provider = log_provider
         else:
+            from src.infra.io.session_log_parser import FileSystemLogProvider
+
             self._log_provider = FileSystemLogProvider()
         # Use injected CommandRunner or create default
         if command_runner is not None:
@@ -311,8 +306,6 @@ class QualityGate:
             from src.infra.tools.command_runner import CommandRunner
 
             self._command_runner = CommandRunner(cwd=repo_path)
-        # Keep SessionLogParser for extract_* helper methods
-        self._parser = SessionLogParser()
 
     def _match_resolution_pattern(self, text: str) -> IssueResolution | None:
         """Check text against all resolution patterns.
@@ -382,7 +375,7 @@ class QualityGate:
 
     def _iter_jsonl_entries(
         self, log_path: Path, offset: int = 0
-    ) -> Iterator[JsonlEntry]:
+    ) -> Iterator[JsonlEntryProtocol]:
         """Iterate over parsed JSONL entries from a log file.
 
         Delegates to LogProvider.iter_events().
@@ -392,15 +385,9 @@ class QualityGate:
             offset: Byte offset to start reading from (default 0).
 
         Yields:
-            JsonlEntry objects for each successfully parsed JSON line.
+            JsonlEntryProtocol objects for each successfully parsed JSON line.
         """
-        # Cast to Iterator[JsonlEntry] since JsonlEntry and JsonlEntryProtocol
-        # are structurally compatible and callers use JsonlEntry methods
-        from typing import cast as typing_cast
-
-        return typing_cast(
-            "Iterator[JsonlEntry]", self._log_provider.iter_events(log_path, offset)
-        )
+        return self._log_provider.iter_events(log_path, offset)
 
     def parse_issue_resolution(self, log_path: Path) -> IssueResolution | None:
         """Parse JSONL log file for issue resolution markers.
@@ -436,7 +423,7 @@ class QualityGate:
 
         try:
             for entry in self._iter_jsonl_entries(log_path, offset):
-                for text in self._parser.extract_assistant_text_blocks(entry):
+                for text in self._log_provider.extract_assistant_text_blocks(entry):
                     resolution = self._match_resolution_pattern(text)
                     if resolution:
                         return resolution, entry.offset + entry.line_len
@@ -476,7 +463,7 @@ class QualityGate:
         kind_failed: dict[CommandKind, tuple[bool, str]] = {}
 
         for entry in self._iter_jsonl_entries(log_path, offset):
-            for tool_id, command in self._parser.extract_bash_commands(entry):
+            for tool_id, command in self._log_provider.extract_bash_commands(entry):
                 matched_kinds = self._match_spec_pattern_with_kinds(
                     command, evidence, kind_patterns
                 )
@@ -485,7 +472,7 @@ class QualityGate:
                     tool_id_to_info[tool_id] = [
                         (kind, cmd_name) for kind in matched_kinds
                     ]
-            for tool_use_id, is_error in self._parser.extract_tool_results(entry):
+            for tool_use_id, is_error in self._log_provider.extract_tool_results(entry):
                 if tool_use_id in tool_id_to_info:
                     for kind, cmd_name in tool_id_to_info[tool_use_id]:
                         # Latest status for this CommandKind wins (allows retries to succeed)

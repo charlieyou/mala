@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.domain.validation.lint_cache import LintCache, LintCacheEntry, LintCacheKey
+from src.infra.tools.command_runner import CommandRunner
 
 
 class TestLintCacheKey:
@@ -91,18 +92,27 @@ class TestLintCache:
         )
         return repo
 
+    @pytest.fixture
+    def command_runner(self, git_repo: Path) -> CommandRunner:
+        """Provide a command runner for tests."""
+        return CommandRunner(cwd=git_repo)
+
     def test_should_skip_returns_false_on_first_run(
-        self, cache_dir: Path, git_repo: Path
+        self, cache_dir: Path, git_repo: Path, command_runner: CommandRunner
     ) -> None:
         """Test that should_skip returns False when no cache entry exists."""
-        cache = LintCache(cache_dir=cache_dir, repo_path=git_repo)
+        cache = LintCache(
+            cache_dir=cache_dir, repo_path=git_repo, command_runner=command_runner
+        )
         assert cache.should_skip("ruff check") is False
 
     def test_should_skip_returns_true_after_mark_passed(
-        self, cache_dir: Path, git_repo: Path
+        self, cache_dir: Path, git_repo: Path, command_runner: CommandRunner
     ) -> None:
         """Test that should_skip returns True after marking command as passed."""
-        cache = LintCache(cache_dir=cache_dir, repo_path=git_repo)
+        cache = LintCache(
+            cache_dir=cache_dir, repo_path=git_repo, command_runner=command_runner
+        )
 
         # First run - should not skip
         assert cache.should_skip("ruff check") is False
@@ -114,10 +124,12 @@ class TestLintCache:
         assert cache.should_skip("ruff check") is True
 
     def test_should_skip_returns_false_after_new_commit(
-        self, cache_dir: Path, git_repo: Path
+        self, cache_dir: Path, git_repo: Path, command_runner: CommandRunner
     ) -> None:
         """Test that should_skip returns False after a new commit."""
-        cache = LintCache(cache_dir=cache_dir, repo_path=git_repo)
+        cache = LintCache(
+            cache_dir=cache_dir, repo_path=git_repo, command_runner=command_runner
+        )
 
         # Mark as passed
         cache.mark_passed("ruff check")
@@ -139,10 +151,12 @@ class TestLintCache:
         assert cache.should_skip("ruff check") is False
 
     def test_should_skip_returns_false_after_uncommitted_change(
-        self, cache_dir: Path, git_repo: Path
+        self, cache_dir: Path, git_repo: Path, command_runner: CommandRunner
     ) -> None:
         """Test that should_skip returns False after uncommitted changes."""
-        cache = LintCache(cache_dir=cache_dir, repo_path=git_repo)
+        cache = LintCache(
+            cache_dir=cache_dir, repo_path=git_repo, command_runner=command_runner
+        )
 
         # Mark as passed (clean state)
         cache.mark_passed("ruff check")
@@ -155,28 +169,40 @@ class TestLintCache:
         assert cache.should_skip("ruff check") is False
 
     def test_cache_persists_across_instances(
-        self, cache_dir: Path, git_repo: Path
+        self, cache_dir: Path, git_repo: Path, command_runner: CommandRunner
     ) -> None:
         """Test that cache entries persist to disk and can be loaded."""
-        cache1 = LintCache(cache_dir=cache_dir, repo_path=git_repo)
+        cache1 = LintCache(
+            cache_dir=cache_dir, repo_path=git_repo, command_runner=command_runner
+        )
         cache1.mark_passed("ruff check")
 
         # Create new instance - should load from disk
-        cache2 = LintCache(cache_dir=cache_dir, repo_path=git_repo)
+        cache2 = LintCache(
+            cache_dir=cache_dir, repo_path=git_repo, command_runner=command_runner
+        )
         assert cache2.should_skip("ruff check") is True
 
-    def test_invalidate_removes_entry(self, cache_dir: Path, git_repo: Path) -> None:
+    def test_invalidate_removes_entry(
+        self, cache_dir: Path, git_repo: Path, command_runner: CommandRunner
+    ) -> None:
         """Test that invalidate removes the cache entry."""
-        cache = LintCache(cache_dir=cache_dir, repo_path=git_repo)
+        cache = LintCache(
+            cache_dir=cache_dir, repo_path=git_repo, command_runner=command_runner
+        )
         cache.mark_passed("ruff check")
         assert cache.should_skip("ruff check") is True
 
         cache.invalidate("ruff check")
         assert cache.should_skip("ruff check") is False
 
-    def test_clear_removes_all_entries(self, cache_dir: Path, git_repo: Path) -> None:
+    def test_clear_removes_all_entries(
+        self, cache_dir: Path, git_repo: Path, command_runner: CommandRunner
+    ) -> None:
         """Test that clear removes all cache entries."""
-        cache = LintCache(cache_dir=cache_dir, repo_path=git_repo)
+        cache = LintCache(
+            cache_dir=cache_dir, repo_path=git_repo, command_runner=command_runner
+        )
         cache.mark_passed("ruff check")
         cache.mark_passed("ty check")
 
@@ -186,10 +212,12 @@ class TestLintCache:
         assert cache.should_skip("ty check") is False
 
     def test_different_commands_cached_separately(
-        self, cache_dir: Path, git_repo: Path
+        self, cache_dir: Path, git_repo: Path, command_runner: CommandRunner
     ) -> None:
         """Test that different commands have separate cache entries."""
-        cache = LintCache(cache_dir=cache_dir, repo_path=git_repo)
+        cache = LintCache(
+            cache_dir=cache_dir, repo_path=git_repo, command_runner=command_runner
+        )
 
         cache.mark_passed("ruff check")
 
@@ -197,21 +225,25 @@ class TestLintCache:
         assert cache.should_skip("ty check") is False
 
     def test_handles_corrupted_cache_file(
-        self, cache_dir: Path, git_repo: Path
+        self, cache_dir: Path, git_repo: Path, command_runner: CommandRunner
     ) -> None:
         """Test that corrupted cache file is handled gracefully."""
         cache_file = cache_dir / "lint_cache.json"
         cache_file.write_text("not valid json {{{")
 
         # Should not raise, just start with empty cache
-        cache = LintCache(cache_dir=cache_dir, repo_path=git_repo)
+        cache = LintCache(
+            cache_dir=cache_dir, repo_path=git_repo, command_runner=command_runner
+        )
         assert cache.should_skip("ruff check") is False
 
     def test_uncommitted_changes_tracked_by_content(
-        self, cache_dir: Path, git_repo: Path
+        self, cache_dir: Path, git_repo: Path, command_runner: CommandRunner
     ) -> None:
         """Test that different uncommitted changes invalidate cache."""
-        cache = LintCache(cache_dir=cache_dir, repo_path=git_repo)
+        cache = LintCache(
+            cache_dir=cache_dir, repo_path=git_repo, command_runner=command_runner
+        )
 
         # Make uncommitted change and mark as passed
         (git_repo / "file.py").write_text("# change 1\n")
@@ -240,10 +272,19 @@ class TestLintCacheWithMocks:
         repo.mkdir()
         return repo
 
-    def test_handles_non_git_repo(self, cache_dir: Path, repo_path: Path) -> None:
+    @pytest.fixture
+    def command_runner(self, repo_path: Path) -> CommandRunner:
+        """Provide a command runner for tests."""
+        return CommandRunner(cwd=repo_path)
+
+    def test_handles_non_git_repo(
+        self, cache_dir: Path, repo_path: Path, command_runner: CommandRunner
+    ) -> None:
         """Test behavior when repo is not a git repository."""
         # git commands will fail since it's not a real git repo
-        cache = LintCache(cache_dir=cache_dir, repo_path=repo_path)
+        cache = LintCache(
+            cache_dir=cache_dir, repo_path=repo_path, command_runner=command_runner
+        )
 
         # Should not crash, just return False (can't verify state)
         cache.mark_passed("ruff check")

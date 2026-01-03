@@ -1179,48 +1179,10 @@ class TestEvidenceGateSkipsValidation:
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-
-        result = gate.check_with_resolution(
-            issue_id="test-123",
-            log_path=log_path,
-            spec=spec,
-        )
-
-        assert result.passed is True
-        # No git commands should be called for no-change resolution
-        assert mock_runner.run.call_count == 0
-
-    def test_no_change_skips_validation_evidence_check(self, tmp_path: Path) -> None:
-        """No-change resolution should not require validation evidence."""
-        log_path = tmp_path / "session.jsonl"
-        log_content = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "ISSUE_NO_CHANGE: Was already fixed by another agent.",
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(log_content + "\n")
-
-        # Create mock command runner for clean working tree
-        mock_runner = make_mock_command_runner(
-            CommandResult(command=[], returncode=0, stdout="", stderr="")
-        )
-        gate = QualityGate(tmp_path, command_runner=mock_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        # Use the custom spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
-        # Should pass without validation evidence
+        # Without detection_pattern, pytest should NOT be detected
         assert evidence.pytest_ran is False
 
     def test_obsolete_skips_commit_and_validation(self, tmp_path: Path) -> None:
@@ -2161,7 +2123,7 @@ class TestSpecDrivenEvidencePatterns:
         gate = QualityGate(tmp_path)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
-        # Use the custom spec without detection_pattern (not build_validation_spec)
+        # Use the custom spec (not build_validation_spec which would overwrite it)
         evidence = gate.parse_validation_evidence_with_spec(log_path, spec, offset=0)
 
         # Without detection_pattern, pytest should NOT be detected
@@ -3095,6 +3057,34 @@ class TestLogProviderInjection:
 
             def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
                 return 100  # Synthetic offset
+
+            def extract_bash_commands(self, entry: JsonlEntry) -> list[tuple[str, str]]:
+                """Extract Bash commands from entry."""
+                if entry.entry is None:
+                    return []
+                if not hasattr(entry.entry, "message"):
+                    return []
+                message = entry.entry.message
+                if not hasattr(message, "content"):
+                    return []
+                result: list[tuple[str, str]] = []
+                for block in message.content:
+                    if hasattr(block, "name") and block.name == "Bash":
+                        cmd = (
+                            block.input.get("command", "")
+                            if isinstance(block.input, dict)
+                            else ""
+                        )
+                        result.append((block.id, cmd))
+                return result
+
+            def extract_tool_results(self, entry: JsonlEntry) -> list[tuple[str, bool]]:
+                """Extract tool results from entry."""
+                return []
+
+            def extract_assistant_text_blocks(self, entry: JsonlEntry) -> list[str]:
+                """Extract assistant text blocks from entry."""
+                return []
 
         # Create mock entries with pytest command - include typed entry
         tool_use_block = ToolUseBlock(

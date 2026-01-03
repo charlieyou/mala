@@ -439,7 +439,7 @@ class TestSpecValidationRunner:
         ):
             env = runner._build_spec_env(context, "test-run")
             with pytest.raises(CommandFailure) as exc_info:
-                runner._run_commands(spec, tmp_path, env, tmp_path)
+                runner._run_commands(spec, tmp_path, env, tmp_path, None)
 
             # Verify the exception contains the right data
             assert len(exc_info.value.steps) == 2
@@ -931,7 +931,9 @@ class TestSpecValidationRunner:
 
         remove_worktree_called_with: list[tuple[object, bool]] = []
 
-        def mock_remove(ctx: object, validation_passed: bool) -> MagicMock:
+        def mock_remove(
+            ctx: object, validation_passed: bool, command_runner: object
+        ) -> MagicMock:
             remove_worktree_called_with.append((ctx, validation_passed))
             return mock_worktree_removed
 
@@ -997,7 +999,9 @@ class TestSpecValidationRunner:
 
         remove_worktree_called_with: list[tuple[object, bool]] = []
 
-        def mock_remove(ctx: object, validation_passed: bool) -> MagicMock:
+        def mock_remove(
+            ctx: object, validation_passed: bool, command_runner: object
+        ) -> MagicMock:
             remove_worktree_called_with.append((ctx, validation_passed))
             return mock_worktree_kept
 
@@ -1198,6 +1202,7 @@ class TestSpecRunnerNoDecreaseMode:
                 log_dir=tmp_path,
                 run_id="test",
                 baseline_percent=90.0,  # Pass baseline explicitly
+                command_runner=None,
             )
 
             # Validation should FAIL because:
@@ -1289,6 +1294,7 @@ class TestSpecRunnerNoDecreaseMode:
                 log_dir=tmp_path,
                 run_id="test",
                 baseline_percent=90.0,  # Pass baseline explicitly
+                command_runner=None,
             )
             # Should fail because 70% < 90% baseline
             assert result.passed is False
@@ -1344,6 +1350,7 @@ class TestSpecRunnerNoDecreaseMode:
                 log_dir=tmp_path,
                 run_id="test",
                 baseline_percent=80.0,  # Lower baseline
+                command_runner=None,
             )
             # Should pass because 95% > 80% baseline
             assert result.passed is True
@@ -1402,6 +1409,7 @@ class TestSpecRunnerNoDecreaseMode:
                 log_dir=tmp_path,
                 run_id="test",
                 baseline_percent=90.0,  # This should be ignored
+                command_runner=None,
             )
             # Should pass because 75% >= 70% (explicit threshold used, not baseline)
             assert result.passed is True
@@ -1537,7 +1545,13 @@ class TestSpecRunnerBaselineRefresh:
                 self.cwd = cwd
 
             def run(
-                self, cmd: list[str], env: dict[str, str] | None = None
+                self,
+                cmd: list[str],
+                env: dict[str, str] | None = None,
+                timeout: float | None = None,
+                use_process_group: bool | None = None,
+                shell: bool = False,
+                cwd: Path | None = None,
             ) -> CommandResult:
                 commands.append(cmd)
                 if "coverage" in cmd and "xml" in cmd:
@@ -2356,6 +2370,7 @@ class TestBaselineCaptureOrder:
                 log_dir=tmp_path,
                 run_id="test",
                 baseline_percent=90.0,  # Pass baseline explicitly
+                command_runner=None,
             )
 
             # Validation should FAIL:
@@ -2396,11 +2411,14 @@ class TestSpecCommandExecutor:
     def basic_config(self, tmp_path: Path) -> "ExecutorConfig":
         """Create a basic executor config with lint cache disabled."""
         from src.domain.validation.spec_executor import ExecutorConfig
+        from src.infra.tools.command_runner import CommandRunner
 
+        command_runner = CommandRunner(cwd=tmp_path)
         return ExecutorConfig(
             enable_lint_cache=False,
             repo_path=tmp_path,
             step_timeout_seconds=None,
+            command_runner=command_runner,
         )
 
     def test_executor_single_passing_command(
@@ -2658,11 +2676,14 @@ class TestSpecCommandExecutor:
             ExecutorInput,
             SpecCommandExecutor,
         )
+        from src.infra.tools.command_runner import CommandRunner
 
+        command_runner = CommandRunner(cwd=tmp_path)
         config = ExecutorConfig(
             enable_lint_cache=True,
             repo_path=tmp_path,
             step_timeout_seconds=None,
+            command_runner=command_runner,
         )
 
         executor = SpecCommandExecutor(config)

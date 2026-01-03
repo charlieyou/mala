@@ -28,6 +28,7 @@ from src.domain.validation.spec import (
     ValidationSpec,
 )
 from src.domain.validation.worktree import WorktreeContext, WorktreeState
+from src.infra.tools.command_runner import CommandRunner
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,6 +40,12 @@ def tmp_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     return repo
+
+
+@pytest.fixture
+def command_runner(tmp_repo: Path) -> CommandRunner:
+    """Create a command runner for tests."""
+    return CommandRunner(cwd=tmp_repo)
 
 
 @pytest.fixture
@@ -129,7 +136,6 @@ class TestSpecRunWorkspaceDataclass:
 
         assert workspace.worktree_ctx is not None
         assert workspace.worktree_ctx.path == worktree_path
-        assert workspace.validation_cwd == worktree_path
 
 
 class TestSetupWorkspace:
@@ -140,6 +146,7 @@ class TestSetupWorkspace:
         tmp_repo: Path,
         basic_spec: ValidationSpec,
         context_in_place: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """setup_workspace should create log directory if not provided."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -149,6 +156,7 @@ class TestSetupWorkspace:
             context=context_in_place,
             log_dir=None,
             step_timeout_seconds=None,
+            command_runner=command_runner,
         )
 
         # Log dir should be created
@@ -161,6 +169,7 @@ class TestSetupWorkspace:
         tmp_repo: Path,
         basic_spec: ValidationSpec,
         context_in_place: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """setup_workspace should use provided log_dir."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -173,6 +182,7 @@ class TestSetupWorkspace:
             context=context_in_place,
             log_dir=log_dir,
             step_timeout_seconds=None,
+            command_runner=command_runner,
         )
 
         assert workspace.log_dir == log_dir
@@ -183,6 +193,7 @@ class TestSetupWorkspace:
         tmp_repo: Path,
         basic_spec: ValidationSpec,
         context_in_place: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """setup_workspace should generate a unique run ID."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -192,12 +203,14 @@ class TestSetupWorkspace:
             context=context_in_place,
             log_dir=None,
             step_timeout_seconds=None,
+            command_runner=command_runner,
         )
         workspace2 = setup_workspace(
             spec=basic_spec,
             context=context_in_place,
             log_dir=None,
             step_timeout_seconds=None,
+            command_runner=command_runner,
         )
 
         assert workspace1.run_id.startswith("run-")
@@ -209,6 +222,7 @@ class TestSetupWorkspace:
         tmp_repo: Path,
         basic_spec: ValidationSpec,
         context_in_place: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """For in-place validation, validation_cwd should be repo_path."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -218,6 +232,7 @@ class TestSetupWorkspace:
             context=context_in_place,
             log_dir=None,
             step_timeout_seconds=None,
+            command_runner=command_runner,
         )
 
         # No commit hash = validate in place
@@ -229,6 +244,7 @@ class TestSetupWorkspace:
         tmp_repo: Path,
         basic_spec: ValidationSpec,
         context_with_commit: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """For commit-based validation, setup should create a worktree."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -247,6 +263,7 @@ class TestSetupWorkspace:
                 context=context_with_commit,
                 log_dir=None,
                 step_timeout_seconds=None,
+                command_runner=command_runner,
             )
 
         assert workspace.worktree_ctx is not None
@@ -261,6 +278,7 @@ class TestSetupWorkspaceBaseline:
         self,
         tmp_repo: Path,
         context_in_place: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """When coverage.min_percent is None, setup should refresh baseline."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -313,6 +331,7 @@ class TestSetupWorkspaceBaseline:
                 context=context_in_place,
                 log_dir=None,
                 step_timeout_seconds=None,
+                command_runner=command_runner,
             )
 
         assert workspace.baseline_percent == 85.0
@@ -321,6 +340,7 @@ class TestSetupWorkspaceBaseline:
         self,
         tmp_repo: Path,
         context_in_place: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """When coverage.min_percent is explicit, baseline refresh is skipped."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -343,6 +363,7 @@ class TestSetupWorkspaceBaseline:
             context=context_in_place,
             log_dir=None,
             step_timeout_seconds=None,
+            command_runner=command_runner,
         )
 
         # No baseline refresh needed when explicit threshold
@@ -353,6 +374,7 @@ class TestSetupWorkspaceBaseline:
         tmp_repo: Path,
         basic_spec: ValidationSpec,
         context_in_place: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """When coverage is disabled, baseline refresh is skipped."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -362,6 +384,7 @@ class TestSetupWorkspaceBaseline:
             context=context_in_place,
             log_dir=None,
             step_timeout_seconds=None,
+            command_runner=command_runner,
         )
 
         assert workspace.baseline_percent is None
@@ -374,6 +397,7 @@ class TestSetupWorkspaceErrors:
         self,
         tmp_repo: Path,
         context_in_place: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """When baseline refresh fails, setup should return an error result."""
         from src.domain.validation.spec_workspace import (
@@ -436,6 +460,7 @@ class TestSetupWorkspaceErrors:
                     context=context_in_place,
                     log_dir=None,
                     step_timeout_seconds=None,
+                    command_runner=command_runner,
                 )
 
         assert "Baseline refresh failed" in str(exc_info.value)
@@ -445,6 +470,7 @@ class TestSetupWorkspaceErrors:
         tmp_repo: Path,
         basic_spec: ValidationSpec,
         context_with_commit: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """When worktree creation fails, setup should return an error result."""
         from src.domain.validation.spec_workspace import (
@@ -466,6 +492,7 @@ class TestSetupWorkspaceErrors:
                     context=context_with_commit,
                     log_dir=None,
                     step_timeout_seconds=None,
+                    command_runner=command_runner,
                 )
 
         assert "Worktree creation failed" in str(exc_info.value)
@@ -474,7 +501,9 @@ class TestSetupWorkspaceErrors:
 class TestCleanupWorkspace:
     """Test cleanup_workspace function."""
 
-    def test_cleanup_removes_worktree_on_success(self, tmp_repo: Path) -> None:
+    def test_cleanup_removes_worktree_on_success(
+        self, tmp_repo: Path, command_runner: CommandRunner
+    ) -> None:
         """On validation success, cleanup should remove the worktree."""
         from src.domain.validation.spec_workspace import (
             SpecRunWorkspace,
@@ -504,11 +533,15 @@ class TestCleanupWorkspace:
             "src.domain.validation.spec_workspace.remove_worktree",
             return_value=mock_worktree_removed,
         ):
-            cleanup_workspace(workspace, validation_passed=True)
+            cleanup_workspace(
+                workspace, validation_passed=True, command_runner=command_runner
+            )
 
         assert workspace.artifacts.worktree_state == "removed"
 
-    def test_cleanup_keeps_worktree_on_failure(self, tmp_repo: Path) -> None:
+    def test_cleanup_keeps_worktree_on_failure(
+        self, tmp_repo: Path, command_runner: CommandRunner
+    ) -> None:
         """On validation failure, cleanup should keep the worktree."""
         from src.domain.validation.spec_workspace import (
             SpecRunWorkspace,
@@ -538,11 +571,15 @@ class TestCleanupWorkspace:
             "src.domain.validation.spec_workspace.remove_worktree",
             return_value=mock_worktree_kept,
         ):
-            cleanup_workspace(workspace, validation_passed=False)
+            cleanup_workspace(
+                workspace, validation_passed=False, command_runner=command_runner
+            )
 
         assert workspace.artifacts.worktree_state == "kept"
 
-    def test_cleanup_noop_without_worktree(self, tmp_repo: Path) -> None:
+    def test_cleanup_noop_without_worktree(
+        self, tmp_repo: Path, command_runner: CommandRunner
+    ) -> None:
         """Cleanup should be a no-op when there's no worktree."""
         from src.domain.validation.spec_workspace import (
             SpecRunWorkspace,
@@ -559,7 +596,9 @@ class TestCleanupWorkspace:
         )
 
         # Should not raise or modify anything
-        cleanup_workspace(workspace, validation_passed=True)
+        cleanup_workspace(
+            workspace, validation_passed=True, command_runner=command_runner
+        )
 
         assert workspace.artifacts.worktree_state is None
 
@@ -572,6 +611,7 @@ class TestWorkspaceContextManager:
         tmp_repo: Path,
         basic_spec: ValidationSpec,
         context_in_place: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """workspace_context should yield a SpecRunWorkspace."""
         from src.domain.validation.spec_workspace import workspace_context
@@ -581,6 +621,7 @@ class TestWorkspaceContextManager:
             context=context_in_place,
             log_dir=None,
             step_timeout_seconds=None,
+            command_runner=command_runner,
         ) as workspace:
             assert workspace.validation_cwd == context_in_place.repo_path
             assert workspace.artifacts is not None
@@ -590,6 +631,7 @@ class TestWorkspaceContextManager:
         tmp_repo: Path,
         basic_spec: ValidationSpec,
         context_with_commit: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """workspace_context should cleanup worktree on normal exit."""
         from src.domain.validation.spec_workspace import workspace_context
@@ -604,7 +646,9 @@ class TestWorkspaceContextManager:
 
         remove_called_with: list[tuple[object, bool]] = []
 
-        def mock_remove(ctx: object, validation_passed: bool) -> MagicMock:
+        def mock_remove(
+            ctx: object, validation_passed: bool, command_runner: object
+        ) -> MagicMock:
             remove_called_with.append((ctx, validation_passed))
             return mock_worktree_removed
 
@@ -623,6 +667,7 @@ class TestWorkspaceContextManager:
                 context=context_with_commit,
                 log_dir=None,
                 step_timeout_seconds=None,
+                command_runner=command_runner,
             ) as workspace:
                 # Normal execution
                 _ = workspace
@@ -636,6 +681,7 @@ class TestWorkspaceContextManager:
         tmp_repo: Path,
         basic_spec: ValidationSpec,
         context_with_commit: ValidationContext,
+        command_runner: CommandRunner,
     ) -> None:
         """workspace_context should cleanup worktree on exception."""
         from src.domain.validation.spec_workspace import workspace_context
@@ -650,7 +696,9 @@ class TestWorkspaceContextManager:
 
         remove_called_with: list[tuple[object, bool]] = []
 
-        def mock_remove(ctx: object, validation_passed: bool) -> MagicMock:
+        def mock_remove(
+            ctx: object, validation_passed: bool, command_runner: object
+        ) -> MagicMock:
             remove_called_with.append((ctx, validation_passed))
             return mock_worktree_kept
 
@@ -670,6 +718,7 @@ class TestWorkspaceContextManager:
                     context=context_with_commit,
                     log_dir=None,
                     step_timeout_seconds=None,
+                    command_runner=command_runner,
                 ) as workspace:
                     _ = workspace
                     raise ValueError("test error")

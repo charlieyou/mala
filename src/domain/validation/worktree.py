@@ -12,12 +12,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from src.infra.tools.command_runner import run_command
-
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.infra.tools.command_runner import CommandResult
+    from src.core.protocols import CommandResultProtocol, CommandRunnerPort
 
 
 # Pattern for valid path components (alphanumeric, dash, underscore, dot)
@@ -145,6 +143,7 @@ def create_worktree(
     run_id: str,
     issue_id: str,
     attempt: int,
+    command_runner: CommandRunnerPort,
 ) -> WorktreeContext:
     """Create a git worktree for validation.
 
@@ -155,6 +154,7 @@ def create_worktree(
         run_id: Unique identifier for this validation run.
         issue_id: Issue identifier being validated.
         attempt: Attempt number (1-indexed).
+        command_runner: Command runner for executing git commands.
 
     Returns:
         WorktreeContext with state tracking.
@@ -191,7 +191,7 @@ def create_worktree(
             ctx.error = f"Failed to remove stale worktree: {e}"
             return ctx
 
-    result = run_command(
+    result = command_runner.run(
         ["git", "worktree", "add", "--detach", str(worktree_path), commit_sha],
         cwd=ctx.repo_path,
     )
@@ -211,12 +211,14 @@ def create_worktree(
 def remove_worktree(
     ctx: WorktreeContext,
     validation_passed: bool,
+    command_runner: CommandRunnerPort,
 ) -> WorktreeContext:
     """Remove a git worktree, respecting keep_on_failure setting.
 
     Args:
         ctx: Worktree context from create_worktree.
         validation_passed: Whether validation succeeded.
+        command_runner: Command runner for executing git commands.
 
     Returns:
         Updated WorktreeContext with new state.
@@ -236,7 +238,7 @@ def remove_worktree(
         cmd.append("--force")
     cmd.append(str(ctx.path))
 
-    result = run_command(
+    result = command_runner.run(
         cmd,
         cwd=ctx.repo_path,
     )
@@ -263,7 +265,7 @@ def remove_worktree(
                 git_error = f"Directory cleanup failed: {e}"
 
     # Prune the worktree list to clean up stale git metadata
-    run_command(
+    command_runner.run(
         ["git", "worktree", "prune"],
         cwd=ctx.repo_path,
     )
@@ -281,6 +283,7 @@ def remove_worktree(
 def cleanup_stale_worktrees(
     repo_path: Path,
     config: WorktreeConfig,
+    command_runner: CommandRunnerPort,
     run_id: str | None = None,
 ) -> int:
     """Clean up stale worktrees from previous runs.
@@ -288,6 +291,7 @@ def cleanup_stale_worktrees(
     Args:
         repo_path: Path to the main git repository.
         config: Worktree configuration.
+        command_runner: Command runner for executing git commands.
         run_id: If provided, only clean up worktrees for this run.
                 If None, clean up all worktrees under base_dir.
 
@@ -304,15 +308,15 @@ def cleanup_stale_worktrees(
         # Clean up specific run
         run_dir = base / run_id
         if run_dir.exists():
-            cleaned += _cleanup_run_dir(repo_path, run_dir)
+            cleaned += _cleanup_run_dir(repo_path, run_dir, command_runner)
     else:
         # Clean up all runs
         for run_dir in base.iterdir():
             if run_dir.is_dir():
-                cleaned += _cleanup_run_dir(repo_path, run_dir)
+                cleaned += _cleanup_run_dir(repo_path, run_dir, command_runner)
 
     # Prune the worktree list
-    run_command(
+    command_runner.run(
         ["git", "worktree", "prune"],
         cwd=repo_path,
     )
@@ -320,7 +324,9 @@ def cleanup_stale_worktrees(
     return cleaned
 
 
-def _cleanup_run_dir(repo_path: Path, run_dir: Path) -> int:
+def _cleanup_run_dir(
+    repo_path: Path, run_dir: Path, command_runner: CommandRunnerPort
+) -> int:
     """Clean up all worktrees in a run directory."""
     cleaned = 0
 
@@ -333,7 +339,7 @@ def _cleanup_run_dir(repo_path: Path, run_dir: Path) -> int:
                 continue
 
             # Try git worktree remove, then force delete
-            run_command(
+            command_runner.run(
                 ["git", "worktree", "remove", "--force", str(attempt_dir)],
                 cwd=repo_path,
             )
@@ -359,7 +365,7 @@ def _cleanup_run_dir(repo_path: Path, run_dir: Path) -> int:
     return cleaned
 
 
-def _format_git_error(cmd_name: str, result: CommandResult) -> str:
+def _format_git_error(cmd_name: str, result: CommandResultProtocol) -> str:
     """Format a git command error message."""
     msg = f"{cmd_name} exited {result.returncode}"
     stderr = result.stderr.strip()

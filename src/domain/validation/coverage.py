@@ -17,6 +17,8 @@ import shutil
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path

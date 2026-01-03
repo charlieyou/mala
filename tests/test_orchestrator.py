@@ -3873,6 +3873,8 @@ class TestBaselineCommitSelection:
                 "get_issue_description_async",
                 return_value="Test issue",
             ),
+            patch.object(orchestrator, "_is_review_enabled", return_value=True),
+            patch.object(orchestrator._session_config, "review_enabled", True),
         ):
             await orchestrator.run_implementer("fresh-issue")
 
@@ -3963,6 +3965,8 @@ class TestBaselineCommitSelection:
                 "get_issue_description_async",
                 return_value="Test issue",
             ),
+            patch.object(orchestrator, "_is_review_enabled", return_value=True),
+            patch.object(orchestrator._session_config, "review_enabled", True),
         ):
             await orchestrator.run_implementer("resumed-issue")
 
@@ -4038,6 +4042,8 @@ class TestBaselineCommitSelection:
                 "get_issue_description_async",
                 return_value="Test",
             ),
+            patch.object(orchestrator, "_is_review_enabled", return_value=True),
+            patch.object(orchestrator._session_config, "review_enabled", True),
         ):
             await orchestrator.run_implementer("priority-test")
 
@@ -4184,6 +4190,8 @@ class TestReviewUsesIssueCommits:
                 "get_issue_description_async",
                 return_value="Test issue",
             ),
+            patch.object(orchestrator, "_is_review_enabled", return_value=True),
+            patch.object(orchestrator._session_config, "review_enabled", True),
         ):
             await orchestrator.run_implementer("test-issue")
 

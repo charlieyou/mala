@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from src.infra.io.log_output.console import Colors, log
-from src.infra.tools.command_runner import CommandRunner
 
 from .helpers import format_step_output
 from .lint_cache import LintCache
@@ -30,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from src.core.protocols import EnvConfigPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort
 
     from .spec import ValidationCommand
 
@@ -44,12 +43,14 @@ class ExecutorConfig:
         repo_path: Path to the main repo (for lint cache storage).
         step_timeout_seconds: Optional timeout for individual command execution.
         env_config: Environment configuration for paths (scripts, cache, etc.).
+        command_runner: Command runner for executing commands.
     """
 
     enable_lint_cache: bool = True
     repo_path: Path | None = None
     step_timeout_seconds: float | None = None
     env_config: EnvConfigPort | None = None
+    command_runner: CommandRunnerPort | None = None
 
 
 @dataclass
@@ -185,6 +186,8 @@ class SpecCommandExecutor:
             return None
         if self.config.repo_path is None:
             return None
+        if self.config.command_runner is None:
+            return None
         if self.config.env_config is not None:
             cache_dir = self.config.env_config.cache_dir
         else:
@@ -195,6 +198,7 @@ class SpecCommandExecutor:
         return LintCache(
             cache_dir=cache_dir,
             repo_path=self.config.repo_path,
+            command_runner=self.config.command_runner,
             git_cwd=cwd,
         )
 
@@ -278,7 +282,14 @@ class SpecCommandExecutor:
         """
         # Use command's timeout if specified, else fall back to config timeout
         timeout = cmd.timeout or self.config.step_timeout_seconds
-        runner = CommandRunner(cwd=cwd, timeout_seconds=timeout)
+
+        # Use injected runner or create one for backward compatibility
+        if self.config.command_runner is not None:
+            runner = self.config.command_runner
+        else:
+            from src.infra.tools.command_runner import CommandRunner
+
+            runner = CommandRunner(cwd=cwd, timeout_seconds=timeout)
 
         if cmd.shell:
             # Shell mode: pass command string directly with shell=True
@@ -294,14 +305,14 @@ class SpecCommandExecutor:
                 full_cmd = f"{scripts_dir / 'test-mutex.sh'} {cmd.command}"
             else:
                 full_cmd = cmd.command
-            result = runner.run(full_cmd, env=env, shell=True)
+            result = runner.run(full_cmd, env=env, shell=True, cwd=cwd, timeout=timeout)
         else:
             # Non-shell mode: split command and run as list (legacy behavior)
             cmd_list = shlex.split(cmd.command)
             full_cmd = (
                 self._wrap_with_mutex(cmd_list) if cmd.use_test_mutex else cmd_list
             )
-            result = runner.run(full_cmd, env=env)
+            result = runner.run(full_cmd, env=env, cwd=cwd, timeout=timeout)
 
         return ValidationStepResult(
             name=cmd.name,

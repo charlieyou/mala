@@ -31,7 +31,7 @@ from .worktree import (
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    from src.core.protocols import EnvConfigPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort
 
     from .spec import ValidationContext, ValidationSpec
     from .worktree import WorktreeContext
@@ -86,6 +86,7 @@ def setup_workspace(
     context: ValidationContext,
     log_dir: Path | None,
     step_timeout_seconds: float | None,
+    command_runner: CommandRunnerPort,
     env_config: EnvConfigPort | None = None,
 ) -> SpecRunWorkspace:
     """Set up workspace for a validation run.
@@ -102,6 +103,7 @@ def setup_workspace(
         context: Immutable context for the validation run.
         log_dir: Directory for logs/artifacts. Uses temp dir if None.
         step_timeout_seconds: Optional timeout for baseline refresh commands.
+        command_runner: Command runner for executing git commands.
         env_config: Environment configuration for paths.
 
     Returns:
@@ -157,6 +159,7 @@ def setup_workspace(
             run_id=run_id,
             issue_id=issue_id,
             attempt=1,
+            command_runner=command_runner,
         )
 
         if worktree_ctx.state == WorktreeState.FAILED:
@@ -184,6 +187,7 @@ def setup_workspace(
 def cleanup_workspace(
     workspace: SpecRunWorkspace,
     validation_passed: bool,
+    command_runner: CommandRunnerPort,
 ) -> None:
     """Clean up workspace after validation completes.
 
@@ -194,12 +198,15 @@ def cleanup_workspace(
     Args:
         workspace: The workspace to clean up.
         validation_passed: Whether validation succeeded.
+        command_runner: Command runner for executing git commands.
     """
     if workspace.worktree_ctx is None:
         return
 
     worktree_ctx = remove_worktree(
-        workspace.worktree_ctx, validation_passed=validation_passed
+        workspace.worktree_ctx,
+        validation_passed=validation_passed,
+        command_runner=command_runner,
     )
 
     # Update artifacts with worktree state
@@ -215,6 +222,7 @@ def workspace_context(
     context: ValidationContext,
     log_dir: Path | None,
     step_timeout_seconds: float | None,
+    command_runner: CommandRunnerPort,
     env_config: EnvConfigPort | None = None,
 ) -> Generator[SpecRunWorkspace, None, None]:
     """Context manager for workspace setup and cleanup.
@@ -227,6 +235,7 @@ def workspace_context(
         context: Immutable context for the validation run.
         log_dir: Directory for logs/artifacts. Uses temp dir if None.
         step_timeout_seconds: Optional timeout for baseline refresh commands.
+        command_runner: Command runner for executing git commands.
         env_config: Environment configuration for paths.
 
     Yields:
@@ -236,11 +245,11 @@ def workspace_context(
         SetupError: If baseline refresh or worktree creation fails.
     """
     workspace = setup_workspace(
-        spec, context, log_dir, step_timeout_seconds, env_config
+        spec, context, log_dir, step_timeout_seconds, command_runner, env_config
     )
     validation_passed = False
     try:
         yield workspace
         validation_passed = True
     finally:
-        cleanup_workspace(workspace, validation_passed)
+        cleanup_workspace(workspace, validation_passed, command_runner)
