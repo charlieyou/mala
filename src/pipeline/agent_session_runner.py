@@ -802,6 +802,7 @@ class AgentSessionRunner:
     def _initialize_session(
         self,
         input: AgentSessionInput,
+        agent_id: str | None = None,
     ) -> tuple[SessionConfig, SessionExecutionState]:
         """Initialize session components and state.
 
@@ -809,12 +810,15 @@ class AgentSessionRunner:
 
         Args:
             input: Session input with issue_id, prompt, etc.
+            agent_id: Optional agent ID. If None, generates a new one.
+                Pass an existing ID to preserve lock continuity across restarts.
 
         Returns:
             Tuple of (SessionConfig, SessionExecutionState).
         """
-        # Generate agent ID
-        agent_id = f"{input.issue_id}-{uuid.uuid4().hex[:8]}"
+        # Generate agent ID if not provided
+        if agent_id is None:
+            agent_id = f"{input.issue_id}-{uuid.uuid4().hex[:8]}"
 
         # Initialize lifecycle
         lifecycle_config = LifecycleConfig(
@@ -1902,6 +1906,8 @@ class AgentSessionRunner:
         current_prompt = input.prompt
         # Timeout for checkpoint fetch operations (30 seconds)
         checkpoint_timeout_seconds = 30
+        # Generate agent_id once to preserve lock continuity across restarts
+        agent_id = f"{input.issue_id}-{uuid.uuid4().hex[:8]}"
 
         while True:
             # Calculate remaining time to enforce overall session timeout
@@ -1916,7 +1922,7 @@ class AgentSessionRunner:
                 baseline_commit=input.baseline_commit,
                 issue_description=input.issue_description,
             )
-            session_cfg, state = self._initialize_session(session_input)
+            session_cfg, state = self._initialize_session(session_input, agent_id)
 
             try:
                 # Check timeout inside try block so on_timeout cleanup runs

@@ -4563,9 +4563,11 @@ class TestSessionRestartLoop:
         original_init = AgentSessionRunner._initialize_session
 
         def patched_init(
-            runner: AgentSessionRunner, input_data: AgentSessionInput
+            runner: AgentSessionRunner,
+            input_data: AgentSessionInput,
+            agent_id: str | None = None,
         ) -> tuple[object, object]:
-            result = original_init(runner, input_data)
+            result = original_init(runner, input_data, agent_id)
             # _initialize_session returns (session_config, exec_state)
             # exec_state has .lifecycle
             _, exec_state = result
