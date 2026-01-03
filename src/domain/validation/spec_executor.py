@@ -18,8 +18,6 @@ import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from src.infra.io.log_output.console import Colors, log
-
 from .helpers import format_step_output
 from .lint_cache import LintCache
 from .result import ValidationStepResult
@@ -29,7 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort, LoggerPort
 
     from .spec import ValidationCommand
 
@@ -44,6 +42,7 @@ class ExecutorConfig:
         step_timeout_seconds: Optional timeout for individual command execution.
         env_config: Environment configuration for paths (scripts, cache, etc.).
         command_runner: Command runner for executing commands.
+        logger: Logger for console output (optional, defaults to no-op).
     """
 
     enable_lint_cache: bool = True
@@ -51,6 +50,7 @@ class ExecutorConfig:
     step_timeout_seconds: float | None = None
     env_config: EnvConfigPort | None = None
     command_runner: CommandRunnerPort
+    logger: LoggerPort | None = None
 
 
 @dataclass
@@ -147,7 +147,7 @@ class SpecCommandExecutor:
             self._write_start_marker(input.log_dir, i, cmd, input.cwd)
 
             # Log command start to terminal
-            log("▸", f"Running {cmd.name}...", Colors.CYAN)
+            self._log_message("▸", f"Running {cmd.name}...", "cyan")
 
             # Execute the command
             step = self._run_command(cmd, input.cwd, input.env)
@@ -229,7 +229,9 @@ class SpecCommandExecutor:
         Returns:
             ValidationStepResult indicating the command was skipped.
         """
-        log("○", f"Skipping {cmd.name} (no changes since last check)", Colors.CYAN)
+        self._log_message(
+            "○", f"Skipping {cmd.name} (no changes since last check)", "cyan"
+        )
         return ValidationStepResult(
             name=cmd.name,
             command=cmd.command,
@@ -387,7 +389,7 @@ class SpecCommandExecutor:
         duration_str = (
             f" ({step.duration_seconds:.1f}s)" if step.duration_seconds else ""
         )
-        log("✓", f"{cmd.name} passed{duration_str}", Colors.GREEN)
+        self._log_message("✓", f"{cmd.name} passed{duration_str}", "green")
 
         # Mark command as passed in cache for cacheable commands
         if lint_cache is not None and cmd.kind in self.CACHEABLE_KINDS:
@@ -404,7 +406,7 @@ class SpecCommandExecutor:
             cmd: The command that failed.
             step: The step result.
         """
-        log("✗", f"{cmd.name} failed (exit {step.returncode})", Colors.RED)
+        self._log_message("✗", f"{cmd.name} failed (exit {step.returncode})", "red")
 
     def _format_failure_reason(
         self,
@@ -425,3 +427,15 @@ class SpecCommandExecutor:
         if details:
             reason = f"{reason}: {details}"
         return reason
+
+    def _log_message(self, prefix: str, message: str, color: str | None = None) -> None:
+        """Log a message using the injected logger if available.
+
+        Args:
+            prefix: Symbol prefix (e.g., "▸", "✓", "✗").
+            message: The message to log.
+            color: Optional color name (e.g., "cyan", "green", "red").
+        """
+        if self.config.logger is not None:
+            full_message = f"{prefix} {message}"
+            self.config.logger.log(full_message, color=color)

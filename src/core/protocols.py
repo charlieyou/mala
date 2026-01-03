@@ -1006,3 +1006,31 @@ class LockManagerPort(Protocol):
             True if lock was released, False if lock was not held by agent_id.
         """
         ...
+
+
+@runtime_checkable
+class LoggerPort(Protocol):
+    """Protocol for console/terminal logging with colored output.
+
+    Enables dependency injection of loggers into domain modules,
+    allowing the core layer to define the interface without depending on
+    the infrastructure implementation.
+
+    The canonical implementation is in src/infra/io/log_output/console.py.
+    """
+
+    def log(
+        self,
+        message: str,
+        *,
+        level: str = "info",
+        color: str | None = None,
+    ) -> None:
+        """Log a message to the console.
+
+        Args:
+            message: The message to log.
+            level: Log level (e.g., "info", "debug", "error").
+            color: Optional ANSI color code for the message.
+        """
+        ...
