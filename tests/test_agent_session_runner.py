@@ -3757,7 +3757,7 @@ class TestRunLifecycleLoop:
 
         session_cfg = SessionConfig(
             agent_id="test-loop-abc",
-            options=runner._build_sdk_options([], [], {}),
+            options=runner._build_sdk_options([], [], [], {}),
             lint_cache=LintCache(repo_path=session_config.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -3821,7 +3821,7 @@ class TestRunLifecycleLoop:
 
         session_cfg = SessionConfig(
             agent_id="test-no-session",
-            options=runner._build_sdk_options([], [], {}),
+            options=runner._build_sdk_options([], [], [], {}),
             lint_cache=LintCache(repo_path=session_config.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -3893,7 +3893,7 @@ class TestRunLifecycleLoop:
 
         session_cfg = SessionConfig(
             agent_id="test-events-abc",
-            options=runner._build_sdk_options([], [], {}),
+            options=runner._build_sdk_options([], [], [], {}),
             lint_cache=LintCache(repo_path=session_config.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,

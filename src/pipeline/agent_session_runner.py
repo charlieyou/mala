@@ -63,6 +63,7 @@ from src.infra.clients.cerberus_review import format_review_issues, ReviewResult
 from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 
 if TYPE_CHECKING:
+    from claude_agent_sdk.types import HookEvent
     from collections.abc import AsyncIterator
     from typing import Self
 
@@ -736,8 +737,8 @@ class AgentSessionRunner:
         agent_id: str,
         file_read_cache: FileReadCache,
         lint_cache: LintCache,
-    ) -> tuple[list[object], list[object]]:
-        """Build PreToolUse and Stop hooks for the session.
+    ) -> tuple[list[object], list[object], list[object]]:
+        """Build PreToolUse, PostToolUse, and Stop hooks for the session.
 
         Args:
             agent_id: The agent ID for lock enforcement.
@@ -745,7 +746,7 @@ class AgentSessionRunner:
             lint_cache: Cache for blocking redundant lint commands.
 
         Returns:
-            Tuple of (pre_tool_hooks, stop_hooks).
+            Tuple of (pre_tool_hooks, post_tool_hooks, stop_hooks).
         """
         pre_tool_hooks: list[object] = [
             block_dangerous_commands,
@@ -754,13 +755,15 @@ class AgentSessionRunner:
             make_file_read_cache_hook(file_read_cache),
             make_lint_cache_hook(lint_cache),
         ]
+        post_tool_hooks: list[object] = []
         stop_hooks: list[object] = [make_stop_hook(agent_id)]
 
-        return pre_tool_hooks, stop_hooks
+        return pre_tool_hooks, post_tool_hooks, stop_hooks
 
     def _build_sdk_options(
         self,
         pre_tool_hooks: list[object],
+        post_tool_hooks: list[object],
         stop_hooks: list[object],
         agent_env: dict[str, str],
     ) -> object:
@@ -768,6 +771,7 @@ class AgentSessionRunner:
 
         Args:
             pre_tool_hooks: PreToolUse hooks for the session.
+            post_tool_hooks: PostToolUse hooks for the session.
             stop_hooks: Stop hooks for the session.
             agent_env: Environment variables for the agent.
 
@@ -776,6 +780,25 @@ class AgentSessionRunner:
         """
         from claude_agent_sdk import ClaudeAgentOptions
         from claude_agent_sdk.types import HookMatcher
+
+        hooks_dict: dict[HookEvent, list[HookMatcher]] = {
+            "PreToolUse": [
+                HookMatcher(
+                    matcher=None,
+                    hooks=pre_tool_hooks,  # type: ignore[arg-type]
+                )
+            ],
+            "Stop": [HookMatcher(matcher=None, hooks=stop_hooks)],  # type: ignore[arg-type]
+        }
+
+        # Only register PostToolUse hooks if any are configured
+        if post_tool_hooks:
+            hooks_dict["PostToolUse"] = [
+                HookMatcher(
+                    matcher=None,
+                    hooks=post_tool_hooks,  # type: ignore[arg-type]
+                )
+            ]
 
         return ClaudeAgentOptions(
             cwd=str(self.config.repo_path),
@@ -788,15 +811,7 @@ class AgentSessionRunner:
             ),
             disallowed_tools=get_disallowed_tools(),
             env=agent_env,
-            hooks={
-                "PreToolUse": [
-                    HookMatcher(
-                        matcher=None,
-                        hooks=pre_tool_hooks,  # type: ignore[arg-type]
-                    )
-                ],
-                "Stop": [HookMatcher(matcher=None, hooks=stop_hooks)],  # type: ignore[arg-type]
-            },
+            hooks=hooks_dict,
         )
 
     def _initialize_session(
@@ -836,11 +851,13 @@ class AgentSessionRunner:
             repo_path=self.config.repo_path,
             lint_tools=self.config.lint_tools,
         )
-        pre_tool_hooks, stop_hooks = self._build_hooks(
+        pre_tool_hooks, post_tool_hooks, stop_hooks = self._build_hooks(
             agent_id, file_read_cache, lint_cache
         )
         agent_env = self._build_agent_env(agent_id)
-        options = self._build_sdk_options(pre_tool_hooks, stop_hooks, agent_env)
+        options = self._build_sdk_options(
+            pre_tool_hooks, post_tool_hooks, stop_hooks, agent_env
+        )
 
         # Calculate idle timeout
         idle_timeout_seconds = self.config.idle_timeout_seconds

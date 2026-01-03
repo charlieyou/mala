@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from claude_agent_sdk.types import (
         HookContext,
+        PostToolUseHookInput,
         PreToolUseHookInput,
         SyncHookJSONOutput,
     )
@@ -21,6 +22,12 @@ from ..mcp import MALA_DISALLOWED_TOOLS
 # Type alias for PreToolUse hooks (using string annotations to avoid import)
 PreToolUseHook = Callable[
     ["PreToolUseHookInput", str | None, "HookContext"],
+    Awaitable["SyncHookJSONOutput"],
+]
+
+# Type alias for PostToolUse hooks (mirrors PreToolUseHook pattern)
+PostToolUseHook = Callable[
+    ["PostToolUseHookInput", str | None, "HookContext"],
     Awaitable["SyncHookJSONOutput"],
 ]
 
