@@ -128,8 +128,14 @@ class ContextUsage:
     cache_read_tokens: int = 0
 
     def pressure_ratio(self, limit: int = 200_000) -> float:
-        """Return input tokens as fraction of limit (0.0 to 1.0+)."""
-        return self.input_tokens / limit
+        """Return total tokens as fraction of limit (0.0 to 1.0+).
+
+        Note: cache_read_tokens are already included in input_tokens
+        per the Anthropic API, so we only sum input + output.
+        """
+        if limit <= 0:
+            return 0.0
+        return (self.input_tokens + self.output_tokens) / limit
 
 
 class ContextPressureError(Exception):
