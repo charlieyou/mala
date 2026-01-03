@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from .spec import ValidationCommand
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class ExecutorConfig:
     """Configuration for SpecCommandExecutor.
 
@@ -50,14 +50,7 @@ class ExecutorConfig:
     repo_path: Path | None = None
     step_timeout_seconds: float | None = None
     env_config: EnvConfigPort | None = None
-    command_runner: CommandRunnerPort = field(
-        default_factory=lambda: _raise_missing_runner()
-    )
-
-
-def _raise_missing_runner() -> CommandRunnerPort:
-    """Raise an error when command_runner is not provided."""
-    raise ValueError("command_runner is required in ExecutorConfig")
+    command_runner: CommandRunnerPort
 
 
 @dataclass
