@@ -995,16 +995,10 @@ class AgentSessionRunner:
                 max_attempts=self.config.max_gate_retries,
                 failure_reasons=failure_text,
                 issue_id=input.issue_id,
-                lint_command=cmds.lint
-                if cmds
-                else "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff check .",
-                format_command=cmds.format
-                if cmds
-                else "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format --check .",
-                typecheck_command=cmds.typecheck if cmds else "uvx ty check",
-                test_command=cmds.test
-                if cmds
-                else "uv run pytest -o cache_dir=/tmp/pytest-${AGENT_ID:-default}",
+                lint_command=cmds.lint,
+                format_command=cmds.format,
+                typecheck_command=cmds.typecheck,
+                test_command=cmds.test,
             )
             return pending_query, False, result  # continue with retry
 
