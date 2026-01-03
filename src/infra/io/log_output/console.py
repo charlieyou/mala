@@ -380,3 +380,48 @@ def log_agent_text(text: str, agent_id: str) -> None:
     print(
         f"  {agent_color}[{agent_id}]{Colors.RESET} {Colors.MUTED}{truncated}{Colors.RESET}"
     )
+
+
+# Color name to ANSI code mapping
+_COLOR_MAP: dict[str, str] = {
+    "cyan": Colors.CYAN,
+    "green": Colors.GREEN,
+    "red": Colors.RED,
+    "yellow": Colors.YELLOW,
+    "blue": Colors.BLUE,
+    "magenta": Colors.MAGENTA,
+    "gray": Colors.GRAY,
+    "white": Colors.WHITE,
+}
+
+
+class ConsoleLoggerAdapter:
+    """Adapter that implements LoggerPort for console output.
+
+    Maps color names to ANSI codes and delegates to the log() function.
+    """
+
+    def log(
+        self,
+        message: str,
+        *,
+        level: str = "info",
+        color: str | None = None,
+    ) -> None:
+        """Log a message to the console.
+
+        Args:
+            message: The message to log.
+            level: Log level (unused, kept for interface compatibility).
+            color: Optional color name (e.g., "cyan", "green", "red").
+        """
+        # Map color name to ANSI code, default to reset if unknown
+        ansi_color = _COLOR_MAP.get(color, Colors.RESET) if color else Colors.RESET
+        # Extract icon prefix if present (e.g., "▸ Running..." -> icon="▸", rest="Running...")
+        if message and len(message) >= 2 and message[1] == " ":
+            icon = message[0]
+            rest = message[2:]
+        else:
+            icon = "→"
+            rest = message
+        log(icon, rest, color=ansi_color)

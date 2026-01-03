@@ -32,7 +32,7 @@ from .validation_gating import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort, LoggerPort
 
     from .result import ValidationStepResult
     from .spec import (
@@ -75,6 +75,7 @@ class SpecValidationRunner:
         enable_lint_cache: bool = True,
         env_config: EnvConfigPort | None = None,
         command_runner: CommandRunnerPort | None = None,
+        logger: LoggerPort | None = None,
     ):
         """Initialize the spec validation runner.
 
@@ -85,12 +86,14 @@ class SpecValidationRunner:
                 in tests or when caching is not desired.
             env_config: Environment configuration for paths.
             command_runner: Command runner for executing commands.
+            logger: Logger for console output during validation.
         """
         self.repo_path = repo_path.resolve()
         self.step_timeout_seconds = step_timeout_seconds
         self.enable_lint_cache = enable_lint_cache
         self.env_config = env_config
         self.command_runner = command_runner
+        self.logger = logger
 
     async def run_spec(
         self,
@@ -368,6 +371,7 @@ class SpecValidationRunner:
             step_timeout_seconds=self.step_timeout_seconds,
             env_config=self.env_config,
             command_runner=runner,
+            logger=self.logger,
         )
         executor = SpecCommandExecutor(executor_config)
 

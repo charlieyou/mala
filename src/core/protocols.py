@@ -1031,6 +1031,6 @@ class LoggerPort(Protocol):
         Args:
             message: The message to log.
             level: Log level (e.g., "info", "debug", "error").
-            color: Optional ANSI color code for the message.
+            color: Optional color name (e.g., "cyan", "green", "red").
         """
         ...

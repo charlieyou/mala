@@ -46,6 +46,7 @@ from src.domain.validation.spec import (
 )
 from src.domain.validation.tool_name_extractor import extract_lint_tools_from_spec
 from src.domain.validation.spec_runner import SpecValidationRunner
+from src.infra.io.log_output.console import ConsoleLoggerAdapter
 
 if TYPE_CHECKING:
     from src.infra.io.event_protocol import MalaEventSink
@@ -246,7 +247,10 @@ class RunCoordinator:
         )
 
         # Create validation runner
-        runner = SpecValidationRunner(self.config.repo_path)
+        runner = SpecValidationRunner(
+            self.config.repo_path,
+            logger=ConsoleLoggerAdapter(),
+        )
 
         # Retry loop with fixer agent
         for attempt in range(1, self.config.max_gate_retries + 1):
