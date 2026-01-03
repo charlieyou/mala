@@ -3,7 +3,7 @@
 Defines the MalaEventSink protocol to decouple orchestration logic from
 presentation concerns. The orchestrator emits semantic events through the
 sink, allowing different implementations for:
-- Console output (ConsoleEventSink - follow-up task)
+- Console output (ConsoleEventSink)
 - Testing (NullEventSink - no side effects)
 - Structured logging (future: JSON/file-based sinks)
 """

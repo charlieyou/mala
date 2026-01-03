@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from src.domain.prompts import PromptValidationCommands
     from src.infra.epic_verifier import EpicVerificationResult
     from src.infra.io.config import MalaConfig
-    from src.infra.io.event_sink import MalaEventSink
+    from src.infra.io.event_protocol import MalaEventSink
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.orchestration.issue_result import IssueResult
 

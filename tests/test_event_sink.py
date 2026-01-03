@@ -2,11 +2,10 @@
 
 from unittest.mock import MagicMock, patch
 
+from src.infra.io.event_protocol import EventRunConfig, MalaEventSink
 from src.infra.io.event_sink import (
-    MalaEventSink,
     BaseEventSink,
     NullEventSink,
-    EventRunConfig,
     ConsoleEventSink,
 )
 

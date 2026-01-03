@@ -17,7 +17,7 @@ from pathlib import Path  # noqa: TC003 - needed at runtime for dataclass field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.infra.io.event_sink import MalaEventSink
+    from src.infra.io.event_protocol import MalaEventSink
     from src.core.protocols import CodeReviewer, GateChecker, IssueProvider, LogProvider
     from src.infra.telemetry import TelemetryProvider
 

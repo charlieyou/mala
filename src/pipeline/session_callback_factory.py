@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from src.domain.quality_gate import GateResult
     from src.domain.validation.spec import ValidationSpec
     from src.infra.clients.cerberus_review import ReviewResult
-    from src.infra.io.event_sink import MalaEventSink
+    from src.infra.io.event_protocol import MalaEventSink
     from src.pipeline.review_runner import ReviewRunner
 
 

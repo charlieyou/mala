@@ -8,10 +8,9 @@ This package contains:
 """
 
 from src.infra.io.config import ConfigurationError, MalaConfig
+from src.infra.io.event_protocol import EventRunConfig, MalaEventSink
 from src.infra.io.event_sink import (
     ConsoleEventSink,
-    EventRunConfig,
-    MalaEventSink,
     NullEventSink,
 )
 from src.infra.io.session_log_parser import (

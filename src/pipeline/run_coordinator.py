@@ -48,7 +48,7 @@ from src.domain.validation.tool_name_extractor import extract_lint_tools_from_sp
 from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
-    from src.infra.io.event_sink import MalaEventSink
+    from src.infra.io.event_protocol import MalaEventSink
     from src.infra.io.log_output.run_metadata import (
         RunMetadata,
         ValidationResult as MetaValidationResult,

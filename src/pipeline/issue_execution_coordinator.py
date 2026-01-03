@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from src.core.protocols import IssueProvider
-    from src.infra.io.event_sink import MalaEventSink
+    from src.infra.io.event_protocol import MalaEventSink
 
 
 class SpawnCallback(Protocol):

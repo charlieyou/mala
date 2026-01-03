@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.core.protocols import IssueProvider, ReviewIssueProtocol
-    from src.infra.io.event_sink import MalaEventSink
+    from src.infra.io.event_protocol import MalaEventSink
 
 
 def _get_finding_fingerprint(issue: ReviewIssueProtocol) -> str:

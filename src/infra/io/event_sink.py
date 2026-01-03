@@ -1,13 +1,9 @@
-"""Event sink protocol for MalaOrchestrator.
+"""Event sink implementations for MalaOrchestrator.
 
-Defines the MalaEventSink protocol to decouple orchestration logic from
-presentation concerns. The orchestrator emits semantic events through the
-sink, allowing different implementations for:
-- Console output (ConsoleEventSink - follow-up task)
-- Testing (NullEventSink - no side effects)
-- Structured logging (future: JSON/file-based sinks)
-
-This module defines the protocol and provides NullEventSink for testing.
+Provides concrete implementations of the MalaEventSink protocol:
+- BaseEventSink: Base class with no-op implementations
+- NullEventSink: Silent sink for testing
+- ConsoleEventSink: Full console output implementation
 """
 
 import re
@@ -23,12 +19,9 @@ from .log_output.console import (
     truncate_text,
 )
 
-# Re-export for backward compatibility
 __all__ = [
     "BaseEventSink",
     "ConsoleEventSink",
-    "EventRunConfig",
-    "MalaEventSink",
     "NullEventSink",
 ]
 
@@ -39,7 +32,7 @@ class BaseEventSink:
     Provides default no-op implementations for all MalaEventSink protocol
     methods. Subclasses can override only the methods they need to handle.
 
-    This eliminates the need to implement all 46 methods when creating a
+    This eliminates the need to implement all 51 methods when creating a
     new event sink - just inherit from BaseEventSink and override what
     you need.
 

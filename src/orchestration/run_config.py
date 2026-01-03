@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from src.infra.mcp import MORPH_DISALLOWED_TOOLS
 from src.infra.tools.env import USER_CONFIG_DIR
-from src.infra.io.event_sink import EventRunConfig
+from src.infra.io.event_protocol import EventRunConfig
 from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
 
 if TYPE_CHECKING:

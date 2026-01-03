@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     )
     from src.infra.epic_verifier import EpicVerifier
     from src.infra.io.config import MalaConfig
-    from src.infra.io.event_sink import MalaEventSink
+    from src.infra.io.event_protocol import MalaEventSink
     from src.infra.telemetry import TelemetryProvider
 
     from .orchestrator import MalaOrchestrator

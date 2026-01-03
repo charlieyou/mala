@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from src.infra.clients.beads_client import BeadsClient
-    from src.infra.io.event_sink import MalaEventSink
+    from src.infra.io.event_protocol import MalaEventSink
     from src.core.protocols import EpicVerificationModel
 
 # Spec path patterns from docs (case-insensitive)

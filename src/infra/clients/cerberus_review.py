@@ -24,7 +24,7 @@ from src.infra.tools.command_runner import CommandRunner
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from src.infra.io.event_sink import MalaEventSink
+    from src.infra.io.event_protocol import MalaEventSink
 
 
 @dataclass
