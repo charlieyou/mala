@@ -785,21 +785,20 @@ class CommandRunnerPort(Protocol):
 
     def run(
         self,
-        cmd: list[str],
-        *,
-        cwd: Path | None = None,
+        cmd: list[str] | str,
         env: Mapping[str, str] | None = None,
-        timeout_seconds: float | None = None,
-        capture: bool = True,
+        timeout: float | None = None,
+        use_process_group: bool | None = None,
+        shell: bool = False,
     ) -> CommandResultProtocol:
         """Run a command synchronously.
 
         Args:
-            cmd: Command to run as a list of strings.
-            cwd: Working directory for command execution.
-            env: Environment variables to set.
-            timeout_seconds: Timeout for command execution.
-            capture: Whether to capture stdout/stderr.
+            cmd: Command to run. Can be a list of strings or a shell string.
+            env: Environment variables to set (merged with os.environ).
+            timeout: Timeout for command execution in seconds.
+            use_process_group: Whether to use process group for termination.
+            shell: If True, run command through shell.
 
         Returns:
             CommandResultProtocol with execution details.
@@ -808,19 +807,20 @@ class CommandRunnerPort(Protocol):
 
     async def run_async(
         self,
-        cmd: list[str],
-        *,
-        cwd: Path | None = None,
+        cmd: list[str] | str,
         env: Mapping[str, str] | None = None,
-        timeout_seconds: float | None = None,
+        timeout: float | None = None,
+        use_process_group: bool | None = None,
+        shell: bool = False,
     ) -> CommandResultProtocol:
         """Run a command asynchronously.
 
         Args:
-            cmd: Command to run as a list of strings.
-            cwd: Working directory for command execution.
-            env: Environment variables to set.
-            timeout_seconds: Timeout for command execution.
+            cmd: Command to run. Can be a list of strings or a shell string.
+            env: Environment variables to set (merged with os.environ).
+            timeout: Timeout for command execution in seconds.
+            use_process_group: Whether to use process group for termination.
+            shell: If True, run command through shell.
 
         Returns:
             CommandResultProtocol with execution details.

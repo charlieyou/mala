@@ -201,7 +201,7 @@ class TestWipFetchWorkaround:
         )
 
         async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json"]:
+            if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 return make_subprocess_result(stdout=ready_json)
             elif cmd == ["bd", "list", "--status", "in_progress", "--json"]:
                 return make_subprocess_result(stdout=wip_json)
@@ -234,7 +234,7 @@ class TestWipFetchWorkaround:
         )
 
         async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json"]:
+            if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 return make_subprocess_result(stdout=ready_json)
             elif cmd == ["bd", "list", "--status", "in_progress", "--json"]:
                 return make_subprocess_result(stdout=wip_json)
@@ -306,7 +306,7 @@ class TestFocusModeEpicGrouping:
             }
 
         async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json"]:
+            if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 return make_subprocess_result(stdout=issues_json)
             return make_subprocess_result(returncode=1)
 
@@ -356,7 +356,7 @@ class TestFocusModeEpicGrouping:
         )
 
         async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json"]:
+            if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 return make_subprocess_result(stdout=issues_json)
             return make_subprocess_result(returncode=1)
 
@@ -404,7 +404,7 @@ class TestFocusModeEpicGrouping:
             }
 
         async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json"]:
+            if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 return make_subprocess_result(stdout=issues_json)
             return make_subprocess_result(returncode=1)
 
@@ -451,7 +451,7 @@ class TestFocusModeEpicGrouping:
             }
 
         async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json"]:
+            if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 return make_subprocess_result(stdout=issues_json)
             return make_subprocess_result(returncode=1)
 
@@ -512,7 +512,7 @@ class TestFocusModeEpicGrouping:
             }
 
         async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json"]:
+            if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 return make_subprocess_result(stdout=ready_json)
             elif cmd == ["bd", "list", "--status", "in_progress", "--json"]:
                 return make_subprocess_result(stdout=wip_json)
@@ -560,7 +560,7 @@ class TestFocusModeEpicGrouping:
             return {"task-a1": "epic-a", "task-a2": "epic-a"}
 
         async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json"]:
+            if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 return make_subprocess_result(stdout=issues_json)
             return make_subprocess_result(returncode=1)
 
@@ -616,7 +616,7 @@ class TestFocusModeEpicGrouping:
             }
 
         async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json"]:
+            if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 return make_subprocess_result(stdout=issues_json)
             return make_subprocess_result(returncode=1)
 

@@ -92,7 +92,7 @@ def make_ready_mock(ready_json: str) -> AsyncMock:
     """Create a mock for get_ready_async that handles both bd ready and bd list calls.
 
     The get_ready_async method now makes two subprocess calls:
-    1. bd ready --json (returns ready issues)
+    1. bd ready --json -t task (returns ready issues)
     2. bd list --status in_progress --json (returns WIP issues to merge in)
 
     This helper creates a mock that returns ready_json for bd ready
@@ -100,7 +100,7 @@ def make_ready_mock(ready_json: str) -> AsyncMock:
     """
 
     async def mock_run(cmd: list[str]) -> subprocess.CompletedProcess:
-        if cmd == ["bd", "ready", "--json"]:
+        if cmd == ["bd", "ready", "--json", "-t", "task"]:
             return make_subprocess_result(stdout=ready_json)
         elif cmd == ["bd", "list", "--status", "in_progress", "--json"]:
             return make_subprocess_result(stdout="[]")
