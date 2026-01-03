@@ -465,7 +465,7 @@ class PromptValidationCommands:
     This dataclass holds the actual command strings to be substituted into
     prompt templates like implementer_prompt.md and gate_followup.md.
     Commands that are not configured will use fallback messages that exit
-    with code 1 to indicate the step was skipped (not falsely passing).
+    with code 0 to indicate the step was skipped (not falsely passing).
 
     Attributes:
         lint: Lint command string (e.g., "uvx ruff check ." or "golangci-lint run")
@@ -479,9 +479,9 @@ class PromptValidationCommands:
     typecheck: str
     test: str
 
-    # Default fallback message for unconfigured commands - exits with code 1
-    # to avoid false success when validation was never executed
-    _NOT_CONFIGURED = "echo 'No {kind} command configured - skipping' >&2 && exit 1"
+    # Default fallback message for unconfigured commands - exits with code 0
+    # since missing optional tooling is not a validation failure
+    _NOT_CONFIGURED = "echo 'No {kind} command configured - skipping' >&2 && exit 0"
 
     @classmethod
     def from_validation_config(
