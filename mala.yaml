@@ -1,7 +1,9 @@
 preset: python-uv
 
+commands:
+  test: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
+
 coverage:
-  command: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0"
   format: xml
   file: coverage.xml
   threshold: 72
