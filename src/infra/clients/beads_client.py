@@ -181,7 +181,9 @@ class BeadsClient:
         Returns:
             Tuple of (issues list, success flag). Returns ([], False) on error.
         """
-        result = await self._run_subprocess_async(["bd", "ready", "--json", "-t", "task"])
+        result = await self._run_subprocess_async(
+            ["bd", "ready", "--json", "-t", "task"]
+        )
         if result.returncode != 0:
             self._log_warning(f"bd ready failed: {result.stderr}")
             return [], False
@@ -663,6 +665,23 @@ class BeadsClient:
             return None
         except json.JSONDecodeError:
             return None
+
+    async def update_issue_description_async(
+        self, issue_id: str, description: str
+    ) -> bool:
+        """Update an issue's description.
+
+        Args:
+            issue_id: The issue ID to update.
+            description: New description content (replaces existing).
+
+        Returns:
+            True if successfully updated, False otherwise.
+        """
+        result = await self._run_subprocess_async(
+            ["bd", "update", issue_id, "--description", description]
+        )
+        return result.returncode == 0
 
     async def get_parent_epic_async(self, issue_id: str) -> str | None:
         """Get the parent epic ID for an issue.

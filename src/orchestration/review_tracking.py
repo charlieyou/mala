@@ -14,20 +14,74 @@ if TYPE_CHECKING:
     from src.infra.io.event_sink import MalaEventSink
 
 
+def _build_findings_section(
+    review_issues: list[ReviewIssueProtocol],
+    start_idx: int = 1,
+) -> tuple[str, str]:
+    """Build markdown sections for review findings.
+
+    Args:
+        review_issues: List of review issues to format.
+        start_idx: Starting index for finding numbering.
+
+    Returns:
+        Tuple of (formatted sections string, dedup tag based on content hash).
+    """
+    # Build a dedup tag from finding fingerprints for this batch
+    finding_fingerprints = sorted(
+        f"{issue.file}:{issue.line_start}:{issue.line_end}:{issue.title}"
+        for issue in review_issues
+    )
+    content_hash = hashlib.sha256("|".join(finding_fingerprints).encode()).hexdigest()[
+        :12
+    ]
+    dedup_tag = f"review_finding:{content_hash}"
+
+    parts: list[str] = []
+    for idx, issue in enumerate(review_issues, start_idx):
+        file_path = issue.file
+        line_start = issue.line_start
+        line_end = issue.line_end
+        priority = issue.priority
+        title = issue.title
+        body = issue.body
+        reviewer = issue.reviewer
+
+        finding_priority = f"P{priority}" if priority is not None else "P3"
+
+        # Build location string
+        if line_start == line_end or line_end == 0:
+            location = f"{file_path}:{line_start}" if file_path else ""
+        else:
+            location = f"{file_path}:{line_start}-{line_end}" if file_path else ""
+
+        parts.append(f"### Finding {idx}: {title}")
+        parts.append("")
+        parts.append(f"**Priority:** {finding_priority}")
+        parts.append(f"**Reviewer:** {reviewer}")
+        if location:
+            parts.append(f"**Location:** {location}")
+        if body:
+            parts.extend(["", body])
+        parts.extend(["", "---", ""])
+
+    return "\n".join(parts), dedup_tag
+
+
 async def create_review_tracking_issues(
     beads: IssueProvider,
     event_sink: MalaEventSink,
     source_issue_id: str,
     review_issues: list[ReviewIssueProtocol],
 ) -> None:
-    """Create a single beads issue from P2/P3 review findings.
+    """Create or update a beads issue from P2/P3 review findings.
 
     All low-priority issues that didn't block the review are consolidated
-    into a single tracking issue for later resolution. Each finding is
-    documented in the issue body.
+    into a single tracking issue per source issue. If a tracking issue already
+    exists for this source, new findings are appended to it.
 
     Args:
-        beads: Issue provider for creating issues.
+        beads: Issue provider for creating/updating issues.
         event_sink: Event sink for warnings.
         source_issue_id: The issue ID that triggered the review.
         review_issues: List of ReviewIssueProtocol objects from the review.
@@ -35,22 +89,51 @@ async def create_review_tracking_issues(
     if not review_issues:
         return
 
-    # Build a dedup tag from all issue content to prevent duplicate consolidated issues
-    # Hash key: source issue + sorted finding fingerprints
-    finding_fingerprints = sorted(
-        f"{issue.file}:{issue.line_start}:{issue.line_end}:{issue.title}"
-        for issue in review_issues
-    )
-    hash_input = f"{source_issue_id}:" + "|".join(finding_fingerprints)
-    content_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:12]
-    dedup_tag = f"review_findings:{content_hash}"
+    # Build the new findings section and get a content-based dedup tag
+    new_findings_section, new_dedup_tag = _build_findings_section(review_issues)
 
-    # Check for existing issue with this dedup tag
-    existing_id = await beads.find_issue_by_tag_async(dedup_tag)
+    # Check for existing tracking issue for this source
+    source_tag = f"source:{source_issue_id}"
+    existing_id = await beads.find_issue_by_tag_async(source_tag)
+
     if existing_id:
-        # Already exists, skip creation
+        # Check if these exact findings already exist (avoid duplicating)
+        existing_desc = await beads.get_issue_description_async(existing_id)
+        if existing_desc and new_dedup_tag in existing_desc:
+            # These findings are already recorded
+            return
+
+        # Append new findings to existing issue
+        # Count existing findings to continue numbering
+        existing_finding_count = (
+            existing_desc.count("### Finding ") if existing_desc else 0
+        )
+        new_findings_section, new_dedup_tag = _build_findings_section(
+            review_issues, start_idx=existing_finding_count + 1
+        )
+
+        # Build updated description
+        updated_desc = existing_desc or ""
+        # Update the finding count in header
+        total_count = existing_finding_count + len(review_issues)
+        updated_desc = updated_desc.replace(
+            f"{existing_finding_count} non-blocking finding",
+            f"{total_count} non-blocking finding",
+        )
+        # Append new findings and dedup tag before the end
+        updated_desc = (
+            updated_desc.rstrip()
+            + f"\n\n{new_findings_section}\n<!-- {new_dedup_tag} -->\n"
+        )
+
+        await beads.update_issue_description_async(existing_id, updated_desc)
+        event_sink.on_warning(
+            f"Appended {len(review_issues)} finding{'s' if len(review_issues) > 1 else ''} to tracking issue {existing_id}",
+            agent_id=source_issue_id,
+        )
         return
 
+    # No existing issue - create a new one
     # Determine highest priority among findings (lowest number = highest priority)
     priorities = [i.priority for i in review_issues if i.priority is not None]
     highest_priority = min(priorities) if priorities else 3
@@ -71,44 +154,17 @@ async def create_review_tracking_issues(
         "",
         "---",
         "",
+        new_findings_section,
+        f"<!-- {new_dedup_tag} -->",
     ]
-
-    # Add each finding as a section
-    for idx, issue in enumerate(review_issues, 1):
-        file_path = issue.file
-        line_start = issue.line_start
-        line_end = issue.line_end
-        priority = issue.priority
-        title = issue.title
-        body = issue.body
-        reviewer = issue.reviewer
-
-        finding_priority = f"P{priority}" if priority is not None else "P3"
-
-        # Build location string
-        if line_start == line_end or line_end == 0:
-            location = f"{file_path}:{line_start}" if file_path else ""
-        else:
-            location = f"{file_path}:{line_start}-{line_end}" if file_path else ""
-
-        description_parts.append(f"### Finding {idx}: {title}")
-        description_parts.append("")
-        description_parts.append(f"**Priority:** {finding_priority}")
-        description_parts.append(f"**Reviewer:** {reviewer}")
-        if location:
-            description_parts.append(f"**Location:** {location}")
-        if body:
-            description_parts.extend(["", body])
-        description_parts.extend(["", "---", ""])
 
     description = "\n".join(description_parts)
 
-    # Tags for tracking and deduplication
+    # Tags for tracking
     tags = [
         "auto_generated",
         "review_finding",
-        f"source:{source_issue_id}",
-        dedup_tag,
+        source_tag,
     ]
 
     new_issue_id = await beads.create_issue_async(

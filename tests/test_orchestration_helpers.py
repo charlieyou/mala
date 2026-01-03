@@ -260,9 +260,21 @@ class FakeIssueProvider:
     def __init__(self) -> None:
         self.created_issues: list[dict[str, Any]] = []
         self.existing_tags: dict[str, str] = {}
+        self.issue_descriptions: dict[str, str] = {}
+        self.updated_descriptions: list[tuple[str, str]] = []
 
     async def find_issue_by_tag_async(self, tag: str) -> str | None:
         return self.existing_tags.get(tag)
+
+    async def get_issue_description_async(self, issue_id: str) -> str | None:
+        return self.issue_descriptions.get(issue_id)
+
+    async def update_issue_description_async(
+        self, issue_id: str, description: str
+    ) -> bool:
+        self.updated_descriptions.append((issue_id, description))
+        self.issue_descriptions[issue_id] = description
+        return True
 
     async def create_issue_async(
         self,
@@ -378,8 +390,8 @@ class TestCreateReviewTrackingIssues:
         assert "[Review] 1 non-blocking finding from bd-test-2" in issue["title"]
 
     @pytest.mark.asyncio
-    async def test_skips_duplicate_consolidated_issue(self) -> None:
-        """Should skip creating issue if consolidated dedup tag already exists."""
+    async def test_skips_duplicate_findings_for_same_source(self) -> None:
+        """Should skip if exact findings already exist in source issue's tracker."""
         beads = FakeIssueProvider()
         event_sink = FakeEventSink()
 
@@ -395,15 +407,18 @@ class TestCreateReviewTrackingIssues:
             )
         ]
 
-        # Pre-populate existing tag (simulating existing consolidated issue)
+        # Pre-populate existing tracking issue for this source
         import hashlib
 
-        # Hash is now based on source_issue + sorted fingerprints
+        # Content-based dedup tag embedded in description
         fingerprint = "src/foo.py:10:10:Consider refactoring"
-        hash_input = f"bd-test-3:{fingerprint}"
-        content_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:12]
-        dedup_tag = f"review_findings:{content_hash}"
-        beads.existing_tags[dedup_tag] = "existing-issue-1"
+        content_hash = hashlib.sha256(fingerprint.encode()).hexdigest()[:12]
+        dedup_tag = f"review_finding:{content_hash}"
+
+        beads.existing_tags["source:bd-test-3"] = "existing-issue-1"
+        beads.issue_descriptions["existing-issue-1"] = (
+            f"## Review Findings\n<!-- {dedup_tag} -->"
+        )
 
         await create_review_tracking_issues(
             beads=cast("IssueProvider", beads),
@@ -412,9 +427,75 @@ class TestCreateReviewTrackingIssues:
             review_issues=review_issues,
         )
 
-        # Should not create any issues
+        # Should not create any issues or update (findings already exist)
         assert len(beads.created_issues) == 0
+        assert len(beads.updated_descriptions) == 0
         assert len(event_sink.warnings) == 0
+
+    @pytest.mark.asyncio
+    async def test_appends_new_findings_to_existing_issue(self) -> None:
+        """Should append new findings to existing tracking issue for same source."""
+        beads = FakeIssueProvider()
+        event_sink = FakeEventSink()
+
+        # First set of findings (already in the existing issue)
+        existing_desc = """## Review Findings
+
+This issue consolidates 1 non-blocking finding from code review.
+
+**Source issue:** bd-test-6
+**Highest priority:** P2
+
+---
+
+### Finding 1: Old finding
+
+**Priority:** P2
+**Reviewer:** claude
+**Location:** src/old.py:5
+
+---
+
+<!-- review_finding:abc123 -->
+"""
+        beads.existing_tags["source:bd-test-6"] = "existing-issue-1"
+        beads.issue_descriptions["existing-issue-1"] = existing_desc
+
+        # New findings to append
+        new_issues = [
+            FakeReviewIssue(
+                file="src/new.py",
+                line_start=20,
+                line_end=20,
+                priority=3,
+                title="New finding",
+                body="Something new",
+                reviewer="gemini",
+            )
+        ]
+
+        await create_review_tracking_issues(
+            beads=cast("IssueProvider", beads),
+            event_sink=cast("MalaEventSink", event_sink),
+            source_issue_id="bd-test-6",
+            review_issues=new_issues,
+        )
+
+        # Should update, not create
+        assert len(beads.created_issues) == 0
+        assert len(beads.updated_descriptions) == 1
+
+        updated_id, updated_desc = beads.updated_descriptions[0]
+        assert updated_id == "existing-issue-1"
+        # Should update count from 1 to 2
+        assert "2 non-blocking finding" in updated_desc
+        # Should contain the new finding numbered as Finding 2
+        assert "### Finding 2: New finding" in updated_desc
+        assert "src/new.py:20" in updated_desc
+        assert "Something new" in updated_desc
+        # Warning should mention appending
+        assert len(event_sink.warnings) == 1
+        assert "Appended" in event_sink.warnings[0]
 
     @pytest.mark.asyncio
     async def test_handles_none_priority(self) -> None:

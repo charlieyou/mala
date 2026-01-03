@@ -512,6 +512,22 @@ class IssueProvider(Protocol):
         """
         ...
 
+    async def update_issue_description_async(
+        self, issue_id: str, description: str
+    ) -> bool:
+        """Update an issue's description.
+
+        Used for appending new findings to existing tracking issues.
+
+        Args:
+            issue_id: The issue ID to update.
+            description: New description content (replaces existing).
+
+        Returns:
+            True if successfully updated, False otherwise.
+        """
+        ...
+
 
 @runtime_checkable
 class CodeReviewer(Protocol):
