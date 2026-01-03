@@ -4324,7 +4324,7 @@ class TestSessionRestartLoop:
         )
 
     def make_high_pressure_result(
-        self, session_id: str, input_tokens: int = 180000, limit: int = 200000
+        self, session_id: str, input_tokens: int = 180000
     ) -> ResultMessage:
         """Create ResultMessage at or above threshold (default 90%)."""
         return ResultMessage(
@@ -4463,8 +4463,8 @@ class TestSessionRestartLoop:
     ) -> None:
         """Multiple context pressure errors cause sequential restarts.
 
-        Verifies that continuation_count increments on each restart and
-        a fresh lifecycle is created for each iteration.
+        Verifies that checkpoint content is correctly passed to continuation
+        prompts across multiple restarts.
         """
         # Create clients: 2 high pressure, then success
         # Checkpoint clients return AssistantMessage with text content
