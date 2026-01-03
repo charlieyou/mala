@@ -394,6 +394,23 @@ _COLOR_MAP: dict[str, str] = {
 }
 
 
+# Known icon characters that can prefix messages
+# Only these characters will be parsed as icon prefixes in LoggerPort.log()
+KNOWN_ICONS: frozenset[str] = frozenset(
+    {
+        "▸",  # Running/in-progress
+        "→",  # Default/transition
+        "◦",  # Verbose/secondary
+        "●",  # Primary marker
+        "○",  # Empty/skipped marker
+        "✓",  # Success
+        "✗",  # Failure
+        "⚠",  # Warning
+        "⚙",  # Tool/processing
+    }
+)
+
+
 class ConsoleLoggerAdapter:
     """Adapter that implements LoggerPort for console output.
 
@@ -416,8 +433,15 @@ class ConsoleLoggerAdapter:
         """
         # Map color name to ANSI code, default to reset if unknown
         ansi_color = _COLOR_MAP.get(color, Colors.RESET) if color else Colors.RESET
-        # Extract icon prefix if present (e.g., "▸ Running..." -> icon="▸", rest="Running...")
-        if message and len(message) >= 2 and message[1] == " ":
+        # Extract icon prefix if present and is a known icon
+        # (e.g., "▸ Running..." -> icon="▸", rest="Running...")
+        # Only split on known icons to avoid misparsing messages like "A thing happened"
+        if (
+            message
+            and len(message) >= 2
+            and message[1] == " "
+            and message[0] in KNOWN_ICONS
+        ):
             icon = message[0]
             rest = message[2:]
         else:
