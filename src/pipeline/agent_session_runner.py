@@ -1471,7 +1471,6 @@ class AgentSessionRunner:
         # Clear pending state from previous attempt to avoid
         # hanging on stale tool IDs (they won't resolve on new stream)
         state.pending_tool_ids.clear()
-        state.tool_calls_this_turn = 0
         state.first_message_received = False
         resume_id = state.session_id or lifecycle_ctx.session_id
 
@@ -1483,6 +1482,8 @@ class AgentSessionRunner:
                 f"(session_id={resume_id[:8]}..., "
                 f"attempt {state.idle_retry_count})"
             )
+            # Reset tool calls after decision to preserve safety check
+            state.tool_calls_this_turn = 0
             return pending_query
         elif state.tool_calls_this_turn == 0:
             state.pending_session_id = None
