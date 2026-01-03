@@ -1108,6 +1108,78 @@ class AgentSessionRunner:
         # RUN_REVIEW or other effects - pass through
         return None, False, result
 
+    def _check_review_no_progress(
+        self,
+        input: AgentSessionInput,
+        log_path: Path,
+        lifecycle: ImplementerLifecycle,
+        lifecycle_ctx: LifecycleContext,
+        cerberus_review_log_path: str | None,
+    ) -> ReviewEffectResult | None:
+        """Check if review retry has made no progress and should be skipped.
+
+        Args:
+            input: Session input with issue_id.
+            log_path: Path to log file.
+            lifecycle: Lifecycle state machine.
+            lifecycle_ctx: Lifecycle context.
+            cerberus_review_log_path: Path to Cerberus review log, if any.
+
+        Returns:
+            ReviewEffectResult if no progress detected (caller should return early),
+            None if review should proceed normally.
+        """
+        # Only check on retry attempts (attempt > 1) when callback is configured
+        if (
+            lifecycle_ctx.retry_state.review_attempt <= 1
+            or self.callbacks.on_review_no_progress is None
+        ):
+            return None
+
+        current_commit = (
+            lifecycle_ctx.last_gate_result.commit_hash
+            if lifecycle_ctx.last_gate_result
+            else None
+        )
+        no_progress = self.callbacks.on_review_no_progress(
+            log_path,
+            lifecycle_ctx.retry_state.log_offset,
+            lifecycle_ctx.retry_state.previous_commit_hash,
+            current_commit,
+        )
+
+        if not no_progress:
+            return None
+
+        # Emit event for no-progress skip
+        if self.event_sink is not None:
+            self.event_sink.on_review_skipped_no_progress(input.issue_id)
+
+        # Create synthetic failed review
+        from src.infra.clients.cerberus_review import ReviewResult
+
+        synthetic = ReviewResult(passed=False, issues=[], parse_error=None)
+        new_offset = (
+            self.callbacks.get_log_offset(
+                log_path,
+                lifecycle_ctx.retry_state.log_offset,
+            )
+            if self.callbacks.get_log_offset
+            else 0
+        )
+        no_progress_result = lifecycle.on_review_result(
+            lifecycle_ctx,
+            synthetic,
+            new_offset,
+            no_progress=True,
+        )
+        return ReviewEffectResult(
+            pending_query=None,
+            should_break=True,
+            cerberus_log_path=cerberus_review_log_path,
+            transition_result=no_progress_result,
+        )
+
     async def _handle_review_effect(
         self,
         input: AgentSessionInput,
@@ -1139,48 +1211,10 @@ class AgentSessionRunner:
         )
 
         # Check no-progress before running review
-        if (
-            lifecycle_ctx.retry_state.review_attempt > 1
-            and self.callbacks.on_review_no_progress is not None
+        if no_progress_result := self._check_review_no_progress(
+            input, log_path, lifecycle, lifecycle_ctx, cerberus_review_log_path
         ):
-            current_commit = (
-                lifecycle_ctx.last_gate_result.commit_hash
-                if lifecycle_ctx.last_gate_result
-                else None
-            )
-            no_progress = self.callbacks.on_review_no_progress(
-                log_path,
-                lifecycle_ctx.retry_state.log_offset,
-                lifecycle_ctx.retry_state.previous_commit_hash,
-                current_commit,
-            )
-            if no_progress:
-                if self.event_sink is not None:
-                    self.event_sink.on_review_skipped_no_progress(input.issue_id)
-                # Create synthetic failed review
-                from src.infra.clients.cerberus_review import ReviewResult
-
-                synthetic = ReviewResult(passed=False, issues=[], parse_error=None)
-                new_offset = (
-                    self.callbacks.get_log_offset(
-                        log_path,
-                        lifecycle_ctx.retry_state.log_offset,
-                    )
-                    if self.callbacks.get_log_offset
-                    else 0
-                )
-                no_progress_result = lifecycle.on_review_result(
-                    lifecycle_ctx,
-                    synthetic,
-                    new_offset,
-                    no_progress=True,
-                )
-                return ReviewEffectResult(
-                    pending_query=None,
-                    should_break=True,
-                    cerberus_log_path=cerberus_review_log_path,
-                    transition_result=no_progress_result,
-                )
+            return no_progress_result
 
         if self.event_sink is not None:
             self.event_sink.on_review_started(

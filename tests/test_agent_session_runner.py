@@ -3265,6 +3265,165 @@ class TestHandleReviewCheck:
             )
 
 
+class TestCheckReviewNoProgress:
+    """Unit tests for _check_review_no_progress helper."""
+
+    @pytest.fixture
+    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
+        """Create a session config for testing."""
+        return AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=600,
+            max_gate_retries=3,
+            max_review_retries=3,
+            review_enabled=True,
+        )
+
+    @pytest.fixture
+    def tmp_log_path(self, tmp_path: Path) -> Path:
+        """Create a temporary log file path."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text("")
+        return log_path
+
+    @pytest.mark.unit
+    def test_returns_none_on_first_attempt(
+        self, session_config: AgentSessionConfig, tmp_log_path: Path
+    ) -> None:
+        """Returns None on first review attempt."""
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+        )
+
+        def on_review_no_progress(
+            log_path: Path, log_offset: int, prev: str | None, curr: str | None
+        ) -> bool:
+            raise AssertionError("Should not be called")
+
+        callbacks = SessionCallbacks(on_review_no_progress=on_review_no_progress)
+        runner = AgentSessionRunner(config=session_config, callbacks=callbacks)
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.retry_state.review_attempt = 1
+
+        input_data = AgentSessionInput(issue_id="test-first", prompt="Test")
+        result = runner._check_review_no_progress(
+            input_data, tmp_log_path, lifecycle, lifecycle_ctx, None
+        )
+        assert result is None
+
+    @pytest.mark.unit
+    def test_returns_none_when_callback_not_set(
+        self, session_config: AgentSessionConfig, tmp_log_path: Path
+    ) -> None:
+        """Returns None when callback not configured."""
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+        )
+
+        callbacks = SessionCallbacks()
+        runner = AgentSessionRunner(config=session_config, callbacks=callbacks)
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.retry_state.review_attempt = 2
+
+        input_data = AgentSessionInput(issue_id="test-no-cb", prompt="Test")
+        result = runner._check_review_no_progress(
+            input_data, tmp_log_path, lifecycle, lifecycle_ctx, None
+        )
+        assert result is None
+
+    @pytest.mark.unit
+    def test_returns_none_when_progress_detected(
+        self, session_config: AgentSessionConfig, tmp_log_path: Path
+    ) -> None:
+        """Returns None when progress is detected."""
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+
+        def on_review_no_progress(
+            log_path: Path, log_offset: int, prev: str | None, curr: str | None
+        ) -> bool:
+            return False
+
+        callbacks = SessionCallbacks(on_review_no_progress=on_review_no_progress)
+        runner = AgentSessionRunner(config=session_config, callbacks=callbacks)
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
+        lifecycle.start()
+        lifecycle._state = LifecycleState.RUNNING_REVIEW
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.retry_state.review_attempt = 2
+        lifecycle_ctx.last_gate_result = GateResult(
+            passed=True, failure_reasons=[], commit_hash="new"
+        )
+
+        input_data = AgentSessionInput(issue_id="test-progress", prompt="Test")
+        result = runner._check_review_no_progress(
+            input_data, tmp_log_path, lifecycle, lifecycle_ctx, None
+        )
+        assert result is None
+
+    @pytest.mark.unit
+    def test_returns_result_on_no_progress(
+        self, session_config: AgentSessionConfig, tmp_log_path: Path
+    ) -> None:
+        """Returns ReviewEffectResult on no progress."""
+        from src.domain.lifecycle import (
+            ImplementerLifecycle,
+            LifecycleConfig,
+            LifecycleContext,
+            LifecycleState,
+        )
+        from src.pipeline.agent_session_runner import ReviewEffectResult
+
+        fake_sink = FakeEventSink()
+
+        def on_review_no_progress(
+            log_path: Path, log_offset: int, prev: str | None, curr: str | None
+        ) -> bool:
+            return True
+
+        callbacks = SessionCallbacks(on_review_no_progress=on_review_no_progress)
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            event_sink=fake_sink,  # type: ignore[arg-type]
+        )
+
+        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
+        lifecycle.start()
+        lifecycle._state = LifecycleState.RUNNING_REVIEW
+        lifecycle_ctx = LifecycleContext()
+        lifecycle_ctx.retry_state.review_attempt = 2
+        lifecycle_ctx.last_gate_result = GateResult(
+            passed=True, failure_reasons=[], commit_hash="same"
+        )
+
+        input_data = AgentSessionInput(issue_id="test-no-progress", prompt="Test")
+        result = runner._check_review_no_progress(
+            input_data, tmp_log_path, lifecycle, lifecycle_ctx, "/log"
+        )
+
+        assert result is not None
+        assert isinstance(result, ReviewEffectResult)
+        assert result.pending_query is None
+        assert result.should_break is True
+        assert result.cerberus_log_path == "/log"
+        event_names = [e[0] for e in fake_sink.events]
+        assert "on_review_skipped_no_progress" in event_names
+
+
 class TestRunLifecycleLoop:
     """Unit tests for _run_lifecycle_loop helper.
 
