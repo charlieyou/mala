@@ -67,7 +67,6 @@ AGENT_COLORS = [
 # Tools that have code fields which should be pretty-printed
 EDIT_TOOLS = frozenset(
     {
-        "mcp__morphllm__edit_file",
         "Edit",
         "Write",
         "NotebookEdit",
@@ -77,12 +76,12 @@ EDIT_TOOLS = frozenset(
 # Tools that show file path in quiet mode
 FILE_TOOLS = frozenset(
     {
-        "mcp__morphllm__edit_file",
         "Edit",
         "Write",
         "NotebookEdit",
         "Read",
         "Glob",
+        "mcp__morphllm__edit_file",
     }
 )
 
