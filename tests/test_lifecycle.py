@@ -858,6 +858,24 @@ class TestContextUsage:
         # Total: 80_000 / 200_000 = 0.4 (cache_read not added separately)
         assert usage.pressure_ratio(200_000) == 0.4
 
+    def test_tracking_disabled_default_false(self) -> None:
+        """tracking_disabled is False by default (fresh instance)."""
+        usage = ContextUsage()
+        assert usage.tracking_disabled is False
+
+    def test_disable_tracking_sets_sentinel(self) -> None:
+        """disable_tracking() sets input_tokens to -1 sentinel."""
+        usage = ContextUsage(input_tokens=1000)
+        usage.disable_tracking()
+        assert usage.input_tokens == -1
+        assert usage.tracking_disabled is True
+
+    def test_pressure_ratio_returns_zero_when_tracking_disabled(self) -> None:
+        """pressure_ratio returns 0.0 when tracking is disabled."""
+        usage = ContextUsage(input_tokens=100_000, output_tokens=50_000)
+        usage.disable_tracking()
+        assert usage.pressure_ratio(200_000) == 0.0
+
 
 class TestLifecycleContextUsage:
     """Tests for context_usage field in LifecycleContext."""

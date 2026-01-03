@@ -219,17 +219,33 @@ class RetryState:
     baseline_timestamp: int = 0
 
 
+# Sentinel value indicating usage tracking is disabled (e.g., SDK returned no usage)
+TRACKING_DISABLED: int = -1
+
+
 @dataclass
 class ContextUsage:
     """Tracks token usage for context exhaustion detection.
 
     The SDK provides cumulative input_tokens in ResultMessage.usage.
     We track usage to detect when approaching the 200K context limit.
+
+    When usage is unavailable (SDK doesn't provide it), input_tokens is set
+    to TRACKING_DISABLED (-1) to distinguish from zero usage.
     """
 
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
+
+    @property
+    def tracking_disabled(self) -> bool:
+        """Return True if usage tracking is disabled."""
+        return self.input_tokens == TRACKING_DISABLED
+
+    def disable_tracking(self) -> None:
+        """Mark tracking as disabled by setting sentinel value."""
+        self.input_tokens = TRACKING_DISABLED
 
     def pressure_ratio(self, limit: int) -> float:
         """Return ratio of total tokens used to the limit.
@@ -242,9 +258,9 @@ class ContextUsage:
 
         Returns:
             Ratio from 0.0 to 1.0+ (e.g., 90000/200000 = 0.45)
-            Returns 0.0 if limit is 0 to avoid division by zero.
+            Returns 0.0 if limit is 0, or if tracking is disabled.
         """
-        if limit <= 0:
+        if limit <= 0 or self.tracking_disabled:
             return 0.0
         return (self.input_tokens + self.output_tokens) / limit
 

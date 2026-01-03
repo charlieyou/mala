@@ -1677,6 +1677,7 @@ class AgentSessionRunner:
                         "context pressure tracking disabled",
                         issue_id,
                     )
+                    lifecycle_ctx.context_usage.disable_tracking()
 
         # Success
         stream_duration = time.time() - query_start
