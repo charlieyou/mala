@@ -189,7 +189,7 @@ def _build_dependencies(
     from src.infra.clients.braintrust_integration import BraintrustProvider
     from src.infra.clients.cerberus_review import DefaultReviewer
     from src.infra.epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
-    from src.infra.io.event_sink import ConsoleEventSink
+    from src.infra.io.console_sink import ConsoleEventSink
     from src.infra.io.session_log_parser import FileSystemLogProvider
     from src.infra.telemetry import NullTelemetryProvider
 

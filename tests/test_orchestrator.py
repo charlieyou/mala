@@ -4311,7 +4311,7 @@ class TestEventSinkIntegration:
         Verifies that on_no_more_issues is called with 'none_ready' when
         get_ready returns empty and max_issues is not reached.
         """
-        from src.infra.io.event_sink import NullEventSink
+        from src.infra.io.base_sink import NullEventSink
 
         # Create a tracking sink that records calls
         class TrackingSink(NullEventSink):
@@ -4367,7 +4367,7 @@ class TestEventSinkIntegration:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """on_no_more_issues is called with limit_reached when max_issues=0."""
-        from src.infra.io.event_sink import NullEventSink
+        from src.infra.io.base_sink import NullEventSink
 
         class TrackingSink(NullEventSink):
             def __init__(self) -> None:
@@ -4416,7 +4416,7 @@ class TestEventSinkIntegration:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Event sink defaults to ConsoleEventSink when not specified."""
-        from src.infra.io.event_sink import ConsoleEventSink
+        from src.infra.io.console_sink import ConsoleEventSink
 
         orchestrator = make_orchestrator(repo_path=tmp_path)
 
@@ -4491,7 +4491,7 @@ class TestOrchestratorFactory:
 
     def test_create_orchestrator_with_custom_dependencies(self, tmp_path: Path) -> None:
         """create_orchestrator uses provided dependencies."""
-        from src.infra.io.event_sink import NullEventSink
+        from src.infra.io.base_sink import NullEventSink
         from src.orchestration.factory import create_orchestrator
         from src.orchestration.types import OrchestratorConfig, OrchestratorDependencies
 

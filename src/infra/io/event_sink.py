@@ -1,15 +1,6 @@
-"""Event sink implementations for MalaOrchestrator.
+"""Event sink implementations have moved to dedicated modules.
 
-Provides concrete implementations of the MalaEventSink protocol:
-- ConsoleEventSink: Full console output implementation
-
-For base classes, import directly from base_sink:
-- BaseEventSink: Base class with no-op implementations
-- NullEventSink: Silent sink for testing
+Import directly from:
+- console_sink: ConsoleEventSink
+- base_sink: BaseEventSink, NullEventSink
 """
-
-from .console_sink import ConsoleEventSink
-
-__all__ = [
-    "ConsoleEventSink",
-]

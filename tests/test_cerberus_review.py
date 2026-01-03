@@ -23,7 +23,7 @@ from src.infra.clients.cerberus_review import (
     map_exit_code_to_result,
     parse_cerberus_json,
 )
-from src.infra.io.event_sink import BaseEventSink
+from src.infra.io.base_sink import BaseEventSink
 
 if TYPE_CHECKING:
     from src.infra.io.event_protocol import MalaEventSink
