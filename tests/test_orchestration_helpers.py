@@ -298,8 +298,8 @@ class TestCreateReviewTrackingIssues:
     """Test create_review_tracking_issues function."""
 
     @pytest.mark.asyncio
-    async def test_creates_issue_for_p2_finding(self) -> None:
-        """Should create a tracking issue for P2 review finding."""
+    async def test_creates_single_consolidated_issue(self) -> None:
+        """Should create a single tracking issue consolidating all findings."""
         beads = FakeIssueProvider()
         event_sink = FakeEventSink()
 
@@ -312,7 +312,16 @@ class TestCreateReviewTrackingIssues:
                 title="Consider refactoring",
                 body="This function is too long",
                 reviewer="gemini",
-            )
+            ),
+            FakeReviewIssue(
+                file="src/bar.py",
+                line_start=20,
+                line_end=30,
+                priority=3,
+                title="Code smell",
+                body="Details here",
+                reviewer="claude",
+            ),
         ]
 
         await create_review_tracking_issues(
@@ -322,17 +331,23 @@ class TestCreateReviewTrackingIssues:
             review_issues=review_issues,
         )
 
+        # Should create exactly one consolidated issue
         assert len(beads.created_issues) == 1
         issue = beads.created_issues[0]
-        assert "[Review]" in issue["title"]
-        assert "src/foo.py:10" in issue["title"]
+        assert "[Review] 2 non-blocking findings from bd-test-1" in issue["title"]
+        # Priority should be the highest (lowest number) - P2
         assert issue["priority"] == "P2"
         assert "auto_generated" in issue["tags"]
+        # Description should contain both findings
+        assert "src/foo.py:10" in issue["description"]
+        assert "src/bar.py:20-30" in issue["description"]
+        assert "Consider refactoring" in issue["description"]
+        assert "Code smell" in issue["description"]
         assert len(event_sink.warnings) == 1
 
     @pytest.mark.asyncio
-    async def test_creates_issue_with_line_range(self) -> None:
-        """Should format line range correctly."""
+    async def test_creates_issue_with_line_range_in_description(self) -> None:
+        """Should format line range correctly in description."""
         beads = FakeIssueProvider()
         event_sink = FakeEventSink()
 
@@ -357,12 +372,14 @@ class TestCreateReviewTrackingIssues:
 
         assert len(beads.created_issues) == 1
         issue = beads.created_issues[0]
-        assert "src/bar.py:10-20" in issue["title"]
+        assert "src/bar.py:10-20" in issue["description"]
         assert issue["priority"] == "P3"
+        # Single finding uses singular
+        assert "[Review] 1 non-blocking finding from bd-test-2" in issue["title"]
 
     @pytest.mark.asyncio
-    async def test_skips_duplicate_finding(self) -> None:
-        """Should skip creating issue if dedup tag already exists."""
+    async def test_skips_duplicate_consolidated_issue(self) -> None:
+        """Should skip creating issue if consolidated dedup tag already exists."""
         beads = FakeIssueProvider()
         event_sink = FakeEventSink()
 
@@ -378,12 +395,14 @@ class TestCreateReviewTrackingIssues:
             )
         ]
 
-        # Pre-populate existing tag (simulating existing issue)
+        # Pre-populate existing tag (simulating existing consolidated issue)
         import hashlib
 
-        hash_key = "src/foo.py:10:10:Consider refactoring"
-        content_hash = hashlib.sha256(hash_key.encode()).hexdigest()[:12]
-        dedup_tag = f"review_finding:{content_hash}"
+        # Hash is now based on source_issue + sorted fingerprints
+        fingerprint = "src/foo.py:10:10:Consider refactoring"
+        hash_input = f"bd-test-3:{fingerprint}"
+        content_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:12]
+        dedup_tag = f"review_findings:{content_hash}"
         beads.existing_tags[dedup_tag] = "existing-issue-1"
 
         await create_review_tracking_issues(
@@ -424,6 +443,22 @@ class TestCreateReviewTrackingIssues:
 
         assert len(beads.created_issues) == 1
         assert beads.created_issues[0]["priority"] == "P3"
+
+    @pytest.mark.asyncio
+    async def test_empty_issues_list(self) -> None:
+        """Should not create issue when no review issues provided."""
+        beads = FakeIssueProvider()
+        event_sink = FakeEventSink()
+
+        await create_review_tracking_issues(
+            beads=cast("IssueProvider", beads),
+            event_sink=cast("MalaEventSink", event_sink),
+            source_issue_id="bd-test-5",
+            review_issues=[],
+        )
+
+        assert len(beads.created_issues) == 0
+        assert len(event_sink.warnings) == 0
 
 
 # ============================================================================

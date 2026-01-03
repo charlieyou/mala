@@ -20,11 +20,11 @@ async def create_review_tracking_issues(
     source_issue_id: str,
     review_issues: list[ReviewIssueProtocol],
 ) -> None:
-    """Create beads issues from P2/P3 review findings.
+    """Create a single beads issue from P2/P3 review findings.
 
-    These are low-priority issues that didn't block the review but should
-    be tracked for later resolution. Each issue is created with appropriate
-    priority and linked to the source issue via tags.
+    All low-priority issues that didn't block the review are consolidated
+    into a single tracking issue for later resolution. Each finding is
+    documented in the issue body.
 
     Args:
         beads: Issue provider for creating issues.
@@ -32,8 +32,49 @@ async def create_review_tracking_issues(
         source_issue_id: The issue ID that triggered the review.
         review_issues: List of ReviewIssueProtocol objects from the review.
     """
-    for issue in review_issues:
-        # Access protocol-defined attributes directly
+    if not review_issues:
+        return
+
+    # Build a dedup tag from all issue content to prevent duplicate consolidated issues
+    # Hash key: source issue + sorted finding fingerprints
+    finding_fingerprints = sorted(
+        f"{issue.file}:{issue.line_start}:{issue.line_end}:{issue.title}"
+        for issue in review_issues
+    )
+    hash_input = f"{source_issue_id}:" + "|".join(finding_fingerprints)
+    content_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:12]
+    dedup_tag = f"review_findings:{content_hash}"
+
+    # Check for existing issue with this dedup tag
+    existing_id = await beads.find_issue_by_tag_async(dedup_tag)
+    if existing_id:
+        # Already exists, skip creation
+        return
+
+    # Determine highest priority among findings (lowest number = highest priority)
+    priorities = [i.priority for i in review_issues if i.priority is not None]
+    highest_priority = min(priorities) if priorities else 3
+    priority_str = f"P{highest_priority}"
+
+    # Build consolidated issue title
+    issue_count = len(review_issues)
+    issue_title = f"[Review] {issue_count} non-blocking finding{'s' if issue_count > 1 else ''} from {source_issue_id}"
+
+    # Build description with all findings
+    description_parts = [
+        "## Review Findings",
+        "",
+        f"This issue consolidates {issue_count} non-blocking finding{'s' if issue_count > 1 else ''} from code review.",
+        "",
+        f"**Source issue:** {source_issue_id}",
+        f"**Highest priority:** {priority_str}",
+        "",
+        "---",
+        "",
+    ]
+
+    # Add each finding as a section
+    for idx, issue in enumerate(review_issues, 1):
         file_path = issue.file
         line_start = issue.line_start
         line_end = issue.line_end
@@ -42,8 +83,7 @@ async def create_review_tracking_issues(
         body = issue.body
         reviewer = issue.reviewer
 
-        # Map priority to beads priority string (P2, P3, etc.)
-        priority_str = f"P{priority}" if priority is not None else "P3"
+        finding_priority = f"P{priority}" if priority is not None else "P3"
 
         # Build location string
         if line_start == line_end or line_end == 0:
@@ -51,55 +91,34 @@ async def create_review_tracking_issues(
         else:
             location = f"{file_path}:{line_start}-{line_end}" if file_path else ""
 
-        # Build dedup tag from content hash to prevent duplicate issues
-        # Hash key: file + line + title (not body, which may vary)
-        hash_key = f"{file_path}:{line_start}:{line_end}:{title}"
-        content_hash = hashlib.sha256(hash_key.encode()).hexdigest()[:12]
-        dedup_tag = f"review_finding:{content_hash}"
-
-        # Check for existing issue with this dedup tag
-        existing_id = await beads.find_issue_by_tag_async(dedup_tag)
-        if existing_id:
-            # Already exists, skip creation
-            continue
-
-        # Build issue title with location
-        issue_title = f"[Review] {title}"
-        if location:
-            issue_title = f"[Review] {location}: {title}"
-
-        # Build description
-        description_parts = [
-            "## Review Finding",
-            "",
-            f"This issue was auto-created from a {priority_str} review finding.",
-            "",
-            f"**Source issue:** {source_issue_id}",
-            f"**Reviewer:** {reviewer}",
-        ]
+        description_parts.append(f"### Finding {idx}: {title}")
+        description_parts.append("")
+        description_parts.append(f"**Priority:** {finding_priority}")
+        description_parts.append(f"**Reviewer:** {reviewer}")
         if location:
             description_parts.append(f"**Location:** {location}")
         if body:
-            description_parts.extend(["", "## Details", "", body])
+            description_parts.extend(["", body])
+        description_parts.extend(["", "---", ""])
 
-        description = "\n".join(description_parts)
+    description = "\n".join(description_parts)
 
-        # Tags for tracking and deduplication
-        tags = [
-            "auto_generated",
-            "review_finding",
-            f"source:{source_issue_id}",
-            dedup_tag,
-        ]
+    # Tags for tracking and deduplication
+    tags = [
+        "auto_generated",
+        "review_finding",
+        f"source:{source_issue_id}",
+        dedup_tag,
+    ]
 
-        new_issue_id = await beads.create_issue_async(
-            title=issue_title,
-            description=description,
-            priority=priority_str,
-            tags=tags,
+    new_issue_id = await beads.create_issue_async(
+        title=issue_title,
+        description=description,
+        priority=priority_str,
+        tags=tags,
+    )
+    if new_issue_id:
+        event_sink.on_warning(
+            f"Created tracking issue {new_issue_id} for {issue_count} {priority_str}+ review finding{'s' if issue_count > 1 else ''}",
+            agent_id=source_issue_id,
         )
-        if new_issue_id:
-            event_sink.on_warning(
-                f"Created tracking issue {new_issue_id} for {priority_str} review finding",
-                agent_id=source_issue_id,
-            )
