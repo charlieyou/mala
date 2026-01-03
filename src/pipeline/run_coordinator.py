@@ -243,6 +243,7 @@ class RunCoordinator:
         # Create validation runner
         runner = SpecValidationRunner(
             self.config.repo_path,
+            event_sink=self.event_sink,
         )
 
         # Retry loop with fixer agent
