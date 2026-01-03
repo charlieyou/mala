@@ -1,5 +1,7 @@
 ## Run-Level Validation Failed (Attempt {attempt}/{max_attempts})
 
+**Token Efficiency:** Use `read_range` ≤120 lines. No narration ("Let me..."). No git archaeology. No whole-file summaries. Fix directly.
+
 The run-level validation (Gate 4) found issues that need to be fixed:
 
 {failure_output}

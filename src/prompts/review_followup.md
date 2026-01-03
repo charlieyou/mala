@@ -1,5 +1,7 @@
 ## External Review Failed (Attempt {attempt}/{max_attempts})
 
+**Token Efficiency:** Use `read_range` ≤120 lines. No narration ("Let me..."). No git archaeology. No whole-file summaries. Fix directly.
+
 The external reviewers found the following issues:
 
 {review_issues}

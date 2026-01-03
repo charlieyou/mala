@@ -1,5 +1,7 @@
 ## Quality Gate Failed (Attempt {attempt}/{max_attempts})
 
+**Token Efficiency:** Use `read_range` ≤120 lines. No narration ("Let me..."). No git archaeology. No whole-file summaries. Fix directly.
+
 The quality gate check failed with the following issues:
 {failure_reasons}
 

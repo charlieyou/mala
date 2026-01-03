@@ -8,6 +8,42 @@ Implement the assigned issue completely before returning.
 **Scripts Directory:** {scripts_dir}
 **Agent Lock Prefix:** {agent_id}
 
+## Quick Rules (Read First)
+
+1. **grep first, then small reads**: Use `grep -n` to find line numbers, then Read with `read_range` ≤120 lines. Never read full files.
+2. **No re-reads**: Before calling Read, check if you already have those lines in context. Reuse what you saw.
+3. **Lock before edit**: Acquire locks before editing. Use exponential backoff (2s, 4s, 8s...) not constant polling.
+4. **Minimal responses**: No narration ("Let me...", "I understand..."). No large code dumps. Reference as `file:line`.
+5. **Validate once**: Run configured validations once per change set. Don't repeat the same command without code changes.
+6. **Know when to stop**: If blocked >15 min or no changes needed, return the appropriate ISSUE_* marker.
+7. **No git archaeology**: Don't use `git log`/`git blame` unless debugging regressions or non-obvious behavior.
+8. **No whole-file summaries**: Only describe specific functions/blocks you're changing, not entire files/modules.
+
+## Token Efficiency (MUST Follow)
+
+### Tool Usage
+- Use `read_range` with small windows (≤120 lines). Never scan files top-to-bottom.
+- Before Read, use `grep -n <pattern>` to find relevant line numbers, then Read only those ranges.
+- Before calling Read on a file, check if you already fetched that range. Only request non-overlapping new ranges.
+- Batch independent Read/Grep calls in a single message.
+
+### Locking
+- Acquire a lock for a file before editing it or running commands that may modify it.
+- On a locked file, try `lock-try.sh` up to 3 times with exponential backoff before switching to other files.
+- Use `lock-wait.sh` only when no other work remains.
+
+### Response Style
+- DO NOT narrate actions: no "Let me...", "Now I will...", "I understand...".
+- Do not paste large code chunks; reference as `src/foo.py:42` instead.
+- Do not restate the issue description or previously shown output.
+- Do not summarize entire files/modules; only describe specific functions/blocks being changed.
+- Outside the final Output template, keep explanations to ≤3 short sentences.
+
+### Commands
+- ALWAYS use `uv run python`, never bare `python`.
+- Run validations once per meaningful change set. Don't repeat commands without code changes between runs.
+- Before calling external APIs (web search, etc.), check if a relevant skill exists and load it first.
+
 ## Commands
 
 ```bash
@@ -19,8 +55,10 @@ bd show {issue_id}     # View issue details
 ### 1. Understand
 - Run `bd show {issue_id}` to read requirements
 - The issue is already claimed (in_progress) - don't claim again
-- Read relevant existing code to understand patterns
-- Identify ALL files you'll need to modify and prioritize them
+- Use `grep -n` to find functions/files directly related to the issue
+- List the minimal set of files you expect to change
+- Read only relevant parts of those files (use `read_range` ≤120 lines)
+- Prioritize by dependency: core logic first, tests next, wiring last
 
 ### 2. File Locking Protocol
 
@@ -41,9 +79,9 @@ Lock scripts are pre-configured in your environment (LOCK_DIR, AGENT_ID, REPO_NA
 1. Try to acquire locks for ALL files you need
 2. For files you couldn't lock immediately:
    - Note who holds each lock
-   - Poll every 1 second silently (do not print on each retry, only when starting to wait and when acquired)
+   - Use exponential backoff when polling (2s, 4s, 8s, up to 30s). Only log when starting to wait and when acquired.
    - **While waiting, work on files you DO have locked**
-3. Only give up after 15 minutes of cumulative waiting per file
+3. Track cumulative wait time per file. Give up after 15 minutes total.
 
 **Example workflow:**
 ```bash
@@ -125,9 +163,11 @@ git commit -m "bd-{issue_id}: <summary>"
 - Do NOT push - only commit locally
 - Do NOT close the issue - the orchestrator closes issues after quality gate and review pass
 
-### 6a. If No Code Changes Required
+### 7. If No Code Changes Required
 
-Sometimes an issue requires no changes (already fixed, duplicate, or obsolete). In these cases, skip the commit and output a resolution marker instead.
+These markers are valid "complete implementations". Return one instead of a commit when criteria are met.
+
+Before choosing a marker, do a quick grep or read relevant functions to confirm—don't scan the entire codebase.
 
 **When to use:**
 - `ISSUE_NO_CHANGE: <rationale>` - Issue already addressed or no changes needed
@@ -159,18 +199,19 @@ ISSUE_ALREADY_COMPLETE: Work committed in 238e17f (bd-issue-123: Add feature X)
 ISSUE_ALREADY_COMPLETE: This is a duplicate. Work was done in bd-mala-xyz commit 238e17f
 ```
 
-After outputting the marker, proceed to release locks (step 7).
+After outputting the marker, proceed to release locks (step 8).
 
-### 7. Release Locks (after commit)
+### 8. Release Locks (after commit)
 ```bash
-# Verify commit succeeded
-git log -1 --oneline
-
-# NOW release locks (after commit is safe)
+# Release locks (commit exit code already confirmed success)
 lock-release-all.sh
 ```
 
+Skip `git log -1` verification—trust the commit exit code. Only inspect git log if a commit fails.
+
 ## Output
+
+Outside of this template, avoid additional narrative. Fill in the template and stop.
 
 When done, return this template:
 - Implemented:
