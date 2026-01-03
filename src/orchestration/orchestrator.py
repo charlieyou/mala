@@ -169,6 +169,8 @@ class MalaOrchestrator:
         self.orphans_only = orch_config.orphans_only
         self.cli_args = orch_config.cli_args
         self.epic_override_ids = orch_config.epic_override_ids or set()
+        self.context_restart_threshold = orch_config.context_restart_threshold
+        self.context_limit = orch_config.context_limit
         self.review_disabled_reason = derived.review_disabled_reason
         self.braintrust_disabled_reason = derived.braintrust_disabled_reason
         self._init_runtime_state()
@@ -259,6 +261,8 @@ class MalaOrchestrator:
             epic_override_ids=self.epic_override_ids,
             prompt_validation_commands=self._prompt_validation_commands,
             prompts=self._prompts,
+            context_restart_threshold=self.context_restart_threshold,
+            context_limit=self.context_limit,
             session_log_paths=self.session_log_paths,
             review_log_paths=self.review_log_paths,
         )

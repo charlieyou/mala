@@ -101,6 +101,8 @@ class WiringDependencies:
     epic_override_ids: set[str]
     prompt_validation_commands: PromptValidationCommands
     prompts: DomainPromptProvider
+    context_restart_threshold: float
+    context_limit: int
     # Mutable state references (shared with orchestrator)
     session_log_paths: dict[str, Path]
     review_log_paths: dict[str, str]
@@ -278,4 +280,6 @@ def build_session_config(
         review_enabled=review_enabled,
         lint_tools=None,  # Set at run start
         prompt_validation_commands=deps.prompt_validation_commands,
+        context_restart_threshold=deps.context_restart_threshold,
+        context_limit=deps.context_limit,
     )
