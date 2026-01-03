@@ -5,6 +5,7 @@ This module centralizes prompt file loading to avoid duplication across modules.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -119,6 +120,32 @@ def load_prompt(name: str) -> str:
     """
     prompt_dir = Path(__file__).parent.parent / "prompts"
     return (prompt_dir / f"{name}.md").read_text()
+
+
+def extract_checkpoint(text: str) -> str:
+    """Extract checkpoint block from agent response text.
+
+    Looks for content between <checkpoint> and </checkpoint> tags.
+    Handles markdown code block wrappers (```xml, ```markdown, etc.).
+    Returns full text as fallback if no tags found.
+
+    Args:
+        text: Raw agent response text.
+
+    Returns:
+        Extracted checkpoint content, or full text if no tags found.
+    """
+    # Strip markdown code block wrappers if present
+    stripped = re.sub(r"^\s*```\w*\s*", "", text)
+    stripped = re.sub(r"\s*```\s*$", "", stripped)
+
+    # Extract content between checkpoint tags (outermost match)
+    match = re.search(r"<checkpoint>(.*)</checkpoint>", stripped, re.DOTALL)
+    if match:
+        return match.group(1)
+
+    # Fallback: return full original text
+    return text
 
 
 def build_continuation_prompt(checkpoint_text: str) -> str:

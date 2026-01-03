@@ -13,6 +13,7 @@ from src.domain.prompts import (
     PromptProvider,
     build_continuation_prompt,
     build_prompt_validation_commands,
+    extract_checkpoint,
     load_prompt,
     load_prompts,
 )
@@ -94,6 +95,85 @@ Complete the feature implementation.
         assert checkpoint in result
         assert "{checkpoint}" not in result
         assert "continuation" in result.lower()
+
+
+class TestExtractCheckpoint:
+    """Tests for extract_checkpoint function."""
+
+    def test_extracts_well_formed_checkpoint(self) -> None:
+        """Extracts content between checkpoint tags."""
+        text = "<checkpoint>some content</checkpoint>"
+        assert extract_checkpoint(text) == "some content"
+
+    def test_extracts_multiline_checkpoint(self) -> None:
+        """Extracts multiline content from checkpoint."""
+        text = """<checkpoint>
+## Goal
+Complete feature
+
+## Completed Work
+- Added main.py:10
+</checkpoint>"""
+        result = extract_checkpoint(text)
+        assert "## Goal" in result
+        assert "## Completed Work" in result
+        assert "Added main.py:10" in result
+
+    def test_strips_xml_code_block_wrapper(self) -> None:
+        """Strips ```xml wrapper before extracting checkpoint."""
+        text = """```xml
+<checkpoint>content inside</checkpoint>
+```"""
+        assert extract_checkpoint(text) == "content inside"
+
+    def test_strips_markdown_code_block_wrapper(self) -> None:
+        """Strips ```markdown wrapper before extracting checkpoint."""
+        text = """```markdown
+<checkpoint>wrapped content</checkpoint>
+```"""
+        assert extract_checkpoint(text) == "wrapped content"
+
+    def test_strips_plain_code_block_wrapper(self) -> None:
+        """Strips ``` wrapper without language before extracting checkpoint."""
+        text = """```
+<checkpoint>plain wrapped</checkpoint>
+```"""
+        assert extract_checkpoint(text) == "plain wrapped"
+
+    def test_returns_full_text_when_no_tags(self) -> None:
+        """Returns full text as fallback when no checkpoint tags found."""
+        text = "No checkpoint here, just plain text."
+        assert extract_checkpoint(text) == text
+
+    def test_returns_full_text_for_empty_input(self) -> None:
+        """Returns empty string for empty input."""
+        assert extract_checkpoint("") == ""
+
+    def test_returns_full_text_for_whitespace_only(self) -> None:
+        """Returns whitespace for whitespace-only input."""
+        text = "   \n\t  "
+        assert extract_checkpoint(text) == text
+
+    def test_handles_nested_tags_returns_outermost(self) -> None:
+        """Returns content of outermost checkpoint tags when nested."""
+        text = "<checkpoint>outer <checkpoint>inner</checkpoint> end</checkpoint>"
+        result = extract_checkpoint(text)
+        assert result == "outer <checkpoint>inner</checkpoint> end"
+
+    def test_preserves_whitespace_inside_checkpoint(self) -> None:
+        """Preserves leading/trailing whitespace inside checkpoint content."""
+        text = "<checkpoint>  spaced content  </checkpoint>"
+        assert extract_checkpoint(text) == "  spaced content  "
+
+    def test_handles_malformed_opening_tag_only(self) -> None:
+        """Returns full text if only opening tag present."""
+        text = "<checkpoint>unclosed content"
+        assert extract_checkpoint(text) == text
+
+    def test_handles_malformed_closing_tag_only(self) -> None:
+        """Returns full text if only closing tag present."""
+        text = "content without opening</checkpoint>"
+        assert extract_checkpoint(text) == text
 
 
 class TestBuildPromptValidationCommands:
