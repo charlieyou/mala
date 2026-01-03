@@ -308,15 +308,29 @@ def is_locked(filepath: str, repo_namespace: str | None = None) -> bool:
     return lock_path(filepath, repo_namespace).exists()
 
 
-def release_lock(filepath: str, repo_namespace: str | None = None) -> None:
+def release_lock(
+    filepath: str, agent_id: str, repo_namespace: str | None = None
+) -> bool:
     """Release a lock on a file.
+
+    Only releases the lock if it is held by the specified agent_id.
+    This prevents accidental or malicious release of locks held by
+    other agents.
 
     Args:
         filepath: Path to the file to unlock.
+        agent_id: Identifier of the agent releasing the lock.
         repo_namespace: Optional repo namespace for cross-repo disambiguation.
+
+    Returns:
+        True if lock was released, False if lock was not held by agent_id.
     """
+    holder = get_lock_holder(filepath, repo_namespace)
+    if holder != agent_id:
+        return False
     lp = lock_path(filepath, repo_namespace)
     lp.unlink(missing_ok=True)
+    return True
 
 
 def get_lock_holder(filepath: str, repo_namespace: str | None = None) -> str | None:

@@ -426,10 +426,12 @@ class _FallbackLockAdapter:
             poll_interval_ms,
         )
 
-    def release_lock(self, filepath: str, repo_namespace: str | None = None) -> None:
+    def release_lock(
+        self, filepath: str, agent_id: str, repo_namespace: str | None = None
+    ) -> bool:
         from src.infra.tools.locking import release_lock as _release_lock
 
-        _release_lock(filepath, repo_namespace)
+        return _release_lock(filepath, agent_id, repo_namespace)
 
 
 # Singleton instance of the fallback adapter
@@ -600,7 +602,7 @@ class BaselineCoverageService:
             return self._run_refresh(spec, baseline_path)
         finally:
             # Release lock through the abstraction
-            lock_mgr.release_lock(_BASELINE_LOCK_FILE, repo_namespace)
+            lock_mgr.release_lock(_BASELINE_LOCK_FILE, agent_id, repo_namespace)
 
     def _run_refresh(
         self,

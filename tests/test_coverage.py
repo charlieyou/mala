@@ -1139,7 +1139,9 @@ class TestBaselineCoverageService:
 
         mock_runner = make_mock_runner(mock_run)
         service = BaselineCoverageService(
-            repo_path=tmp_path, coverage_config=config, command_runner=mock_runner
+            repo_path=tmp_path,
+            coverage_config=config,
+            command_runner=mock_runner,
         )
 
         # Mock spec
@@ -1150,3 +1152,194 @@ class TestBaselineCoverageService:
         # Should return existing baseline without refresh
         assert result.success is True
         assert result.percent == 90.0
+
+    def test_injected_lock_manager_try_lock_called(self, tmp_path: Path) -> None:
+        """When lock_manager is injected, it should be used for locking."""
+        from unittest.mock import MagicMock
+
+        # Create stale baseline (old mtime)
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+        old_time = 1000000000  # Year 2001
+        os.utime(report, (old_time, old_time))
+
+        # Create config with command
+        config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=85.0,
+            command="uv run pytest --cov",
+        )
+
+        # Mock git commands to indicate stale repo
+        def mock_run(args: list[str], **kwargs: object) -> CommandResult:
+            if "status" in args:
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
+            elif "log" in args:
+                # Recent commit time (after baseline)
+                return CommandResult(
+                    command=args, returncode=0, stdout="2000000000\n", stderr=""
+                )
+            return CommandResult(command=args, returncode=0, stdout="", stderr="")
+
+        mock_runner = make_mock_runner(mock_run)
+
+        # Create mock lock manager
+        mock_lock_manager = MagicMock()
+        mock_lock_manager.try_lock.return_value = False  # Force wait path
+        mock_lock_manager.wait_for_lock.return_value = False  # Timeout
+
+        service = BaselineCoverageService(
+            repo_path=tmp_path,
+            coverage_config=config,
+            command_runner=mock_runner,
+            lock_manager=mock_lock_manager,
+        )
+
+        mock_spec = MagicMock()
+        result = service.refresh_if_stale(mock_spec)
+
+        # Should fail with timeout since wait_for_lock returned False
+        assert result.success is False
+        assert "Timeout" in (result.error or "")
+
+        # Verify lock manager was called
+        assert mock_lock_manager.try_lock.called
+        assert mock_lock_manager.wait_for_lock.called
+
+    def test_injected_lock_manager_release_called_on_success(
+        self, tmp_path: Path
+    ) -> None:
+        """When lock is acquired, release_lock should be called with agent_id."""
+        from unittest.mock import MagicMock
+
+        # Create stale baseline (old mtime, recent commit means stale)
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+        old_time = 1000000000
+        os.utime(report, (old_time, old_time))
+
+        config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=85.0,
+            command="uv run pytest --cov",
+        )
+
+        # Mock git: stale first check, then fresh after lock (double-check pattern)
+        call_count = {"log": 0, "is_stale_check": 0}
+
+        def mock_run(args: list[str], **kwargs: object) -> CommandResult:
+            if "status" in args:
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
+            elif "log" in args:
+                call_count["log"] += 1
+                call_count["is_stale_check"] += 1
+                if call_count["is_stale_check"] == 1:
+                    # First check: stale (commit after baseline mtime)
+                    return CommandResult(
+                        command=args, returncode=0, stdout="2000000000\n", stderr=""
+                    )
+                else:
+                    # After lock: fresh (commit before new baseline mtime)
+                    # The baseline file gets updated mtime dynamically
+                    return CommandResult(
+                        command=args, returncode=0, stdout="500000000\n", stderr=""
+                    )
+            return CommandResult(command=args, returncode=0, stdout="", stderr="")
+
+        mock_runner = make_mock_runner(mock_run)
+
+        # Create mock lock manager that succeeds - updates baseline before second check
+        mock_lock_manager = MagicMock()
+
+        def try_lock_side_effect(*args: object, **kwargs: object) -> bool:
+            # After acquiring lock, update baseline to be fresh
+            future_time = 4102444800
+            os.utime(report, (future_time, future_time))
+            return True
+
+        mock_lock_manager.try_lock.side_effect = try_lock_side_effect
+        mock_lock_manager.release_lock.return_value = True
+
+        service = BaselineCoverageService(
+            repo_path=tmp_path,
+            coverage_config=config,
+            command_runner=mock_runner,
+            lock_manager=mock_lock_manager,
+        )
+
+        mock_spec = MagicMock()
+        result = service.refresh_if_stale(mock_spec)
+
+        # Should succeed with cached baseline
+        assert result.success is True
+        assert result.percent == 90.0
+
+        # Verify release_lock was called with agent_id
+        assert mock_lock_manager.release_lock.called
+        release_call = mock_lock_manager.release_lock.call_args
+        # release_lock(filepath, agent_id, repo_namespace)
+        assert release_call[0][0] == "coverage-baseline.lock"  # filepath
+        assert "baseline-refresh-" in release_call[0][1]  # agent_id contains prefix
+        assert release_call[0][2] == str(tmp_path)  # repo_namespace
+
+    def test_injected_lock_manager_release_called_on_error(
+        self, tmp_path: Path
+    ) -> None:
+        """release_lock should be called even when refresh fails."""
+        from unittest.mock import MagicMock
+
+        # Create stale baseline
+        report = tmp_path / "coverage.xml"
+        report.write_text(VALID_COVERAGE_XML_90_PERCENT)
+        old_time = 1000000000
+        os.utime(report, (old_time, old_time))
+
+        config = YamlCoverageConfig(
+            format="xml",
+            file="coverage.xml",
+            threshold=85.0,
+            command="uv run pytest --cov",
+        )
+
+        # Mock git: always stale, worktree creation will fail
+        def mock_run(args: list[str], **kwargs: object) -> CommandResult:
+            if "status" in args:
+                return CommandResult(command=args, returncode=0, stdout="", stderr="")
+            elif "log" in args:
+                return CommandResult(
+                    command=args, returncode=0, stdout="2000000000\n", stderr=""
+                )
+            elif "worktree" in args:
+                return CommandResult(
+                    command=args, returncode=1, stdout="", stderr="worktree failed"
+                )
+            return CommandResult(command=args, returncode=0, stdout="", stderr="")
+
+        mock_runner = make_mock_runner(mock_run)
+
+        mock_lock_manager = MagicMock()
+        mock_lock_manager.try_lock.return_value = True
+        mock_lock_manager.release_lock.return_value = True
+
+        service = BaselineCoverageService(
+            repo_path=tmp_path,
+            coverage_config=config,
+            command_runner=mock_runner,
+            lock_manager=mock_lock_manager,
+        )
+
+        mock_spec = MagicMock()
+        result = service.refresh_if_stale(mock_spec)
+
+        # Should fail (worktree creation failed)
+        assert result.success is False
+
+        # But release_lock should still be called (finally block)
+        assert mock_lock_manager.release_lock.called
+        release_call = mock_lock_manager.release_lock.call_args
+        # release_lock(filepath, agent_id, repo_namespace)
+        assert release_call[0][0] == "coverage-baseline.lock"  # filepath
+        assert "baseline-refresh-" in release_call[0][1]  # agent_id contains prefix
+        assert release_call[0][2] == str(tmp_path)  # repo_namespace
