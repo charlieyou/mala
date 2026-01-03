@@ -548,6 +548,10 @@ def baseline_worktree(
         }
 
         # Create runner for worktree context
+        # NOTE: When an injected command_runner is provided, we use it as-is
+        # with its original timeout configuration. This is intentional: callers
+        # injecting a runner (typically tests) are responsible for its setup.
+        # The `timeout` parameter only applies when creating a new CommandRunner.
         if command_runner is not None:
             runner = command_runner
         else:
