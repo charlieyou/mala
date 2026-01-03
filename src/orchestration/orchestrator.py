@@ -265,6 +265,8 @@ class MalaOrchestrator:
             context_limit=self.context_limit,
             session_log_paths=self.session_log_paths,
             review_log_paths=self.review_log_paths,
+            # T004 will wire actual DeadlockMonitor here
+            deadlock_monitor=None,
         )
 
     def _build_issue_finalizer(self) -> IssueFinalizer:

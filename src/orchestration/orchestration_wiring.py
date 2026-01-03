@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from src.infra.epic_verifier import EpicVerificationResult
     from src.infra.io.config import MalaConfig
     from src.core.protocols import MalaEventSink
+    from src.domain.deadlock import DeadlockMonitor
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.issue_result import IssueResult
 
@@ -106,6 +107,8 @@ class WiringDependencies:
     # Mutable state references (shared with orchestrator)
     session_log_paths: dict[str, Path]
     review_log_paths: dict[str, str]
+    # Deadlock detection (None until T004 wires DeadlockMonitor into orchestrator)
+    deadlock_monitor: DeadlockMonitor | None = None
 
 
 def build_gate_runner(deps: WiringDependencies) -> tuple[GateRunner, AsyncGateRunner]:
