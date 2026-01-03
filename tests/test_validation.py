@@ -25,13 +25,15 @@ from src.domain.validation import (
     ValidationScope,
     ValidationSpec,
     ValidationStepResult,
-    check_e2e_prereqs,
     format_step_output,
     tail,
 )
+from src.domain.validation.helpers import check_e2e_prereqs
 from src.domain.validation.spec_runner import CommandFailure, SpecValidationRunner
 from src.domain.validation.coverage import BaselineCoverageService
 from src.domain.validation.worktree import WorktreeContext, WorktreeState
+from src.infra.tools.command_runner import CommandRunner
+from src.infra.tools.env import EnvConfig
 
 if TYPE_CHECKING:
     from src.domain.validation.spec_executor import ExecutorConfig
@@ -60,6 +62,16 @@ def mock_popen_timeout() -> MagicMock:
     mock_proc.pid = 12345
     mock_proc.returncode = None
     return mock_proc
+
+
+def make_mock_lock_manager() -> MagicMock:
+    """Create a mock LockManagerPort."""
+    mock = MagicMock()
+    mock.lock_path.return_value = Path("/tmp/mock-lock")
+    mock.try_lock.return_value = True
+    mock.wait_for_lock.return_value = True
+    mock.release_lock.return_value = True
+    return mock
 
 
 class TestValidationStepResult:
@@ -232,7 +244,16 @@ class TestSpecValidationRunner:
     @pytest.fixture
     def runner(self, tmp_path: Path) -> SpecValidationRunner:
         """Create a spec runner with lint caching disabled for tests."""
-        return SpecValidationRunner(tmp_path, enable_lint_cache=False)
+        env_config = EnvConfig()
+        command_runner = CommandRunner(cwd=tmp_path)
+        lock_manager = make_mock_lock_manager()
+        return SpecValidationRunner(
+            tmp_path,
+            env_config=env_config,
+            command_runner=command_runner,
+            lock_manager=lock_manager,
+            enable_lint_cache=False,
+        )
 
     @pytest.fixture
     def basic_spec(self) -> ValidationSpec:
@@ -792,7 +813,15 @@ class TestSpecValidationRunner:
         mock_worktree_ctx.path = tmp_path / "worktree"
         mock_worktree_ctx.path.mkdir()
 
-        runner = SpecValidationRunner(repo_path)
+        env_config = EnvConfig()
+        command_runner = CommandRunner(cwd=repo_path)
+        lock_manager = make_mock_lock_manager()
+        runner = SpecValidationRunner(
+            repo_path,
+            env_config=env_config,
+            command_runner=command_runner,
+            lock_manager=lock_manager,
+        )
 
         context = ValidationContext(
             issue_id="test-123",
@@ -843,7 +872,15 @@ class TestSpecValidationRunner:
         mock_worktree_ctx.state = WorktreeState.FAILED
         mock_worktree_ctx.error = "git worktree add failed"
 
-        runner = SpecValidationRunner(tmp_path)
+        env_config = EnvConfig()
+        command_runner = CommandRunner(cwd=tmp_path)
+        lock_manager = make_mock_lock_manager()
+        runner = SpecValidationRunner(
+            tmp_path,
+            env_config=env_config,
+            command_runner=command_runner,
+            lock_manager=lock_manager,
+        )
 
         context = ValidationContext(
             issue_id="test-123",
@@ -907,7 +944,15 @@ class TestSpecValidationRunner:
 
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
-        runner = SpecValidationRunner(repo_path)
+        env_config = EnvConfig()
+        command_runner = CommandRunner(cwd=repo_path)
+        lock_manager = make_mock_lock_manager()
+        runner = SpecValidationRunner(
+            repo_path,
+            env_config=env_config,
+            command_runner=command_runner,
+            lock_manager=lock_manager,
+        )
 
         context = ValidationContext(
             issue_id="test-123",
@@ -977,7 +1022,15 @@ class TestSpecValidationRunner:
 
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
-        runner = SpecValidationRunner(repo_path)
+        env_config = EnvConfig()
+        command_runner = CommandRunner(cwd=repo_path)
+        lock_manager = make_mock_lock_manager()
+        runner = SpecValidationRunner(
+            repo_path,
+            env_config=env_config,
+            command_runner=command_runner,
+            lock_manager=lock_manager,
+        )
 
         context = ValidationContext(
             issue_id="test-123",
@@ -1045,7 +1098,15 @@ class TestSpecRunnerNoDecreaseMode:
     @pytest.fixture
     def runner(self, tmp_path: Path) -> SpecValidationRunner:
         """Create a spec runner for coverage tests."""
-        return SpecValidationRunner(tmp_path)
+        env_config = EnvConfig()
+        command_runner = CommandRunner(cwd=tmp_path)
+        lock_manager = make_mock_lock_manager()
+        return SpecValidationRunner(
+            tmp_path,
+            env_config=env_config,
+            command_runner=command_runner,
+            lock_manager=lock_manager,
+        )
 
     def test_no_decrease_mode_uses_baseline_when_fresh(
         self, runner: SpecValidationRunner, tmp_path: Path
@@ -1197,6 +1258,7 @@ class TestSpecRunnerNoDecreaseMode:
         ):
             # Execute validation with the pre-captured baseline (90%)
             # The worktree has 70% coverage, which is below baseline
+            mock_cmd_runner = CommandRunner(cwd=tmp_path)
             result = runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
@@ -1205,7 +1267,7 @@ class TestSpecRunnerNoDecreaseMode:
                 log_dir=tmp_path,
                 run_id="test",
                 baseline_percent=90.0,  # Pass baseline explicitly
-                command_runner=None,
+                command_runner=mock_cmd_runner,
             )
 
             # Validation should FAIL because:
@@ -1289,6 +1351,7 @@ class TestSpecRunnerNoDecreaseMode:
             ),
         ):
             # Override context to use worktree path for coverage check
+            mock_cmd_runner = CommandRunner(cwd=tmp_path)
             result = runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
@@ -1297,7 +1360,7 @@ class TestSpecRunnerNoDecreaseMode:
                 log_dir=tmp_path,
                 run_id="test",
                 baseline_percent=90.0,  # Pass baseline explicitly
-                command_runner=None,
+                command_runner=mock_cmd_runner,
             )
             # Should fail because 70% < 90% baseline
             assert result.passed is False
@@ -1345,6 +1408,7 @@ class TestSpecRunnerNoDecreaseMode:
             "src.infra.tools.command_runner.subprocess.Popen",
             return_value=mock_proc,
         ):
+            mock_cmd_runner = CommandRunner(cwd=tmp_path)
             result = runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
@@ -1353,7 +1417,7 @@ class TestSpecRunnerNoDecreaseMode:
                 log_dir=tmp_path,
                 run_id="test",
                 baseline_percent=80.0,  # Lower baseline
-                command_runner=None,
+                command_runner=mock_cmd_runner,
             )
             # Should pass because 95% > 80% baseline
             assert result.passed is True
@@ -1404,6 +1468,7 @@ class TestSpecRunnerNoDecreaseMode:
             "src.infra.tools.command_runner.subprocess.Popen",
             return_value=mock_proc,
         ):
+            mock_cmd_runner = CommandRunner(cwd=tmp_path)
             result = runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
@@ -1412,7 +1477,7 @@ class TestSpecRunnerNoDecreaseMode:
                 log_dir=tmp_path,
                 run_id="test",
                 baseline_percent=90.0,  # This should be ignored
-                command_runner=None,
+                command_runner=mock_cmd_runner,
             )
             # Should pass because 75% >= 70% (explicit threshold used, not baseline)
             assert result.passed is True
@@ -1440,7 +1505,16 @@ class TestSpecRunnerBaselineRefresh:
             threshold=0.0,
             command="uv run pytest --cov=src --cov-report=xml",
         )
-        return BaselineCoverageService(tmp_path, coverage_config=coverage_config)
+        env_config = EnvConfig()
+        command_runner = CommandRunner(cwd=tmp_path)
+        lock_manager = make_mock_lock_manager()
+        return BaselineCoverageService(
+            tmp_path,
+            coverage_config=coverage_config,
+            env_config=env_config,
+            command_runner=command_runner,
+            lock_manager=lock_manager,
+        )
 
     def test_baseline_refresh_when_missing(
         self, service: BaselineCoverageService, tmp_path: Path
@@ -1514,9 +1588,11 @@ class TestSpecRunnerBaselineRefresh:
         assert baseline_path.exists()
 
     def test_baseline_refresh_generates_xml_from_coverage_data(
-        self, service: BaselineCoverageService, tmp_path: Path
+        self, tmp_path: Path
     ) -> None:
         """Fallback should generate coverage.xml when only coverage data exists."""
+        from src.domain.validation.config import YamlCoverageConfig
+
         spec = ValidationSpec(
             commands=[
                 ValidationCommand(
@@ -1557,8 +1633,9 @@ class TestSpecRunnerBaselineRefresh:
                 cwd: Path | None = None,
             ) -> CommandResult:
                 commands.append(cmd)
+                effective_cwd = cwd or self.cwd
                 if "coverage" in cmd and "xml" in cmd:
-                    (self.cwd / "coverage.xml").write_text(
+                    (effective_cwd / "coverage.xml").write_text(
                         '<?xml version="1.0"?>\n'
                         '<coverage line-rate="0.90" branch-rate="0.85" />'
                     )
@@ -1588,6 +1665,23 @@ class TestSpecRunnerBaselineRefresh:
             ),
             patch("src.infra.tools.locking.try_lock", return_value=True),
         ):
+            # Create service inside patch block so FakeRunner is used
+            coverage_config = YamlCoverageConfig(
+                format="xml",
+                file="coverage.xml",
+                threshold=0.0,
+                command="uv run pytest --cov=src --cov-report=xml",
+            )
+            env_config = EnvConfig()
+            command_runner = FakeRunner(cwd=tmp_path)
+            lock_manager = make_mock_lock_manager()
+            service = BaselineCoverageService(
+                tmp_path,
+                coverage_config=coverage_config,
+                env_config=env_config,
+                command_runner=command_runner,  # type: ignore[arg-type]
+                lock_manager=lock_manager,
+            )
             result = service.refresh_if_stale(spec)
 
         assert result.success
@@ -1654,10 +1748,10 @@ class TestSpecRunnerBaselineRefresh:
         assert result.percent == 88.0
         assert not worktree_created
 
-    def test_baseline_refresh_with_lock_contention(
-        self, service: BaselineCoverageService, tmp_path: Path
-    ) -> None:
+    def test_baseline_refresh_with_lock_contention(self, tmp_path: Path) -> None:
         """When another agent holds the lock, wait and use their refreshed baseline."""
+        from src.domain.validation.config import YamlCoverageConfig
+
         spec = ValidationSpec(
             commands=[
                 ValidationCommand(
@@ -1712,19 +1806,37 @@ class TestSpecRunnerBaselineRefresh:
                 )
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
+        # Create mock command runner
+        mock_cmd_runner = MagicMock()
+        mock_cmd_runner.run.side_effect = mock_git_run_fresh
+
+        # Create lock manager with try_lock returning False (lock held by other)
+        # and wait_for_lock triggering baseline creation
+        lock_manager = make_mock_lock_manager()
+        lock_manager.try_lock.return_value = False
+        lock_manager.wait_for_lock.side_effect = mock_wait_for_lock
+
         with (
-            patch(
-                "src.infra.tools.locking.try_lock", return_value=False
-            ),  # Lock held by other
-            patch(
-                "src.infra.tools.locking.wait_for_lock",
-                side_effect=mock_wait_for_lock,
-            ),
             patch(
                 "src.domain.validation.coverage.is_baseline_stale",
                 return_value=False,
             ),
         ):
+            # Create service with mock command runner
+            coverage_config = YamlCoverageConfig(
+                format="xml",
+                file="coverage.xml",
+                threshold=0.0,
+                command="uv run pytest --cov=src --cov-report=xml",
+            )
+            env_config = EnvConfig()
+            service = BaselineCoverageService(
+                tmp_path,
+                coverage_config=coverage_config,
+                env_config=env_config,
+                command_runner=mock_cmd_runner,
+                lock_manager=lock_manager,
+            )
             result = service.refresh_if_stale(spec)
 
         # Should use the baseline created by the other agent
@@ -1946,7 +2058,16 @@ class TestSpecRunnerBaselineRefresh:
             threshold=0.0,
             command="uv run pytest --cov=src --cov-report=xml",  # Default path
         )
-        service = BaselineCoverageService(tmp_path, coverage_config=coverage_config)
+        env_config = EnvConfig()
+        command_runner = CommandRunner(cwd=tmp_path)
+        lock_manager = make_mock_lock_manager()
+        service = BaselineCoverageService(
+            tmp_path,
+            coverage_config=coverage_config,
+            env_config=env_config,
+            command_runner=command_runner,
+            lock_manager=lock_manager,
+        )
 
         # Create the reports directory in the main repo (for atomic copy destination)
         (tmp_path / "reports").mkdir()
@@ -2058,7 +2179,16 @@ class TestSpecRunnerBaselineRefresh:
             threshold=0.0,
             command="uv run pytest --cov=src --cov-report=xml:old.xml",  # Different path
         )
-        service = BaselineCoverageService(tmp_path, coverage_config=coverage_config)
+        env_config = EnvConfig()
+        command_runner = CommandRunner(cwd=tmp_path)
+        lock_manager = make_mock_lock_manager()
+        service = BaselineCoverageService(
+            tmp_path,
+            coverage_config=coverage_config,
+            env_config=env_config,
+            command_runner=command_runner,
+            lock_manager=lock_manager,
+        )
 
         # Create the reports directory in the main repo (for atomic copy destination)
         (tmp_path / "reports").mkdir()
@@ -2161,7 +2291,15 @@ class TestBaselineCaptureOrder:
     @pytest.fixture
     def runner(self, tmp_path: Path) -> SpecValidationRunner:
         """Create a spec runner for baseline tests."""
-        return SpecValidationRunner(tmp_path)
+        env_config = EnvConfig()
+        command_runner = CommandRunner(cwd=tmp_path)
+        lock_manager = make_mock_lock_manager()
+        return SpecValidationRunner(
+            tmp_path,
+            env_config=env_config,
+            command_runner=command_runner,
+            lock_manager=lock_manager,
+        )
 
     def test_baseline_captured_before_worktree_creation(
         self, runner: SpecValidationRunner, tmp_path: Path
@@ -2365,6 +2503,7 @@ class TestBaselineCaptureOrder:
         ):
             # Execute validation with the pre-captured baseline (90%)
             # The worktree has 70% coverage, which is below baseline
+            mock_cmd_runner = CommandRunner(cwd=tmp_path)
             result = runner._run_validation_pipeline(
                 spec=spec,
                 context=context,
@@ -2373,7 +2512,7 @@ class TestBaselineCaptureOrder:
                 log_dir=tmp_path,
                 run_id="test",
                 baseline_percent=90.0,  # Pass baseline explicitly
-                command_runner=None,
+                command_runner=mock_cmd_runner,
             )
 
             # Validation should FAIL:
@@ -2413,15 +2552,23 @@ class TestSpecCommandExecutor:
     @pytest.fixture
     def basic_config(self, tmp_path: Path) -> "ExecutorConfig":
         """Create a basic executor config with lint cache disabled."""
+        from pathlib import Path as PathType
+        from unittest.mock import MagicMock
+
         from src.domain.validation.spec_executor import ExecutorConfig
         from src.infra.tools.command_runner import CommandRunner
 
         command_runner = CommandRunner(cwd=tmp_path)
+        mock_env_config = MagicMock()
+        mock_env_config.scripts_dir = PathType("/mock/scripts")
+        mock_env_config.cache_dir = PathType("/mock/cache")
+        mock_env_config.lock_dir = PathType("/tmp/mock-locks")
         return ExecutorConfig(
             enable_lint_cache=False,
             repo_path=tmp_path,
             step_timeout_seconds=None,
             command_runner=command_runner,
+            env_config=mock_env_config,
         )
 
     def test_executor_single_passing_command(
@@ -2674,6 +2821,9 @@ class TestSpecCommandExecutor:
         since the actual git-based cache logic is tested separately in
         test_lint_cache.py.
         """
+        from pathlib import Path as PathType
+        from unittest.mock import MagicMock
+
         from src.domain.validation.spec_executor import (
             ExecutorConfig,
             ExecutorInput,
@@ -2682,11 +2832,16 @@ class TestSpecCommandExecutor:
         from src.infra.tools.command_runner import CommandRunner
 
         command_runner = CommandRunner(cwd=tmp_path)
+        mock_env_config = MagicMock()
+        mock_env_config.scripts_dir = PathType("/mock/scripts")
+        mock_env_config.cache_dir = PathType("/mock/cache")
+        mock_env_config.lock_dir = PathType("/tmp/mock-locks")
         config = ExecutorConfig(
             enable_lint_cache=True,
             repo_path=tmp_path,
             step_timeout_seconds=None,
             command_runner=command_runner,
+            env_config=mock_env_config,
         )
 
         executor = SpecCommandExecutor(config)
@@ -2824,12 +2979,24 @@ class TestSpecResultBuilder:
             )
         ]
 
+    @pytest.fixture
+    def env_config(self) -> EnvConfig:
+        """Create env config for testing."""
+        return EnvConfig()
+
+    @pytest.fixture
+    def command_runner(self, tmp_path: Path) -> CommandRunner:
+        """Create command runner for testing."""
+        return CommandRunner(cwd=tmp_path)
+
     def test_build_success_no_coverage_no_e2e(
         self,
         builder: "SpecResultBuilder",
         basic_artifacts: ValidationArtifacts,
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
+        env_config: EnvConfig,
+        command_runner: CommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() returns success when coverage and E2E are disabled."""
@@ -2851,6 +3018,8 @@ class TestSpecResultBuilder:
             log_dir=tmp_path,
             env={},
             baseline_percent=None,
+            env_config=env_config,
+            command_runner=command_runner,
         )
 
         result = builder.build(input)
@@ -2867,6 +3036,8 @@ class TestSpecResultBuilder:
         basic_artifacts: ValidationArtifacts,
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
+        env_config: EnvConfig,
+        command_runner: CommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() passes when coverage meets threshold."""
@@ -2894,6 +3065,8 @@ class TestSpecResultBuilder:
             log_dir=tmp_path,
             env={},
             baseline_percent=None,
+            env_config=env_config,
+            command_runner=command_runner,
         )
 
         result = builder.build(input)
@@ -2909,6 +3082,8 @@ class TestSpecResultBuilder:
         basic_artifacts: ValidationArtifacts,
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
+        env_config: EnvConfig,
+        command_runner: CommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() fails when coverage is below threshold."""
@@ -2936,6 +3111,8 @@ class TestSpecResultBuilder:
             log_dir=tmp_path,
             env={},
             baseline_percent=None,
+            env_config=env_config,
+            command_runner=command_runner,
         )
 
         result = builder.build(input)
@@ -2951,6 +3128,8 @@ class TestSpecResultBuilder:
         basic_artifacts: ValidationArtifacts,
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
+        env_config: EnvConfig,
+        command_runner: CommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() uses baseline_percent when min_percent is None."""
@@ -2978,6 +3157,8 @@ class TestSpecResultBuilder:
             log_dir=tmp_path,
             env={},
             baseline_percent=90.0,  # Higher than current
+            env_config=env_config,
+            command_runner=command_runner,
         )
 
         result = builder.build(input)
@@ -2995,6 +3176,8 @@ class TestSpecResultBuilder:
         basic_artifacts: ValidationArtifacts,
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
+        env_config: EnvConfig,
+        command_runner: CommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() fails when coverage report is missing."""
@@ -3016,6 +3199,8 @@ class TestSpecResultBuilder:
             log_dir=tmp_path,
             env={},
             baseline_percent=None,
+            env_config=env_config,
+            command_runner=command_runner,
         )
 
         result = builder.build(input)
@@ -3030,6 +3215,8 @@ class TestSpecResultBuilder:
         basic_artifacts: ValidationArtifacts,
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
+        env_config: EnvConfig,
+        command_runner: CommandRunner,
         tmp_path: Path,
     ) -> None:
         """Coverage command failure should fail validation with clear reason."""
@@ -3062,6 +3249,8 @@ class TestSpecResultBuilder:
             env={},
             baseline_percent=None,
             yaml_coverage_config=yaml_coverage_config,
+            env_config=env_config,
+            command_runner=command_runner,
         )
 
         with patch(
@@ -3088,6 +3277,8 @@ class TestSpecResultBuilder:
         basic_artifacts: ValidationArtifacts,
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
+        env_config: EnvConfig,
+        command_runner: CommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() skips E2E for per-issue scope."""
@@ -3109,6 +3300,8 @@ class TestSpecResultBuilder:
             log_dir=tmp_path,
             env={},
             baseline_percent=None,
+            env_config=env_config,
+            command_runner=command_runner,
         )
 
         e2e_called = False
@@ -3130,6 +3323,8 @@ class TestSpecResultBuilder:
         builder: "SpecResultBuilder",
         basic_artifacts: ValidationArtifacts,
         basic_steps: list[ValidationStepResult],
+        env_config: EnvConfig,
+        command_runner: CommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() runs E2E for run-level scope."""
@@ -3166,6 +3361,8 @@ class TestSpecResultBuilder:
             log_dir=tmp_path,
             env={},
             baseline_percent=None,
+            env_config=env_config,
+            command_runner=command_runner,
         )
 
         with patch.object(builder, "_run_e2e", return_value=mock_e2e_result):
@@ -3179,6 +3376,8 @@ class TestSpecResultBuilder:
         builder: "SpecResultBuilder",
         basic_artifacts: ValidationArtifacts,
         basic_steps: list[ValidationStepResult],
+        env_config: EnvConfig,
+        command_runner: CommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() fails when E2E fails."""
@@ -3215,6 +3414,8 @@ class TestSpecResultBuilder:
             log_dir=tmp_path,
             env={},
             baseline_percent=None,
+            env_config=env_config,
+            command_runner=command_runner,
         )
 
         with patch.object(builder, "_run_e2e", return_value=mock_e2e_result):
@@ -3229,6 +3430,8 @@ class TestSpecResultBuilder:
         builder: "SpecResultBuilder",
         basic_artifacts: ValidationArtifacts,
         basic_steps: list[ValidationStepResult],
+        env_config: EnvConfig,
+        command_runner: CommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() passes when E2E is skipped (status=SKIPPED)."""
@@ -3266,6 +3469,8 @@ class TestSpecResultBuilder:
             log_dir=tmp_path,
             env={},
             baseline_percent=None,
+            env_config=env_config,
+            command_runner=command_runner,
         )
 
         with patch.object(builder, "_run_e2e", return_value=mock_e2e_result):
@@ -3280,6 +3485,8 @@ class TestSpecResultBuilder:
         builder: "SpecResultBuilder",
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
+        env_config: EnvConfig,
+        command_runner: CommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() updates artifacts with coverage report path."""
@@ -3309,6 +3516,8 @@ class TestSpecResultBuilder:
             log_dir=tmp_path,
             env={},
             baseline_percent=None,
+            env_config=env_config,
+            command_runner=command_runner,
         )
 
         builder.build(input)

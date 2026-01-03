@@ -246,13 +246,15 @@ def _build_dependencies(
             retry_config=RetryConfig(),
             repo_path=repo_path,
         )
+        from src.infra.tools.locking import LockManager
+
         epic_verifier = EpicVerifier(
             beads=issue_provider,
             model=cast("EpicVerificationModel", verification_model),
             repo_path=repo_path,
             command_runner=command_runner,
             event_sink=event_sink,
-            lock_manager=True,
+            lock_manager=LockManager(),
         )
 
     # Code reviewer

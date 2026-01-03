@@ -1168,10 +1168,10 @@ class TestWipFallbackOnReadyFailure:
         beads = BeadsClient(tmp_path)
 
         async def mock_run_async(cmd: list[str]) -> CommandResult:
-            if cmd == ["bd", "ready", "--json"]:
+            if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 # Simulate bd ready failure
                 return make_command_result(returncode=1, stderr="bd ready failed")
-            if cmd == ["bd", "list", "--status", "in_progress", "--json"]:
+            if cmd == ["bd", "list", "--status", "in_progress", "--json", "-t", "task"]:
                 # Return WIP issues
                 return make_command_result(
                     stdout=json.dumps([{"id": "wip-1", "priority": 1}])
@@ -1195,7 +1195,7 @@ class TestWipFallbackOnReadyFailure:
         beads = BeadsClient(tmp_path)
 
         async def mock_run_async(cmd: list[str]) -> CommandResult:
-            if cmd == ["bd", "ready", "--json"]:
+            if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 # Simulate bd ready failure
                 return make_command_result(returncode=1, stderr="bd ready failed")
             return make_command_result(stdout="[]")

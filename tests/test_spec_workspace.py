@@ -49,6 +49,24 @@ def command_runner(tmp_repo: Path) -> CommandRunner:
 
 
 @pytest.fixture
+def mock_env_config() -> MagicMock:
+    """Create a mock EnvConfigPort for tests."""
+    from pathlib import Path
+
+    mock = MagicMock()
+    mock.scripts_dir = Path("/mock/scripts")
+    mock.cache_dir = Path("/mock/cache")
+    mock.lock_dir = Path("/tmp/mock-locks")
+    return mock
+
+
+@pytest.fixture
+def mock_lock_manager() -> MagicMock:
+    """Create a mock LockManagerPort for tests."""
+    return MagicMock()
+
+
+@pytest.fixture
 def basic_spec() -> ValidationSpec:
     """Create a basic validation spec without coverage or E2E."""
     return ValidationSpec(
@@ -147,6 +165,8 @@ class TestSetupWorkspace:
         basic_spec: ValidationSpec,
         context_in_place: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """setup_workspace should create log directory if not provided."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -157,6 +177,8 @@ class TestSetupWorkspace:
             log_dir=None,
             step_timeout_seconds=None,
             command_runner=command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
         )
 
         # Log dir should be created
@@ -170,6 +192,8 @@ class TestSetupWorkspace:
         basic_spec: ValidationSpec,
         context_in_place: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """setup_workspace should use provided log_dir."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -183,6 +207,8 @@ class TestSetupWorkspace:
             log_dir=log_dir,
             step_timeout_seconds=None,
             command_runner=command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
         )
 
         assert workspace.log_dir == log_dir
@@ -194,6 +220,8 @@ class TestSetupWorkspace:
         basic_spec: ValidationSpec,
         context_in_place: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """setup_workspace should generate a unique run ID."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -204,6 +232,8 @@ class TestSetupWorkspace:
             log_dir=None,
             step_timeout_seconds=None,
             command_runner=command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
         )
         workspace2 = setup_workspace(
             spec=basic_spec,
@@ -211,6 +241,8 @@ class TestSetupWorkspace:
             log_dir=None,
             step_timeout_seconds=None,
             command_runner=command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
         )
 
         assert workspace1.run_id.startswith("run-")
@@ -223,6 +255,8 @@ class TestSetupWorkspace:
         basic_spec: ValidationSpec,
         context_in_place: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """For in-place validation, validation_cwd should be repo_path."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -233,6 +267,8 @@ class TestSetupWorkspace:
             log_dir=None,
             step_timeout_seconds=None,
             command_runner=command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
         )
 
         # No commit hash = validate in place
@@ -245,6 +281,8 @@ class TestSetupWorkspace:
         basic_spec: ValidationSpec,
         context_with_commit: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """For commit-based validation, setup should create a worktree."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -264,6 +302,8 @@ class TestSetupWorkspace:
                 log_dir=None,
                 step_timeout_seconds=None,
                 command_runner=command_runner,
+                env_config=mock_env_config,
+                lock_manager=mock_lock_manager,
             )
 
         assert workspace.worktree_ctx is not None
@@ -279,6 +319,8 @@ class TestSetupWorkspaceBaseline:
         tmp_repo: Path,
         context_in_place: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """When coverage.min_percent is None, setup should refresh baseline."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -332,6 +374,8 @@ class TestSetupWorkspaceBaseline:
                 log_dir=None,
                 step_timeout_seconds=None,
                 command_runner=command_runner,
+                env_config=mock_env_config,
+                lock_manager=mock_lock_manager,
             )
 
         assert workspace.baseline_percent == 85.0
@@ -341,6 +385,8 @@ class TestSetupWorkspaceBaseline:
         tmp_repo: Path,
         context_in_place: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """When coverage.min_percent is explicit, baseline refresh is skipped."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -364,6 +410,8 @@ class TestSetupWorkspaceBaseline:
             log_dir=None,
             step_timeout_seconds=None,
             command_runner=command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
         )
 
         # No baseline refresh needed when explicit threshold
@@ -375,6 +423,8 @@ class TestSetupWorkspaceBaseline:
         basic_spec: ValidationSpec,
         context_in_place: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """When coverage is disabled, baseline refresh is skipped."""
         from src.domain.validation.spec_workspace import setup_workspace
@@ -385,6 +435,8 @@ class TestSetupWorkspaceBaseline:
             log_dir=None,
             step_timeout_seconds=None,
             command_runner=command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
         )
 
         assert workspace.baseline_percent is None
@@ -398,6 +450,8 @@ class TestSetupWorkspaceErrors:
         tmp_repo: Path,
         context_in_place: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """When baseline refresh fails, setup should return an error result."""
         from src.domain.validation.spec_workspace import (
@@ -461,6 +515,8 @@ class TestSetupWorkspaceErrors:
                     log_dir=None,
                     step_timeout_seconds=None,
                     command_runner=command_runner,
+                    env_config=mock_env_config,
+                    lock_manager=mock_lock_manager,
                 )
 
         assert "Baseline refresh failed" in str(exc_info.value)
@@ -471,6 +527,8 @@ class TestSetupWorkspaceErrors:
         basic_spec: ValidationSpec,
         context_with_commit: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """When worktree creation fails, setup should return an error result."""
         from src.domain.validation.spec_workspace import (
@@ -493,6 +551,8 @@ class TestSetupWorkspaceErrors:
                     log_dir=None,
                     step_timeout_seconds=None,
                     command_runner=command_runner,
+                    env_config=mock_env_config,
+                    lock_manager=mock_lock_manager,
                 )
 
         assert "Worktree creation failed" in str(exc_info.value)
@@ -612,6 +672,8 @@ class TestWorkspaceContextManager:
         basic_spec: ValidationSpec,
         context_in_place: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """workspace_context should yield a SpecRunWorkspace."""
         from src.domain.validation.spec_workspace import workspace_context
@@ -622,6 +684,8 @@ class TestWorkspaceContextManager:
             log_dir=None,
             step_timeout_seconds=None,
             command_runner=command_runner,
+            env_config=mock_env_config,
+            lock_manager=mock_lock_manager,
         ) as workspace:
             assert workspace.validation_cwd == context_in_place.repo_path
             assert workspace.artifacts is not None
@@ -632,6 +696,8 @@ class TestWorkspaceContextManager:
         basic_spec: ValidationSpec,
         context_with_commit: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """workspace_context should cleanup worktree on normal exit."""
         from src.domain.validation.spec_workspace import workspace_context
@@ -668,6 +734,8 @@ class TestWorkspaceContextManager:
                 log_dir=None,
                 step_timeout_seconds=None,
                 command_runner=command_runner,
+                env_config=mock_env_config,
+                lock_manager=mock_lock_manager,
             ) as workspace:
                 # Normal execution
                 _ = workspace
@@ -682,6 +750,8 @@ class TestWorkspaceContextManager:
         basic_spec: ValidationSpec,
         context_with_commit: ValidationContext,
         command_runner: CommandRunner,
+        mock_env_config: MagicMock,
+        mock_lock_manager: MagicMock,
     ) -> None:
         """workspace_context should cleanup worktree on exception."""
         from src.domain.validation.spec_workspace import workspace_context
@@ -719,6 +789,8 @@ class TestWorkspaceContextManager:
                     log_dir=None,
                     step_timeout_seconds=None,
                     command_runner=command_runner,
+                    env_config=mock_env_config,
+                    lock_manager=mock_lock_manager,
                 ) as workspace:
                     _ = workspace
                     raise ValueError("test error")

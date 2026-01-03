@@ -203,7 +203,15 @@ class TestWipFetchWorkaround:
         async def mock_subprocess(cmd: list[str]) -> object:
             if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 return make_subprocess_result(stdout=ready_json)
-            elif cmd == ["bd", "list", "--status", "in_progress", "--json"]:
+            elif cmd == [
+                "bd",
+                "list",
+                "--status",
+                "in_progress",
+                "--json",
+                "-t",
+                "task",
+            ]:
                 return make_subprocess_result(stdout=wip_json)
             return make_subprocess_result(returncode=1)
 
@@ -236,7 +244,15 @@ class TestWipFetchWorkaround:
         async def mock_subprocess(cmd: list[str]) -> object:
             if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 return make_subprocess_result(stdout=ready_json)
-            elif cmd == ["bd", "list", "--status", "in_progress", "--json"]:
+            elif cmd == [
+                "bd",
+                "list",
+                "--status",
+                "in_progress",
+                "--json",
+                "-t",
+                "task",
+            ]:
                 return make_subprocess_result(stdout=wip_json)
             return make_subprocess_result(returncode=1)
 
@@ -514,7 +530,15 @@ class TestFocusModeEpicGrouping:
         async def mock_subprocess(cmd: list[str]) -> object:
             if cmd == ["bd", "ready", "--json", "-t", "task"]:
                 return make_subprocess_result(stdout=ready_json)
-            elif cmd == ["bd", "list", "--status", "in_progress", "--json"]:
+            elif cmd == [
+                "bd",
+                "list",
+                "--status",
+                "in_progress",
+                "--json",
+                "-t",
+                "task",
+            ]:
                 return make_subprocess_result(stdout=wip_json)
             return make_subprocess_result(returncode=1)
 

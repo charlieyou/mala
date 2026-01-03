@@ -4,7 +4,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -179,7 +179,7 @@ class TestE2ERunnerRun:
 
     def test_run_proceeds_without_api_keys(self, tmp_path: Path) -> None:
         """E2E should work without optional API keys."""
-        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner())
+        runner = E2ERunner(make_mock_env_config(tmp_path), make_mock_command_runner())
 
         def mock_runner_run(
             cmd: list[str], cwd: Path | None = None, **kwargs: object
@@ -216,22 +216,19 @@ class TestE2ERunnerRun:
             assert result.status == E2EStatus.FAILED
             assert "mala CLI" in (result.failure_reason or "")
 
-    def test_run_fails_on_fixture_setup_error(self) -> None:
-        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner())
-
-        mock_run_result = CommandResult(
-            command=[],
+    def test_run_fails_on_fixture_setup_error(self, tmp_path: Path) -> None:
+        # Create a mock command_runner that fails for git init
+        mock_cmd_runner = Mock()
+        mock_cmd_runner.run.return_value = CommandResult(
+            command=["git", "init"],
             returncode=1,
             stdout="",
             stderr="git init failed",
         )
+        runner = E2ERunner(make_mock_env_config(tmp_path), mock_cmd_runner)
 
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch(
-                "src.infra.tools.command_runner.CommandRunner.run",
-                return_value=mock_run_result,
-            ),
             patch("tempfile.mkdtemp", return_value="/tmp/test-fixture"),
             patch("pathlib.Path.exists", return_value=True),
             patch("pathlib.Path.mkdir"),
@@ -244,7 +241,9 @@ class TestE2ERunnerRun:
 
     def test_run_success(self, tmp_path: Path) -> None:
         config = E2EConfig(keep_fixture=False)
-        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner(), config)
+        runner = E2ERunner(
+            make_mock_env_config(tmp_path), make_mock_command_runner(), config
+        )
 
         def mock_runner_run(
             cmd: list[str], cwd: Path | None = None, **kwargs: object
@@ -276,7 +275,9 @@ class TestE2ERunnerRun:
 
     def test_run_cleans_up_fixture(self, tmp_path: Path) -> None:
         config = E2EConfig(keep_fixture=False)
-        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner(), config)
+        runner = E2ERunner(
+            make_mock_env_config(tmp_path), make_mock_command_runner(), config
+        )
 
         cleanup_called = {"value": False}
 
@@ -305,7 +306,9 @@ class TestE2ERunnerRun:
 
     def test_run_keeps_fixture_when_configured(self, tmp_path: Path) -> None:
         config = E2EConfig(keep_fixture=True)
-        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner(), config)
+        runner = E2ERunner(
+            make_mock_env_config(tmp_path), make_mock_command_runner(), config
+        )
 
         def mock_runner_run(
             cmd: list[str], cwd: Path | None = None, **kwargs: object
@@ -332,15 +335,11 @@ class TestE2ERunnerRun:
 
     def test_run_handles_mala_timeout(self, tmp_path: Path) -> None:
         config = E2EConfig(timeout_seconds=1.0)
-        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner(), config)
-
-        call_count = {"value": 0}
 
         def mock_runner_run(
             cmd: list[str], cwd: Path | None = None, **kwargs: object
         ) -> CommandResult:
             """Mock CommandRunner.run - succeed for fixture setup, timeout for mala."""
-            call_count["value"] += 1
             # Fixture setup commands (git, bd) succeed
             if any(x in cmd for x in ["git", "bd"]):
                 return CommandResult(command=cmd, returncode=0, stdout="", stderr="")
@@ -353,12 +352,12 @@ class TestE2ERunnerRun:
                 timed_out=True,
             )
 
+        mock_cmd_runner = Mock()
+        mock_cmd_runner.run.side_effect = mock_runner_run
+        runner = E2ERunner(make_mock_env_config(tmp_path), mock_cmd_runner, config)
+
         with (
             patch("shutil.which", return_value="/usr/bin/fake"),
-            patch(
-                "src.infra.tools.command_runner.CommandRunner.run",
-                side_effect=mock_runner_run,
-            ),
             patch("tempfile.mkdtemp", return_value=str(tmp_path / "fixture")),
             patch("shutil.rmtree"),
         ):
@@ -526,22 +525,20 @@ class TestInitFixtureRepo:
 
     def test_returns_none_on_success(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        with patch(
-            "src.infra.tools.command_runner.CommandRunner.run", return_value=mock_result
-        ):
-            result = init_fixture_repo(tmp_path)
-            assert result is None
+        mock_runner = make_mock_command_runner()
+        mock_runner.run.return_value = mock_result
+        result = init_fixture_repo(tmp_path, mock_runner)
+        assert result is None
 
     def test_returns_error_on_failure(self, tmp_path: Path) -> None:
         mock_result = CommandResult(
             command=[], returncode=1, stdout="", stderr="git init failed"
         )
-        with patch(
-            "src.infra.tools.command_runner.CommandRunner.run", return_value=mock_result
-        ):
-            result = init_fixture_repo(tmp_path)
-            assert result is not None
-            assert "fixture setup failed" in result
+        mock_runner = make_mock_command_runner()
+        mock_runner.run.return_value = mock_result
+        result = init_fixture_repo(tmp_path, mock_runner)
+        assert result is not None
+        assert "fixture setup failed" in result
 
 
 class TestGetReadyIssueId:
@@ -554,37 +551,33 @@ class TestGetReadyIssueId:
             stdout='[{"id": "test-123", "title": "Fix bug"}]',
             stderr="",
         )
-        with patch(
-            "src.infra.tools.command_runner.CommandRunner.run", return_value=mock_result
-        ):
-            result = get_ready_issue_id(tmp_path)
-            assert result == "test-123"
+        mock_runner = make_mock_command_runner()
+        mock_runner.run.return_value = mock_result
+        result = get_ready_issue_id(tmp_path, mock_runner)
+        assert result == "test-123"
 
     def test_returns_none_on_failure(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=1, stdout="", stderr="")
-        with patch(
-            "src.infra.tools.command_runner.CommandRunner.run", return_value=mock_result
-        ):
-            result = get_ready_issue_id(tmp_path)
-            assert result is None
+        mock_runner = make_mock_command_runner()
+        mock_runner.run.return_value = mock_result
+        result = get_ready_issue_id(tmp_path, mock_runner)
+        assert result is None
 
     def test_returns_none_on_invalid_json(self, tmp_path: Path) -> None:
         mock_result = CommandResult(
             command=[], returncode=0, stdout="not json", stderr=""
         )
-        with patch(
-            "src.infra.tools.command_runner.CommandRunner.run", return_value=mock_result
-        ):
-            result = get_ready_issue_id(tmp_path)
-            assert result is None
+        mock_runner = make_mock_command_runner()
+        mock_runner.run.return_value = mock_result
+        result = get_ready_issue_id(tmp_path, mock_runner)
+        assert result is None
 
     def test_returns_none_on_empty_list(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="[]", stderr="")
-        with patch(
-            "src.infra.tools.command_runner.CommandRunner.run", return_value=mock_result
-        ):
-            result = get_ready_issue_id(tmp_path)
-            assert result is None
+        mock_runner = make_mock_command_runner()
+        mock_runner.run.return_value = mock_result
+        result = get_ready_issue_id(tmp_path, mock_runner)
+        assert result is None
 
 
 class TestAnnotateIssue:
@@ -592,29 +585,33 @@ class TestAnnotateIssue:
 
     def test_calls_bd_update(self, tmp_path: Path) -> None:
         mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_run = MagicMock(return_value=mock_result)
-        with patch("src.infra.tools.command_runner.CommandRunner.run", mock_run):
-            annotate_issue(tmp_path, "test-123")
+        mock_runner = make_mock_command_runner()
+        mock_runner.run.return_value = mock_result
+        annotate_issue(tmp_path, "test-123", mock_runner)
 
-            mock_run.assert_called_once()
-            args = mock_run.call_args
-            cmd = args[0][0]
-            assert "bd" in cmd
-            assert "update" in cmd
-            assert "test-123" in cmd
+        mock_runner.run.assert_called_once()
+        args = mock_runner.run.call_args
+        cmd = args[0][0]
+        assert "bd" in cmd
+        assert "update" in cmd
+        assert "test-123" in cmd
 
 
 class TestCheckE2EPrereqsLegacy:
     """Test the legacy check_e2e_prereqs function."""
 
-    def test_returns_none_when_ok(self) -> None:
+    def test_returns_none_when_ok(self, tmp_path: Path) -> None:
+        mock_env_config = make_mock_env_config(tmp_path)
+        mock_cmd_runner = make_mock_command_runner()
         with patch("shutil.which", return_value="/usr/bin/fake"):
-            result = check_e2e_prereqs({})
+            result = check_e2e_prereqs(mock_env_config, mock_cmd_runner, {})
             assert result is None
 
-    def test_returns_error_when_missing_cli(self) -> None:
+    def test_returns_error_when_missing_cli(self, tmp_path: Path) -> None:
+        mock_env_config = make_mock_env_config(tmp_path)
+        mock_cmd_runner = make_mock_command_runner()
         with patch("shutil.which", return_value=None):
-            result = check_e2e_prereqs({})
+            result = check_e2e_prereqs(mock_env_config, mock_cmd_runner, {})
             assert result is not None
             assert "mala CLI" in result
 
