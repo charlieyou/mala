@@ -252,6 +252,7 @@ class MessageIterationState:
         idle_retry_count: Number of idle timeout retries attempted.
         pending_tool_ids: Set of tool IDs awaiting results.
         pending_lint_commands: Map of tool_use_id to (lint_type, command).
+        first_message_received: Whether any message was received in current turn.
     """
 
     session_id: str | None = None
@@ -260,6 +261,7 @@ class MessageIterationState:
     idle_retry_count: int = 0
     pending_tool_ids: set[str] = field(default_factory=set)
     pending_lint_commands: dict[str, tuple[str, str]] = field(default_factory=dict)
+    first_message_received: bool = False
 
 
 @dataclass
@@ -1467,11 +1469,9 @@ class AgentSessionRunner:
             ToolUseBlock,
         )
 
-        first_message_received = False
-
         async for message in stream:
-            if not first_message_received:
-                first_message_received = True
+            if not state.first_message_received:
+                state.first_message_received = True
                 latency = time.time() - query_start
                 logger.debug(
                     "Session %s: first message after %.1fs",
@@ -1623,8 +1623,8 @@ class AgentSessionRunner:
                         idle_duration = time.time() - query_start
                         logger.warning(
                             f"Session {issue_id}: idle timeout after "
-                            f"{idle_duration:.1f}s, {state.tool_calls_this_turn} tool "
-                            "calls, disconnecting subprocess"
+                            f"{idle_duration:.1f}s, first_msg={state.first_message_received}, "
+                            f"{state.tool_calls_this_turn} tool calls, disconnecting subprocess"
                         )
                         try:
                             await asyncio.wait_for(
@@ -1655,6 +1655,7 @@ class AgentSessionRunner:
                         # hanging on stale tool IDs (they won't resolve on new stream)
                         state.pending_tool_ids.clear()
                         state.tool_calls_this_turn = 0
+                        state.first_message_received = False
                         resume_id = state.session_id or lifecycle_ctx.session_id
 
                         if resume_id is not None:
