@@ -27,7 +27,7 @@ import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast, runtime_checkable
 
 from src.infra.hooks import (
     FileReadCache,
@@ -100,6 +100,45 @@ def _get_idle_resume_prompt() -> str:
 
 class IdleTimeoutError(Exception):
     """Raised when the SDK response stream is idle for too long."""
+
+
+_T = TypeVar("_T")
+
+
+class IdleTimeoutStream(Generic[_T]):
+    """Wrap an async iterator with idle timeout detection.
+
+    Raises IdleTimeoutError if no message received within timeout,
+    unless pending_tool_ids is non-empty (tool execution in progress).
+    """
+
+    def __init__(
+        self,
+        stream: AsyncIterator[_T],
+        timeout_seconds: float | None,
+        pending_tool_ids: set[str],
+    ) -> None:
+        self._stream: AsyncIterator[_T] = stream
+        self._timeout_seconds = timeout_seconds
+        self._pending_tool_ids = pending_tool_ids
+
+    def __aiter__(self) -> Self:
+        return self
+
+    async def __anext__(self) -> _T:
+        if self._timeout_seconds is None:
+            return await self._stream.__anext__()
+        # Disable timeout if tools are pending (execution in progress)
+        current_timeout = None if self._pending_tool_ids else self._timeout_seconds
+        try:
+            return await asyncio.wait_for(
+                self._stream.__anext__(),
+                timeout=current_timeout,
+            )
+        except TimeoutError as exc:
+            raise IdleTimeoutError(
+                f"SDK stream idle for {self._timeout_seconds:.0f} seconds"
+            ) from exc
 
 
 @runtime_checkable
@@ -486,6 +525,46 @@ def _emit_review_result_events(
             parse_error=review_result.parse_error,
             issue_id=input.issue_id,
         )
+
+
+def _count_blocking_issues(issues: list[ReviewIssueProtocol] | None) -> int:
+    """Count issues with priority <= 1 (P0 or P1).
+
+    Args:
+        issues: List of review issues, or None.
+
+    Returns:
+        Number of blocking (high-priority) issues.
+    """
+    if not issues:
+        return 0
+    return sum(1 for i in issues if i.priority is not None and i.priority <= 1)
+
+
+def _make_review_effect_result(
+    effect: Effect,
+    cerberus_log_path: str | None,
+    transition_result: TransitionResult,
+    pending_query: str | None = None,
+) -> ReviewEffectResult:
+    """Build ReviewEffectResult based on effect type.
+
+    Args:
+        effect: The lifecycle effect to handle.
+        cerberus_log_path: Path to Cerberus review log.
+        transition_result: Lifecycle transition result.
+        pending_query: Query string for SEND_REVIEW_RETRY effect.
+
+    Returns:
+        ReviewEffectResult with appropriate should_break flag.
+    """
+    should_break = effect in (Effect.COMPLETE_SUCCESS, Effect.COMPLETE_FAILURE)
+    return ReviewEffectResult(
+        pending_query=pending_query,
+        should_break=should_break,
+        cerberus_log_path=cerberus_log_path,
+        transition_result=transition_result,
+    )
 
 
 def _build_review_retry_prompt(
@@ -1244,15 +1323,7 @@ class AgentSessionRunner:
         )
         review_duration = time.time() - review_start
         issue_count = len(review_result.issues) if review_result.issues else 0
-        blocking = (
-            sum(
-                1
-                for i in review_result.issues
-                if i.priority is not None and i.priority <= 1
-            )
-            if review_result.issues
-            else 0
-        )
+        blocking = _count_blocking_issues(review_result.issues)
         logger.debug(
             "Session %s: review completed in %.1fs "
             "(passed=%s, issues=%d, blocking=%d, parse_error=%s)",
@@ -1299,34 +1370,9 @@ class AgentSessionRunner:
             blocking,
         )
 
-        if result.effect == Effect.COMPLETE_SUCCESS:
-            return ReviewEffectResult(
-                pending_query=None,
-                should_break=True,
-                cerberus_log_path=cerberus_review_log_path,
-                transition_result=result,
-            )  # break
-
-        if result.effect == Effect.COMPLETE_FAILURE:
-            return ReviewEffectResult(
-                pending_query=None,
-                should_break=True,
-                cerberus_log_path=cerberus_review_log_path,
-                transition_result=result,
-            )  # break
-
-        # parse_error retry: lifecycle returns RUN_REVIEW to re-run
-        # review without prompting agent (no code changes needed)
-        if result.effect == Effect.RUN_REVIEW:
-            return ReviewEffectResult(
-                pending_query=None,
-                should_break=False,
-                cerberus_log_path=cerberus_review_log_path,
-                transition_result=result,
-            )  # continue (re-run review)
-
+        # Build pending_query only for SEND_REVIEW_RETRY
+        pending_query = None
         if result.effect == Effect.SEND_REVIEW_RETRY:
-            # Build follow-up prompt for legitimate review issues
             pending_query = _build_review_retry_prompt(
                 review_result,
                 lifecycle_ctx,
@@ -1334,18 +1380,12 @@ class AgentSessionRunner:
                 self.config.repo_path,
                 self.config.max_review_retries,
             )
-            return ReviewEffectResult(
-                pending_query=pending_query,
-                should_break=False,
-                cerberus_log_path=cerberus_review_log_path,
-                transition_result=result,
-            )
 
-        return ReviewEffectResult(
-            pending_query=None,
-            should_break=False,
-            cerberus_log_path=cerberus_review_log_path,
-            transition_result=result,
+        return _make_review_effect_result(
+            result.effect,
+            cerberus_review_log_path,
+            result,
+            pending_query,
         )
 
     def _emit_gate_passed_events(self, issue_id: str, review_attempt: int) -> None:
@@ -1461,32 +1501,15 @@ class AgentSessionRunner:
                         await client.query(pending_query)
                     first_message_received = False
 
-                    # Define message iterator with timeout handling
-                    async def _iter_messages() -> AsyncIterator[Any]:
-                        stream = client.receive_response()
-                        if idle_timeout_seconds is None:
-                            async for msg in stream:
-                                yield msg
-                            return
-                        while True:
-                            current_timeout = (
-                                None if state.pending_tool_ids else idle_timeout_seconds
-                            )
-                            try:
-                                msg = await asyncio.wait_for(
-                                    stream.__anext__(),
-                                    timeout=current_timeout,
-                                )
-                            except StopAsyncIteration:
-                                break
-                            except TimeoutError as exc:
-                                raise IdleTimeoutError(
-                                    f"SDK stream idle for {idle_timeout_seconds:.0f} seconds"
-                                ) from exc
-                            yield msg
+                    # Wrap stream with idle timeout handling
+                    stream = IdleTimeoutStream(
+                        client.receive_response(),
+                        idle_timeout_seconds,
+                        state.pending_tool_ids,
+                    )
 
                     try:
-                        async for message in _iter_messages():
+                        async for message in stream:
                             if not first_message_received:
                                 first_message_received = True
                                 latency = time.time() - query_start
