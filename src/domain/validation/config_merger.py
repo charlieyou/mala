@@ -220,7 +220,11 @@ def _merge_commands(
     # null/empty (no individual fields set), short-circuit to return the user's
     # empty config without inheriting. This allows users to clear all preset
     # run_level_commands overrides.
-    if clear_on_explicit_empty and user_commands_explicitly_set and not user._fields_set:
+    if (
+        clear_on_explicit_empty
+        and user_commands_explicitly_set
+        and not user._fields_set
+    ):
         return user
 
     return CommandsConfig(

@@ -837,7 +837,9 @@ class TestExplicitRunLevelCommandsNullOrEmpty:
         # run_level_commands should be cleared
         assert result.run_level_commands.test is None
 
-    def test_run_level_commands_with_specific_override_still_inherits_others(self) -> None:
+    def test_run_level_commands_with_specific_override_still_inherits_others(
+        self,
+    ) -> None:
         """run_level_commands with specific fields still inherits other run-level overrides.
 
         Unlike null/empty which clears ALL run-level overrides, specifying some
@@ -854,9 +856,7 @@ class TestExplicitRunLevelCommandsNullOrEmpty:
             ),
         )
         # User specifies only test override, lint override should inherit
-        user = ValidationConfig.from_dict(
-            {"run_level_commands": {"test": "pytest -v"}}
-        )
+        user = ValidationConfig.from_dict({"run_level_commands": {"test": "pytest -v"}})
         result = merge_configs(preset, user)
 
         # Commands inherited
@@ -1149,7 +1149,10 @@ class TestRunLevelCommandsFieldsSetPreservation:
         # User's run_level_commands.test should be in _fields_set
         assert "test" in result.run_level_commands._fields_set
         assert result.run_level_commands.test is not None
-        assert result.run_level_commands.test.command == "pytest --cov=src --cov-report=xml"
+        assert (
+            result.run_level_commands.test.command
+            == "pytest --cov=src --cov-report=xml"
+        )
 
     def test_preset_run_level_test_not_in_merged_fields_set(self) -> None:
         """When preset sets run_level_commands.test but user doesn't, it's NOT in merged _fields_set."""

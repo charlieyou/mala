@@ -467,9 +467,7 @@ class TestWriteFixtureFiles:
         content = (tmp_path / "src" / "app.py").read_text()
         assert "return a - b" in content  # The bug
 
-    def test_programmatic_fallback_creates_same_structure(
-        self, tmp_path: Path
-    ) -> None:
+    def test_programmatic_fallback_creates_same_structure(self, tmp_path: Path) -> None:
         """Test that programmatic generation creates the same file structure."""
         _generate_fixture_programmatically(tmp_path)
 
