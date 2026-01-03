@@ -1,0 +1,276 @@
+"""EpicVerificationCoordinator: Epic closure verification pipeline stage.
+
+Extracted from MalaOrchestrator to separate epic verification logic from orchestration.
+This module handles:
+- Checking if closing an issue should close its parent epic
+- Retry loop for epic verification
+- Executing remediation issues when verification fails
+
+Design principles:
+- Protocol-based callbacks for orchestrator-owned operations
+- State management: verified_epics, epics_being_verified sets
+- Explicit config for retry behavior
+"""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from src.core.models import EpicVerificationResult
+    from src.infra.io.log_output.run_metadata import RunMetadata
+    from src.orchestration.issue_result import IssueResult
+
+
+@dataclass
+class EpicVerificationConfig:
+    """Configuration for EpicVerificationCoordinator.
+
+    Attributes:
+        max_retries: Maximum number of retry attempts after initial verification.
+    """
+
+    max_retries: int = 0
+
+
+@dataclass
+class EpicVerificationCallbacks:
+    """Callbacks for orchestrator-owned operations during epic verification.
+
+    These callbacks allow the coordinator to trigger orchestrator operations
+    without taking dependencies on orchestrator internals.
+
+    Attributes:
+        get_parent_epic: Get the parent epic ID for an issue.
+        verify_epic: Run epic verification, returns verification result.
+        spawn_remediation: Spawn an agent for a remediation issue.
+        finalize_remediation: Finalize a remediation issue result.
+        mark_completed: Mark an issue as completed in the coordinator.
+        is_issue_failed: Check if an issue has failed.
+        close_eligible_epics: Fallback for mock providers without EpicVerifier.
+        on_epic_closed: Emit epic closed event.
+        on_warning: Emit warning event.
+    """
+
+    get_parent_epic: Callable[[str], Awaitable[str | None]]
+    verify_epic: Callable[[str, bool], Awaitable[EpicVerificationResult]]
+    spawn_remediation: Callable[[str], Awaitable[asyncio.Task[IssueResult] | None]]
+    finalize_remediation: Callable[[str, IssueResult, RunMetadata], Awaitable[None]]
+    mark_completed: Callable[[str], None]
+    is_issue_failed: Callable[[str], bool]
+    close_eligible_epics: Callable[[], Awaitable[bool]]
+    on_epic_closed: Callable[[str], None]
+    on_warning: Callable[[str], None]
+
+
+@dataclass
+class EpicVerificationCoordinator:
+    """Epic verification pipeline stage.
+
+    This class encapsulates the epic closure verification logic that was previously
+    inline in MalaOrchestrator._check_epic_closure. It manages:
+    - Tracking verified epics to avoid re-verification
+    - Re-entrant guard for epics being verified
+    - Retry loop with remediation issue execution
+    - Fallback for mock providers
+
+    Attributes:
+        config: Verification configuration.
+        callbacks: Callbacks for orchestrator-owned operations.
+        epic_override_ids: Set of epic IDs to force human override.
+        has_epic_verifier: Whether an EpicVerifier is available.
+    """
+
+    config: EpicVerificationConfig
+    callbacks: EpicVerificationCallbacks
+    epic_override_ids: set[str] = field(default_factory=set)
+    has_epic_verifier: bool = True
+
+    # State: Tracked across multiple check_epic_closure calls
+    verified_epics: set[str] = field(default_factory=set)
+    epics_being_verified: set[str] = field(default_factory=set)
+
+    async def check_epic_closure(
+        self, issue_id: str, run_metadata: RunMetadata
+    ) -> None:
+        """Check if closing this issue should also close its parent epic.
+
+        Implements a retry loop for epic verification:
+        1. Run verification
+        2. If verification fails and creates remediation issues, execute them
+        3. Re-verify the epic
+        4. Repeat until verification passes OR max retries reached
+
+        Args:
+            issue_id: The issue that was just closed.
+            run_metadata: Run metadata for recording remediation issue results.
+        """
+        parent_epic = await self.callbacks.get_parent_epic(issue_id)
+        if parent_epic is None or parent_epic in self.verified_epics:
+            return
+
+        # Guard against re-entrant verification (e.g., when remediation tasks complete)
+        if parent_epic in self.epics_being_verified:
+            return
+
+        if self.has_epic_verifier:
+            # Mark as being verified to prevent parallel verification loops
+            self.epics_being_verified.add(parent_epic)
+            try:
+                await self._verify_epic_with_retries(parent_epic, run_metadata)
+            finally:
+                # Always remove from being_verified set when done
+                self.epics_being_verified.discard(parent_epic)
+
+        elif await self.callbacks.close_eligible_epics():
+            # Fallback for mock providers without EpicVerifier
+            self.callbacks.on_epic_closed(issue_id)
+
+    async def _verify_epic_with_retries(
+        self, epic_id: str, run_metadata: RunMetadata
+    ) -> None:
+        """Run epic verification with retry loop.
+
+        Args:
+            epic_id: The epic to verify.
+            run_metadata: Run metadata for recording remediation issue results.
+        """
+        # max_retries is the number of retries AFTER the first attempt
+        # So total attempts = 1 (initial) + max_retries
+        max_retries = self.config.max_retries
+        max_attempts = 1 + max_retries
+        human_override = epic_id in self.epic_override_ids
+
+        for attempt in range(1, max_attempts + 1):
+            # Log attempt if retrying (attempt > 1)
+            if attempt > 1:
+                self.callbacks.on_warning(
+                    f"Epic verification retry {attempt - 1}/{max_retries} for {epic_id}"
+                )
+
+            verification_result = await self.callbacks.verify_epic(
+                epic_id, human_override
+            )
+
+            # If epic wasn't eligible (children still open), don't mark as verified
+            # so it can be re-checked when more children close
+            if verification_result.verified_count == 0:
+                return
+
+            # If epic passed verification, mark as verified and return
+            if verification_result.passed_count > 0:
+                self.verified_epics.add(epic_id)
+                return
+
+            # If no remediation issues were created, or max attempts reached,
+            # mark as verified (to prevent infinite loops) and return
+            if (
+                not verification_result.remediation_issues_created
+                or attempt >= max_attempts
+            ):
+                if attempt >= max_attempts and verification_result.failed_count > 0:
+                    self.callbacks.on_warning(
+                        f"Epic verification failed after {max_retries} retries for {epic_id}"
+                    )
+                self.verified_epics.add(epic_id)
+                return
+
+            # Execute remediation issues before next verification attempt
+            await self._execute_remediation_issues(
+                verification_result.remediation_issues_created,
+                run_metadata,
+            )
+
+    async def _execute_remediation_issues(
+        self,
+        issue_ids: list[str],
+        run_metadata: RunMetadata,
+    ) -> None:
+        """Execute remediation issues and wait for their completion.
+
+        Spawns agents for remediation issues, waits for completion, and finalizes
+        results (closes issues, records metadata). This ensures remediation issues
+        are properly tracked even though they bypass the main run_loop.
+
+        Args:
+            issue_ids: List of remediation issue IDs to execute.
+            run_metadata: Run metadata for recording issue results.
+        """
+        if not issue_ids:
+            return
+
+        # Track (issue_id, task) pairs for finalization
+        task_pairs: list[tuple[str, asyncio.Task[IssueResult]]] = []
+
+        for issue_id in issue_ids:
+            # Skip if already failed (remediation issues are freshly created, so won't be completed)
+            if self.callbacks.is_issue_failed(issue_id):
+                continue
+
+            # Spawn agent for this issue
+            task = await self.callbacks.spawn_remediation(issue_id)
+            if task:
+                task_pairs.append((issue_id, task))
+
+        # Wait for all remediation tasks to complete
+        if not task_pairs:
+            return
+
+        tasks = [pair[1] for pair in task_pairs]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Finalize each task result (close issue, record metadata, emit events)
+        for issue_id, task in task_pairs:
+            result = self._extract_task_result(issue_id, task)
+
+            # Finalize (closes issue, records to run_metadata, emits events)
+            # Wrap in try/except to ensure all issues are finalized even if one fails
+            try:
+                await self.callbacks.finalize_remediation(
+                    issue_id, result, run_metadata
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                self.callbacks.on_warning(
+                    f"Failed to finalize remediation result for {issue_id}: {e}",
+                )
+
+            # Mark as completed in the coordinator
+            self.callbacks.mark_completed(issue_id)
+
+    def _extract_task_result(
+        self, issue_id: str, task: asyncio.Task[IssueResult]
+    ) -> IssueResult:
+        """Extract result from a completed task, handling exceptions.
+
+        Args:
+            issue_id: The issue ID for error results.
+            task: The completed task.
+
+        Returns:
+            The task result or an error IssueResult.
+        """
+        # Import here to avoid circular dependency
+        from src.orchestration.issue_result import IssueResult
+
+        try:
+            return task.result()
+        except asyncio.CancelledError:
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id="unknown",
+                success=False,
+                summary="Remediation task was cancelled",
+            )
+        except Exception as e:
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id="unknown",
+                success=False,
+                summary=str(e),
+            )
