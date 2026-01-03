@@ -25,7 +25,6 @@ class EpicScopeAnalyzer:
             repo_path: Path to the git repository.
             runner: Optional CommandRunner instance. If not provided, creates one.
         """
-        self._repo_path = repo_path
         self._runner = runner or CommandRunner(cwd=repo_path)
 
     async def compute_scoped_commits(
@@ -73,28 +72,30 @@ class EpicScopeAnalyzer:
         if blocker_ids:
             all_issue_ids.update(blocker_ids)
 
-        all_commits: list[str] = []
-
-        for issue_id in all_issue_ids:
-            # Find commits matching bd-<issue_id>: prefix
-            # Note: Intentionally searches only HEAD branch - child issue commits
-            # should be merged before epic verification runs
-            result = await self._runner.run_async(
-                [
-                    "git",
-                    "log",
-                    "--oneline",
-                    "--no-merges",  # Skip merge commits
-                    f"--grep=bd-{issue_id}:",  # Substring match, not start-of-line
-                    "--format=%H",
-                ]
-            )
-            if result.ok and result.stdout.strip():
-                commits = result.stdout.strip().split("\n")
-                all_commits.extend(commits)
-
-        if not all_commits:
+        if not all_issue_ids:
             return []
+
+        # Sort issue IDs for deterministic commit discovery order (Finding 4)
+        sorted_issue_ids = sorted(all_issue_ids)
+
+        # Build batched git log command with multiple --grep patterns (Finding 2)
+        # Use --fixed-strings to treat issue IDs as literals (Finding 1)
+        cmd = [
+            "git",
+            "log",
+            "--oneline",
+            "--no-merges",
+            "--fixed-strings",  # Treat patterns as literal strings, not regex
+            "--format=%H",
+        ]
+        for issue_id in sorted_issue_ids:
+            cmd.append(f"--grep=bd-{issue_id}:")
+
+        result = await self._runner.run_async(cmd)
+        if not result.ok or not result.stdout.strip():
+            return []
+
+        all_commits = result.stdout.strip().split("\n")
 
         # Deduplicate commits while preserving order
         # A single commit may fix multiple child issues under the same epic
@@ -114,13 +115,21 @@ class EpicScopeAnalyzer:
         """
         if not commits:
             return None
+
+        # Batch fetch timestamps for all commits in a single git command (Finding 2)
+        result = await self._runner.run_async(
+            ["git", "show", "-s", "--format=%H %ct", "--no-walk", *commits]
+        )
+        if not result.ok:
+            return None
+
         timestamps: list[tuple[int, str]] = []
-        for commit in commits:
-            result = await self._runner.run_async(
-                ["git", "show", "-s", "--format=%ct", commit]
-            )
-            if result.ok and result.stdout.strip().isdigit():
-                timestamps.append((int(result.stdout.strip()), commit))
+        for line in result.stdout.strip().split("\n"):
+            parts = line.strip().split()
+            if len(parts) == 2 and parts[1].isdigit():
+                sha, ts = parts
+                timestamps.append((int(ts), sha))
+
         # Only provide a range hint if we have timestamps for all commits.
         # The commits list is aggregated from multiple git log calls over an
         # unordered set of issue IDs, so we cannot assume any ordering without
@@ -165,15 +174,19 @@ class EpicScopeAnalyzer:
         truncated = len(commits) > max_commits
         display_commits = commits[:max_commits] if truncated else commits
 
+        # Batch fetch commit summaries in a single git command (Finding 2)
+        result = await self._runner.run_async(
+            ["git", "show", "-s", "--format=%H %s", "--no-walk", *display_commits]
+        )
+
         lines: list[str] = []
-        for commit in display_commits:
-            result = await self._runner.run_async(
-                ["git", "show", "-s", "--format=%H %s", commit]
-            )
-            summary = result.stdout.strip() if result.ok else ""
-            if summary:
-                lines.append(f"- {summary}")
-            else:
+        if result.ok and result.stdout.strip():
+            for line in result.stdout.strip().split("\n"):
+                if line.strip():
+                    lines.append(f"- {line.strip()}")
+        else:
+            # Fallback: just list the SHAs
+            for commit in display_commits:
                 lines.append(f"- {commit}")
 
         if truncated:

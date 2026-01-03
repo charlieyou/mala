@@ -135,17 +135,14 @@ class TestComputeCommitList:
     @pytest.mark.asyncio
     async def test_deduplicates_commits(self, analyzer: EpicScopeAnalyzer) -> None:
         """Should deduplicate commits that appear in multiple issues."""
-        call_count = 0
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            nonlocal call_count
             if "log" in cmd:
-                call_count += 1
-                # Both issues return same commit
+                # Batched call returns commits from both issues, with shared one duplicated
                 return CommandResult(
                     command=cmd,
                     returncode=0,
-                    stdout="shared-commit\nunique-commit-" + str(call_count),
+                    stdout="shared-commit\nunique-commit-1\nshared-commit\nunique-commit-2",
                 )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
@@ -163,10 +160,11 @@ class TestComputeCommitList:
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             commands_run.append(cmd)
-            if "log" in cmd and "child-1" in str(cmd):
-                return CommandResult(command=cmd, returncode=0, stdout="child-commit")
-            if "log" in cmd and "blocker-1" in str(cmd):
-                return CommandResult(command=cmd, returncode=0, stdout="blocker-commit")
+            if "log" in cmd:
+                # Batched call with both patterns returns both commits
+                return CommandResult(
+                    command=cmd, returncode=0, stdout="child-commit\nblocker-commit"
+                )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
@@ -176,6 +174,10 @@ class TestComputeCommitList:
         )
         assert "child-commit" in commits
         assert "blocker-commit" in commits
+        # Verify both patterns are in the batched command
+        log_cmd = next(c for c in commands_run if "log" in c)
+        assert "--grep=bd-child-1:" in log_cmd
+        assert "--grep=bd-blocker-1:" in log_cmd
 
 
 # ============================================================================
@@ -199,8 +201,11 @@ class TestSummarizeCommitRange:
         """Should return single commit SHA when only one commit."""
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "show" in cmd:
-                return CommandResult(command=cmd, returncode=0, stdout="1234567890")
+            if "show" in cmd and "--format=%H %ct" in cmd:
+                # Batched format: SHA timestamp
+                return CommandResult(
+                    command=cmd, returncode=0, stdout="abc123 1234567890"
+                )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
@@ -213,13 +218,15 @@ class TestSummarizeCommitRange:
         self, analyzer: EpicScopeAnalyzer
     ) -> None:
         """Should return range format for multiple commits."""
-        timestamps = {"abc123": "1000", "def456": "2000", "ghi789": "1500"}
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "show" in cmd and "--format=%ct" in cmd:
-                for sha, ts in timestamps.items():
-                    if sha in cmd:
-                        return CommandResult(command=cmd, returncode=0, stdout=ts)
+            if "show" in cmd and "--format=%H %ct" in cmd:
+                # Batched format: all commits with timestamps in one response
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout="abc123 1000\ndef456 2000\nghi789 1500",
+                )
             if "rev-parse" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="parent-sha")
             return CommandResult(command=cmd, returncode=0, stdout="")
@@ -233,13 +240,15 @@ class TestSummarizeCommitRange:
     @pytest.mark.asyncio
     async def test_handles_root_commit(self, analyzer: EpicScopeAnalyzer) -> None:
         """Should handle root commit without parent."""
-        timestamps = {"root123": "1000", "child456": "2000"}
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
-            if "show" in cmd and "--format=%ct" in cmd:
-                for sha, ts in timestamps.items():
-                    if sha in cmd:
-                        return CommandResult(command=cmd, returncode=0, stdout=ts)
+            if "show" in cmd and "--format=%H %ct" in cmd:
+                # Batched format: all commits with timestamps in one response
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout="root123 1000\nchild456 2000",
+                )
             if "rev-parse" in cmd:
                 # Root commit has no parent
                 return CommandResult(command=cmd, returncode=1, stdout="", stderr="")
@@ -295,18 +304,12 @@ class TestFormatCommitSummary:
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             if "show" in cmd and "--format=%H %s" in cmd:
-                if "abc123" in cmd:
-                    return CommandResult(
-                        command=cmd,
-                        returncode=0,
-                        stdout="abc123 Fix bug in parser",
-                    )
-                if "def456" in cmd:
-                    return CommandResult(
-                        command=cmd,
-                        returncode=0,
-                        stdout="def456 Add new feature",
-                    )
+                # Batched format: all commits with subjects in one response
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout="abc123 Fix bug in parser\ndef456 Add new feature",
+                )
             return CommandResult(command=cmd, returncode=0, stdout="")
 
         analyzer._runner.run_async = mock_run_async  # type: ignore[method-assign]
@@ -363,24 +366,22 @@ class TestComputeScopedCommits:
         self, analyzer: EpicScopeAnalyzer
     ) -> None:
         """Should return ScopedCommits with all fields populated."""
-        timestamps = {"abc123": "1000", "def456": "2000"}
 
         async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
             if "log" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="abc123\ndef456")
-            if "show" in cmd and "--format=%ct" in cmd:
-                for sha, ts in timestamps.items():
-                    if sha in cmd:
-                        return CommandResult(command=cmd, returncode=0, stdout=ts)
+            if "show" in cmd and "--format=%H %ct" in cmd:
+                # Batched format: all commits with timestamps
+                return CommandResult(
+                    command=cmd, returncode=0, stdout="abc123 1000\ndef456 2000"
+                )
             if "show" in cmd and "--format=%H %s" in cmd:
-                if "abc123" in cmd:
-                    return CommandResult(
-                        command=cmd, returncode=0, stdout="abc123 First commit"
-                    )
-                if "def456" in cmd:
-                    return CommandResult(
-                        command=cmd, returncode=0, stdout="def456 Second commit"
-                    )
+                # Batched format: all commits with subjects
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout="abc123 First commit\ndef456 Second commit",
+                )
             if "rev-parse" in cmd:
                 return CommandResult(command=cmd, returncode=0, stdout="parent")
             return CommandResult(command=cmd, returncode=0, stdout="")
