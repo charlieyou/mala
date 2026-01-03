@@ -78,7 +78,7 @@ def extract_marker_expr(args: list[str]) -> tuple[list[str], str | None]:
     result = []
     marker_expr: str | None = None
     skip_next = False
-    for i, arg in enumerate(args):
+    for arg in args:
         if skip_next:
             # This is the value after -m
             marker_expr = arg
