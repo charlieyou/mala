@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 from .config import YamlCoverageConfig  # noqa: TC001 - used at runtime
 
 if TYPE_CHECKING:
-    from src.core.protocols import CommandRunnerPort, EnvConfigPort
+    from src.core.protocols import CommandRunnerPort, EnvConfigPort, LockManagerPort
 
     from .spec import ValidationSpec
 
@@ -440,6 +440,7 @@ class BaselineCoverageService:
         step_timeout_seconds: float | None = None,
         env_config: EnvConfigPort | None = None,
         command_runner: CommandRunnerPort | None = None,
+        lock_manager: LockManagerPort | None = None,
     ):
         """Initialize the baseline coverage service.
 
@@ -452,12 +453,15 @@ class BaselineCoverageService:
             env_config: Environment configuration for paths (lock_dir, etc.).
             command_runner: Optional CommandRunnerPort for running commands.
                 If not provided, creates a CommandRunner as needed.
+            lock_manager: Optional LockManagerPort for file locking.
+                If not provided, imports locking functions from infra as needed.
         """
         self.repo_path = repo_path.resolve()
         self.coverage_config = coverage_config
         self.step_timeout_seconds = step_timeout_seconds
         self.env_config = env_config
         self.command_runner = command_runner
+        self.lock_manager = lock_manager
 
     def refresh_if_stale(
         self,
@@ -475,7 +479,48 @@ class BaselineCoverageService:
             BaselineRefreshResult with the baseline percentage or error.
             Returns failure if coverage_config is None or has no command.
         """
-        from src.infra.tools.locking import lock_path, try_lock, wait_for_lock
+        # Get lock manager (injected or fallback to infra import)
+        if self.lock_manager is not None:
+            lock_mgr = self.lock_manager
+        else:
+            from src.infra.tools.locking import (
+                lock_path as _lock_path,
+                try_lock as _try_lock,
+                wait_for_lock as _wait_for_lock,
+            )
+
+            # Create a simple adapter for the module-level functions
+            class _LockAdapter:
+                def lock_path(
+                    self, filepath: str, repo_namespace: str | None = None
+                ) -> Path:
+                    return _lock_path(filepath, repo_namespace)
+
+                def try_lock(
+                    self,
+                    filepath: str,
+                    agent_id: str,
+                    repo_namespace: str | None = None,
+                ) -> bool:
+                    return _try_lock(filepath, agent_id, repo_namespace)
+
+                def wait_for_lock(
+                    self,
+                    filepath: str,
+                    agent_id: str,
+                    repo_namespace: str | None = None,
+                    timeout_seconds: float = 30.0,
+                    poll_interval_ms: int = 100,
+                ) -> bool:
+                    return _wait_for_lock(
+                        filepath,
+                        agent_id,
+                        repo_namespace,
+                        timeout_seconds,
+                        poll_interval_ms,
+                    )
+
+            lock_mgr = _LockAdapter()
 
         # Check if baseline refresh is available
         if self.coverage_config is None:
@@ -512,9 +557,9 @@ class BaselineCoverageService:
         repo_namespace = str(self.repo_path)
 
         # Try to acquire lock (non-blocking first)
-        if not try_lock(_BASELINE_LOCK_FILE, agent_id, repo_namespace):
+        if not lock_mgr.try_lock(_BASELINE_LOCK_FILE, agent_id, repo_namespace):
             # Another agent is refreshing - wait for them
-            if not wait_for_lock(
+            if not lock_mgr.wait_for_lock(
                 _BASELINE_LOCK_FILE,
                 agent_id,
                 repo_namespace,
@@ -541,7 +586,7 @@ class BaselineCoverageService:
             return self._run_refresh(spec, baseline_path)
         finally:
             # Release lock by removing lock file
-            lock_file = lock_path(_BASELINE_LOCK_FILE, repo_namespace)
+            lock_file = lock_mgr.lock_path(_BASELINE_LOCK_FILE, repo_namespace)
             lock_file.unlink(missing_ok=True)
 
     def _run_refresh(
@@ -816,6 +861,8 @@ class BaselineCoverageService:
         finally:
             # Clean up temp worktree
             if worktree_ctx is not None:
-                remove_worktree(worktree_ctx, validation_passed=True)
+                remove_worktree(
+                    worktree_ctx, validation_passed=True, command_runner=worktree_runner
+                )
             # Clean up temp directory
             shutil.rmtree(temp_dir, ignore_errors=True)

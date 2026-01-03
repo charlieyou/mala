@@ -325,6 +325,42 @@ class LogProvider(Protocol):
         """
         ...
 
+    def extract_bash_commands(self, entry: JsonlEntryProtocol) -> list[tuple[str, str]]:
+        """Extract Bash tool_use commands from an entry.
+
+        Args:
+            entry: A JsonlEntryProtocol from iter_events.
+
+        Returns:
+            List of (tool_id, command) tuples for Bash tool_use blocks.
+            Returns empty list if entry is not an assistant message.
+        """
+        ...
+
+    def extract_tool_results(self, entry: JsonlEntryProtocol) -> list[tuple[str, bool]]:
+        """Extract tool_result entries from an entry.
+
+        Args:
+            entry: A JsonlEntryProtocol from iter_events.
+
+        Returns:
+            List of (tool_use_id, is_error) tuples for tool_result blocks.
+            Returns empty list if entry is not a user message.
+        """
+        ...
+
+    def extract_assistant_text_blocks(self, entry: JsonlEntryProtocol) -> list[str]:
+        """Extract text content from assistant message blocks.
+
+        Args:
+            entry: A JsonlEntryProtocol from iter_events.
+
+        Returns:
+            List of text strings from text blocks in assistant messages.
+            Returns empty list if entry is not an assistant message.
+        """
+        ...
+
 
 @runtime_checkable
 class IssueProvider(Protocol):
@@ -863,5 +899,66 @@ class EnvConfigPort(Protocol):
 
         Returns:
             Path to cerberus bin directory, or None if not found.
+        """
+        ...
+
+
+@runtime_checkable
+class LockManagerPort(Protocol):
+    """Protocol for abstracting file-based locking operations.
+
+    Enables dependency injection of lock managers into domain modules,
+    allowing the core layer to define the interface without depending on
+    the infrastructure implementation.
+
+    The canonical implementation is in src/infra/tools/locking.py.
+    """
+
+    def lock_path(self, filepath: str, repo_namespace: str | None = None) -> Path:
+        """Get the lock file path for a given filepath.
+
+        Args:
+            filepath: Path to the file to lock.
+            repo_namespace: Optional repo namespace for cross-repo disambiguation.
+
+        Returns:
+            Path to the lock file.
+        """
+        ...
+
+    def try_lock(
+        self, filepath: str, agent_id: str, repo_namespace: str | None = None
+    ) -> bool:
+        """Try to acquire a lock without blocking.
+
+        Args:
+            filepath: Path to the file to lock.
+            agent_id: Identifier of the agent requesting the lock.
+            repo_namespace: Optional repo namespace for cross-repo disambiguation.
+
+        Returns:
+            True if lock was acquired, False if already held by another agent.
+        """
+        ...
+
+    def wait_for_lock(
+        self,
+        filepath: str,
+        agent_id: str,
+        repo_namespace: str | None = None,
+        timeout_seconds: float = 30.0,
+        poll_interval_ms: int = 100,
+    ) -> bool:
+        """Wait for and acquire a lock on a file.
+
+        Args:
+            filepath: Path to the file to lock.
+            agent_id: Identifier of the agent requesting the lock.
+            repo_namespace: Optional repo namespace for cross-repo disambiguation.
+            timeout_seconds: Maximum time to wait for the lock in seconds.
+            poll_interval_ms: Polling interval in milliseconds.
+
+        Returns:
+            True if lock was acquired, False if timeout.
         """
         ...
