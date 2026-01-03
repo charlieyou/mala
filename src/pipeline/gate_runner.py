@@ -4,6 +4,7 @@ Extracted from MalaOrchestrator to separate gate/fixer policy from orchestration
 This module handles:
 - Per-issue quality gate checks with retry state management
 - No-progress detection for retry termination
+- Async gate running for non-blocking orchestration
 
 The GateRunner receives explicit inputs and returns explicit outputs,
 making it testable without SDK or subprocess dependencies.
@@ -16,6 +17,7 @@ Design principles:
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
@@ -219,3 +221,103 @@ class GateRunner:
             spec: ValidationSpec to cache.
         """
         self.per_issue_spec = spec
+
+
+@dataclass
+class AsyncGateRunner:
+    """Async wrapper for GateRunner that runs gate checks in a thread pool.
+
+    This class implements the GateAsyncRunner protocol used by SessionCallbackFactory.
+    It wraps a GateRunner and delegates to it via asyncio.to_thread for non-blocking
+    execution.
+
+    The AsyncGateRunner maintains its own state for:
+    - per_issue_spec: Cached validation spec (synced with underlying GateRunner)
+    - last_gate_results: Most recent gate results per issue
+
+    Usage:
+        gate_runner = GateRunner(gate_checker=..., repo_path=..., config=...)
+        async_runner = AsyncGateRunner(gate_runner=gate_runner)
+        result, offset = await async_runner.run_gate_async(issue_id, log_path, retry_state)
+    """
+
+    gate_runner: GateRunner
+    per_issue_spec: ValidationSpec | None = field(default=None)
+    last_gate_results: dict[str, GateResult | GateResultProtocol] = field(
+        default_factory=dict
+    )
+
+    def _run_gate_sync(
+        self,
+        issue_id: str,
+        log_path: Path,
+        retry_state: RetryState,
+    ) -> tuple[GateResult | GateResultProtocol, int]:
+        """Synchronous gate check (blocking I/O).
+
+        Delegates to GateRunner for actual gate checking logic.
+        """
+        # Sync per_issue_spec with gate_runner
+        if self.per_issue_spec is not None:
+            self.gate_runner.set_cached_spec(self.per_issue_spec)
+
+        gate_input = PerIssueGateInput(
+            issue_id=issue_id,
+            log_path=log_path,
+            retry_state=retry_state,
+            spec=self.per_issue_spec,
+        )
+        output = self.gate_runner.run_per_issue_gate(gate_input)
+
+        # Sync cached spec back (gate_runner may have built it)
+        if self.per_issue_spec is None:
+            self.per_issue_spec = self.gate_runner.get_cached_spec()
+
+        # Store gate result for later retrieval
+        self.last_gate_results[issue_id] = output.gate_result
+
+        return (output.gate_result, output.new_log_offset)
+
+    async def run_gate_async(
+        self,
+        issue_id: str,
+        log_path: Path,
+        retry_state: RetryState,
+    ) -> tuple[GateResult | GateResultProtocol, int]:
+        """Run quality gate check asynchronously (GateAsyncRunner protocol).
+
+        Wraps the blocking gate check to avoid stalling the event loop.
+        This allows the orchestrator to service other agents while a gate runs.
+
+        Args:
+            issue_id: The issue being checked.
+            log_path: Path to the session log file.
+            retry_state: Current retry state for this issue.
+
+        Returns:
+            Tuple of (GateResult, new_log_offset).
+        """
+        return await asyncio.to_thread(
+            self._run_gate_sync, issue_id, log_path, retry_state
+        )
+
+    def get_last_gate_result(
+        self, issue_id: str
+    ) -> GateResult | GateResultProtocol | None:
+        """Get the last gate result for an issue.
+
+        Args:
+            issue_id: The issue ID.
+
+        Returns:
+            The last gate result, or None if not available.
+        """
+        return self.last_gate_results.get(issue_id)
+
+    def clear_gate_result(self, issue_id: str) -> None:
+        """Clear the stored gate result for an issue.
+
+        Args:
+            issue_id: The issue ID.
+        """
+        self.last_gate_results.pop(issue_id, None)

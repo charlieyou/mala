@@ -7,6 +7,12 @@ from __future__ import annotations
 
 import functools
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
+
+if TYPE_CHECKING:
+    from src.domain.prompts import PromptValidationCommands
 
 # Prompt file paths
 _PROMPT_DIR = Path(__file__).parent.parent / "prompts"
@@ -31,3 +37,33 @@ def get_review_followup_prompt() -> str:
 def get_fixer_prompt() -> str:
     """Load fixer prompt (cached on first use)."""
     return FIXER_PROMPT_FILE.read_text()
+
+
+def format_implementer_prompt(
+    issue_id: str,
+    repo_path: Path,
+    agent_id: str,
+    validation_commands: PromptValidationCommands,
+) -> str:
+    """Format the implementer prompt with runtime values.
+
+    Args:
+        issue_id: The issue ID being implemented.
+        repo_path: Path to the repository.
+        agent_id: The agent ID for this session.
+        validation_commands: Validation commands for the prompt.
+
+    Returns:
+        Formatted prompt string.
+    """
+    return get_implementer_prompt().format(
+        issue_id=issue_id,
+        repo_path=repo_path,
+        lock_dir=get_lock_dir(),
+        scripts_dir=SCRIPTS_DIR,
+        agent_id=agent_id,
+        lint_command=validation_commands.lint,
+        format_command=validation_commands.format,
+        typecheck_command=validation_commands.typecheck,
+        test_command=validation_commands.test,
+    )

@@ -2708,8 +2708,8 @@ class TestValidationResultMetadata:
         )
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            # Simulate gate result being stored (as done by _run_quality_gate_sync)
-            orchestrator.last_gate_results[issue_id] = gate_result
+            # Simulate gate result being stored (as done by AsyncGateRunner)
+            orchestrator.async_gate_runner.last_gate_results[issue_id] = gate_result
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -2821,7 +2821,7 @@ class TestValidationResultMetadata:
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             # Simulate gate result being stored
-            orchestrator.last_gate_results[issue_id] = gate_result
+            orchestrator.async_gate_runner.last_gate_results[issue_id] = gate_result
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -3620,11 +3620,11 @@ class TestQualityGateAsync:
 
         with (
             patch(
-                "src.orchestration.orchestrator.asyncio.to_thread",
+                "src.pipeline.gate_runner.asyncio.to_thread",
                 side_effect=mock_to_thread,
             ),
         ):
-            result, offset = await orchestrator._run_quality_gate_async(
+            result, offset = await orchestrator.async_gate_runner.run_gate_async(
                 "test-issue", log_path, retry_state
             )
 
@@ -4174,6 +4174,11 @@ class TestReviewUsesIssueCommits:
             patch.object(orchestrator.review_runner, "code_reviewer", mock_reviewer),
             patch.object(orchestrator, "quality_gate", mock_quality_gate),
             patch.object(orchestrator.gate_runner, "gate_checker", mock_quality_gate),
+            patch.object(
+                orchestrator.async_gate_runner.gate_runner,
+                "gate_checker",
+                mock_quality_gate,
+            ),
             patch.object(
                 orchestrator.beads,
                 "get_issue_description_async",

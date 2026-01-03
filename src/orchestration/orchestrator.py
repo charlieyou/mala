@@ -18,15 +18,11 @@ from src.infra.git_utils import (
     get_git_commit_async,
 )
 from src.infra.clients.cerberus_review import DefaultReviewer
-from src.infra.io.log_output.console import (
-    is_verbose_enabled,
-)
 from src.infra.io.log_output.run_metadata import (
     remove_run_marker,
     write_run_marker,
 )
 from src.infra.tools.env import (
-    SCRIPTS_DIR,
     get_lock_dir,
     get_runs_dir,
 )
@@ -35,42 +31,30 @@ from src.infra.tools.locking import (
     release_run_locks,
 )
 from src.pipeline.agent_session_runner import (
-    AgentSessionConfig,
     AgentSessionInput,
     AgentSessionRunner,
 )
-from src.pipeline.gate_runner import (
-    GateRunner,
-    GateRunnerConfig,
-    PerIssueGateInput,
-)
 from src.pipeline.issue_finalizer import (
-    IssueFinalizeCallbacks,
-    IssueFinalizeConfig,
     IssueFinalizeInput,
-    IssueFinalizer,
-)
-from src.pipeline.epic_verification_coordinator import (
-    EpicVerificationCallbacks,
-    EpicVerificationConfig,
-    EpicVerificationCoordinator,
-)
-from src.pipeline.review_runner import (
-    ReviewRunner,
-    ReviewRunnerConfig,
-)
-from src.pipeline.session_callback_factory import SessionCallbackFactory
-from src.pipeline.issue_execution_coordinator import (
-    CoordinatorConfig,
-    IssueExecutionCoordinator,
 )
 from src.pipeline.run_coordinator import (
-    RunCoordinator,
-    RunCoordinatorConfig,
     RunLevelValidationInput,
 )
+from src.orchestration.orchestration_wiring import (
+    WiringDependencies,
+    FinalizerCallbackRefs,
+    EpicCallbackRefs,
+    build_gate_runner,
+    build_review_runner,
+    build_run_coordinator,
+    build_issue_coordinator,
+    build_finalizer_callbacks,
+    build_epic_callbacks,
+    build_session_callback_factory,
+    build_session_config,
+)
 from src.orchestration.issue_result import IssueResult
-from src.orchestration.prompts import get_implementer_prompt
+from src.orchestration.prompts import format_implementer_prompt
 from src.orchestration.review_tracking import create_review_tracking_issues
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
 
@@ -80,19 +64,17 @@ if TYPE_CHECKING:
     from src.core.protocols import (
         CodeReviewer,
         GateChecker,
-        GateResultProtocol,
         IssueProvider,
         LogProvider,
     )
-    from src.domain.lifecycle import RetryState
-    from src.domain.quality_gate import GateResult
-    from src.domain.validation.spec import ValidationSpec
     from src.infra.epic_verifier import EpicVerifier
     from src.infra.io.config import MalaConfig
     from src.infra.io.event_sink import MalaEventSink
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.infra.telemetry import TelemetryProvider
     from src.pipeline.agent_session_runner import SessionCallbacks
+    from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
+    from src.pipeline.issue_finalizer import IssueFinalizer
 
     from .types import OrchestratorConfig, _DerivedConfig
 
@@ -199,166 +181,158 @@ class MalaOrchestrator:
 
         Note: verified_epics and epics_being_verified are delegated to
         epic_verification_coordinator.
+
+        Note: per_issue_spec and last_gate_results are delegated to
+        async_gate_runner.
         """
         self.agent_ids: dict[str, str] = {}
         self.completed: list[IssueResult] = []
         self.session_log_paths: dict[str, Path] = {}
         self.review_log_paths: dict[str, str] = {}
-        self.last_gate_results: dict[str, GateResult | GateResultProtocol] = {}
-        self.per_issue_spec: ValidationSpec | None = None
         self._lint_tools: frozenset[str] | None = None
         self._prompt_validation_commands = build_prompt_validation_commands(
             self.repo_path
         )
 
     def _init_pipeline_runners(self) -> None:
-        """Initialize pipeline runner components."""
-        # GateRunner
-        gate_runner_config = GateRunnerConfig(
-            max_gate_retries=self.max_gate_retries,
-            disable_validations=self._disabled_validations,
-            coverage_threshold=self.coverage_threshold,
+        """Initialize pipeline runner components using wiring functions."""
+        deps = self._build_wiring_dependencies()
+
+        # Build core runners
+        self.gate_runner, self.async_gate_runner = build_gate_runner(deps)
+        self.review_runner = build_review_runner(deps)
+        self.run_coordinator = build_run_coordinator(deps)
+        self.issue_coordinator = build_issue_coordinator(deps)
+
+        # Build coordinators with callbacks (callbacks need self references)
+        self.issue_finalizer = self._build_issue_finalizer()
+        self.epic_verification_coordinator = self._build_epic_verification_coordinator()
+
+        # Build session infrastructure
+        self.session_callback_factory = build_session_callback_factory(
+            deps,
+            self.async_gate_runner,
+            self.review_runner,
+            lambda: self.log_provider,
+            lambda: self.quality_gate,
         )
-        self.gate_runner = GateRunner(
-            gate_checker=self.quality_gate,
-            repo_path=self.repo_path,
-            config=gate_runner_config,
+        self._session_config = build_session_config(
+            deps, review_enabled=self._is_review_enabled()
         )
 
-        # ReviewRunner
-        review_runner_config = ReviewRunnerConfig(
-            max_review_retries=self.max_review_retries,
-            capture_session_log=False,
-            review_timeout=self._mala_config.review_timeout,
-        )
-        self.review_runner = ReviewRunner(
+    def _build_wiring_dependencies(self) -> WiringDependencies:
+        """Build WiringDependencies from orchestrator state."""
+        return WiringDependencies(
+            repo_path=self.repo_path,
+            quality_gate=self.quality_gate,
             code_reviewer=self.code_reviewer,
-            config=review_runner_config,
-            gate_checker=self.quality_gate,
-        )
-
-        # RunCoordinator
-        run_coordinator_config = RunCoordinatorConfig(
-            repo_path=self.repo_path,
-            timeout_seconds=self.timeout_seconds,
-            max_gate_retries=self.max_gate_retries,
-            disable_validations=self._disabled_validations,
-            coverage_threshold=self.coverage_threshold,
-            morph_enabled=self.morph_enabled,
-            morph_api_key=self._mala_config.morph_api_key,
-        )
-        self.run_coordinator = RunCoordinator(
-            config=run_coordinator_config,
-            gate_checker=self.quality_gate,
+            beads=self.beads,
             event_sink=self.event_sink,
-        )
-
-        # IssueExecutionCoordinator
-        coordinator_config = CoordinatorConfig(
+            mala_config=self._mala_config,
             max_agents=self.max_agents,
             max_issues=self._max_issues,
+            timeout_seconds=self.timeout_seconds,
+            max_gate_retries=self.max_gate_retries,
+            max_review_retries=self.max_review_retries,
+            coverage_threshold=self.coverage_threshold,
+            morph_enabled=self.morph_enabled,
+            disabled_validations=set(self._disabled_validations)
+            if self._disabled_validations
+            else None,
             epic_id=self.epic_id,
-            only_ids=self.only_ids,
+            only_ids=set(self.only_ids) if self.only_ids else None,
             prioritize_wip=self.prioritize_wip,
             focus=self.focus,
             orphans_only=self.orphans_only,
-        )
-        self.issue_coordinator = IssueExecutionCoordinator(
-            beads=self.beads,
-            event_sink=self.event_sink,
-            config=coordinator_config,
-        )
-
-        # IssueFinalizer
-        finalizer_config = IssueFinalizeConfig(
-            track_review_issues=self._mala_config.track_review_issues,
-        )
-        self.issue_finalizer = IssueFinalizer(
-            config=finalizer_config,
-            callbacks=self._create_finalizer_callbacks(),
-            quality_gate=self.quality_gate,
-            per_issue_spec=None,  # Set later when spec is built
-        )
-
-        # EpicVerificationCoordinator
-        epic_verification_config = EpicVerificationConfig(
-            max_retries=self._mala_config.max_epic_verification_retries,
-        )
-        self.epic_verification_coordinator = EpicVerificationCoordinator(
-            config=epic_verification_config,
-            callbacks=self._create_epic_verification_callbacks(),
             epic_override_ids=self.epic_override_ids,
-        )
-
-        # SessionCallbackFactory
-        self.session_callback_factory = SessionCallbackFactory(
-            gate_async_runner=self,
-            review_runner=self.review_runner,
-            log_provider=lambda: self.log_provider,
-            event_sink=lambda: self.event_sink,
-            quality_gate=lambda: self.quality_gate,
-            repo_path=self.repo_path,
+            prompt_validation_commands=self._prompt_validation_commands,
             session_log_paths=self.session_log_paths,
             review_log_paths=self.review_log_paths,
-            get_per_issue_spec=lambda: self.per_issue_spec,
-            is_verbose=is_verbose_enabled,
         )
 
-    def _create_finalizer_callbacks(self) -> IssueFinalizeCallbacks:
-        """Create callbacks for IssueFinalizer.
+    def _build_issue_finalizer(self) -> IssueFinalizer:
+        """Build IssueFinalizer with callbacks."""
+        from src.pipeline.issue_finalizer import IssueFinalizer, IssueFinalizeConfig
 
-        Uses lambdas to defer method resolution, allowing tests to patch
-        self.beads and self.event_sink after orchestrator construction.
-        """
-        return IssueFinalizeCallbacks(
-            close_issue=lambda issue_id: self.beads.close_async(issue_id),
-            mark_needs_followup=lambda issue_id, summary, log_path: (
-                self.beads.mark_needs_followup_async(
-                    issue_id, summary, log_path=log_path
-                )
-            ),
-            on_issue_closed=lambda agent_id, issue_id: self.event_sink.on_issue_closed(
-                agent_id, issue_id
-            ),
-            on_issue_completed=lambda agent_id, issue_id, success, duration, summary: (
-                self.event_sink.on_issue_completed(
-                    agent_id, issue_id, success, duration, summary
-                )
-            ),
-            trigger_epic_closure=lambda issue_id, run_metadata: (
-                self.epic_verification_coordinator.check_epic_closure(
-                    issue_id, run_metadata
-                )
-            ),
-            create_tracking_issues=self._create_review_tracking_issues,
+        config = IssueFinalizeConfig(
+            track_review_issues=self._mala_config.track_review_issues,
+        )
+        callbacks = build_finalizer_callbacks(
+            FinalizerCallbackRefs(
+                close_issue=lambda issue_id: self.beads.close_async(issue_id),
+                mark_needs_followup=lambda issue_id, summary, log_path: (
+                    self.beads.mark_needs_followup_async(
+                        issue_id, summary, log_path=log_path
+                    )
+                ),
+                on_issue_closed=lambda agent_id, issue_id: (
+                    self.event_sink.on_issue_closed(agent_id, issue_id)
+                ),
+                on_issue_completed=lambda agent_id,
+                issue_id,
+                success,
+                duration,
+                summary: (
+                    self.event_sink.on_issue_completed(
+                        agent_id, issue_id, success, duration, summary
+                    )
+                ),
+                trigger_epic_closure=lambda issue_id, run_metadata: (
+                    self.epic_verification_coordinator.check_epic_closure(
+                        issue_id, run_metadata
+                    )
+                ),
+                create_tracking_issues=self._create_review_tracking_issues,
+            )
+        )
+        return IssueFinalizer(
+            config=config,
+            callbacks=callbacks,
+            quality_gate=self.quality_gate,
+            per_issue_spec=None,
         )
 
-    def _create_epic_verification_callbacks(self) -> EpicVerificationCallbacks:
-        """Create callbacks for EpicVerificationCoordinator.
+    def _build_epic_verification_coordinator(self) -> EpicVerificationCoordinator:
+        """Build EpicVerificationCoordinator with callbacks."""
+        from src.pipeline.epic_verification_coordinator import (
+            EpicVerificationCoordinator,
+            EpicVerificationConfig,
+        )
 
-        Uses lambdas to defer method resolution, allowing tests to patch
-        self.beads, self.epic_verifier, and self.event_sink after construction.
-        """
-        return EpicVerificationCallbacks(
-            get_parent_epic=lambda issue_id: self.beads.get_parent_epic_async(issue_id),
-            verify_epic=lambda epic_id, human_override: (
-                self.epic_verifier.verify_and_close_epic(  # type: ignore[union-attr]
-                    epic_id, human_override=human_override
-                )
-            ),
-            spawn_remediation=lambda issue_id: self.spawn_agent(issue_id),
-            finalize_remediation=lambda issue_id, result, run_metadata: (
-                self._finalize_issue_result(issue_id, result, run_metadata)
-            ),
-            mark_completed=lambda issue_id: self.issue_coordinator.mark_completed(
-                issue_id
-            ),
-            is_issue_failed=lambda issue_id: issue_id in self.failed_issues,
-            close_eligible_epics=lambda: self.beads.close_eligible_epics_async(),
-            on_epic_closed=lambda issue_id: self.event_sink.on_epic_closed(issue_id),
-            on_warning=lambda msg: self.event_sink.on_warning(msg),
-            has_epic_verifier=lambda: self.epic_verifier is not None,
-            get_agent_id=lambda issue_id: self.agent_ids.get(issue_id, "unknown"),
+        config = EpicVerificationConfig(
+            max_retries=self._mala_config.max_epic_verification_retries,
+        )
+        callbacks = build_epic_callbacks(
+            EpicCallbackRefs(
+                get_parent_epic=lambda issue_id: self.beads.get_parent_epic_async(
+                    issue_id
+                ),
+                verify_epic=lambda epic_id, human_override: (
+                    self.epic_verifier.verify_and_close_epic(  # type: ignore[union-attr]
+                        epic_id, human_override=human_override
+                    )
+                ),
+                spawn_remediation=lambda issue_id: self.spawn_agent(issue_id),
+                finalize_remediation=lambda issue_id, result, run_metadata: (
+                    self._finalize_issue_result(issue_id, result, run_metadata)
+                ),
+                mark_completed=lambda issue_id: self.issue_coordinator.mark_completed(
+                    issue_id
+                ),
+                is_issue_failed=lambda issue_id: issue_id in self.failed_issues,
+                close_eligible_epics=lambda: self.beads.close_eligible_epics_async(),
+                on_epic_closed=lambda issue_id: self.event_sink.on_epic_closed(
+                    issue_id
+                ),
+                on_warning=lambda msg: self.event_sink.on_warning(msg),
+                has_epic_verifier=lambda: self.epic_verifier is not None,
+                get_agent_id=lambda issue_id: self.agent_ids.get(issue_id, "unknown"),
+            )
+        )
+        return EpicVerificationCoordinator(
+            config=config,
+            callbacks=callbacks,
+            epic_override_ids=self.epic_override_ids,
         )
 
     async def _create_review_tracking_issues(
@@ -449,75 +423,6 @@ class MalaOrchestrator:
             return True
         return False
 
-    def _run_quality_gate_sync(
-        self,
-        issue_id: str,
-        log_path: Path,
-        retry_state: RetryState,
-    ) -> tuple[GateResult | GateResultProtocol, int]:
-        """Synchronous quality gate check (blocking I/O).
-
-        This is the blocking implementation that gets run via asyncio.to_thread.
-        Delegates to GateRunner for the actual gate checking logic.
-        """
-        # Sync per_issue_spec with gate_runner (orchestrator may have built it at run start)
-        if self.per_issue_spec is not None:
-            self.gate_runner.set_cached_spec(self.per_issue_spec)
-
-        gate_input = PerIssueGateInput(
-            issue_id=issue_id,
-            log_path=log_path,
-            retry_state=retry_state,
-            spec=self.per_issue_spec,
-        )
-        output = self.gate_runner.run_per_issue_gate(gate_input)
-
-        # Sync cached spec back to orchestrator (gate_runner may have built it)
-        if self.per_issue_spec is None:
-            self.per_issue_spec = self.gate_runner.get_cached_spec()
-
-        # Store gate result to avoid duplicate validation in _finalize_issue_result
-        # The gate result includes validation_evidence parsed from logs
-        self.last_gate_results[issue_id] = output.gate_result
-
-        return (output.gate_result, output.new_log_offset)
-
-    async def _run_quality_gate_async(
-        self,
-        issue_id: str,
-        log_path: Path,
-        retry_state: RetryState,
-    ) -> tuple[GateResult | GateResultProtocol, int]:
-        """Run quality gate check asynchronously via to_thread.
-
-        Wraps the blocking _run_quality_gate_sync to avoid stalling the event loop.
-        This allows the orchestrator to service other agents while a gate runs.
-
-        Args:
-            issue_id: The issue being checked.
-            log_path: Path to the session log file.
-            retry_state: Current retry state for this issue.
-
-        Returns:
-            Tuple of (GateResult, new_log_offset).
-        """
-        return await asyncio.to_thread(
-            self._run_quality_gate_sync, issue_id, log_path, retry_state
-        )
-
-    async def run_gate_async(
-        self,
-        issue_id: str,
-        log_path: Path,
-        retry_state: RetryState,
-    ) -> tuple[GateResult | GateResultProtocol, int]:
-        """Run quality gate check asynchronously (GateAsyncRunner protocol).
-
-        This method satisfies the GateAsyncRunner protocol used by
-        SessionCallbackFactory to wire gate checks into session callbacks.
-        """
-        return await self._run_quality_gate_async(issue_id, log_path, retry_state)
-
     def _cleanup_session_paths(self, issue_id: str) -> None:
         """Remove stored session and review log paths for an issue.
 
@@ -541,10 +446,10 @@ class MalaOrchestrator:
         already parsed during quality gate check.
         """
         log_path = self.session_log_paths.get(issue_id)
-        stored_gate_result = self.last_gate_results.get(issue_id)
+        stored_gate_result = self.async_gate_runner.get_last_gate_result(issue_id)
 
         # Update finalizer's per_issue_spec if it has changed
-        self.issue_finalizer.per_issue_spec = self.per_issue_spec
+        self.issue_finalizer.per_issue_spec = self.async_gate_runner.per_issue_spec
 
         # Build finalization input
         finalize_input = IssueFinalizeInput(
@@ -567,8 +472,9 @@ class MalaOrchestrator:
         # Update tracking state (active_tasks is updated by mark_completed in finalize_callback)
         self.completed.append(result)
 
-        # Cleanup session paths
+        # Cleanup session paths and gate result
         self._cleanup_session_paths(issue_id)
+        self.async_gate_runner.clear_gate_result(issue_id)
 
     async def _abort_active_tasks(self, run_metadata: RunMetadata) -> None:
         """Cancel active tasks and mark them as failed.
@@ -647,30 +553,13 @@ class MalaOrchestrator:
         if baseline_commit is None:
             baseline_commit = await get_git_commit_async(self.repo_path)
 
-        prompt = get_implementer_prompt().format(
+        prompt = format_implementer_prompt(
             issue_id=issue_id,
             repo_path=self.repo_path,
-            lock_dir=get_lock_dir(),
-            scripts_dir=SCRIPTS_DIR,
             agent_id=temp_agent_id,
-            lint_command=self._prompt_validation_commands.lint,
-            format_command=self._prompt_validation_commands.format,
-            typecheck_command=self._prompt_validation_commands.typecheck,
-            test_command=self._prompt_validation_commands.test,
+            validation_commands=self._prompt_validation_commands,
         )
 
-        review_enabled = self._is_review_enabled()
-        session_config = AgentSessionConfig(
-            repo_path=self.repo_path,
-            timeout_seconds=self.timeout_seconds,
-            max_gate_retries=self.max_gate_retries,
-            max_review_retries=self.max_review_retries,
-            morph_enabled=self.morph_enabled,
-            morph_api_key=self._config.morph_api_key,
-            review_enabled=review_enabled,
-            lint_tools=self._lint_tools,
-            prompt_validation_commands=self._prompt_validation_commands,
-        )
         session_input = AgentSessionInput(
             issue_id=issue_id,
             prompt=prompt,
@@ -679,7 +568,7 @@ class MalaOrchestrator:
         )
 
         runner = AgentSessionRunner(
-            config=session_config,
+            config=self._session_config,
             callbacks=self._build_session_callbacks(issue_id),
             event_sink=self.event_sink,
         )
@@ -849,12 +738,14 @@ class MalaOrchestrator:
             cli_args=self.cli_args,
             version=__version__,
         )
-        self.per_issue_spec = build_validation_spec(
+        per_issue_spec = build_validation_spec(
             self.repo_path,
             scope=ValidationScope.PER_ISSUE,
             disable_validations=self._disabled_validations,
         )
-        self._lint_tools = extract_lint_tools_from_spec(self.per_issue_spec)
+        self.async_gate_runner.per_issue_spec = per_issue_spec
+        self._lint_tools = extract_lint_tools_from_spec(per_issue_spec)
+        self._session_config.lint_tools = self._lint_tools
         write_run_marker(
             run_id=run_metadata.run_id,
             repo_path=self.repo_path,
