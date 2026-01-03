@@ -6,11 +6,48 @@ This module centralizes prompt file loading to avoid duplication across modules.
 from __future__ import annotations
 
 import functools
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.domain.validation.config import PromptValidationCommands
+
+
+@dataclass(frozen=True)
+class PromptProvider:
+    """Data class holding all loaded prompt templates.
+
+    This is a pure data object constructed at startup boundary.
+    All fields are immutable string contents of prompt files.
+    """
+
+    implementer_prompt: str
+    review_followup_prompt: str
+    gate_followup_prompt: str
+    fixer_prompt: str
+    idle_resume_prompt: str
+
+
+def load_prompts(prompt_dir: Path) -> PromptProvider:
+    """Load all prompt templates from disk.
+
+    Args:
+        prompt_dir: Directory containing prompt template files.
+
+    Returns:
+        PromptProvider with all loaded prompt templates.
+
+    Raises:
+        FileNotFoundError: If any required prompt file is missing.
+    """
+    return PromptProvider(
+        implementer_prompt=(prompt_dir / "implementer_prompt.md").read_text(),
+        review_followup_prompt=(prompt_dir / "review_followup.md").read_text(),
+        gate_followup_prompt=(prompt_dir / "gate_followup.md").read_text(),
+        fixer_prompt=(prompt_dir / "fixer.md").read_text(),
+        idle_resume_prompt=(prompt_dir / "idle_resume.md").read_text(),
+    )
 
 
 # Prompt directory - points to src/prompts/ where prompt files live
