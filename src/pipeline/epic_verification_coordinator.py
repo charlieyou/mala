@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from src.core.models import EpicVerificationResult
     from src.infra.io.log_output.run_metadata import RunMetadata
-    from src.orchestration.issue_result import IssueResult
+    from src.pipeline.issue_result import IssueResult
 
 
 @dataclass
@@ -259,7 +259,7 @@ class EpicVerificationCoordinator:
             The task result or an error IssueResult.
         """
         # Import here to avoid circular dependency
-        from src.orchestration.issue_result import IssueResult
+        from src.pipeline.issue_result import IssueResult
 
         try:
             return task.result()

@@ -12,8 +12,10 @@ from src.domain.validation.spec import (
 )
 from src.domain.validation.tool_name_extractor import extract_lint_tools_from_spec
 from src.domain.prompts import (
+    PromptProvider,
     build_prompt_validation_commands,
     format_implementer_prompt,
+    load_prompts,
 )
 from src.infra.git_utils import (
     get_baseline_for_issue,
@@ -26,11 +28,15 @@ from src.infra.io.log_output.run_metadata import (
     write_run_marker,
 )
 from src.infra.tools.env import (
+    EnvConfig,
+    PROMPTS_DIR,
     SCRIPTS_DIR,
     get_lock_dir,
     get_runs_dir,
 )
+from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.locking import (
+    LockManager,
     cleanup_agent_locks,
     release_run_locks,
 )
@@ -57,7 +63,7 @@ from src.orchestration.orchestration_wiring import (
     build_session_callback_factory,
     build_session_config,
 )
-from src.orchestration.issue_result import IssueResult
+from src.pipeline.issue_result import IssueResult
 from src.orchestration.review_tracking import create_review_tracking_issues
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
 
@@ -196,6 +202,7 @@ class MalaOrchestrator:
         self._prompt_validation_commands = build_prompt_validation_commands(
             self.repo_path
         )
+        self._prompts: PromptProvider = load_prompts(PROMPTS_DIR)
 
     def _init_pipeline_runners(self) -> None:
         """Initialize pipeline runner components using wiring functions."""
@@ -232,6 +239,9 @@ class MalaOrchestrator:
             beads=self.beads,
             event_sink=self.event_sink,
             mala_config=self._mala_config,
+            command_runner=CommandRunner(cwd=self.repo_path),
+            env_config=EnvConfig(),
+            lock_manager=LockManager(),
             max_agents=self.max_agents,
             max_issues=self._max_issues,
             timeout_seconds=self.timeout_seconds,
@@ -248,6 +258,7 @@ class MalaOrchestrator:
             orphans_only=self.orphans_only,
             epic_override_ids=self.epic_override_ids,
             prompt_validation_commands=self._prompt_validation_commands,
+            prompts=self._prompts,
             session_log_paths=self.session_log_paths,
             review_log_paths=self.review_log_paths,
         )
@@ -561,6 +572,7 @@ class MalaOrchestrator:
             baseline_commit = await get_git_commit_async(self.repo_path)
 
         prompt = format_implementer_prompt(
+            self._prompts.implementer_prompt,
             issue_id=issue_id,
             repo_path=self.repo_path,
             agent_id=temp_agent_id,

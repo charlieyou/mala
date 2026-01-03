@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from src.infra.io.log_output.console import truncate_text
 from src.infra.io.log_output.run_metadata import IssueRun
-from src.orchestration.gate_metadata import (
+from src.pipeline.gate_metadata import (
     GateMetadata,
     build_gate_metadata,
     build_gate_metadata_from_logs,
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from src.domain.quality_gate import GateResult
     from src.domain.validation.spec import ValidationSpec
     from src.infra.io.log_output.run_metadata import RunMetadata
-    from src.orchestration.issue_result import IssueResult
+    from src.pipeline.issue_result import IssueResult
 
 
 @dataclass

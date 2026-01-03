@@ -17,7 +17,7 @@ import pytest
 
 from src.core.models import EpicVerdict, EpicVerificationResult
 from src.infra.io.config import MalaConfig
-from src.orchestration.issue_result import IssueResult
+from src.pipeline.issue_result import IssueResult
 from src.pipeline.epic_verification_coordinator import (
     EpicVerificationCallbacks,
     EpicVerificationConfig,

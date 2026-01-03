@@ -23,14 +23,10 @@ from src.infra.clients.beads_client import BeadsClient
 from src.orchestration.orchestrator import (
     MalaOrchestrator,
 )
-from src.orchestration.issue_result import IssueResult
-from src.domain.prompts import (
-    get_fixer_prompt as _get_fixer_prompt,
-    get_gate_followup_prompt as _get_gate_followup_prompt,
-    get_implementer_prompt as _get_implementer_prompt,
-    get_review_followup_prompt as _get_review_followup_prompt,
-)
-from src.infra.tools.command_runner import CommandResult
+from src.pipeline.issue_result import IssueResult
+from src.domain.prompts import load_prompts
+from src.infra.tools.env import PROMPTS_DIR
+from src.infra.tools.command_runner import CommandResult, CommandRunner
 
 from src.core.protocols import LogProvider
 
@@ -117,7 +113,8 @@ class TestPromptTemplate:
     def test_prompt_template_placeholders_match_format_call(self) -> None:
         """Verify prompt template placeholders match what format() provides."""
         # Extract all {placeholder} from template
-        placeholders = set(re.findall(r"\{(\w+)\}", _get_implementer_prompt()))
+        prompts = load_prompts(PROMPTS_DIR)
+        placeholders = set(re.findall(r"\{(\w+)\}", prompts.implementer_prompt))
 
         # These are the keys passed to format() in run_implementer
         expected_keys = {
@@ -134,100 +131,6 @@ class TestPromptTemplate:
 
         assert placeholders == expected_keys, (
             f"Mismatch: template has {placeholders}, format expects {expected_keys}"
-        )
-
-
-class TestPromptLazyLoading:
-    """Test that prompts are lazy-loaded and cached."""
-
-    def test_prompts_are_cached_functions(self) -> None:
-        """All prompt loaders should use functools.cache."""
-        # Verify each prompt function has cache_info (attribute from functools.cache)
-        assert hasattr(_get_implementer_prompt, "cache_info")
-        assert hasattr(_get_gate_followup_prompt, "cache_info")
-        assert hasattr(_get_review_followup_prompt, "cache_info")
-        assert hasattr(_get_fixer_prompt, "cache_info")
-
-    def test_prompts_cached_after_first_call(self) -> None:
-        """Prompts should be read from disk only once per session."""
-        # Clear any existing cache
-        _get_implementer_prompt.cache_clear()
-
-        # Before calling: cache should be empty
-        info_before = _get_implementer_prompt.cache_info()
-        assert info_before.currsize == 0, "Cache should be empty before first call"
-
-        # First call: cache miss
-        _ = _get_implementer_prompt()
-        info_after_first = _get_implementer_prompt.cache_info()
-        assert info_after_first.misses == 1, "First call should be a cache miss"
-        assert info_after_first.currsize == 1, (
-            "Cache should have 1 entry after first call"
-        )
-
-        # Second call: cache hit
-        _ = _get_implementer_prompt()
-        info_after_second = _get_implementer_prompt.cache_info()
-        assert info_after_second.hits == 1, "Second call should be a cache hit"
-        assert info_after_second.misses == 1, "Should still have only 1 miss"
-
-    def test_all_prompt_loaders_return_non_empty_content(self) -> None:
-        """All prompt loaders should return non-empty strings."""
-        assert len(_get_implementer_prompt()) > 0
-        assert len(_get_gate_followup_prompt()) > 0
-        assert len(_get_review_followup_prompt()) > 0
-        assert len(_get_fixer_prompt()) > 0
-
-    def test_import_succeeds_without_prompt_files(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Import succeeds even when prompt files don't exist (lazy loading).
-
-        This validates the first acceptance criterion: 'import src.orchestration.orchestrator
-        succeeds without filesystem access to prompts'.
-        """
-        # Create a test script that patches prompt paths to non-existent files
-        # then imports the module - if import succeeds, lazy loading works
-        test_script = tmp_path / "test_import.py"
-        test_script.write_text(
-            """\
-import sys
-from pathlib import Path
-
-# Store original for restoration
-_orig_truediv = Path.__truediv__
-
-def _patched_truediv(self, key):
-    result = _orig_truediv(self, key)
-    # If this is a prompt file path, redirect to non-existent location
-    if str(result).endswith(".md") and "prompts" in str(result):
-        return Path("/nonexistent/prompt/file.md")
-    return result
-
-Path.__truediv__ = _patched_truediv
-
-# Now import orchestrator - should succeed without reading files
-try:
-    from src.orchestration import orchestrator
-    print("IMPORT_SUCCESS")
-except FileNotFoundError:
-    print("IMPORT_FAILED: FileNotFoundError during import")
-except Exception as e:
-    print(f"IMPORT_FAILED: {type(e).__name__}: {e}")
-"""
-        )
-
-        # Run the test script in subprocess
-        result = subprocess.run(
-            [sys.executable, str(test_script)],
-            capture_output=True,
-            text=True,
-            cwd=Path(__file__).parent.parent,  # Run from repo root
-        )
-
-        assert "IMPORT_SUCCESS" in result.stdout, (
-            f"Import should succeed without prompt files.\n"
-            f"stdout: {result.stdout}\nstderr: {result.stderr}"
         )
 
 
@@ -1026,7 +929,7 @@ class TestQualityGateValidationEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         # Create minimal mala.yaml for test
@@ -1059,7 +962,7 @@ class TestQualityGateValidationEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         # Create minimal mala.yaml for test
@@ -1092,7 +995,7 @@ class TestQualityGateValidationEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         # Create minimal mala.yaml for test
@@ -1125,7 +1028,7 @@ class TestQualityGateValidationEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         # Create minimal mala.yaml for test
@@ -1141,7 +1044,7 @@ class TestQualityGateValidationEvidence:
         """Quality gate should return empty evidence for missing log file."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
         nonexistent = tmp_path / "nonexistent.jsonl"
         from src.domain.validation.spec import ValidationScope, build_validation_spec
 
@@ -1165,7 +1068,7 @@ class TestQualityGateCommitCheck:
         """Quality gate should detect commit with correct issue ID."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
 
         with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(
@@ -1182,7 +1085,7 @@ class TestQualityGateCommitCheck:
         """Quality gate should reject when no matching commit found."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
 
         with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(stdout="")
@@ -1197,7 +1100,7 @@ class TestQualityGateCommitCheck:
         """Quality gate should handle git command failures gracefully."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
 
         with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(
@@ -1213,7 +1116,7 @@ class TestQualityGateCommitCheck:
         """Quality gate should search commits from the last 30 days."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
 
         with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
             mock_run.return_value = make_command_result(
@@ -1238,7 +1141,7 @@ class TestQualityGateFullCheck:
         """Quality gate passes when closed, commit exists, validation ran."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
 
         # Create log with all validation commands (including uv sync for SETUP)
         log_path = tmp_path / "session.jsonl"
@@ -1290,7 +1193,7 @@ class TestQualityGateFullCheck:
         """Quality gate fails when commit is missing."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
 
         # Create log with validation commands
         log_path = tmp_path / "session.jsonl"
@@ -1331,7 +1234,7 @@ class TestQualityGateFullCheck:
         """Quality gate failure message should mention the 30-day window."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
 
         # Create log with validation commands
         log_path = tmp_path / "session.jsonl"
@@ -1372,7 +1275,7 @@ class TestQualityGateFullCheck:
         """Quality gate fails when validation commands didn't run."""
         from src.domain.quality_gate import QualityGate
 
-        gate = QualityGate(tmp_path, log_provider)
+        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
 
         # Create empty log (no validation commands)
         log_path = tmp_path / "session.jsonl"
@@ -4567,7 +4470,7 @@ class TestBuildGateMetadata:
 
     def test_none_gate_result_returns_empty_metadata(self) -> None:
         """When gate_result is None, returns empty GateMetadata."""
-        from src.orchestration.gate_metadata import (
+        from src.pipeline.gate_metadata import (
             build_gate_metadata as _build_gate_metadata,
         )
 
@@ -4578,7 +4481,7 @@ class TestBuildGateMetadata:
 
     def test_successful_gate_with_full_evidence(self) -> None:
         """Successful gate result with full evidence extracts all fields."""
-        from src.orchestration.gate_metadata import (
+        from src.pipeline.gate_metadata import (
             build_gate_metadata as _build_gate_metadata,
         )
         from src.domain.quality_gate import GateResult, ValidationEvidence
@@ -4610,7 +4513,7 @@ class TestBuildGateMetadata:
 
     def test_failed_gate_with_partial_evidence(self) -> None:
         """Failed gate result extracts failure reasons and evidence."""
-        from src.orchestration.gate_metadata import (
+        from src.pipeline.gate_metadata import (
             build_gate_metadata as _build_gate_metadata,
         )
         from src.domain.quality_gate import GateResult, ValidationEvidence
@@ -4645,7 +4548,7 @@ class TestBuildGateMetadata:
 
     def test_empty_failure_reasons_and_missing_commit(self) -> None:
         """Gate result with empty failure reasons and missing commit."""
-        from src.orchestration.gate_metadata import (
+        from src.pipeline.gate_metadata import (
             build_gate_metadata as _build_gate_metadata,
         )
         from src.domain.quality_gate import GateResult, ValidationEvidence
@@ -4666,7 +4569,7 @@ class TestBuildGateMetadata:
 
     def test_passed_true_overrides_gate_result_passed(self) -> None:
         """When passed=True, quality_gate_result.passed should be True."""
-        from src.orchestration.gate_metadata import (
+        from src.pipeline.gate_metadata import (
             build_gate_metadata as _build_gate_metadata,
         )
         from src.domain.quality_gate import GateResult, ValidationEvidence
@@ -4698,7 +4601,7 @@ class TestBuildGateMetadataFromLogs:
         """When per_issue_spec is None, returns empty GateMetadata."""
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestration.gate_metadata import (
+        from src.pipeline.gate_metadata import (
             build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
         )
         from src.domain.quality_gate import QualityGate
@@ -4708,7 +4611,10 @@ class TestBuildGateMetadataFromLogs:
 
         log_path = tmp_path / "test.log"
         log_path.write_text("{}")
-        quality_gate = cast("GateChecker", QualityGate(tmp_path, log_provider))
+        quality_gate = cast(
+            "GateChecker",
+            QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+        )
 
         result = _build_gate_metadata_from_logs(
             log_path=log_path,
@@ -4728,7 +4634,7 @@ class TestBuildGateMetadataFromLogs:
         import re
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestration.gate_metadata import (
+        from src.pipeline.gate_metadata import (
             build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
         )
         from src.domain.quality_gate import QualityGate
@@ -4746,7 +4652,10 @@ class TestBuildGateMetadataFromLogs:
         # Write a minimal log entry
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast("GateChecker", QualityGate(tmp_path, log_provider))
+        quality_gate = cast(
+            "GateChecker",
+            QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+        )
         spec = ValidationSpec(
             commands=[
                 ValidationCommand(
@@ -4780,7 +4689,7 @@ class TestBuildGateMetadataFromLogs:
         """result_success parameter determines quality_gate_result.passed."""
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestration.gate_metadata import (
+        from src.pipeline.gate_metadata import (
             build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
         )
         from src.domain.quality_gate import QualityGate
@@ -4792,7 +4701,10 @@ class TestBuildGateMetadataFromLogs:
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast("GateChecker", QualityGate(tmp_path, log_provider))
+        quality_gate = cast(
+            "GateChecker",
+            QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+        )
         spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
 
         # Test with result_success=True
@@ -4813,7 +4725,7 @@ class TestBuildGateMetadataFromLogs:
         """Extracts failure reasons from 'Quality gate failed:' prefix."""
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestration.gate_metadata import (
+        from src.pipeline.gate_metadata import (
             build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
         )
         from src.domain.quality_gate import QualityGate
@@ -4825,7 +4737,10 @@ class TestBuildGateMetadataFromLogs:
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast("GateChecker", QualityGate(tmp_path, log_provider))
+        quality_gate = cast(
+            "GateChecker",
+            QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+        )
         spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
 
         result = _build_gate_metadata_from_logs(
@@ -4848,7 +4763,7 @@ class TestBuildGateMetadataFromLogs:
         """Builds validation_result (not None) matching _build_gate_metadata behavior."""
         from typing import TYPE_CHECKING, cast
 
-        from src.orchestration.gate_metadata import (
+        from src.pipeline.gate_metadata import (
             build_gate_metadata_from_logs as _build_gate_metadata_from_logs,
         )
         from src.domain.quality_gate import QualityGate
@@ -4861,7 +4776,10 @@ class TestBuildGateMetadataFromLogs:
         log_path = tmp_path / "test.log"
         log_path.write_text('{"type":"result"}\n')
 
-        quality_gate = cast("GateChecker", QualityGate(tmp_path, log_provider))
+        quality_gate = cast(
+            "GateChecker",
+            QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path)),
+        )
         spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
 
         result = _build_gate_metadata_from_logs(

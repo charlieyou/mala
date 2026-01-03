@@ -41,12 +41,6 @@ from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
 )
-from src.domain.prompts import (
-    get_fixer_prompt,
-    get_gate_followup_prompt,
-    get_idle_resume_prompt,
-    get_review_followup_prompt,
-)
 
 if TYPE_CHECKING:
     import asyncio
@@ -56,16 +50,22 @@ if TYPE_CHECKING:
 
     from src.core.protocols import (
         CodeReviewer,
+        CommandRunnerPort,
+        EnvConfigPort,
         GateChecker,
         IssueProvider,
+        LockManagerPort,
         ReviewIssueProtocol,
     )
-    from src.domain.prompts import PromptValidationCommands
+    from src.domain.prompts import (
+        PromptProvider as DomainPromptProvider,
+        PromptValidationCommands,
+    )
     from src.infra.epic_verifier import EpicVerificationResult
     from src.infra.io.config import MalaConfig
     from src.infra.io.event_protocol import MalaEventSink
     from src.infra.io.log_output.run_metadata import RunMetadata
-    from src.orchestration.issue_result import IssueResult
+    from src.pipeline.issue_result import IssueResult
 
 
 @dataclass
@@ -82,6 +82,9 @@ class WiringDependencies:
     beads: IssueProvider
     event_sink: MalaEventSink
     mala_config: MalaConfig
+    command_runner: CommandRunnerPort
+    env_config: EnvConfigPort
+    lock_manager: LockManagerPort
     # Config values
     max_agents: int | None
     max_issues: int | None
@@ -97,6 +100,7 @@ class WiringDependencies:
     orphans_only: bool
     epic_override_ids: set[str]
     prompt_validation_commands: PromptValidationCommands
+    prompts: DomainPromptProvider
     # Mutable state references (shared with orchestrator)
     session_log_paths: dict[str, Path]
     review_log_paths: dict[str, str]
@@ -140,11 +144,14 @@ def build_run_coordinator(deps: WiringDependencies) -> RunCoordinator:
         max_gate_retries=deps.max_gate_retries,
         disable_validations=deps.disabled_validations,
         coverage_threshold=deps.coverage_threshold,
-        fixer_prompt=get_fixer_prompt(),
+        fixer_prompt=deps.prompts.fixer_prompt,
     )
     return RunCoordinator(
         config=config,
         gate_checker=deps.quality_gate,
+        command_runner=deps.command_runner,
+        env_config=deps.env_config,
+        lock_manager=deps.lock_manager,
         event_sink=deps.event_sink,
     )
 
@@ -256,9 +263,9 @@ def build_session_config(
 ) -> AgentSessionConfig:
     """Build AgentSessionConfig for agent sessions."""
     prompts = PromptProvider(
-        gate_followup=get_gate_followup_prompt(),
-        review_followup=get_review_followup_prompt(),
-        idle_resume=get_idle_resume_prompt(),
+        gate_followup=deps.prompts.gate_followup_prompt,
+        review_followup=deps.prompts.review_followup_prompt,
+        idle_resume=deps.prompts.idle_resume_prompt,
     )
     return AgentSessionConfig(
         repo_path=deps.repo_path,

@@ -16,16 +16,16 @@ import pytest
 
 from src.domain.quality_gate import GateResult, ValidationEvidence
 from src.domain.validation.spec import CommandKind
-from src.orchestration.gate_metadata import (
+from src.pipeline.gate_metadata import (
     GateMetadata,
     build_gate_metadata,
     build_gate_metadata_from_logs,
 )
-from src.domain.prompts import (
-    get_fixer_prompt,
-    get_implementer_prompt,
-    get_review_followup_prompt,
-)
+from src.domain.prompts import PromptProvider, load_prompts
+from src.infra.tools.env import PROMPTS_DIR
+
+# Load prompts once for tests
+_prompts = load_prompts(PROMPTS_DIR)
 from src.orchestration.review_tracking import (
     _extract_existing_fingerprints,
     _get_finding_fingerprint,
@@ -851,31 +851,28 @@ class TestBuildRunMetadata:
 class TestPromptLoading:
     """Test prompt loading utilities."""
 
-    def test_get_implementer_prompt(self) -> None:
-        """Should load implementer prompt."""
-        prompt = get_implementer_prompt()
-        assert isinstance(prompt, str)
-        assert len(prompt) > 0
+    def test_load_prompts_returns_prompt_provider(self) -> None:
+        """load_prompts returns a PromptProvider with all prompts."""
+        assert isinstance(_prompts, PromptProvider)
+
+    def test_implementer_prompt(self) -> None:
+        """Should have implementer prompt loaded."""
+        assert isinstance(_prompts.implementer_prompt, str)
+        assert len(_prompts.implementer_prompt) > 0
         # Verify it contains expected placeholders
-        assert "{issue_id}" in prompt or "issue" in prompt.lower()
+        assert "{issue_id}" in _prompts.implementer_prompt
 
-    def test_get_review_followup_prompt(self) -> None:
-        """Should load review followup prompt."""
-        prompt = get_review_followup_prompt()
-        assert isinstance(prompt, str)
-        assert len(prompt) > 0
+    def test_review_followup_prompt(self) -> None:
+        """Should have review followup prompt loaded."""
+        assert isinstance(_prompts.review_followup_prompt, str)
+        assert len(_prompts.review_followup_prompt) > 0
 
-    def test_get_fixer_prompt(self) -> None:
-        """Should load fixer prompt."""
-        prompt = get_fixer_prompt()
-        assert isinstance(prompt, str)
-        assert len(prompt) > 0
+    def test_fixer_prompt(self) -> None:
+        """Should have fixer prompt loaded."""
+        assert isinstance(_prompts.fixer_prompt, str)
+        assert len(_prompts.fixer_prompt) > 0
 
-    def test_prompts_are_cached(self) -> None:
-        """Prompts should be cached after first load."""
-        # Get prompts twice
-        prompt1 = get_implementer_prompt()
-        prompt2 = get_implementer_prompt()
-
-        # Should be the exact same object due to caching
-        assert prompt1 is prompt2
+    def test_prompt_provider_is_frozen(self) -> None:
+        """PromptProvider should be immutable (frozen dataclass)."""
+        with pytest.raises(Exception):  # FrozenInstanceError
+            _prompts.implementer_prompt = "modified"  # type: ignore[misc]
