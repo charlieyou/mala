@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-def _parse_cerberus_args(raw: str | None, *, source: str) -> list[str]:
+def parse_cerberus_args(raw: str | None, *, source: str) -> list[str]:
     if not raw or not raw.strip():
         return []
     try:
@@ -38,7 +38,7 @@ def _parse_cerberus_args(raw: str | None, *, source: str) -> list[str]:
         raise ValueError(f"{source}: {exc}") from exc
 
 
-def _parse_cerberus_env(raw: str | None, *, source: str) -> dict[str, str]:
+def parse_cerberus_env(raw: str | None, *, source: str) -> dict[str, str]:
     if not raw or not raw.strip():
         return {}
 
@@ -337,7 +337,7 @@ class MalaConfig:
 
         # Parse Cerberus override settings
         try:
-            cerberus_spawn_args = _parse_cerberus_args(
+            cerberus_spawn_args = parse_cerberus_args(
                 os.environ.get("MALA_CERBERUS_SPAWN_ARGS"),
                 source="MALA_CERBERUS_SPAWN_ARGS",
             )
@@ -346,7 +346,7 @@ class MalaConfig:
             cerberus_spawn_args = []
 
         try:
-            cerberus_wait_args = _parse_cerberus_args(
+            cerberus_wait_args = parse_cerberus_args(
                 os.environ.get("MALA_CERBERUS_WAIT_ARGS"),
                 source="MALA_CERBERUS_WAIT_ARGS",
             )
@@ -355,7 +355,7 @@ class MalaConfig:
             cerberus_wait_args = []
 
         try:
-            cerberus_env = _parse_cerberus_env(
+            cerberus_env = parse_cerberus_env(
                 os.environ.get("MALA_CERBERUS_ENV"),
                 source="MALA_CERBERUS_ENV",
             )
@@ -459,3 +459,201 @@ class MalaConfig:
         """
         self.runs_dir.mkdir(parents=True, exist_ok=True)
         self.lock_dir.mkdir(parents=True, exist_ok=True)
+
+
+@dataclass(frozen=True)
+class CLIOverrides:
+    """Raw CLI override values that need parsing before use.
+
+    This represents the raw string values from CLI arguments that will be
+    parsed and merged with MalaConfig to produce a ResolvedConfig.
+
+    Attributes:
+        cerberus_spawn_args: Raw string of extra args for review-gate spawn.
+        cerberus_wait_args: Raw string of extra args for review-gate wait.
+        cerberus_env: Raw string of extra env vars (JSON or KEY=VALUE,KEY=VALUE).
+        review_timeout: Override for review timeout in seconds.
+        max_epic_verification_retries: Override for max epic verification retries.
+        no_morph: Whether --no-morph flag was passed.
+        no_braintrust: Whether --no-braintrust flag was passed.
+    """
+
+    cerberus_spawn_args: str | None = None
+    cerberus_wait_args: str | None = None
+    cerberus_env: str | None = None
+    review_timeout: int | None = None
+    max_epic_verification_retries: int | None = None
+    no_morph: bool = False
+    no_braintrust: bool = False
+
+
+@dataclass(frozen=True)
+class ResolvedConfig:
+    """Fully resolved configuration combining MalaConfig and CLI overrides.
+
+    This is the final configuration object used by the orchestrator. It contains
+    all fields from MalaConfig plus derived fields computed from the combination
+    of base config and CLI overrides.
+
+    Attributes:
+        runs_dir: Directory where run metadata files are stored.
+        lock_dir: Directory for file locks during parallel processing.
+        claude_config_dir: Claude SDK configuration directory.
+        braintrust_api_key: Braintrust API key for tracing.
+        morph_api_key: Morph API key for MCP features.
+        braintrust_enabled: Whether Braintrust tracing is enabled.
+        morph_enabled: Whether Morph MCP features are enabled.
+        review_enabled: Whether automated code review is enabled.
+        review_timeout: Timeout in seconds for review operations.
+        cerberus_bin_path: Path to cerberus bin/ directory.
+        cerberus_spawn_args: Parsed extra args for review-gate spawn.
+        cerberus_wait_args: Parsed extra args for review-gate wait.
+        cerberus_env: Parsed extra environment variables for review-gate.
+        track_review_issues: Whether to create beads issues for P2/P3.
+        llm_api_key: API key for LLM calls.
+        llm_base_url: Base URL for LLM API.
+        max_epic_verification_retries: Maximum retries for epic verification loop.
+        morph_disabled_reason: Reason morph is disabled, if applicable.
+        braintrust_disabled_reason: Reason braintrust is disabled, if applicable.
+    """
+
+    # Paths
+    runs_dir: Path
+    lock_dir: Path
+    claude_config_dir: Path
+
+    # API keys
+    braintrust_api_key: str | None
+    morph_api_key: str | None
+
+    # Feature flags
+    braintrust_enabled: bool
+    morph_enabled: bool
+
+    # Review settings
+    review_enabled: bool
+    review_timeout: int
+    cerberus_bin_path: Path | None
+    cerberus_spawn_args: tuple[str, ...]
+    cerberus_wait_args: tuple[str, ...]
+    cerberus_env: tuple[tuple[str, str], ...]
+    track_review_issues: bool
+
+    # LLM configuration
+    llm_api_key: str | None
+    llm_base_url: str | None
+
+    # Epic verification
+    max_epic_verification_retries: int
+
+    # Derived disabled reasons
+    morph_disabled_reason: str | None
+    braintrust_disabled_reason: str | None
+
+
+def build_resolved_config(
+    base_config: MalaConfig,
+    cli_overrides: CLIOverrides | None = None,
+) -> ResolvedConfig:
+    """Build a ResolvedConfig by merging MalaConfig with CLI overrides.
+
+    Takes a base MalaConfig (typically from environment) and applies CLI
+    overrides, parsing string values and computing derived fields.
+
+    Args:
+        base_config: Base configuration from MalaConfig.from_env() or constructed.
+        cli_overrides: Optional CLI overrides to apply on top of base config.
+
+    Returns:
+        A frozen ResolvedConfig with all values resolved and derived fields computed.
+
+    Raises:
+        ValueError: If CLI override values cannot be parsed.
+
+    Example:
+        config = MalaConfig.from_env()
+        overrides = CLIOverrides(
+            cerberus_spawn_args="--mode fast",
+            no_morph=True,
+        )
+        resolved = build_resolved_config(config, overrides)
+    """
+    overrides = cli_overrides or CLIOverrides()
+
+    # Parse CLI override strings, falling back to base config values
+    if overrides.cerberus_spawn_args is not None:
+        spawn_args = tuple(
+            parse_cerberus_args(overrides.cerberus_spawn_args, source="CLI")
+        )
+    else:
+        spawn_args = base_config.cerberus_spawn_args
+
+    if overrides.cerberus_wait_args is not None:
+        wait_args = tuple(
+            parse_cerberus_args(overrides.cerberus_wait_args, source="CLI")
+        )
+    else:
+        wait_args = base_config.cerberus_wait_args
+
+    if overrides.cerberus_env is not None:
+        env = _normalize_cerberus_env(
+            parse_cerberus_env(overrides.cerberus_env, source="CLI")
+        )
+    else:
+        env = base_config.cerberus_env
+
+    # Apply timeout override
+    review_timeout = (
+        overrides.review_timeout
+        if overrides.review_timeout is not None
+        else base_config.review_timeout
+    )
+
+    # Apply max_epic_verification_retries override
+    max_epic_verification_retries = (
+        overrides.max_epic_verification_retries
+        if overrides.max_epic_verification_retries is not None
+        else base_config.max_epic_verification_retries
+    )
+
+    # Determine if features are enabled after CLI overrides
+    morph_enabled = base_config.morph_enabled and not overrides.no_morph
+    braintrust_enabled = base_config.braintrust_enabled and not overrides.no_braintrust
+
+    # Compute disabled reasons
+    morph_disabled_reason: str | None = None
+    if not morph_enabled:
+        if overrides.no_morph:
+            morph_disabled_reason = "--no-morph"
+        elif not base_config.morph_api_key:
+            morph_disabled_reason = "MORPH_API_KEY not set"
+        else:
+            morph_disabled_reason = "disabled by config"
+
+    braintrust_disabled_reason: str | None = None
+    if not braintrust_enabled:
+        from src.infra.tools.env import USER_CONFIG_DIR
+
+        braintrust_disabled_reason = f"add BRAINTRUST_API_KEY to {USER_CONFIG_DIR}/.env"
+
+    return ResolvedConfig(
+        runs_dir=base_config.runs_dir,
+        lock_dir=base_config.lock_dir,
+        claude_config_dir=base_config.claude_config_dir,
+        braintrust_api_key=base_config.braintrust_api_key,
+        morph_api_key=base_config.morph_api_key,
+        braintrust_enabled=braintrust_enabled,
+        morph_enabled=morph_enabled,
+        review_enabled=base_config.review_enabled,
+        review_timeout=review_timeout,
+        cerberus_bin_path=base_config.cerberus_bin_path,
+        cerberus_spawn_args=spawn_args,
+        cerberus_wait_args=wait_args,
+        cerberus_env=env,
+        track_review_issues=base_config.track_review_issues,
+        llm_api_key=base_config.llm_api_key,
+        llm_base_url=base_config.llm_base_url,
+        max_epic_verification_retries=max_epic_verification_retries,
+        morph_disabled_reason=morph_disabled_reason,
+        braintrust_disabled_reason=braintrust_disabled_reason,
+    )
