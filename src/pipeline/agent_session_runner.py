@@ -414,6 +414,27 @@ class SessionCallbacks:
 
 
 @dataclass
+class ReviewEffectResult:
+    """Result from _handle_review_effect method.
+
+    Encapsulates the multi-value return from review effect handling
+    with named fields for clarity.
+    """
+
+    pending_query: str | None
+    """Query to send for review retry, or None if no retry needed."""
+
+    should_break: bool
+    """Whether the caller should break out of the message iteration loop."""
+
+    cerberus_log_path: str | None
+    """Path to Cerberus review log file, if captured."""
+
+    transition_result: TransitionResult | None
+    """Lifecycle transition result, None only for no-progress early exit."""
+
+
+@dataclass
 class AgentSessionRunner:
     """Runs agent sessions with lifecycle management.
 
@@ -784,19 +805,14 @@ class AgentSessionRunner:
             Tuple of (pending_query for retry, transition_result).
         """
         assert state.log_path is not None
-        (
-            retry_query,
-            should_break,
-            review_log,
-            review_result,
-        ) = await self._handle_review_effect(
+        review_effect = await self._handle_review_effect(
             input, state.log_path, state.session_id, lifecycle, lifecycle_ctx
         )
-        if review_log is not None:
-            state.cerberus_review_log_path = review_log
-        if should_break:
-            return None, review_result
-        if retry_query is not None:
+        if review_effect.cerberus_log_path is not None:
+            state.cerberus_review_log_path = review_effect.cerberus_log_path
+        if review_effect.should_break:
+            return None, review_effect.transition_result
+        if review_effect.pending_query is not None:
             if state.session_id is None:
                 raise IdleTimeoutError(
                     "Cannot retry review: session_id not received from SDK"
@@ -804,11 +820,11 @@ class AgentSessionRunner:
             logger.debug(
                 "Session %s: queueing review retry prompt (%d chars, session_id=%s)",
                 input.issue_id,
-                len(retry_query),
+                len(review_effect.pending_query),
                 state.session_id[:8],
             )
-            return retry_query, review_result
-        return None, review_result
+            return review_effect.pending_query, review_effect.transition_result
+        return None, review_effect.transition_result
 
     def _build_session_output(
         self,
@@ -1014,7 +1030,7 @@ class AgentSessionRunner:
         session_id: str | None,
         lifecycle: ImplementerLifecycle,
         lifecycle_ctx: LifecycleContext,
-    ) -> tuple[str | None, bool, str | None, TransitionResult | None]:
+    ) -> ReviewEffectResult:
         """Handle RUN_REVIEW effect - run review and process result.
 
         Args:
@@ -1025,8 +1041,9 @@ class AgentSessionRunner:
             lifecycle_ctx: Lifecycle context.
 
         Returns:
-            Tuple of (pending_query, should_break, cerberus_log_path, transition_result).
-            transition_result is None only for no-progress early exit.
+            ReviewEffectResult with pending_query, should_break, cerberus_log_path,
+            and transition_result. transition_result is None only for no-progress
+            early exit.
         """
         cerberus_review_log_path: str | None = None
 
@@ -1083,7 +1100,12 @@ class AgentSessionRunner:
                     new_offset,
                     no_progress=True,
                 )
-                return None, True, cerberus_review_log_path, no_progress_result
+                return ReviewEffectResult(
+                    pending_query=None,
+                    should_break=True,
+                    cerberus_log_path=cerberus_review_log_path,
+                    transition_result=no_progress_result,
+                )
 
         if self.event_sink is not None:
             self.event_sink.on_review_started(
@@ -1163,10 +1185,20 @@ class AgentSessionRunner:
                     input.issue_id,
                     issue_id=input.issue_id,
                 )
-            return None, True, cerberus_review_log_path, result  # break
+            return ReviewEffectResult(
+                pending_query=None,
+                should_break=True,
+                cerberus_log_path=cerberus_review_log_path,
+                transition_result=result,
+            )  # break
 
         if result.effect == Effect.COMPLETE_FAILURE:
-            return None, True, cerberus_review_log_path, result  # break
+            return ReviewEffectResult(
+                pending_query=None,
+                should_break=True,
+                cerberus_log_path=cerberus_review_log_path,
+                transition_result=result,
+            )  # break
 
         # parse_error retry: lifecycle returns RUN_REVIEW to re-run
         # review without prompting agent (no code changes needed)
@@ -1176,11 +1208,11 @@ class AgentSessionRunner:
                     f"Review tool error: {review_result.parse_error}; retrying",
                     agent_id=input.issue_id,
                 )
-            return (
-                None,
-                False,
-                cerberus_review_log_path,
-                result,
+            return ReviewEffectResult(
+                pending_query=None,
+                should_break=False,
+                cerberus_log_path=cerberus_review_log_path,
+                transition_result=result,
             )  # continue (re-run review)
 
         if result.effect == Effect.SEND_REVIEW_RETRY:
@@ -1227,9 +1259,19 @@ class AgentSessionRunner:
                 review_issues=review_issues_text,
                 issue_id=input.issue_id,
             )
-            return pending_query, False, cerberus_review_log_path, result
+            return ReviewEffectResult(
+                pending_query=pending_query,
+                should_break=False,
+                cerberus_log_path=cerberus_review_log_path,
+                transition_result=result,
+            )
 
-        return None, False, cerberus_review_log_path, result
+        return ReviewEffectResult(
+            pending_query=None,
+            should_break=False,
+            cerberus_log_path=cerberus_review_log_path,
+            transition_result=result,
+        )
 
     async def _apply_retry_backoff(self, retry_count: int) -> None:
         """Apply backoff delay before an idle retry attempt.
