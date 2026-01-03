@@ -33,7 +33,6 @@ from src.orchestration.review_tracking import (
     create_review_tracking_issues,
 )
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
-from src.infra.tools.env import USER_CONFIG_DIR
 
 if TYPE_CHECKING:
     from src.core.protocols import IssueProvider
@@ -758,11 +757,9 @@ class TestBuildEventRunConfig:
             braintrust_enabled=True,
             review_enabled=True,
             review_disabled_reason=None,
-            morph_enabled=True,
             prioritize_wip=False,
             orphans_only=False,
             cli_args={"verbose": True},
-            morph_disabled_reason=None,
             braintrust_disabled_reason=None,
         )
 
@@ -777,61 +774,7 @@ class TestBuildEventRunConfig:
         assert set(config.only_ids) == {"bd-1", "bd-2"}
         assert config.braintrust_enabled is True
         assert config.review_enabled is True
-        assert config.morph_enabled is True
         assert config.orphans_only is False
-
-    def test_morph_disabled_no_key(self, tmp_path: Path) -> None:
-        """Should set morph_disabled_reason when key missing."""
-        config = build_event_run_config(
-            repo_path=tmp_path,
-            max_agents=4,
-            timeout_seconds=1800,
-            max_issues=10,
-            max_gate_retries=3,
-            max_review_retries=2,
-            epic_id=None,
-            only_ids=None,
-            braintrust_enabled=False,
-            review_enabled=True,
-            review_disabled_reason=None,
-            morph_enabled=False,
-            prioritize_wip=False,
-            orphans_only=False,
-            cli_args=None,
-            morph_disabled_reason=f"add MORPH_API_KEY to {USER_CONFIG_DIR}/.env",
-            braintrust_disabled_reason=None,
-        )
-
-        assert config.morph_enabled is False
-        assert (
-            config.morph_disabled_reason
-            == f"add MORPH_API_KEY to {USER_CONFIG_DIR}/.env"
-        )
-
-    def test_morph_disabled_by_cli(self, tmp_path: Path) -> None:
-        """Should set morph_disabled_reason when --no-morph used."""
-        config = build_event_run_config(
-            repo_path=tmp_path,
-            max_agents=4,
-            timeout_seconds=1800,
-            max_issues=10,
-            max_gate_retries=3,
-            max_review_retries=2,
-            epic_id=None,
-            only_ids=None,
-            braintrust_enabled=False,
-            review_enabled=True,
-            review_disabled_reason=None,
-            morph_enabled=False,
-            prioritize_wip=False,
-            orphans_only=False,
-            cli_args={"no_morph": True},
-            morph_disabled_reason="--no-morph",
-            braintrust_disabled_reason=None,
-        )
-
-        assert config.morph_enabled is False
-        assert config.morph_disabled_reason == "--no-morph"
 
 
 class TestBuildRunMetadata:
@@ -871,33 +814,6 @@ class TestBuildRunMetadata:
         assert metadata.config.max_review_retries == 2
         assert metadata.config.review_enabled is True
         assert metadata.config.orphans_only is False
-
-    def test_none_timeout(self, tmp_path: Path) -> None:
-        """Should handle None timeout."""
-        with patch(
-            "src.infra.io.log_output.run_metadata.configure_debug_logging"
-        ) as mock_debug:
-            mock_debug.return_value = None
-
-            metadata = build_run_metadata(
-                repo_path=tmp_path,
-                max_agents=None,
-                timeout_seconds=None,
-                max_issues=None,
-                epic_id=None,
-                only_ids=None,
-                braintrust_enabled=False,
-                max_gate_retries=3,
-                max_review_retries=2,
-                review_enabled=False,
-                orphans_only=False,
-                cli_args=None,
-                version="1.0.0",
-            )
-
-        assert metadata.config.timeout_minutes is None
-        assert metadata.config.max_agents is None
-        assert metadata.config.max_issues is None
 
 
 # ============================================================================

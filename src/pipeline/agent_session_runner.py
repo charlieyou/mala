@@ -42,7 +42,6 @@ from src.infra.hooks import (
     LintCache,
     block_dangerous_commands,
     block_mala_disallowed_tools,
-    block_morph_replaced_tools,
     make_file_read_cache_hook,
     make_lint_cache_hook,
     make_lock_enforcement_hook,
@@ -343,8 +342,6 @@ class AgentSessionConfig:
         timeout_seconds: Session timeout in seconds.
         max_gate_retries: Maximum gate retry attempts.
         max_review_retries: Maximum review retry attempts.
-        morph_enabled: Whether Morph MCP is enabled.
-        morph_api_key: Morph API key (required if morph_enabled).
         review_enabled: Whether Cerberus external review is enabled.
             When enabled, code changes are reviewed after the gate passes.
         log_file_wait_timeout: Seconds to wait for log file after session
@@ -364,8 +361,6 @@ class AgentSessionConfig:
     timeout_seconds: int
     max_gate_retries: int = 3
     max_review_retries: int = 3
-    morph_enabled: bool = False
-    morph_api_key: str | None = None
     review_enabled: bool = True
     log_file_wait_timeout: float = 60.0
     idle_timeout_seconds: float | None = None
@@ -712,9 +707,6 @@ class AgentSessionRunner:
             make_file_read_cache_hook(file_read_cache),
             make_lint_cache_hook(lint_cache),
         ]
-        if self.config.morph_enabled:
-            pre_tool_hooks.insert(2, block_morph_replaced_tools)
-
         stop_hooks: list[object] = [make_stop_hook(agent_id)]
 
         return pre_tool_hooks, stop_hooks
@@ -746,10 +738,8 @@ class AgentSessionRunner:
             setting_sources=["project", "user"],
             mcp_servers=get_mcp_servers(
                 self.config.repo_path,
-                morph_api_key=self.config.morph_api_key,
-                morph_enabled=self.config.morph_enabled,
             ),
-            disallowed_tools=get_disallowed_tools(self.config.morph_enabled),
+            disallowed_tools=get_disallowed_tools(),
             env=agent_env,
             hooks={
                 "PreToolUse": [
@@ -1435,7 +1425,7 @@ class AgentSessionRunner:
             await asyncio.sleep(backoff)
 
     async def _disconnect_client_safely(
-        self, client: SDKClientProtocol | Any, issue_id: str
+        self, client: SDKClientProtocol | object, issue_id: str
     ) -> None:
         """Disconnect SDK client with timeout, logging any failures."""
         try:

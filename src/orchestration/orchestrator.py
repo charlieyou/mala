@@ -150,7 +150,6 @@ class MalaOrchestrator:
         self.epic_id = orch_config.epic_id
         self.only_ids = orch_config.only_ids
         self.braintrust_enabled = derived.braintrust_enabled
-        self.morph_enabled = derived.morph_enabled
         self.max_gate_retries = orch_config.max_gate_retries
         self.max_review_retries = orch_config.max_review_retries
         self.disable_validations = orch_config.disable_validations
@@ -162,7 +161,6 @@ class MalaOrchestrator:
         self.cli_args = orch_config.cli_args
         self.epic_override_ids = orch_config.epic_override_ids or set()
         self.review_disabled_reason = derived.review_disabled_reason
-        self.morph_disabled_reason = derived.morph_disabled_reason
         self.braintrust_disabled_reason = derived.braintrust_disabled_reason
         self._init_runtime_state()
         self.log_provider = log_provider
@@ -237,7 +235,6 @@ class MalaOrchestrator:
             max_gate_retries=self.max_gate_retries,
             max_review_retries=self.max_review_retries,
             coverage_threshold=self.coverage_threshold,
-            morph_enabled=self.morph_enabled,
             disabled_validations=set(self._disabled_validations)
             if self._disabled_validations
             else None,
@@ -721,11 +718,9 @@ class MalaOrchestrator:
             braintrust_enabled=self.braintrust_enabled,
             review_enabled=self._is_review_enabled(),
             review_disabled_reason=self.review_disabled_reason,
-            morph_enabled=self.morph_enabled,
             prioritize_wip=self.prioritize_wip,
             orphans_only=self.orphans_only,
             cli_args=self.cli_args,
-            morph_disabled_reason=self.morph_disabled_reason,
             braintrust_disabled_reason=self.braintrust_disabled_reason,
         )
         self.event_sink.on_run_started(run_config)

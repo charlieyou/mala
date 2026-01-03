@@ -4299,37 +4299,6 @@ class TestRunSync:
         assert total == 0
 
 
-class TestGetMcpServers:
-    """Test get_mcp_servers function."""
-
-    def test_returns_empty_when_morph_disabled(self, tmp_path: Path) -> None:
-        """get_mcp_servers returns empty dict when morph_enabled=False."""
-        from src.infra.mcp import get_mcp_servers
-
-        result = get_mcp_servers(tmp_path, morph_enabled=False)
-        assert result == {}
-
-    def test_returns_config_when_api_key_set(self, tmp_path: Path) -> None:
-        """get_mcp_servers returns config when morph_api_key is provided."""
-        from src.infra.mcp import get_mcp_servers
-
-        result = get_mcp_servers(tmp_path, morph_api_key="test-key", morph_enabled=True)
-
-        assert "morphllm" in result
-        assert result["morphllm"]["env"]["MORPH_API_KEY"] == "test-key"
-
-    def test_raises_error_when_api_key_missing(self, tmp_path: Path) -> None:
-        """get_mcp_servers raises ValueError when morph_api_key missing but morph_enabled=True."""
-        from src.infra.mcp import get_mcp_servers
-
-        with pytest.raises(ValueError) as exc_info:
-            # morph_api_key is None but morph_enabled=True (default)
-            get_mcp_servers(tmp_path, morph_enabled=True)
-
-        assert "morph_api_key is required" in str(exc_info.value)
-        assert "MalaConfig" in str(exc_info.value)
-
-
 class TestEventSinkIntegration:
     """Tests for event sink integration with orchestrator run lifecycle."""
 
@@ -4579,7 +4548,6 @@ class TestOrchestratorFactory:
         assert config.max_review_retries == 3
         assert config.disable_validations is None
         assert config.coverage_threshold is None
-        assert config.morph_enabled is None
         assert config.prioritize_wip is False
         assert config.focus is True
 

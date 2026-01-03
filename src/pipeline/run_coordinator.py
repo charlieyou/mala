@@ -29,7 +29,6 @@ from src.infra.hooks import (
     FileReadCache,
     LintCache,
     block_dangerous_commands,
-    block_morph_replaced_tools,
     make_file_read_cache_hook,
     make_lint_cache_hook,
     make_lock_enforcement_hook,
@@ -46,7 +45,6 @@ from src.domain.validation.spec import (
 )
 from src.domain.validation.tool_name_extractor import extract_lint_tools_from_spec
 from src.domain.validation.spec_runner import SpecValidationRunner
-from src.infra.io.log_output.console import ConsoleLoggerAdapter
 
 if TYPE_CHECKING:
     from src.infra.io.event_protocol import MalaEventSink
@@ -72,7 +70,7 @@ def _get_fixer_prompt() -> str:
 
 @dataclass
 class RunCoordinatorConfig:
-    """Configuration for RunCoordinator behavior.
+    """Configuration for RunCoordinator.
 
     Attributes:
         repo_path: Path to the repository.
@@ -80,8 +78,6 @@ class RunCoordinatorConfig:
         max_gate_retries: Maximum gate retry attempts.
         disable_validations: Set of validation names to disable.
         coverage_threshold: Optional coverage threshold override.
-        morph_enabled: Whether Morph MCP is enabled.
-        morph_api_key: Morph API key (required if morph_enabled).
     """
 
     repo_path: Path
@@ -89,8 +85,6 @@ class RunCoordinatorConfig:
     max_gate_retries: int = 3
     disable_validations: set[str] | None = None
     coverage_threshold: float | None = None
-    morph_enabled: bool = False
-    morph_api_key: str | None = None
 
 
 @dataclass
@@ -249,7 +243,6 @@ class RunCoordinator:
         # Create validation runner
         runner = SpecValidationRunner(
             self.config.repo_path,
-            logger=ConsoleLoggerAdapter(),
         )
 
         # Retry loop with fixer agent
@@ -422,8 +415,6 @@ class RunCoordinator:
             make_file_read_cache_hook(file_read_cache),
             make_lint_cache_hook(lint_cache),
         ]
-        if self.config.morph_enabled:
-            pre_tool_hooks.append(block_morph_replaced_tools)
 
         options = ClaudeAgentOptions(
             cwd=str(fixer_cwd),
@@ -433,10 +424,8 @@ class RunCoordinator:
             setting_sources=["project", "user"],
             mcp_servers=get_mcp_servers(
                 fixer_cwd,
-                morph_api_key=self.config.morph_api_key,
-                morph_enabled=self.config.morph_enabled,
             ),
-            disallowed_tools=get_disallowed_tools(self.config.morph_enabled),
+            disallowed_tools=get_disallowed_tools(),
             env=agent_env,
             hooks={
                 "PreToolUse": [

@@ -44,7 +44,6 @@ class OrchestratorConfig:
         max_review_retries: Maximum code review retry attempts per issue.
         disable_validations: Set of validation types to disable.
         coverage_threshold: Minimum coverage percentage (None = no-decrease mode).
-        morph_enabled: Enable MorphLLM routing.
         prioritize_wip: Prioritize in_progress issues before open issues.
         focus: Group tasks by epic for focused work.
         cli_args: CLI arguments for logging and metadata.
@@ -63,7 +62,6 @@ class OrchestratorConfig:
     max_review_retries: int = 3
     disable_validations: set[str] | None = None
     coverage_threshold: float | None = None
-    morph_enabled: bool | None = None
     prioritize_wip: bool = False
     focus: bool = True
     cli_args: dict[str, object] | None = None
@@ -107,8 +105,6 @@ class _DerivedConfig:
 
     timeout_seconds: int
     braintrust_enabled: bool
-    morph_enabled: bool
     disabled_validations: set[str]
     review_disabled_reason: str | None = None
-    morph_disabled_reason: str | None = None
     braintrust_disabled_reason: str | None = None
