@@ -38,6 +38,9 @@ from .lint_cache import (
     _get_git_state,
     make_lint_cache_hook,
 )
+from .deadlock import (
+    make_lock_event_hook,
+)
 from .locking import (
     StopHook,
     get_lock_holder,
@@ -69,6 +72,7 @@ __all__ = [
     "make_file_read_cache_hook",
     "make_lint_cache_hook",
     "make_lock_enforcement_hook",
+    "make_lock_event_hook",
     "make_stop_hook",
     "run_command",
 ]
