@@ -962,3 +962,12 @@ class LockManagerPort(Protocol):
             True if lock was acquired, False if timeout.
         """
         ...
+
+    def release_lock(self, filepath: str, repo_namespace: str | None = None) -> None:
+        """Release a lock on a file.
+
+        Args:
+            filepath: Path to the file to unlock.
+            repo_namespace: Optional repo namespace for cross-repo disambiguation.
+        """
+        ...

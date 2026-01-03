@@ -308,6 +308,17 @@ def is_locked(filepath: str, repo_namespace: str | None = None) -> bool:
     return lock_path(filepath, repo_namespace).exists()
 
 
+def release_lock(filepath: str, repo_namespace: str | None = None) -> None:
+    """Release a lock on a file.
+
+    Args:
+        filepath: Path to the file to unlock.
+        repo_namespace: Optional repo namespace for cross-repo disambiguation.
+    """
+    lp = lock_path(filepath, repo_namespace)
+    lp.unlink(missing_ok=True)
+
+
 def get_lock_holder(filepath: str, repo_namespace: str | None = None) -> str | None:
     """Get the agent ID holding a lock, or None if not locked.
 

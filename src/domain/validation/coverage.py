@@ -386,6 +386,56 @@ def is_baseline_stale(
 _BASELINE_LOCK_FILE = "coverage-baseline.lock"
 
 
+class _FallbackLockAdapter:
+    """Adapter that wraps module-level locking functions as LockManagerPort.
+
+    Defined at module level to avoid re-creating the class on every call
+    to refresh_if_stale when no lock manager is injected.
+    """
+
+    def lock_path(self, filepath: str, repo_namespace: str | None = None) -> Path:
+        from src.infra.tools.locking import lock_path as _lock_path
+
+        return _lock_path(filepath, repo_namespace)
+
+    def try_lock(
+        self,
+        filepath: str,
+        agent_id: str,
+        repo_namespace: str | None = None,
+    ) -> bool:
+        from src.infra.tools.locking import try_lock as _try_lock
+
+        return _try_lock(filepath, agent_id, repo_namespace)
+
+    def wait_for_lock(
+        self,
+        filepath: str,
+        agent_id: str,
+        repo_namespace: str | None = None,
+        timeout_seconds: float = 30.0,
+        poll_interval_ms: int = 100,
+    ) -> bool:
+        from src.infra.tools.locking import wait_for_lock as _wait_for_lock
+
+        return _wait_for_lock(
+            filepath,
+            agent_id,
+            repo_namespace,
+            timeout_seconds,
+            poll_interval_ms,
+        )
+
+    def release_lock(self, filepath: str, repo_namespace: str | None = None) -> None:
+        from src.infra.tools.locking import release_lock as _release_lock
+
+        _release_lock(filepath, repo_namespace)
+
+
+# Singleton instance of the fallback adapter
+_FALLBACK_LOCK_ADAPTER = _FallbackLockAdapter()
+
+
 @dataclass
 class BaselineRefreshResult:
     """Result of a baseline coverage refresh operation.
@@ -479,48 +529,12 @@ class BaselineCoverageService:
             BaselineRefreshResult with the baseline percentage or error.
             Returns failure if coverage_config is None or has no command.
         """
-        # Get lock manager (injected or fallback to infra import)
-        if self.lock_manager is not None:
-            lock_mgr = self.lock_manager
-        else:
-            from src.infra.tools.locking import (
-                lock_path as _lock_path,
-                try_lock as _try_lock,
-                wait_for_lock as _wait_for_lock,
-            )
-
-            # Create a simple adapter for the module-level functions
-            class _LockAdapter:
-                def lock_path(
-                    self, filepath: str, repo_namespace: str | None = None
-                ) -> Path:
-                    return _lock_path(filepath, repo_namespace)
-
-                def try_lock(
-                    self,
-                    filepath: str,
-                    agent_id: str,
-                    repo_namespace: str | None = None,
-                ) -> bool:
-                    return _try_lock(filepath, agent_id, repo_namespace)
-
-                def wait_for_lock(
-                    self,
-                    filepath: str,
-                    agent_id: str,
-                    repo_namespace: str | None = None,
-                    timeout_seconds: float = 30.0,
-                    poll_interval_ms: int = 100,
-                ) -> bool:
-                    return _wait_for_lock(
-                        filepath,
-                        agent_id,
-                        repo_namespace,
-                        timeout_seconds,
-                        poll_interval_ms,
-                    )
-
-            lock_mgr = _LockAdapter()
+        # Get lock manager (injected or fallback to module-level singleton)
+        lock_mgr = (
+            self.lock_manager
+            if self.lock_manager is not None
+            else _FALLBACK_LOCK_ADAPTER
+        )
 
         # Check if baseline refresh is available
         if self.coverage_config is None:
@@ -585,9 +599,8 @@ class BaselineCoverageService:
             # Still stale - run refresh in temp worktree
             return self._run_refresh(spec, baseline_path)
         finally:
-            # Release lock by removing lock file
-            lock_file = lock_mgr.lock_path(_BASELINE_LOCK_FILE, repo_namespace)
-            lock_file.unlink(missing_ok=True)
+            # Release lock through the abstraction
+            lock_mgr.release_lock(_BASELINE_LOCK_FILE, repo_namespace)
 
     def _run_refresh(
         self,
