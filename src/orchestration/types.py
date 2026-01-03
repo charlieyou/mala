@@ -67,6 +67,9 @@ class OrchestratorConfig:
     cli_args: dict[str, object] | None = None
     epic_override_ids: set[str] | None = None
     orphans_only: bool = False
+    # Context exhaustion handling thresholds
+    context_restart_threshold: float = 0.90
+    context_limit: int = 200_000
 
 
 @dataclass

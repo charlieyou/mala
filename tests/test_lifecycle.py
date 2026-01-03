@@ -9,6 +9,7 @@ import pytest
 
 from src.infra.clients.cerberus_review import ReviewIssue, ReviewResult
 from src.domain.lifecycle import (
+    ContextUsage,
     Effect,
     ImplementerLifecycle,
     LifecycleConfig,
@@ -805,3 +806,91 @@ class TestReviewIssueProtocol:
         assert issue.title == "Test bug"
         assert issue.body == "Description"
         assert issue.reviewer == "code-reviewer"
+
+
+class TestContextUsage:
+    """Tests for ContextUsage dataclass and pressure_ratio method."""
+
+    def test_default_values(self) -> None:
+        """ContextUsage initializes with zero token counts."""
+        usage = ContextUsage()
+        assert usage.input_tokens == 0
+        assert usage.output_tokens == 0
+        assert usage.cache_read_tokens == 0
+
+    def test_pressure_ratio_at_zero(self) -> None:
+        """pressure_ratio returns 0.0 when input_tokens is 0."""
+        usage = ContextUsage(input_tokens=0)
+        assert usage.pressure_ratio(200_000) == 0.0
+
+    def test_pressure_ratio_at_fifty_percent(self) -> None:
+        """pressure_ratio returns 0.5 at 50% usage."""
+        usage = ContextUsage(input_tokens=100_000)
+        assert usage.pressure_ratio(200_000) == 0.5
+
+    def test_pressure_ratio_at_hundred_percent(self) -> None:
+        """pressure_ratio returns 1.0 at 100% usage."""
+        usage = ContextUsage(input_tokens=200_000)
+        assert usage.pressure_ratio(200_000) == 1.0
+
+    def test_pressure_ratio_above_limit(self) -> None:
+        """pressure_ratio can exceed 1.0 when over limit."""
+        usage = ContextUsage(input_tokens=250_000)
+        assert usage.pressure_ratio(200_000) == 1.25
+
+    def test_pressure_ratio_with_zero_limit(self) -> None:
+        """pressure_ratio returns 0.0 when limit is 0 to avoid division by zero."""
+        usage = ContextUsage(input_tokens=100_000)
+        assert usage.pressure_ratio(0) == 0.0
+
+    def test_pressure_ratio_with_negative_limit(self) -> None:
+        """pressure_ratio returns 0.0 when limit is negative."""
+        usage = ContextUsage(input_tokens=100_000)
+        assert usage.pressure_ratio(-1) == 0.0
+
+
+class TestLifecycleContextUsage:
+    """Tests for context_usage field in LifecycleContext."""
+
+    def test_default_context_usage(self) -> None:
+        """LifecycleContext has default ContextUsage instance."""
+        ctx = LifecycleContext()
+        assert ctx.context_usage is not None
+        assert ctx.context_usage.input_tokens == 0
+        assert ctx.context_usage.output_tokens == 0
+        assert ctx.context_usage.cache_read_tokens == 0
+
+    def test_context_usage_independent_instances(self) -> None:
+        """Each LifecycleContext gets its own ContextUsage instance."""
+        ctx1 = LifecycleContext()
+        ctx2 = LifecycleContext()
+        ctx1.context_usage.input_tokens = 1000
+        assert ctx2.context_usage.input_tokens == 0
+
+
+class TestOrchestratorConfigContextFields:
+    """Tests for context exhaustion config fields in OrchestratorConfig."""
+
+    def test_context_config_defaults(self) -> None:
+        """OrchestratorConfig has correct context exhaustion defaults."""
+        from pathlib import Path
+
+        from src.orchestration.types import OrchestratorConfig
+
+        config = OrchestratorConfig(repo_path=Path("/tmp"))
+        assert config.context_restart_threshold == 0.90
+        assert config.context_limit == 200_000
+
+    def test_context_config_custom_values(self) -> None:
+        """OrchestratorConfig accepts custom context values."""
+        from pathlib import Path
+
+        from src.orchestration.types import OrchestratorConfig
+
+        config = OrchestratorConfig(
+            repo_path=Path("/tmp"),
+            context_restart_threshold=0.85,
+            context_limit=150_000,
+        )
+        assert config.context_restart_threshold == 0.85
+        assert config.context_limit == 150_000

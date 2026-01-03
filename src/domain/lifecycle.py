@@ -220,6 +220,33 @@ class RetryState:
 
 
 @dataclass
+class ContextUsage:
+    """Tracks token usage for context exhaustion detection.
+
+    The SDK provides cumulative input_tokens in ResultMessage.usage.
+    We track usage to detect when approaching the 200K context limit.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+
+    def pressure_ratio(self, limit: int) -> float:
+        """Return ratio of input tokens used to the limit.
+
+        Args:
+            limit: Maximum context tokens (e.g., 200_000)
+
+        Returns:
+            Ratio from 0.0 to 1.0+ (e.g., 90000/200000 = 0.45)
+            Returns 0.0 if limit is 0 to avoid division by zero.
+        """
+        if limit <= 0:
+            return 0.0
+        return self.input_tokens / limit
+
+
+@dataclass
 class LifecycleContext:
     """Context passed to and updated by state transitions.
 
@@ -240,6 +267,8 @@ class LifecycleContext:
     # P2/P3 issues from review to create as tracking issues
     # These are low-priority issues that don't block the review but should be tracked
     low_priority_review_issues: list[ReviewIssue] = field(default_factory=list)
+    # Token usage for context exhaustion detection
+    context_usage: ContextUsage = field(default_factory=ContextUsage)
 
 
 @dataclass
