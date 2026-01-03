@@ -50,7 +50,14 @@ class ExecutorConfig:
     repo_path: Path | None = None
     step_timeout_seconds: float | None = None
     env_config: EnvConfigPort | None = None
-    command_runner: CommandRunnerPort | None = None
+    command_runner: CommandRunnerPort = field(
+        default_factory=lambda: _raise_missing_runner()
+    )
+
+
+def _raise_missing_runner() -> CommandRunnerPort:
+    """Raise an error when command_runner is not provided."""
+    raise ValueError("command_runner is required in ExecutorConfig")
 
 
 @dataclass
@@ -186,8 +193,6 @@ class SpecCommandExecutor:
             return None
         if self.config.repo_path is None:
             return None
-        if self.config.command_runner is None:
-            return None
         if self.config.env_config is not None:
             cache_dir = self.config.env_config.cache_dir
         else:
@@ -283,13 +288,8 @@ class SpecCommandExecutor:
         # Use command's timeout if specified, else fall back to config timeout
         timeout = cmd.timeout or self.config.step_timeout_seconds
 
-        # Use injected runner or create one for backward compatibility
-        if self.config.command_runner is not None:
-            runner = self.config.command_runner
-        else:
-            from src.infra.tools.command_runner import CommandRunner
-
-            runner = CommandRunner(cwd=cwd, timeout_seconds=timeout)
+        # Use injected runner (required)
+        runner = self.config.command_runner
 
         if cmd.shell:
             # Shell mode: pass command string directly with shell=True

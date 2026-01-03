@@ -353,13 +353,21 @@ class SpecValidationRunner:
         Raises:
             CommandFailure: If a command fails (and allow_fail is False).
         """
+        # Create fallback runner if not provided (for backward compatibility)
+        if command_runner is None:
+            from src.infra.tools.command_runner import CommandRunner
+
+            runner: CommandRunnerPort = CommandRunner(cwd=cwd)
+        else:
+            runner = command_runner
+
         # Configure executor
         executor_config = ExecutorConfig(
             enable_lint_cache=self.enable_lint_cache,
             repo_path=self.repo_path,
             step_timeout_seconds=self.step_timeout_seconds,
             env_config=self.env_config,
-            command_runner=command_runner,
+            command_runner=runner,
         )
         executor = SpecCommandExecutor(executor_config)
 
