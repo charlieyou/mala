@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from src.core.log_events import (
     AssistantLogEntry,
@@ -155,11 +155,13 @@ class SessionLogParser:
         except OSError:
             return start_offset
 
-    def extract_bash_commands(self, entry: JsonlEntry) -> list[tuple[str, str]]:
+    def extract_bash_commands(
+        self, entry: JsonlEntry | JsonlEntryProtocol
+    ) -> list[tuple[str, str]]:
         """Extract Bash tool_use commands from an entry.
 
         Args:
-            entry: A JsonlEntry from iter_jsonl_entries.
+            entry: A JsonlEntry or JsonlEntryProtocol from iter_jsonl_entries.
 
         Returns:
             List of (tool_id, command) tuples for Bash tool_use blocks.
@@ -204,11 +206,13 @@ class SessionLogParser:
                     commands.append((tool_id, command))
         return commands
 
-    def extract_tool_results(self, entry: JsonlEntry) -> list[tuple[str, bool]]:
+    def extract_tool_results(
+        self, entry: JsonlEntry | JsonlEntryProtocol
+    ) -> list[tuple[str, bool]]:
         """Extract tool_result entries from an entry.
 
         Args:
-            entry: A JsonlEntry from iter_jsonl_entries.
+            entry: A JsonlEntry or JsonlEntryProtocol from iter_jsonl_entries.
 
         Returns:
             List of (tool_use_id, is_error) tuples for tool_result blocks.
@@ -250,11 +254,13 @@ class SessionLogParser:
                 results.append((tool_use_id, is_error))
         return results
 
-    def extract_assistant_text_blocks(self, entry: JsonlEntry) -> list[str]:
+    def extract_assistant_text_blocks(
+        self, entry: JsonlEntry | JsonlEntryProtocol
+    ) -> list[str]:
         """Extract text content from assistant message blocks.
 
         Args:
-            entry: A JsonlEntry from iter_jsonl_entries.
+            entry: A JsonlEntry or JsonlEntryProtocol from iter_jsonl_entries.
 
         Returns:
             List of text strings from text blocks in assistant messages.
@@ -347,7 +353,10 @@ class FileSystemLogProvider:
         Yields:
             JsonlEntryProtocol objects for each successfully parsed JSON line.
         """
-        return self._parser.iter_jsonl_entries(log_path, offset)
+        return cast(
+            "Iterator[JsonlEntryProtocol]",
+            self._parser.iter_jsonl_entries(log_path, offset),
+        )
 
     def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
         """Get the byte offset at the end of a log file.
@@ -375,7 +384,7 @@ class FileSystemLogProvider:
         Returns:
             List of (tool_id, command) tuples for Bash tool_use blocks.
         """
-        return self._parser.extract_bash_commands(entry)  # type: ignore[arg-type]
+        return self._parser.extract_bash_commands(entry)
 
     def extract_tool_results(self, entry: JsonlEntryProtocol) -> list[tuple[str, bool]]:
         """Extract tool_result entries from an entry.
@@ -388,7 +397,7 @@ class FileSystemLogProvider:
         Returns:
             List of (tool_use_id, is_error) tuples for tool_result blocks.
         """
-        return self._parser.extract_tool_results(entry)  # type: ignore[arg-type]
+        return self._parser.extract_tool_results(entry)
 
     def extract_assistant_text_blocks(self, entry: JsonlEntryProtocol) -> list[str]:
         """Extract text content from assistant message blocks.
@@ -401,4 +410,4 @@ class FileSystemLogProvider:
         Returns:
             List of text strings from text blocks in assistant messages.
         """
-        return self._parser.extract_assistant_text_blocks(entry)  # type: ignore[arg-type]
+        return self._parser.extract_assistant_text_blocks(entry)

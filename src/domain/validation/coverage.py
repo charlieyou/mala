@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from .config import YamlCoverageConfig  # noqa: TC001 - used at runtime
 
@@ -649,9 +649,11 @@ class BaselineCoverageService:
             from src.infra.tools.command_runner import CommandRunner
 
             if self.command_runner is not None:
-                worktree_runner = self.command_runner
+                worktree_runner: CommandRunnerPort = self.command_runner
             else:
-                worktree_runner = CommandRunner(cwd=self.repo_path)
+                worktree_runner = cast(
+                    "CommandRunnerPort", CommandRunner(cwd=self.repo_path)
+                )
 
             worktree_ctx = create_worktree(
                 repo_path=self.repo_path,

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from .lint_cache import LintCache
 from .spec import ValidationArtifacts
@@ -139,26 +139,27 @@ class SpecValidationRunner:
                 artifacts=artifacts,
             )
 
-        # Step 0b: Invalidate lint cache if config_files changed
-        if context.changed_files and should_invalidate_lint_cache(
-            context.changed_files, spec
-        ):
-            self._invalidate_lint_cache_for_config_change()
-
         # Note: setup commands always run fresh (not cached per CACHEABLE_KINDS in
         # spec_executor.py). The should_invalidate_setup_cache() function in
         # validation_gating.py exists for future setup caching support but is not
         # currently wired up.
 
         # Delegate workspace setup to spec_workspace module
-        try:
-            # Get command runner, creating fallback if not injected
-            if self.command_runner is not None:
-                runner = self.command_runner
-            else:
-                from src.infra.tools.command_runner import CommandRunner
+        # Get command runner, creating fallback if not injected
+        if self.command_runner is not None:
+            runner: CommandRunnerPort = self.command_runner
+        else:
+            from src.infra.tools.command_runner import CommandRunner
 
-                runner = CommandRunner(cwd=context.repo_path)
+            runner = cast("CommandRunnerPort", CommandRunner(cwd=context.repo_path))
+
+        try:
+            # Step 0b: Invalidate lint cache if config_files changed
+            # Done after runner is available so cache invalidation works
+            if context.changed_files and should_invalidate_lint_cache(
+                context.changed_files, spec
+            ):
+                self._invalidate_lint_cache_for_config_change(runner)
 
             workspace = setup_workspace(
                 spec=spec,
@@ -189,6 +190,7 @@ class SpecValidationRunner:
                 workspace.log_dir,
                 workspace.run_id,
                 workspace.baseline_percent,
+                runner,
             )
             return result
         finally:
@@ -197,16 +199,19 @@ class SpecValidationRunner:
             validation_passed = result.passed if result is not None else False
             cleanup_workspace(workspace, validation_passed, runner)
 
-    def _invalidate_lint_cache_for_config_change(self) -> None:
+    def _invalidate_lint_cache_for_config_change(
+        self, command_runner: CommandRunnerPort
+    ) -> None:
         """Invalidate lint cache when config files change.
 
         Called when files matching config_files patterns are detected in
         the changed files. This ensures lint/format/typecheck commands
         run fresh when their configuration changes.
+
+        Args:
+            command_runner: The command runner to use for cache operations.
         """
         if not self.enable_lint_cache:
-            return
-        if self.command_runner is None:
             return
         try:
             if self.env_config is not None:
@@ -219,7 +224,7 @@ class SpecValidationRunner:
             cache = LintCache(
                 cache_dir=cache_dir,
                 repo_path=self.repo_path,
-                command_runner=self.command_runner,
+                command_runner=command_runner,
             )
             cache.invalidate_all()
         except Exception:
@@ -236,6 +241,7 @@ class SpecValidationRunner:
         log_dir: Path,
         run_id: str,
         baseline_percent: float | None,
+        command_runner: CommandRunnerPort | None,
     ) -> ValidationResult:
         """Run pipeline: commands -> coverage -> e2e -> result."""
         env = self._build_spec_env(context, run_id)
@@ -244,7 +250,7 @@ class SpecValidationRunner:
 
         # Step 1: Run commands
         try:
-            steps = self._run_commands(spec, cwd, env, log_dir)
+            steps = self._run_commands(spec, cwd, env, log_dir, command_runner)
         except CommandFailure as e:
             self._write_completion_manifest(log_dir, expected, e.steps, e.reason)
             return ValidationResult(
@@ -327,6 +333,7 @@ class SpecValidationRunner:
         cwd: Path,
         env: dict[str, str],
         log_dir: Path,
+        command_runner: CommandRunnerPort | None,
     ) -> list[ValidationStepResult]:
         """Execute all commands in the spec.
 
@@ -338,6 +345,7 @@ class SpecValidationRunner:
             cwd: Working directory for commands.
             env: Environment variables.
             log_dir: Directory for logs.
+            command_runner: Command runner for executing commands.
 
         Returns:
             List of step results for all commands.
@@ -351,6 +359,7 @@ class SpecValidationRunner:
             repo_path=self.repo_path,
             step_timeout_seconds=self.step_timeout_seconds,
             env_config=self.env_config,
+            command_runner=command_runner,
         )
         executor = SpecCommandExecutor(executor_config)
 
