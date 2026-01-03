@@ -231,7 +231,7 @@ def init_fixture_repo(
         ["bd", "init"],
         ["bd", "create", "Fix failing add() test", "-p", "1"],
     ):
-        result = runner.run(cmd)
+        result = runner.run(cmd, cwd=repo_path)
         if not result.ok:
             stderr = result.stderr.strip()
             reason = (
@@ -265,7 +265,7 @@ def get_ready_issue_id(
 
         runner = CommandRunner(cwd=repo_path)
 
-    result = runner.run(["bd", "ready", "--json"])
+    result = runner.run(["bd", "ready", "--json"], cwd=repo_path)
     if not result.ok:
         return None
     try:
@@ -313,4 +313,4 @@ def annotate_issue(
             "- uv run pytest",
         ]
     )
-    runner.run(["bd", "update", issue_id, "--notes", notes])
+    runner.run(["bd", "update", issue_id, "--notes", notes], cwd=repo_path)

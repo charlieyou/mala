@@ -790,6 +790,7 @@ class CommandRunnerPort(Protocol):
         timeout: float | None = None,
         use_process_group: bool | None = None,
         shell: bool = False,
+        cwd: Path | None = None,
     ) -> CommandResultProtocol:
         """Run a command synchronously.
 
@@ -799,6 +800,7 @@ class CommandRunnerPort(Protocol):
             timeout: Timeout for command execution in seconds.
             use_process_group: Whether to use process group for termination.
             shell: If True, run command through shell.
+            cwd: Override working directory for this command.
 
         Returns:
             CommandResultProtocol with execution details.
@@ -812,6 +814,7 @@ class CommandRunnerPort(Protocol):
         timeout: float | None = None,
         use_process_group: bool | None = None,
         shell: bool = False,
+        cwd: Path | None = None,
     ) -> CommandResultProtocol:
         """Run a command asynchronously.
 
@@ -821,6 +824,7 @@ class CommandRunnerPort(Protocol):
             timeout: Timeout for command execution in seconds.
             use_process_group: Whether to use process group for termination.
             shell: If True, run command through shell.
+            cwd: Override working directory for this command.
 
         Returns:
             CommandResultProtocol with execution details.

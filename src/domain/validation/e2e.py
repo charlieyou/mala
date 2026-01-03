@@ -332,7 +332,7 @@ class E2ERunner:
             runner = CommandRunner(
                 cwd=cwd, timeout_seconds=self.config.timeout_seconds + 30
             )
-        result = runner.run(cmd, env=child_env)
+        result = runner.run(cmd, env=child_env, cwd=cwd)
 
         if result.ok:
             return E2EResult(

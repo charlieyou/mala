@@ -152,6 +152,7 @@ class CommandRunner:
         timeout: float | None = None,
         use_process_group: bool | None = None,
         shell: bool = False,
+        cwd: Path | None = None,
     ) -> CommandResult:
         """Run a command synchronously.
 
@@ -172,11 +173,13 @@ class CommandRunner:
                 and this parameter is ignored (always treated as False).
             shell: If True, run command through shell (cmd should be a string).
                 Defaults to False for backwards compatibility.
+            cwd: Override working directory for this command. If None, uses self.cwd.
 
         Returns:
             CommandResult with execution details.
         """
         effective_timeout = timeout if timeout is not None else self.timeout_seconds
+        effective_cwd = cwd if cwd is not None else self.cwd
         merged_env = self._merge_env(env)
 
         # Use process group on Unix for proper child termination (default behavior)
@@ -190,7 +193,7 @@ class CommandRunner:
         start = time.monotonic()
         proc = subprocess.Popen(
             cmd,
-            cwd=self.cwd,
+            cwd=effective_cwd,
             env=merged_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
