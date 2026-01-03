@@ -245,10 +245,20 @@ class ValidatedRunArgs:
 
 @dataclass(frozen=True)
 class ConfigOverrideResult:
-    """Result of applying CLI overrides to config."""
+    """Result of applying CLI overrides to config.
 
-    resolved: ResolvedConfig
-    updated_config: MalaConfig
+    On success: resolved and updated_config are set, error is None.
+    On failure: error is set, resolved and updated_config are None.
+    """
+
+    resolved: ResolvedConfig | None = None
+    updated_config: MalaConfig | None = None
+    error: str | None = None
+
+    @property
+    def is_error(self) -> bool:
+        """Return True if this result represents an error."""
+        return self.error is not None
 
 
 def _build_cli_args_metadata(
@@ -306,7 +316,7 @@ def _apply_config_overrides(
     braintrust_enabled: bool,
     disable_review: bool,
 ) -> ConfigOverrideResult:
-    """Apply CLI overrides to MalaConfig, raising typer.Exit(1) on parse errors.
+    """Apply CLI overrides to MalaConfig, returning error on parse failures.
 
     Args:
         config: Base MalaConfig from environment.
@@ -319,10 +329,8 @@ def _apply_config_overrides(
         disable_review: Whether review is disabled.
 
     Returns:
-        ConfigOverrideResult with resolved config and updated MalaConfig.
-
-    Raises:
-        typer.Exit: If any override parsing fails.
+        ConfigOverrideResult with resolved config and updated MalaConfig on success,
+        or with error message on failure.
     """
     from src.infra.io.config import CLIOverrides, build_resolved_config
 
@@ -339,8 +347,7 @@ def _apply_config_overrides(
     try:
         resolved = build_resolved_config(config, cli_overrides)
     except ValueError as exc:
-        log("✗", str(exc), Colors.RED)
-        raise typer.Exit(1)
+        return ConfigOverrideResult(error=str(exc))
 
     updated_config = replace(
         config,
@@ -705,6 +712,14 @@ def run(
         braintrust_enabled=_braintrust_enabled,
         disable_review="review" in (disable_set or set()),
     )
+    if override_result.is_error:
+        assert override_result.error is not None  # for type narrowing
+        log("✗", override_result.error, Colors.RED)
+        raise typer.Exit(1)
+
+    # After error check, resolved and updated_config are guaranteed non-None
+    assert override_result.resolved is not None
+    assert override_result.updated_config is not None
 
     # Build cli_args metadata for logging
     cli_args = _build_cli_args_metadata(

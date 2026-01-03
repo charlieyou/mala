@@ -1906,8 +1906,8 @@ class TestApplyConfigOverrides:
         assert result.resolved.cerberus_env == (("BAZ", "qux"), ("FOO", "bar"))
         assert result.updated_config.cerberus_env == (("BAZ", "qux"), ("FOO", "bar"))
 
-    def test_invalid_cerberus_spawn_args_raises_exit(self) -> None:
-        """Invalid cerberus_spawn_args raises typer.Exit(1)."""
+    def test_invalid_cerberus_spawn_args_returns_error(self) -> None:
+        """Invalid cerberus_spawn_args returns error result."""
         from src.cli.cli import _apply_config_overrides
         from src.infra.io.config import MalaConfig
 
@@ -1916,21 +1916,24 @@ class TestApplyConfigOverrides:
             lock_dir=Path("/tmp/locks"),
         )
 
-        with pytest.raises(typer.Exit) as excinfo:
-            _apply_config_overrides(
-                config=config,
-                review_timeout=None,
-                cerberus_spawn_args="--model 'unclosed quote",
-                cerberus_wait_args=None,
-                cerberus_env=None,
-                max_epic_verification_retries=None,
-                braintrust_enabled=False,
-                disable_review=False,
-            )
-        assert excinfo.value.exit_code == 1
+        result = _apply_config_overrides(
+            config=config,
+            review_timeout=None,
+            cerberus_spawn_args="--model 'unclosed quote",
+            cerberus_wait_args=None,
+            cerberus_env=None,
+            max_epic_verification_retries=None,
+            braintrust_enabled=False,
+            disable_review=False,
+        )
 
-    def test_invalid_cerberus_wait_args_raises_exit(self) -> None:
-        """Invalid cerberus_wait_args raises typer.Exit(1)."""
+        assert result.is_error
+        assert result.error is not None
+        assert result.resolved is None
+        assert result.updated_config is None
+
+    def test_invalid_cerberus_wait_args_returns_error(self) -> None:
+        """Invalid cerberus_wait_args returns error result."""
         from src.cli.cli import _apply_config_overrides
         from src.infra.io.config import MalaConfig
 
@@ -1939,21 +1942,24 @@ class TestApplyConfigOverrides:
             lock_dir=Path("/tmp/locks"),
         )
 
-        with pytest.raises(typer.Exit) as excinfo:
-            _apply_config_overrides(
-                config=config,
-                review_timeout=None,
-                cerberus_spawn_args=None,
-                cerberus_wait_args="--poll 'bad",
-                cerberus_env=None,
-                max_epic_verification_retries=None,
-                braintrust_enabled=False,
-                disable_review=False,
-            )
-        assert excinfo.value.exit_code == 1
+        result = _apply_config_overrides(
+            config=config,
+            review_timeout=None,
+            cerberus_spawn_args=None,
+            cerberus_wait_args="--poll 'bad",
+            cerberus_env=None,
+            max_epic_verification_retries=None,
+            braintrust_enabled=False,
+            disable_review=False,
+        )
 
-    def test_invalid_cerberus_env_raises_exit(self) -> None:
-        """Invalid cerberus_env (missing =) raises typer.Exit(1)."""
+        assert result.is_error
+        assert result.error is not None
+        assert result.resolved is None
+        assert result.updated_config is None
+
+    def test_invalid_cerberus_env_returns_error(self) -> None:
+        """Invalid cerberus_env (missing =) returns error result."""
         from src.cli.cli import _apply_config_overrides
         from src.infra.io.config import MalaConfig
 
@@ -1962,15 +1968,18 @@ class TestApplyConfigOverrides:
             lock_dir=Path("/tmp/locks"),
         )
 
-        with pytest.raises(typer.Exit) as excinfo:
-            _apply_config_overrides(
-                config=config,
-                review_timeout=None,
-                cerberus_spawn_args=None,
-                cerberus_wait_args=None,
-                cerberus_env="INVALID_NO_EQUALS",
-                max_epic_verification_retries=None,
-                braintrust_enabled=False,
-                disable_review=False,
-            )
-        assert excinfo.value.exit_code == 1
+        result = _apply_config_overrides(
+            config=config,
+            review_timeout=None,
+            cerberus_spawn_args=None,
+            cerberus_wait_args=None,
+            cerberus_env="INVALID_NO_EQUALS",
+            max_epic_verification_retries=None,
+            braintrust_enabled=False,
+            disable_review=False,
+        )
+
+        assert result.is_error
+        assert result.error is not None
+        assert result.resolved is None
+        assert result.updated_config is None
