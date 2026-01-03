@@ -22,6 +22,7 @@ from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
     AgentSessionRunner,
+    PromptProvider,
     SessionCallbacks,
 )
 from src.domain.quality_gate import GateResult
@@ -34,6 +35,22 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.domain.lifecycle import RetryState
+
+
+def make_test_prompts() -> PromptProvider:
+    """Create a PromptProvider with stub templates for testing."""
+    return PromptProvider(
+        gate_followup=(
+            "Gate followup: {issue_id} attempt {attempt}/{max_attempts}\n"
+            "Failures: {failure_reasons}\n"
+            "Commands: {lint_command} {format_command} {typecheck_command} {test_command}"
+        ),
+        review_followup=(
+            "Review followup: {issue_id} attempt {attempt}/{max_attempts}\n"
+            "Issues: {review_issues}"
+        ),
+        idle_resume="Continue on issue {issue_id}.",
+    )
 
 
 def make_result_message(
@@ -192,6 +209,7 @@ class TestAgentSessionRunnerBasics:
         return AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,  # Disable review for basic tests
@@ -303,6 +321,7 @@ class TestAgentSessionRunnerBasics:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             idle_timeout_seconds=0.1,
             review_enabled=False,
         )
@@ -335,6 +354,7 @@ class TestAgentSessionRunnerBasics:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=5,
+            prompts=make_test_prompts(),
             idle_timeout_seconds=0.2,
             review_enabled=False,
         )
@@ -382,6 +402,7 @@ class TestAgentSessionRunnerBasics:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=5,
+            prompts=make_test_prompts(),
             idle_timeout_seconds=0,
             review_enabled=False,
         )
@@ -436,6 +457,7 @@ class TestAgentSessionRunnerGateHandling:
         return AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
@@ -498,6 +520,7 @@ class TestAgentSessionRunnerGateHandling:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             max_gate_retries=1,
             review_enabled=False,
         )
@@ -558,6 +581,7 @@ class TestAgentSessionRunnerCallbacks:
         return AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
@@ -646,6 +670,7 @@ class TestAgentSessionRunnerConfig:
         config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=120,
+            prompts=make_test_prompts(),
             max_gate_retries=5,
             max_review_retries=4,
             review_enabled=False,
@@ -724,6 +749,7 @@ class TestAgentSessionRunnerStreamingCallbacks:
         return AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
@@ -1036,6 +1062,7 @@ class TestAgentSessionRunnerEventSink:
         return AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
@@ -1125,6 +1152,7 @@ class TestAgentSessionRunnerEventSink:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             max_gate_retries=1,  # Fail immediately
             review_enabled=False,
         )
@@ -1207,6 +1235,7 @@ class TestAgentSessionRunnerEventSink:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             max_gate_retries=2,  # Allow 1 retry
             review_enabled=False,
         )
@@ -1328,6 +1357,7 @@ class TestAgentSessionRunnerEventSink:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=True,  # Enable review
@@ -1425,6 +1455,7 @@ class TestAgentSessionRunnerEventSink:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,  # Allow 1 retry
             review_enabled=True,  # Enable review
@@ -1542,6 +1573,7 @@ class TestIdleTimeoutRetry:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             idle_timeout_seconds=0.01,
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
@@ -1604,6 +1636,7 @@ class TestIdleTimeoutRetry:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             idle_timeout_seconds=0.01,
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
@@ -1646,6 +1679,7 @@ class TestIdleTimeoutRetry:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             idle_timeout_seconds=0.01,
             max_idle_retries=0,  # No retries allowed
             review_enabled=False,
@@ -1689,6 +1723,7 @@ class TestIdleTimeoutRetry:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             idle_timeout_seconds=0.01,
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
@@ -1756,6 +1791,7 @@ class TestIdleTimeoutRetry:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=1,  # Short session timeout for test
+            prompts=make_test_prompts(),
             idle_timeout_seconds=0.01,  # Would fire instantly, but disabled during tool exec
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
@@ -1804,6 +1840,7 @@ class TestIdleTimeoutRetry:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             idle_timeout_seconds=0.01,
             review_enabled=False,
         )
@@ -1865,6 +1902,7 @@ class TestIdleTimeoutRetry:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             idle_timeout_seconds=0.01,
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 5.0, 15.0),
@@ -1952,6 +1990,7 @@ class TestIdleTimeoutRetry:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             max_gate_retries=2,
             review_enabled=False,
         )
@@ -2053,6 +2092,7 @@ class TestInitializeSession:
         return AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=600,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=True,
@@ -2155,6 +2195,7 @@ class TestInitializeSession:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=3000,  # 50 min -> derived = 600
+            prompts=make_test_prompts(),
             idle_timeout_seconds=None,  # Let it be computed
         )
         runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
@@ -2174,6 +2215,7 @@ class TestInitializeSession:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=600,  # 10 min -> derived = 120 < 300
+            prompts=make_test_prompts(),
             idle_timeout_seconds=None,
         )
         runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
@@ -2193,6 +2235,7 @@ class TestInitializeSession:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=6000,  # 100 min -> derived = 1200 > 900
+            prompts=make_test_prompts(),
             idle_timeout_seconds=None,
         )
         runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
@@ -2212,6 +2255,7 @@ class TestInitializeSession:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=600,
+            prompts=make_test_prompts(),
             idle_timeout_seconds=0,  # Explicitly disabled
         )
         runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
@@ -2231,6 +2275,7 @@ class TestInitializeSession:
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=600,
+            prompts=make_test_prompts(),
             idle_timeout_seconds=42.5,  # Explicit value
         )
         runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
@@ -2254,6 +2299,7 @@ class TestBuildSessionOutput:
         return AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=600,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
         )
@@ -2744,6 +2790,7 @@ class TestHandleGateCheck:
         return AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=600,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
@@ -2933,6 +2980,7 @@ class TestHandleReviewCheck:
         return AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=600,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=3,
             review_enabled=True,
@@ -3221,6 +3269,7 @@ class TestCheckReviewNoProgress:
         return AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=600,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=3,
             review_enabled=True,
@@ -3391,6 +3440,7 @@ class TestRunLifecycleLoop:
         return AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=60,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
@@ -3643,6 +3693,7 @@ class TestBuildReviewRetryPrompt:
             issue_id="test-123",
             repo_path=tmp_path,
             max_review_retries=3,
+            review_followup_template=make_test_prompts().review_followup,
         )
 
         # Verify prompt contains key elements
@@ -3667,6 +3718,7 @@ class TestBuildReviewRetryPrompt:
             issue_id="test-456",
             repo_path=tmp_path,
             max_review_retries=5,
+            review_followup_template=make_test_prompts().review_followup,
         )
 
         assert isinstance(prompt, str)
@@ -3694,6 +3746,7 @@ class TestHandleReviewEffectIntegration:
         return AgentSessionConfig(
             repo_path=tmp_path,
             timeout_seconds=600,
+            prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=3,
             review_enabled=True,

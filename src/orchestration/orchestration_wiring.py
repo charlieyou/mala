@@ -255,9 +255,15 @@ def build_session_config(
     review_enabled: bool,
 ) -> AgentSessionConfig:
     """Build AgentSessionConfig for agent sessions."""
+    prompts = PromptProvider(
+        gate_followup=get_gate_followup_prompt(),
+        review_followup=get_review_followup_prompt(),
+        idle_resume=get_idle_resume_prompt(),
+    )
     return AgentSessionConfig(
         repo_path=deps.repo_path,
         timeout_seconds=deps.timeout_seconds,
+        prompts=prompts,
         max_gate_retries=deps.max_gate_retries,
         max_review_retries=deps.max_review_retries,
         review_enabled=review_enabled,
