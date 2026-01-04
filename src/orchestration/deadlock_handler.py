@@ -31,7 +31,7 @@ class DeadlockHandlerCallbacks:
     Attributes:
         add_dependency: Add dependency between issues. Args: (dependent_id, dependency_id).
         mark_needs_followup: Mark issue as needing followup. Args: (issue_id, summary, log_path).
-        on_deadlock_detected: Event callback when deadlock is detected.
+        on_deadlock_detected: Event callback when deadlock is detected. Args: (info).
         on_locks_cleaned: Event callback when locks are cleaned. Args: (agent_id, count).
         on_tasks_aborting: Event callback when tasks are being aborted. Args: (count, reason).
         do_cleanup_agent_locks: Clean up locks held by agent. Args: (agent_id).
