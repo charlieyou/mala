@@ -439,7 +439,7 @@ class TestPathNormalization:
         result1 = run_script("lock-try.sh", [abs_path], env1)
         assert result1.returncode == 0
 
-        # Same agent trying the relative path should fail (same lock)
+        # Same agent trying the relative path should succeed (idempotent re-acquire)
         rel_path = "target.py"
         # We need to cd to tmp_path for relative to work - use a subshell
         full_env = {**_clean_os_environ(), **env1}
@@ -450,9 +450,9 @@ class TestPathNormalization:
             capture_output=True,
             text=True,
         )
-        # Should fail because it's the same file, already locked
-        assert result2.returncode == 1, (
-            "Relative path should resolve to same lock as absolute"
+        # Should succeed because same agent can re-acquire (idempotent)
+        assert result2.returncode == 0, (
+            "Same agent should be able to re-acquire lock via relative path"
         )
 
     def test_dot_slash_prefix_same_as_without(
@@ -475,7 +475,7 @@ class TestPathNormalization:
         )
         assert result1.returncode == 0
 
-        # Try foo.py (same file)
+        # Try foo.py (same file) - should succeed for same agent (idempotent)
         result2 = subprocess.run(
             f"cd {tmp_path} && {SCRIPTS_DIR}/lock-try.sh foo.py",
             shell=True,
@@ -483,7 +483,9 @@ class TestPathNormalization:
             capture_output=True,
             text=True,
         )
-        assert result2.returncode == 1, "./foo.py and foo.py should be same lock"
+        assert result2.returncode == 0, (
+            "Same agent should be able to re-acquire lock via foo.py"
+        )
 
     def test_dotdot_path_resolves_correctly(
         self, lock_env: dict[str, str], tmp_path: Path
@@ -502,7 +504,7 @@ class TestPathNormalization:
         result1 = run_script("lock-try.sh", [str(test_file)], env)
         assert result1.returncode == 0
 
-        # Try from subdir using ../root.py
+        # Try from subdir using ../root.py - should succeed for same agent (idempotent)
         result2 = subprocess.run(
             f"cd {subdir} && {SCRIPTS_DIR}/lock-try.sh ../root.py",
             shell=True,
@@ -510,8 +512,8 @@ class TestPathNormalization:
             capture_output=True,
             text=True,
         )
-        assert result2.returncode == 1, (
-            "../root.py should resolve to same lock as absolute path"
+        assert result2.returncode == 0, (
+            "Same agent should be able to re-acquire lock via ../root.py"
         )
 
     def test_symlink_resolves_to_target(
@@ -529,9 +531,11 @@ class TestPathNormalization:
         result1 = run_script("lock-try.sh", [str(target)], env)
         assert result1.returncode == 0
 
-        # Symlink should hit the same lock
+        # Symlink should hit the same lock - same agent re-acquires (idempotent)
         result2 = run_script("lock-try.sh", [str(symlink)], env)
-        assert result2.returncode == 1, "Symlink should resolve to same lock as target"
+        assert result2.returncode == 0, (
+            "Same agent should be able to re-acquire lock via symlink"
+        )
 
     def test_namespace_applied_after_normalization(
         self, lock_env: dict[str, str], tmp_path: Path
@@ -763,7 +767,7 @@ class TestLockWait:
         result1 = run_script("lock-wait.sh", [str(test_file), "2", "50"], env)
         assert result1.returncode == 0
 
-        # Try with relative path using lock-try - should fail (same lock)
+        # Try with relative path using lock-try - succeeds (idempotent re-acquire)
         result2 = subprocess.run(
             f"cd {tmp_path} && {SCRIPTS_DIR}/lock-try.sh normalized.py",
             shell=True,
@@ -771,4 +775,6 @@ class TestLockWait:
             capture_output=True,
             text=True,
         )
-        assert result2.returncode == 1, "Relative path should resolve to same lock"
+        assert result2.returncode == 0, (
+            "Same agent can re-acquire lock via relative path"
+        )

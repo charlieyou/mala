@@ -268,9 +268,17 @@ def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) ->
 
     # Fast-path if already locked
     if lp.exists():
-        # Get holder for contention logging
+        # Get holder to check for re-entrant acquire
         try:
             holder = lp.read_text().strip()
+            if holder == agent_id:
+                # Idempotent: same agent already holds the lock
+                logger.debug(
+                    "Lock re-acquired (idempotent): path=%s agent_id=%s",
+                    filepath,
+                    agent_id,
+                )
+                return True
             logger.debug(
                 "Lock contention: path=%s holder=%s requester=%s",
                 filepath,

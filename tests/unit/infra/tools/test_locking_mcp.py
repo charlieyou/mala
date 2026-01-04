@@ -309,6 +309,37 @@ class TestLockAcquireWaitingEvents:
 
         assert len(events) == 0
 
+    @pytest.mark.asyncio
+    async def test_no_waiting_for_reentrant_acquire(self) -> None:
+        """No WAITING events when same agent re-acquires lock it already holds."""
+        events: list[Any] = []
+        call_count = 0
+
+        def mock_try_lock(filepath: str, agent_id: str, namespace: str | None) -> bool:
+            nonlocal call_count
+            call_count += 1
+            # First call returns True (initial acquire)
+            # Second call also returns True (idempotent re-acquire)
+            return True
+
+        with patch("src.infra.tools.locking_mcp.try_lock", side_effect=mock_try_lock):
+            handlers = _create_handlers(emit_lock_event=events.append)
+
+            # First acquire
+            result1 = await handlers.lock_acquire.handler({"filepaths": ["a.py"]})
+            content1 = json.loads(result1["content"][0]["text"])
+            assert content1["all_acquired"] is True
+
+            # Second acquire (re-entrant) - should succeed without WAITING
+            result2 = await handlers.lock_acquire.handler({"filepaths": ["a.py"]})
+            content2 = json.loads(result2["content"][0]["text"])
+            assert content2["all_acquired"] is True
+
+        # No WAITING events should be emitted for re-entrant acquire
+        assert len(events) == 0
+        # try_lock was called twice (once per acquire call)
+        assert call_count == 2
+
 
 class TestAsyncEmitLockEvent:
     """Test async emit_lock_event callback support."""

@@ -248,6 +248,26 @@ class TestAgentLockWorkflow:
         assert len(blocked) == 1
         assert blocked[0] == ("utils.py", "bd-blocker")
 
+    def test_agent_reacquire_own_lock_idempotent(
+        self, agent_env: dict[str, str], lock_env: Path
+    ) -> None:
+        """Same agent re-acquiring a lock it already holds succeeds (idempotent)."""
+        # First acquire
+        result1 = run_lock_script("lock-try.sh", ["reacquire.py"], agent_env)
+        assert result1.returncode == 0, "Initial acquire should succeed"
+
+        # Verify we hold it
+        result_check = run_lock_script("lock-check.sh", ["reacquire.py"], agent_env)
+        assert result_check.returncode == 0, "Should hold lock after first acquire"
+
+        # Re-acquire same lock (idempotent)
+        result2 = run_lock_script("lock-try.sh", ["reacquire.py"], agent_env)
+        assert result2.returncode == 0, "Re-acquire by same agent should succeed"
+
+        # Still hold it
+        result_check2 = run_lock_script("lock-check.sh", ["reacquire.py"], agent_env)
+        assert result_check2.returncode == 0, "Should still hold lock after re-acquire"
+
 
 class TestStopHookIntegration:
     """Test the Stop hook cleanup mechanism."""
@@ -523,10 +543,10 @@ class TestPathCanonicalization:
         result = run_lock_script("lock-try.sh", ["file.py"], env)
         assert result.returncode == 0
 
-        # Try to lock the same file using absolute path - should fail (already locked)
+        # Try to lock the same file using absolute path - succeeds (idempotent re-acquire)
         absolute_path = str(tmp_path / "file.py")
         result2 = run_lock_script("lock-try.sh", [absolute_path], env)
-        assert result2.returncode == 1, "Absolute path should resolve to same lock"
+        assert result2.returncode == 0, "Same agent can re-acquire via absolute path"
 
         # Verify there's only one lock file
         locks = list(lock_env.glob("*.lock"))
@@ -547,9 +567,9 @@ class TestPathCanonicalization:
         result = run_lock_script("lock-try.sh", ["./src/../src/file.py"], env)
         assert result.returncode == 0
 
-        # Try to lock the normalized version - should fail
+        # Try to lock the normalized version - succeeds (idempotent re-acquire)
         result2 = run_lock_script("lock-try.sh", ["src/file.py"], env)
-        assert result2.returncode == 1, "Normalized path should resolve to same lock"
+        assert result2.returncode == 0, "Same agent can re-acquire via normalized path"
 
         # Verify only one lock
         locks = list(lock_env.glob("*.lock"))
@@ -768,10 +788,10 @@ class TestRepoNamespaceIntegration:
         result = run_lock_script("lock-try.sh", ["file.py"], base_env)
         assert result.returncode == 0
 
-        # Try to lock with empty namespace - should conflict (same as no namespace)
+        # Try to lock with empty namespace - succeeds (idempotent, same agent)
         env_empty = {**base_env, "REPO_NAMESPACE": ""}
         result2 = run_lock_script("lock-try.sh", ["file.py"], env_empty)
-        assert result2.returncode == 1, "Empty namespace should be same as no namespace"
+        assert result2.returncode == 0, "Same agent can re-acquire with empty namespace"
 
 
 class TestReleaseRunLocks:
