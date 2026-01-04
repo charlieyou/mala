@@ -7,12 +7,15 @@ Design principles:
 - OrchestratorConfig: All scalar configuration (timeouts, flags, limits)
 - OrchestratorDependencies: All protocol implementations (DI for testability)
 - _DerivedConfig: Internal computed configuration values
+- RuntimeDeps: Protocol implementations for pipeline components
+- PipelineConfig: Configuration for pipeline stages
+- IssueFilterConfig: Filtering criteria for issue selection
 - DEFAULT_AGENT_TIMEOUT_MINUTES: Default timeout constant
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path  # noqa: TC003 - needed at runtime for dataclass field
 from typing import TYPE_CHECKING
 
@@ -79,7 +82,7 @@ class OrchestratorConfig:
     prioritize_wip: bool = False
     focus: bool = True
     cli_args: dict[str, object] | None = None
-    epic_override_ids: set[str] | None = None
+    epic_override_ids: set[str] = field(default_factory=set)
     orphans_only: bool = False
     # Context exhaustion handling thresholds
     context_restart_threshold: float = 0.90
@@ -211,4 +214,4 @@ class IssueFilterConfig:
     prioritize_wip: bool = False
     focus: bool = True
     orphans_only: bool = False
-    epic_override_ids: set[str] | None = None
+    epic_override_ids: set[str] = field(default_factory=set)
