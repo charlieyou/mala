@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).parent.parent / "src" / "scripts"
+SCRIPTS_DIR = Path(__file__).parent.parent.parent.parent / "src" / "scripts"
 
 
 pytestmark = pytest.mark.integration
