@@ -104,8 +104,8 @@ Use the MCP locking tools to coordinate file access with other agents.
 **Acquisition strategy - mandatory protocol:**
 
 1. Call `lock_acquire` with ALL files you need (one call, list all paths)
-2. For files in `blocked`, note the holder and **complete all edits on files in `acquired`**
-3. Once all other work is done, call `lock_acquire` with blocked files and `timeout_seconds=300`
+2. Check `results`: for entries with `acquired: false`, note the `holder`; **complete all edits on files with `acquired: true`**
+3. Once all other work is done, call `lock_acquire` with the blocked files and `timeout_seconds=300`
 4. If still blocked after timeout, return BLOCKED—do not retry or investigate
 
 **Hard rules:**
