@@ -47,6 +47,59 @@ def _strip_quotes(path: str) -> str:
     return path
 
 
+def _is_safe_batch_command(command: str) -> bool:
+    """Check if a batched command is safe for emitting events for all matches.
+
+    A command is "safe" if it only uses && to chain commands, meaning
+    success (exit 0) implies all commands ran successfully. Commands using
+    ;, ||, |, or & operators are unsafe because:
+    - ; runs commands regardless of previous exit codes
+    - || short-circuits on success
+    - | creates pipelines where exit code reflects last command
+    - & runs commands in background
+
+    Args:
+        command: The bash command string.
+
+    Returns:
+        True if the command is safe for batch emission, False otherwise.
+    """
+    # Check for unsafe operators outside of quoted strings
+    # Simple heuristic: if any of ; || | & appear outside quotes, it's unsafe
+    # Note: && is safe, so we need to distinguish || from &&
+    in_single_quote = False
+    in_double_quote = False
+    i = 0
+    while i < len(command):
+        char = command[i]
+
+        # Handle quote state changes
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+        elif char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+        elif not in_single_quote and not in_double_quote:
+            # Check for unsafe operators
+            if char == ";":
+                return False
+            if char == "|":
+                # Check if it's || (unsafe) or just | (unsafe)
+                # Note: && is handled separately - it's safe
+                if i + 1 < len(command) and command[i + 1] == "|":
+                    return False  # ||
+                return False  # single |
+            if char == "&":
+                # Check if it's && (safe) or just & (unsafe)
+                if i + 1 < len(command) and command[i + 1] == "&":
+                    i += 1  # Skip the second &, && is safe
+                else:
+                    return False  # single & (background)
+
+        i += 1
+
+    return True
+
+
 def _extract_all_lock_paths(command: str) -> list[tuple[str, str]]:
     """Extract all lock commands from a bash command string.
 
@@ -54,19 +107,24 @@ def _extract_all_lock_paths(command: str) -> list[tuple[str, str]]:
         command: The bash command string (may contain multiple commands).
 
     Returns:
-        List of (command_type, file_path) tuples for each lock command found.
+        List of (command_type, file_path) tuples for each lock command found,
+        sorted by position in the command string (preserving execution order).
         command_type is one of "try", "wait", "release".
     """
-    results: list[tuple[str, str]] = []
+    # Collect (position, command_type, file_path) tuples
+    matches: list[tuple[int, str, str]] = []
 
     for match in _LOCK_TRY_PATTERN.finditer(command):
-        results.append(("try", _strip_quotes(match.group(1))))
+        matches.append((match.start(), "try", _strip_quotes(match.group(1))))
     for match in _LOCK_WAIT_PATTERN.finditer(command):
-        results.append(("wait", _strip_quotes(match.group(1))))
+        matches.append((match.start(), "wait", _strip_quotes(match.group(1))))
     for match in _LOCK_RELEASE_PATTERN.finditer(command):
-        results.append(("release", _strip_quotes(match.group(1))))
+        matches.append((match.start(), "release", _strip_quotes(match.group(1))))
 
-    return results
+    # Sort by position to preserve execution order
+    matches.sort(key=lambda x: x[0])
+
+    return [(cmd_type, path) for _, cmd_type, path in matches]
 
 
 def _extract_lock_path(command: str) -> tuple[str, str] | None:
@@ -97,7 +155,8 @@ def _get_exit_code(tool_result: str) -> int | None:
     """
     # Check for explicit exit code patterns in tool result
     # Common format: "exit code: N" or "(exit N)" or just the exit code
-    if "exit code: " in tool_result.lower():
+    # Guard uses "exit code:" (no space after colon) to match regex which uses \s*
+    if "exit code:" in tool_result.lower():
         match = re.search(r"exit code:\s*(\d+)", tool_result, re.IGNORECASE)
         if match:
             return int(match.group(1))
@@ -163,12 +222,18 @@ def make_lock_event_hook(
             )
             return {}
 
-        # Process each lock command found
-        # For batched commands with exit 0, all succeeded
-        # For single command, exit code determines event type
+        # Process lock commands found
+        # For batched commands, we can only safely emit events for all if:
+        # 1. Single command, or
+        # 2. Commands are chained with && only (safe batch)
+        # For unsafe batches (;, ||, |, &), only emit for the last command
         is_single_command = len(lock_infos) == 1
+        is_safe_batch = is_single_command or _is_safe_batch_command(command)
 
-        for cmd_type, raw_path in lock_infos:
+        # If unsafe batch, only process the last command (whose exit code we have)
+        commands_to_process = lock_infos if is_safe_batch else lock_infos[-1:]
+
+        for cmd_type, raw_path in commands_to_process:
             # Canonicalize the path
             try:
                 lock_path = canonicalize_path(raw_path, repo_namespace)

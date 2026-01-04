@@ -17,6 +17,7 @@ from src.infra.hooks.deadlock import (
     _extract_all_lock_paths,
     _extract_lock_path,
     _get_exit_code,
+    _is_safe_batch_command,
     make_lock_event_hook,
 )
 
@@ -424,3 +425,147 @@ class TestMakeLockEventHook:
 
         assert len(events) == 1
         assert events[0].timestamp > 0
+
+
+@pytest.mark.unit
+class TestIsSafeBatchCommand:
+    """Tests for _is_safe_batch_command helper."""
+
+    def test_single_command_safe(self) -> None:
+        """Single commands are safe."""
+        assert _is_safe_batch_command("lock-try.sh file.py") is True
+
+    def test_and_chain_safe(self) -> None:
+        """Commands chained with && are safe."""
+        assert _is_safe_batch_command("lock-try.sh a.py && lock-try.sh b.py") is True
+        assert (
+            _is_safe_batch_command("lock-try.sh a && lock-try.sh b && lock-try.sh c")
+            is True
+        )
+
+    def test_semicolon_unsafe(self) -> None:
+        """Commands with ; are unsafe."""
+        assert _is_safe_batch_command("lock-try.sh a.py; lock-try.sh b.py") is False
+
+    def test_or_chain_unsafe(self) -> None:
+        """Commands with || are unsafe."""
+        assert _is_safe_batch_command("lock-try.sh a.py || lock-try.sh b.py") is False
+
+    def test_pipe_unsafe(self) -> None:
+        """Commands with | are unsafe."""
+        assert _is_safe_batch_command("lock-try.sh a.py | cat") is False
+
+    def test_background_unsafe(self) -> None:
+        """Commands with & (background) are unsafe."""
+        assert _is_safe_batch_command("lock-try.sh a.py & lock-try.sh b.py") is False
+
+    def test_operators_in_quotes_safe(self) -> None:
+        """Operators inside quotes don't make command unsafe."""
+        assert _is_safe_batch_command('lock-try.sh "file;name.py"') is True
+        assert _is_safe_batch_command("lock-try.sh 'file|name.py'") is True
+        assert _is_safe_batch_command('echo "a || b" && lock-try.sh c.py') is True
+
+
+@pytest.mark.unit
+class TestExtractAllLockPathsOrder:
+    """Tests for _extract_all_lock_paths order preservation (Finding 2)."""
+
+    def test_preserves_command_order(self) -> None:
+        """Lock commands should be returned in their original order."""
+        # release before try in command should preserve that order
+        cmd = "lock-release.sh a && lock-try.sh b"
+        result = _extract_all_lock_paths(cmd)
+        assert result == [("release", "a"), ("try", "b")]
+
+    def test_mixed_types_ordered(self) -> None:
+        """Mixed command types maintain positional order."""
+        cmd = "lock-try.sh a && lock-wait.sh b && lock-release.sh c"
+        result = _extract_all_lock_paths(cmd)
+        assert result == [("try", "a"), ("wait", "b"), ("release", "c")]
+
+
+@pytest.mark.unit
+class TestGetExitCodeNoSpace:
+    """Tests for _get_exit_code guard fix (Finding 1)."""
+
+    def test_exit_code_without_space(self) -> None:
+        """Parse exit code without space after colon."""
+        assert _get_exit_code("exit code:0") == 0
+        assert _get_exit_code("exit code:1") == 1
+
+    def test_exit_code_with_space(self) -> None:
+        """Parse exit code with space after colon."""
+        assert _get_exit_code("exit code: 0") == 0
+        assert _get_exit_code("exit code:  1") == 1
+
+
+@pytest.mark.unit
+class TestUnsafeBatchEventEmission:
+    """Tests for unsafe batch handling (Finding 3)."""
+
+    @pytest.mark.asyncio
+    async def test_unsafe_batch_only_emits_last_command(self) -> None:
+        """Unsafe batch with || only emits event for the last command."""
+        events: list[LockEvent] = []
+        emit = MagicMock(side_effect=lambda e: events.append(e))
+
+        with patch(
+            "src.infra.hooks.deadlock.canonicalize_path",
+            side_effect=lambda p, _: f"/canonical/{p}",
+        ):
+            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            # || is unsafe - only last command event should be emitted
+            hook_input = make_post_hook_input(
+                "Bash",
+                {"command": "lock-try.sh a.py || lock-try.sh b.py"},
+                exit_code=0,
+            )
+            await hook(hook_input, None, make_context())
+
+        # Only b.py (last command) should emit
+        assert len(events) == 1
+        assert events[0].lock_path == "/canonical/b.py"
+
+    @pytest.mark.asyncio
+    async def test_safe_batch_emits_all_commands(self) -> None:
+        """Safe batch with && emits events for all commands."""
+        events: list[LockEvent] = []
+        emit = MagicMock(side_effect=lambda e: events.append(e))
+
+        with patch(
+            "src.infra.hooks.deadlock.canonicalize_path",
+            side_effect=lambda p, _: f"/canonical/{p}",
+        ):
+            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            # && is safe - all commands should emit
+            hook_input = make_post_hook_input(
+                "Bash",
+                {"command": "lock-try.sh a.py && lock-try.sh b.py"},
+                exit_code=0,
+            )
+            await hook(hook_input, None, make_context())
+
+        assert len(events) == 2
+        assert events[0].lock_path == "/canonical/a.py"
+        assert events[1].lock_path == "/canonical/b.py"
+
+    @pytest.mark.asyncio
+    async def test_semicolon_batch_only_emits_last(self) -> None:
+        """Semicolon batch only emits event for the last command."""
+        events: list[LockEvent] = []
+        emit = MagicMock(side_effect=lambda e: events.append(e))
+
+        with patch(
+            "src.infra.hooks.deadlock.canonicalize_path",
+            side_effect=lambda p, _: f"/canonical/{p}",
+        ):
+            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook_input = make_post_hook_input(
+                "Bash",
+                {"command": "lock-try.sh a.py; lock-try.sh b.py"},
+                exit_code=0,
+            )
+            await hook(hook_input, None, make_context())
+
+        assert len(events) == 1
+        assert events[0].lock_path == "/canonical/b.py"
