@@ -66,21 +66,28 @@ def create_locking_mcp_server(
         """Canonicalize path for consistent deadlock graph nodes."""
         return canonicalize_path(filepath, repo_namespace)
 
-    def _emit_waiting(filepath: str) -> None:
-        """Emit WAITING event for a blocked file."""
-        canonical = _canonical(filepath)
+    def _emit_waiting(canonical_path: str) -> None:
+        """Emit WAITING event for a blocked file.
+
+        Args:
+            canonical_path: Already-canonicalized path (from _canonical()).
+        """
         event = LockEvent(
             event_type=LockEventType.WAITING,
             agent_id=agent_id,
-            lock_path=canonical,
+            lock_path=canonical_path,
             timestamp=time.time(),
         )
         emit_lock_event(event)
         logger.debug(
             "WAITING emitted: agent=%s path=%s",
             agent_id,
-            canonical,
+            canonical_path,
         )
+
+    def _strip_internal_fields(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Strip internal fields from results before returning to caller."""
+        return [{k: v for k, v in r.items() if k != "canonical"} for r in results]
 
     @tool(
         name=LOCK_ACQUIRE_TOOL,
@@ -161,7 +168,7 @@ def create_locking_mcp_server(
                         "type": "text",
                         "text": json.dumps(
                             {
-                                "results": results,
+                                "results": _strip_internal_fields(results),
                                 "all_acquired": all_acquired,
                             }
                         ),
@@ -243,7 +250,7 @@ def create_locking_mcp_server(
                     "type": "text",
                     "text": json.dumps(
                         {
-                            "results": results,
+                            "results": _strip_internal_fields(results),
                             "all_acquired": all_acquired,
                         }
                     ),
