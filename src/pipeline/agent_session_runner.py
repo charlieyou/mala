@@ -59,7 +59,8 @@ from src.domain.prompts import (
     extract_checkpoint,
     get_default_validation_commands as _get_default_validation_commands,
 )
-from src.infra.clients.cerberus_review import format_review_issues, ReviewResult
+from src.infra.clients.cerberus_review import format_review_issues
+from src.infra.clients.review_output_parser import ReviewResult
 from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 
 if TYPE_CHECKING:
