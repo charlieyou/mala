@@ -206,6 +206,8 @@ class MalaOrchestrator:
         self.completed: list[IssueResult] = []
         self.session_log_paths: dict[str, Path] = {}
         self.review_log_paths: dict[str, str] = {}
+        # Track agents whose locks were cleaned during deadlock handling to avoid double cleanup
+        self._deadlock_cleaned_agents: set[str] = set()
         self._lint_tools: frozenset[str] | None = None
         self._prompt_validation_commands = build_prompt_validation_commands(
             self.repo_path
@@ -476,13 +478,19 @@ class MalaOrchestrator:
                     is_self_cancel = task is asyncio.current_task()
 
             # Clean up victim's locks first (before any await that could raise)
+            # Track that we cleaned this agent to avoid double cleanup in run_implementer
             self._cleanup_agent_locks(info.victim_id)
+            self._deadlock_cleaned_agents.add(info.victim_id)
 
             # Use shield to protect resolution from cancellation
+            # Track whether cancellation occurred during shielded section
+            cancelled_during_shield = False
             try:
                 await asyncio.shield(self._resolve_deadlock(info))
             except asyncio.CancelledError:
-                # Re-raise only if this wasn't a self-cancel scenario
+                cancelled_during_shield = True
+                # In self-cancel case, we'll schedule deferred cancellation below,
+                # so don't re-raise yet. For external cancellation, re-raise.
                 if not is_self_cancel:
                     raise
 
@@ -504,6 +512,12 @@ class MalaOrchestrator:
                         victim_issue_id,
                         info.victim_id,
                     )
+
+            # If we caught CancelledError in self-cancel case but it arrived before
+            # we scheduled our deferred cancellation, it was from an external source.
+            # Re-raise after scheduling our own cancellation to not mask it.
+            if cancelled_during_shield and is_self_cancel:
+                raise asyncio.CancelledError()
 
     async def _resolve_deadlock(self, info: DeadlockInfo) -> None:
         """Perform dependency and needs-followup updates for deadlock resolution.
@@ -750,7 +764,11 @@ class MalaOrchestrator:
             # Get agent_id for lock cleanup but don't pop - entry needed for get_agent_id callback
             # until finalization completes (see _finalize_issue_result)
             agent_id = self.agent_ids.get(issue_id, temp_agent_id)
-            self._cleanup_agent_locks(agent_id)
+            # Skip cleanup if already done during deadlock handling (avoid double unregister)
+            if agent_id not in self._deadlock_cleaned_agents:
+                self._cleanup_agent_locks(agent_id)
+            else:
+                self._deadlock_cleaned_agents.discard(agent_id)
 
         return IssueResult(
             issue_id=issue_id,
