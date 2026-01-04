@@ -138,13 +138,20 @@ class TestHandleDeadlock:
         ]
 
         # Verify key callbacks were called with correct arguments
-        mock_callbacks.add_dependency.assert_awaited_once_with(
-            deadlock_info.victim_issue_id, deadlock_info.blocker_issue_id
-        )
+        # Use .args/.kwargs to be robust against positional vs keyword argument calls
+        add_dep_args = mock_callbacks.add_dependency.await_args
+        assert add_dep_args is not None
+        victim_arg = add_dep_args.kwargs.get("victim") or add_dep_args.args[0]
+        blocker_arg = add_dep_args.kwargs.get("blocker") or add_dep_args.args[1]
+        assert victim_arg == deadlock_info.victim_issue_id
+        assert blocker_arg == deadlock_info.blocker_issue_id
+
         mock_callbacks.mark_needs_followup.assert_awaited_once()
         # Check mark_needs_followup was called with victim issue_id
-        call_args = mock_callbacks.mark_needs_followup.call_args
-        assert call_args[0][0] == deadlock_info.victim_issue_id
+        followup_args = mock_callbacks.mark_needs_followup.await_args
+        assert followup_args is not None
+        issue_id_arg = followup_args.kwargs.get("issue_id") or followup_args.args[0]
+        assert issue_id_arg == deadlock_info.victim_issue_id
 
     @pytest.mark.asyncio
     async def test_cleans_up_locks_and_tracks_in_state(
@@ -316,8 +323,10 @@ class TestHandleDeadlock:
 
         # Verify log path passed to mark_needs_followup
         mock_callbacks.mark_needs_followup.assert_awaited_once()
-        call_args = mock_callbacks.mark_needs_followup.call_args
-        assert call_args[0][2] == log_path
+        followup_args = mock_callbacks.mark_needs_followup.await_args
+        assert followup_args is not None
+        log_path_arg = followup_args.kwargs.get("log_path") or followup_args.args[2]
+        assert log_path_arg == log_path
 
     @pytest.mark.asyncio
     async def test_handles_none_issue_ids(
@@ -412,8 +421,9 @@ class TestAbortActiveTasks:
         )
 
         # Should use the real result, not an aborted result
-        call_args = mock_callbacks.finalize_issue_result.call_args
-        result = call_args[0][1]
+        finalize_args = mock_callbacks.finalize_issue_result.call_args
+        assert finalize_args is not None
+        result = finalize_args.kwargs.get("result") or finalize_args.args[1]
         assert result.success is True
         assert result.summary == "Completed successfully"
 
@@ -441,8 +451,9 @@ class TestAbortActiveTasks:
             active_tasks, "Test abort", state, mock_run_metadata
         )
 
-        call_args = mock_callbacks.finalize_issue_result.call_args
-        result = call_args[0][1]
+        finalize_args = mock_callbacks.finalize_issue_result.call_args
+        assert finalize_args is not None
+        result = finalize_args.kwargs.get("result") or finalize_args.args[1]
         assert result.success is False
         assert "Task failed" in result.summary
 
@@ -519,8 +530,9 @@ class TestAbortActiveTasks:
             active_tasks, "Test abort", state, mock_run_metadata
         )
 
-        call_args = mock_callbacks.finalize_issue_result.call_args
-        result = call_args[0][1]
+        finalize_args = mock_callbacks.finalize_issue_result.call_args
+        assert finalize_args is not None
+        result = finalize_args.kwargs.get("result") or finalize_args.args[1]
         assert result.session_log_path == log_path
 
         # Ensure task reaches terminal state to avoid "Task was destroyed" warnings
