@@ -80,8 +80,9 @@ class CerberusGateCLI:
     """Low-level CLI subprocess management for review-gate.
 
     Handles subprocess spawn/wait/resolve, binary validation, env merging,
-    and timeout handling. Does not parse JSON or map exit codes to domain
-    results - that responsibility belongs to DefaultReviewer.
+    and timeout handling. Performs minimal JSON parsing to extract transport
+    fields (e.g., session_dir) but does not map exit codes to domain results
+    - that responsibility belongs to DefaultReviewer.
 
     Attributes:
         repo_path: Working directory for subprocess execution.
