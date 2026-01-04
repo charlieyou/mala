@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 import uuid
 from collections.abc import Callable, Coroutine
@@ -34,19 +33,7 @@ from typing import (
     cast,
 )
 
-from src.infra.hooks import (
-    FileReadCache,
-    LintCache,
-    block_dangerous_commands,
-    block_mala_disallowed_tools,
-    make_file_read_cache_hook,
-    make_lint_cache_hook,
-    make_lock_enforcement_hook,
-    make_lock_event_hook,
-    make_lock_wait_hook,
-    make_stop_hook,
-)
-from src.infra.mcp import get_disallowed_tools, get_mcp_servers
+from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.domain.lifecycle import (
     Effect,
     ImplementerLifecycle,
@@ -61,14 +48,15 @@ from src.domain.prompts import (
 )
 from src.infra.clients.cerberus_review import format_review_issues
 from src.infra.clients.review_output_parser import ReviewResult
-from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from typing import Self
 
+    from src.core.models import IssueResolution
     from src.core.protocols import (
         MalaEventSink,
+        ReviewIssueProtocol,
         SDKClientFactoryProtocol,
         SDKClientProtocol,
     )
@@ -80,10 +68,9 @@ if TYPE_CHECKING:
         ReviewOutcome,
         TransitionResult,
     )
-    from src.core.models import IssueResolution
-    from src.core.protocols import ReviewIssueProtocol
-    from src.infra.telemetry import TelemetrySpan
     from src.domain.validation.config import PromptValidationCommands
+    from src.infra.hooks import LintCache
+    from src.infra.telemetry import TelemetrySpan
 
 
 # Module-level logger for idle retry messages
@@ -652,112 +639,6 @@ class AgentSessionRunner:
     sdk_client_factory: SDKClientFactoryProtocol | None = None
     event_sink: MalaEventSink | None = None
 
-    def _build_agent_env(self, agent_id: str) -> dict[str, str]:
-        """Build environment variables for agent execution.
-
-        Args:
-            agent_id: The agent ID for lock management.
-
-        Returns:
-            Environment dict with PATH, LOCK_DIR, AGENT_ID, etc.
-        """
-        return {
-            **os.environ,
-            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
-            "LOCK_DIR": str(get_lock_dir()),
-            "AGENT_ID": agent_id,
-            "REPO_NAMESPACE": str(self.config.repo_path),
-            "MCP_TIMEOUT": "300000",
-        }
-
-    def _build_hooks(
-        self,
-        agent_id: str,
-        file_read_cache: FileReadCache,
-        lint_cache: LintCache,
-    ) -> tuple[list[object], list[object], list[object]]:
-        """Build PreToolUse, PostToolUse, and Stop hooks for the session.
-
-        Args:
-            agent_id: The agent ID for lock enforcement.
-            file_read_cache: Cache for blocking redundant file reads.
-            lint_cache: Cache for blocking redundant lint commands.
-
-        Returns:
-            Tuple of (pre_tool_hooks, post_tool_hooks, stop_hooks).
-        """
-        pre_tool_hooks: list[object] = [
-            block_dangerous_commands,
-            block_mala_disallowed_tools,
-            make_lock_enforcement_hook(agent_id, str(self.config.repo_path)),
-            make_file_read_cache_hook(file_read_cache),
-            make_lint_cache_hook(lint_cache),
-        ]
-        post_tool_hooks: list[object] = []
-        stop_hooks: list[object] = [make_stop_hook(agent_id)]
-
-        # Add lock event hooks if deadlock monitor is configured
-        if self.config.deadlock_monitor is not None:
-            monitor = self.config.deadlock_monitor
-            # PreToolUse hook for real-time WAITING detection on lock-wait.sh
-            pre_tool_hooks.append(
-                make_lock_wait_hook(
-                    agent_id=agent_id,
-                    emit_event=monitor.handle_event,
-                    repo_namespace=str(self.config.repo_path),
-                )
-            )
-            # PostToolUse hook for ACQUIRED/RELEASED events
-            post_tool_hooks.append(
-                make_lock_event_hook(
-                    agent_id=agent_id,
-                    emit_event=monitor.handle_event,
-                    repo_namespace=str(self.config.repo_path),
-                )
-            )
-
-        return pre_tool_hooks, post_tool_hooks, stop_hooks
-
-    def _build_sdk_options(
-        self,
-        pre_tool_hooks: list[object],
-        post_tool_hooks: list[object],
-        stop_hooks: list[object],
-        agent_env: dict[str, str],
-    ) -> object:
-        """Build SDK client options for the session.
-
-        Args:
-            pre_tool_hooks: PreToolUse hooks for the session.
-            post_tool_hooks: PostToolUse hooks for the session.
-            stop_hooks: Stop hooks for the session.
-            agent_env: Environment variables for the agent.
-
-        Returns:
-            ClaudeAgentOptions configured for this session.
-        """
-        # Build hooks dict using factory (required)
-        if self.sdk_client_factory is None:
-            raise RuntimeError(
-                "sdk_client_factory is required. Use SDKClientFactory from "
-                "src.infra.sdk_adapter or inject via orchestration wiring."
-            )
-        make_matcher = self.sdk_client_factory.create_hook_matcher
-        hooks_dict: dict[str, list[object]] = {
-            "PreToolUse": [make_matcher(None, pre_tool_hooks)],
-            "Stop": [make_matcher(None, stop_hooks)],
-        }
-        if post_tool_hooks:
-            hooks_dict["PostToolUse"] = [make_matcher(None, post_tool_hooks)]
-
-        return self.sdk_client_factory.create_options(
-            cwd=str(self.config.repo_path),
-            mcp_servers=get_mcp_servers(self.config.repo_path),
-            disallowed_tools=get_disallowed_tools(),
-            env=agent_env,
-            hooks=hooks_dict,
-        )
-
     def _initialize_session(
         self,
         input: AgentSessionInput,
@@ -789,18 +670,22 @@ class AgentSessionRunner:
         lifecycle_ctx = LifecycleContext()
         lifecycle_ctx.retry_state.baseline_timestamp = int(time.time())
 
-        # Build session components
-        file_read_cache = FileReadCache()
-        lint_cache = LintCache(
-            repo_path=self.config.repo_path,
-            lint_tools=self.config.lint_tools,
-        )
-        pre_tool_hooks, post_tool_hooks, stop_hooks = self._build_hooks(
-            agent_id, file_read_cache, lint_cache
-        )
-        agent_env = self._build_agent_env(agent_id)
-        options = self._build_sdk_options(
-            pre_tool_hooks, post_tool_hooks, stop_hooks, agent_env
+        # Build session components using AgentRuntimeBuilder
+        if self.sdk_client_factory is None:
+            raise RuntimeError(
+                "sdk_client_factory is required. Use SDKClientFactory from "
+                "src.infra.sdk_adapter or inject via orchestration wiring."
+            )
+        runtime = (
+            AgentRuntimeBuilder(
+                self.config.repo_path, agent_id, self.sdk_client_factory
+            )
+            .with_hooks(deadlock_monitor=self.config.deadlock_monitor)
+            .with_env()
+            .with_mcp()
+            .with_disallowed_tools()
+            .with_lint_tools(self.config.lint_tools)
+            .build()
         )
 
         # Calculate idle timeout
@@ -813,8 +698,8 @@ class AgentSessionRunner:
 
         session_config = SessionConfig(
             agent_id=agent_id,
-            options=options,
-            lint_cache=lint_cache,
+            options=runtime.options,
+            lint_cache=runtime.lint_cache,
             log_file_wait_timeout=self.config.log_file_wait_timeout,
             log_file_poll_interval=0.5,
             idle_timeout_seconds=idle_timeout_seconds,

@@ -18,22 +18,11 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from src.infra.hooks import (
-    FileReadCache,
-    LintCache,
-    block_dangerous_commands,
-    make_file_read_cache_hook,
-    make_lint_cache_hook,
-    make_lock_enforcement_hook,
-    make_stop_hook,
-)
-from src.infra.mcp import get_disallowed_tools, get_mcp_servers
-from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
+from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.tools.locking import cleanup_agent_locks
 from src.domain.validation.e2e import E2EStatus
 from src.domain.validation.spec import (
@@ -406,45 +395,23 @@ class RunCoordinator:
 
         fixer_cwd = self.config.repo_path
 
-        # Set up environment
-        agent_env = {
-            **os.environ,
-            "PATH": f"{SCRIPTS_DIR}:{os.environ.get('PATH', '')}",
-            "LOCK_DIR": str(get_lock_dir()),
-            "AGENT_ID": agent_id,
-            "REPO_NAMESPACE": str(self.config.repo_path),
-            "MCP_TIMEOUT": "300000",
-        }
-
-        # Build hooks
-        file_read_cache = FileReadCache()
-        lint_tools = extract_lint_tools_from_spec(spec)
-        lint_cache = LintCache(repo_path=fixer_cwd, lint_tools=lint_tools)
-        pre_tool_hooks: list[object] = [
-            block_dangerous_commands,
-            make_lock_enforcement_hook(agent_id, str(self.config.repo_path)),
-            make_file_read_cache_hook(file_read_cache),
-            make_lint_cache_hook(lint_cache),
-        ]
-
-        # Build options using factory (required)
+        # Build runtime using AgentRuntimeBuilder
         if self.sdk_client_factory is None:
             raise RuntimeError(
                 "sdk_client_factory is required for fixer agent. "
                 "Use SDKClientFactory from src.infra.sdk_adapter."
             )
-        make_matcher = self.sdk_client_factory.create_hook_matcher
-        options = self.sdk_client_factory.create_options(
-            cwd=str(fixer_cwd),
-            mcp_servers=get_mcp_servers(fixer_cwd),
-            disallowed_tools=get_disallowed_tools(),
-            env=agent_env,
-            hooks={
-                "PreToolUse": [make_matcher(None, pre_tool_hooks)],
-                "Stop": [make_matcher(None, [make_stop_hook(agent_id)])],
-            },
+        lint_tools = extract_lint_tools_from_spec(spec)
+        runtime = (
+            AgentRuntimeBuilder(fixer_cwd, agent_id, self.sdk_client_factory)
+            .with_hooks(deadlock_monitor=None, include_stop_hook=True)
+            .with_env()
+            .with_mcp()
+            .with_disallowed_tools()
+            .with_lint_tools(lint_tools)
+            .build()
         )
-        client = self.sdk_client_factory.create(options)
+        client = self.sdk_client_factory.create(runtime.options)
 
         pending_lint_commands: dict[str, tuple[str, str]] = {}
 
@@ -473,7 +440,9 @@ class RunCoordinator:
                                         )
                                     if name.lower() == "bash":
                                         cmd = block_input.get("command", "")
-                                        lint_type = lint_cache.detect_lint_command(cmd)
+                                        lint_type = (
+                                            runtime.lint_cache.detect_lint_command(cmd)
+                                        )
                                         if lint_type:
                                             block_id = getattr(block, "id", "")
                                             pending_lint_commands[block_id] = (
@@ -487,7 +456,9 @@ class RunCoordinator:
                                             tool_use_id
                                         )
                                         if not getattr(block, "is_error", False):
-                                            lint_cache.mark_success(lint_type, cmd)
+                                            runtime.lint_cache.mark_success(
+                                                lint_type, cmd
+                                            )
                         elif msg_type == "ResultMessage":
                             result = getattr(message, "result", "") or ""
                             if self.event_sink is not None:
