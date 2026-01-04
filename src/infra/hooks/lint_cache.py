@@ -10,16 +10,10 @@ import hashlib
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
-
-    from claude_agent_sdk.types import (
-        HookContext,
-        PreToolUseHookInput,
-        SyncHookJSONOutput,
-    )
 
     from .dangerous_commands import PreToolUseHook
 
@@ -337,10 +331,10 @@ def make_lint_cache_hook(
     """
 
     async def lint_cache_hook(
-        hook_input: PreToolUseHookInput,
+        hook_input: Any,  # noqa: ANN401 - SDK type, avoid import
         stderr: str | None,
-        context: HookContext,
-    ) -> SyncHookJSONOutput:
+        context: Any,  # noqa: ANN401 - SDK type, avoid import
+    ) -> dict[str, Any]:
         """PreToolUse hook to block redundant lint commands."""
         tool_name = hook_input["tool_name"]
         tool_input = hook_input["tool_input"]

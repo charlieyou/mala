@@ -10,9 +10,7 @@ import pytest
 if TYPE_CHECKING:
     from claude_agent_sdk.types import HookContext, PostToolUseHookInput
 
-    from src.domain.deadlock import LockEvent
-
-from src.domain.deadlock import LockEventType
+from src.core.models import LockEvent, LockEventType
 from src.infra.hooks.deadlock import (
     _extract_all_lock_paths,
     _extract_lock_path,
@@ -180,7 +178,13 @@ class TestMakeLockEventHook:
             "src.infra.hooks.deadlock.canonicalize_path",
             return_value="/canonical/path/file.py",
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             hook_input = make_post_hook_input(
                 "Bash",
                 {"command": "lock-try.sh /path/file.py"},
@@ -203,7 +207,13 @@ class TestMakeLockEventHook:
             "src.infra.hooks.deadlock.canonicalize_path",
             return_value="/canonical/path/file.py",
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             hook_input = make_post_hook_input(
                 "Bash",
                 {"command": "lock-try.sh /path/file.py"},
@@ -225,7 +235,13 @@ class TestMakeLockEventHook:
             "src.infra.hooks.deadlock.canonicalize_path",
             return_value="/canonical/path/file.py",
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             hook_input = make_post_hook_input(
                 "Bash",
                 {"command": "lock-release.sh /path/file.py"},
@@ -247,7 +263,13 @@ class TestMakeLockEventHook:
             "src.infra.hooks.deadlock.canonicalize_path",
             return_value="/canonical/path/file.py",
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             hook_input = make_post_hook_input(
                 "Bash",
                 {"command": "lock-wait.sh /path/file.py 300"},
@@ -268,7 +290,13 @@ class TestMakeLockEventHook:
             "src.infra.hooks.deadlock.canonicalize_path",
             return_value="/canonical/path/file.py",
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             hook_input = make_post_hook_input(
                 "Bash",
                 {"command": "lock-wait.sh /path/file.py 300"},
@@ -284,7 +312,13 @@ class TestMakeLockEventHook:
         events: list[LockEvent] = []
         emit = MagicMock(side_effect=lambda e: events.append(e))
 
-        hook = make_lock_event_hook("agent-1", emit, "/repo")
+        hook = make_lock_event_hook(
+            "agent-1",
+            emit,
+            "/repo",
+            lock_event_class=LockEvent,
+            lock_event_type_enum=LockEventType,
+        )
         hook_input = make_post_hook_input(
             "Bash",
             {"command": "ls -la"},
@@ -300,7 +334,13 @@ class TestMakeLockEventHook:
         events: list[LockEvent] = []
         emit = MagicMock(side_effect=lambda e: events.append(e))
 
-        hook = make_lock_event_hook("agent-1", emit, "/repo")
+        hook = make_lock_event_hook(
+            "agent-1",
+            emit,
+            "/repo",
+            lock_event_class=LockEvent,
+            lock_event_type_enum=LockEventType,
+        )
         hook_input = make_post_hook_input(
             "Write",
             {"file_path": "/path/file.py", "content": "..."},
@@ -323,7 +363,13 @@ class TestMakeLockEventHook:
             ),
             patch("src.infra.hooks.deadlock.logger") as mock_logger,
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             hook_input = make_post_hook_input(
                 "Bash",
                 {"command": "lock-try.sh /path/file.py"},
@@ -347,7 +393,13 @@ class TestMakeLockEventHook:
             ),
             patch("src.infra.hooks.deadlock.logger") as mock_logger,
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             hook_input = make_post_hook_input(
                 "Bash",
                 {"command": "lock-try.sh /bad/path"},
@@ -372,7 +424,13 @@ class TestMakeLockEventHook:
             "src.infra.hooks.deadlock.canonicalize_path",
             return_value="/canonical/path/file.py",
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             hook_input = make_post_hook_input(
                 "Bash",
                 {"command": "lock-try.sh /path/file.py"},
@@ -393,7 +451,13 @@ class TestMakeLockEventHook:
             "src.infra.hooks.deadlock.canonicalize_path",
             return_value="/canonical/path/file.py",
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             hook_input = make_post_hook_input(
                 "Bash",
                 {"command": "lock-try.sh /path/file.py"},
@@ -415,7 +479,13 @@ class TestMakeLockEventHook:
             "src.infra.hooks.deadlock.canonicalize_path",
             return_value="/canonical/path/file.py",
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             hook_input = make_post_hook_input(
                 "Bash",
                 {"command": "lock-try.sh /path/file.py"},
@@ -546,7 +616,13 @@ class TestUnsafeBatchEventEmission:
             "src.infra.hooks.deadlock.canonicalize_path",
             side_effect=lambda p, _: f"/canonical/{p}",
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             # || is unsafe - only last command event should be emitted
             hook_input = make_post_hook_input(
                 "Bash",
@@ -569,7 +645,13 @@ class TestUnsafeBatchEventEmission:
             "src.infra.hooks.deadlock.canonicalize_path",
             side_effect=lambda p, _: f"/canonical/{p}",
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             # && is safe - all commands should emit
             hook_input = make_post_hook_input(
                 "Bash",
@@ -592,7 +674,13 @@ class TestUnsafeBatchEventEmission:
             "src.infra.hooks.deadlock.canonicalize_path",
             side_effect=lambda p, _: f"/canonical/{p}",
         ):
-            hook = make_lock_event_hook("agent-1", emit, "/repo")
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
             hook_input = make_post_hook_input(
                 "Bash",
                 {"command": "lock-try.sh a.py; lock-try.sh b.py"},

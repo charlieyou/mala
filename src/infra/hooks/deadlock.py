@@ -6,6 +6,9 @@ Provides:
 
 Captures lock command outcomes (lock-try.sh, lock-wait.sh, lock-release.sh)
 and emits LockEvents for deadlock detection.
+
+Note: LockEvent and LockEventType are injected via parameters to avoid importing
+from src.core.models, which would violate the "Hooks isolated" contract.
 """
 
 from __future__ import annotations
@@ -13,21 +16,13 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from claude_agent_sdk.types import (
-        HookContext,
-        PostToolUseHookInput,
-        PreToolUseHookInput,
-        SyncHookJSONOutput,
-    )
-
     from .dangerous_commands import PostToolUseHook, PreToolUseHook
 
-from src.domain.deadlock import LockEvent, LockEventType
 from src.infra.tools.locking import canonicalize_path
 
 logger = logging.getLogger(__name__)
@@ -181,8 +176,11 @@ def _get_exit_code(tool_result: str) -> int | None:
 
 def make_lock_event_hook(
     agent_id: str,
-    emit_event: Callable[[LockEvent], Awaitable[object] | None],
+    emit_event: Callable[[Any], Awaitable[object] | None],
     repo_namespace: str | None = None,
+    *,
+    lock_event_class: type[Any],
+    lock_event_type_enum: type[Any],
 ) -> PostToolUseHook:
     """Create a PostToolUse hook that emits lock events.
 
@@ -191,16 +189,21 @@ def make_lock_event_hook(
         emit_event: Callback to emit lock events. Can be sync or async.
             Return value is awaited if async, but discarded.
         repo_namespace: Optional repo root for path canonicalization.
+        lock_event_class: The LockEvent class to instantiate.
+        lock_event_type_enum: The LockEventType enum.
 
     Returns:
         An async hook function for PostToolUse events.
     """
+    # Capture the types for use in the closure
+    LockEvent = lock_event_class
+    LockEventType = lock_event_type_enum
 
     async def lock_event_hook(
-        hook_input: PostToolUseHookInput,
+        hook_input: Any,  # noqa: ANN401 - SDK type, avoid import
         stderr: str | None,
-        context: HookContext,
-    ) -> SyncHookJSONOutput:
+        context: Any,  # noqa: ANN401 - SDK type, avoid import
+    ) -> dict[str, Any]:
         """PostToolUse hook to capture lock command outcomes."""
         tool_name = hook_input["tool_name"]
 
@@ -261,7 +264,7 @@ def make_lock_event_hook(
                 continue
 
             # Determine event type based on command and exit code
-            event_type: LockEventType | None = None
+            event_type: Any = None
 
             if cmd_type == "try":
                 if exit_code == 0:
@@ -314,8 +317,11 @@ def make_lock_event_hook(
 
 def make_lock_wait_hook(
     agent_id: str,
-    emit_event: Callable[[LockEvent], Awaitable[object] | None],
+    emit_event: Callable[[Any], Awaitable[object] | None],
     repo_namespace: str | None = None,
+    *,
+    lock_event_class: type[Any],
+    lock_event_type_enum: type[Any],
 ) -> PreToolUseHook:
     """Create a PreToolUse hook that emits WAITING events for lock-wait.sh.
 
@@ -329,16 +335,21 @@ def make_lock_wait_hook(
         emit_event: Callback to emit lock events. Can be sync or async.
             Return value is awaited if async, but discarded.
         repo_namespace: Optional repo root for path canonicalization.
+        lock_event_class: The LockEvent class to instantiate.
+        lock_event_type_enum: The LockEventType enum.
 
     Returns:
         An async hook function for PreToolUse events.
     """
+    # Capture the types for use in the closure
+    LockEvent = lock_event_class
+    LockEventType = lock_event_type_enum
 
     async def lock_wait_hook(
-        hook_input: PreToolUseHookInput,
+        hook_input: Any,  # noqa: ANN401 - SDK type, avoid import
         stderr: str | None,
-        context: HookContext,
-    ) -> SyncHookJSONOutput:
+        context: Any,  # noqa: ANN401 - SDK type, avoid import
+    ) -> dict[str, Any]:
         """PreToolUse hook to emit WAITING events before lock-wait.sh runs."""
         tool_name = hook_input["tool_name"]
 

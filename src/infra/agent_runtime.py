@@ -24,8 +24,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols import SDKClientFactoryProtocol
-    from src.domain.deadlock import DeadlockMonitor
+    from src.core.protocols import DeadlockMonitorProtocol, SDKClientFactoryProtocol
     from src.infra.hooks import FileReadCache, LintCache
 
 
@@ -103,7 +102,7 @@ class AgentRuntimeBuilder:
         self._lint_tools: set[str] | frozenset[str] | None = None
 
         # Hook configuration
-        self._deadlock_monitor: DeadlockMonitor | None = None
+        self._deadlock_monitor: DeadlockMonitorProtocol | None = None
         self._include_stop_hook: bool = True
         self._include_mala_disallowed_tools_hook: bool = True
 
@@ -115,7 +114,7 @@ class AgentRuntimeBuilder:
     def with_hooks(
         self,
         *,
-        deadlock_monitor: DeadlockMonitor | None = None,
+        deadlock_monitor: DeadlockMonitorProtocol | None = None,
         include_stop_hook: bool = True,
         include_mala_disallowed_tools_hook: bool = True,
     ) -> AgentRuntimeBuilder:
@@ -264,6 +263,9 @@ class AgentRuntimeBuilder:
         # Add deadlock monitor hooks if configured
         if self._deadlock_monitor is not None:
             logger.info("Wiring deadlock monitor hooks: agent_id=%s", self._agent_id)
+            # Import LockEvent types here to inject into hooks
+            from src.core.models import LockEvent, LockEventType
+
             monitor = self._deadlock_monitor
             # PreToolUse hook for real-time WAITING detection on lock-wait.sh
             pre_tool_hooks.append(
@@ -271,6 +273,8 @@ class AgentRuntimeBuilder:
                     agent_id=self._agent_id,
                     emit_event=monitor.handle_event,
                     repo_namespace=str(self._repo_path),
+                    lock_event_class=LockEvent,
+                    lock_event_type_enum=LockEventType,
                 )
             )
             # PostToolUse hook for ACQUIRED/RELEASED events
@@ -279,6 +283,8 @@ class AgentRuntimeBuilder:
                     agent_id=self._agent_id,
                     emit_event=monitor.handle_event,
                     repo_namespace=str(self._repo_path),
+                    lock_event_class=LockEvent,
+                    lock_event_type_enum=LockEventType,
                 )
             )
         else:

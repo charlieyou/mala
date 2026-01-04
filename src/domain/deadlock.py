@@ -16,41 +16,28 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from enum import Enum
 from typing import TYPE_CHECKING
+
+from src.core.models import LockEvent, LockEventType
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
+# Re-export for backward compatibility
+__all__ = [
+    "AgentInfo",
+    "DeadlockCallback",
+    "DeadlockInfo",
+    "DeadlockMonitor",
+    "LockEvent",
+    "LockEventType",
+    "WaitForGraph",
+]
+
 # Type alias for the deadlock callback
 DeadlockCallback = Callable[["DeadlockInfo"], Awaitable[None] | None]
-
-
-class LockEventType(Enum):
-    """Types of lock events emitted by agents."""
-
-    ACQUIRED = "acquired"
-    WAITING = "waiting"
-    RELEASED = "released"
-
-
-@dataclass
-class LockEvent:
-    """A lock event from an agent.
-
-    Attributes:
-        event_type: Type of lock event.
-        agent_id: ID of the agent that emitted this event.
-        lock_path: Path to the lock file.
-        timestamp: Unix timestamp when the event occurred.
-    """
-
-    event_type: LockEventType
-    agent_id: str
-    lock_path: str
-    timestamp: float
 
 
 @dataclass

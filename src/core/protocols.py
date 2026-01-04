@@ -278,6 +278,46 @@ class DeadlockInfoProtocol(Protocol):
 
 
 @runtime_checkable
+class LockEventProtocol(Protocol):
+    """Protocol for lock events.
+
+    Matches the shape of core.models.LockEvent for structural typing.
+    """
+
+    event_type: Any
+    """Type of lock event (LockEventType enum value)."""
+
+    agent_id: str
+    """ID of the agent that emitted this event."""
+
+    lock_path: str
+    """Path to the lock file."""
+
+    timestamp: float
+    """Unix timestamp when the event occurred."""
+
+
+@runtime_checkable
+class DeadlockMonitorProtocol(Protocol):
+    """Protocol for deadlock monitor.
+
+    Matches the interface of domain.deadlock.DeadlockMonitor for structural typing.
+    Only includes the handle_event method used by hooks.
+    """
+
+    async def handle_event(self, event: Any) -> Any:  # noqa: ANN401
+        """Process a lock event and check for deadlocks.
+
+        Args:
+            event: The lock event to process (LockEvent).
+
+        Returns:
+            DeadlockInfo if a deadlock is detected, None otherwise.
+        """
+        ...
+
+
+@runtime_checkable
 class LogProvider(Protocol):
     """Protocol for abstracting SDK log storage and schema.
 

@@ -7,28 +7,20 @@ operations, plus hooks for enforcing these restrictions.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from claude_agent_sdk.types import (
-        HookContext,
-        PostToolUseHookInput,
-        PreToolUseHookInput,
-        SyncHookJSONOutput,
-    )
+from typing import Any
 
 from ..mcp import MALA_DISALLOWED_TOOLS
 
-# Type alias for PreToolUse hooks (using string annotations to avoid import)
+# Type alias for PreToolUse hooks (using Any to avoid SDK import)
 PreToolUseHook = Callable[
-    ["PreToolUseHookInput", str | None, "HookContext"],
-    Awaitable["SyncHookJSONOutput"],
+    [Any, str | None, Any],
+    Awaitable[dict[str, Any]],
 ]
 
 # Type alias for PostToolUse hooks (mirrors PreToolUseHook pattern)
 PostToolUseHook = Callable[
-    ["PostToolUseHookInput", str | None, "HookContext"],
-    Awaitable["SyncHookJSONOutput"],
+    [Any, str | None, Any],
+    Awaitable[dict[str, Any]],
 ]
 
 # Dangerous bash command patterns to block
@@ -96,10 +88,10 @@ BASH_TOOL_NAMES = frozenset(["bash"])
 
 
 async def block_dangerous_commands(
-    hook_input: PreToolUseHookInput,
+    hook_input: Any,  # noqa: ANN401 - SDK type, avoid import
     stderr: str | None,
-    context: HookContext,
-) -> SyncHookJSONOutput:
+    context: Any,  # noqa: ANN401 - SDK type, avoid import
+) -> dict[str, Any]:
     """PreToolUse hook to block dangerous bash commands.
 
     In multi-agent contexts, certain git operations are blocked because they
@@ -155,10 +147,10 @@ async def block_dangerous_commands(
 
 
 async def block_mala_disallowed_tools(
-    hook_input: PreToolUseHookInput,
+    hook_input: Any,  # noqa: ANN401 - SDK type, avoid import
     stderr: str | None,
-    context: HookContext,
-) -> SyncHookJSONOutput:
+    context: Any,  # noqa: ANN401 - SDK type, avoid import
+) -> dict[str, Any]:
     """PreToolUse hook to block tools disabled for mala agents.
 
     Blocks tools that cause excessive token usage without proportional value.

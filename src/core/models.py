@@ -4,6 +4,8 @@ This module provides shared types that are used across multiple domains
 (logging, validation, orchestrator) to avoid circular dependencies.
 
 Types:
+- LockEventType: Enum for lock event types (acquired, waiting, released)
+- LockEvent: A lock event from an agent
 - ResolutionOutcome: Enum for issue resolution outcomes
 - IssueResolution: Records how an issue was resolved
 - ValidationArtifacts: Record of validation outputs for observability
@@ -21,6 +23,31 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+class LockEventType(Enum):
+    """Types of lock events emitted by agents."""
+
+    ACQUIRED = "acquired"
+    WAITING = "waiting"
+    RELEASED = "released"
+
+
+@dataclass
+class LockEvent:
+    """A lock event from an agent.
+
+    Attributes:
+        event_type: Type of lock event.
+        agent_id: ID of the agent that emitted this event.
+        lock_path: Path to the lock file.
+        timestamp: Unix timestamp when the event occurred.
+    """
+
+    event_type: LockEventType
+    agent_id: str
+    lock_path: str
+    timestamp: float
 
 
 class ResolutionOutcome(Enum):

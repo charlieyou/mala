@@ -8,16 +8,9 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from claude_agent_sdk.types import (
-        HookContext,
-        PreToolUseHookInput,
-        StopHookInput,
-        SyncHookJSONOutput,
-    )
-
     from .dangerous_commands import PreToolUseHook
 
 from ..tools.command_runner import run_command
@@ -25,10 +18,10 @@ from ..tools.env import SCRIPTS_DIR, get_lock_dir
 from ..tools.locking import get_lock_holder
 from .file_cache import FILE_PATH_KEYS, FILE_WRITE_TOOLS
 
-# Type alias for Stop hooks (using string annotations to avoid import)
+# Type alias for Stop hooks (using Any to avoid SDK import)
 StopHook = Callable[
-    ["StopHookInput", str | None, "HookContext"],
-    Awaitable["SyncHookJSONOutput"],
+    [Any, str | None, Any],
+    Awaitable[dict[str, Any]],
 ]
 
 
@@ -48,10 +41,10 @@ def make_lock_enforcement_hook(
     """
 
     async def enforce_lock_ownership(
-        hook_input: PreToolUseHookInput,
+        hook_input: Any,  # noqa: ANN401 - SDK type, avoid import
         stderr: str | None,
-        context: HookContext,
-    ) -> SyncHookJSONOutput:
+        context: Any,  # noqa: ANN401 - SDK type, avoid import
+    ) -> dict[str, Any]:
         """PreToolUse hook to block file writes unless this agent holds the lock."""
         tool_name = hook_input["tool_name"]
 
@@ -102,10 +95,10 @@ def make_stop_hook(agent_id: str) -> StopHook:
     """
 
     async def cleanup_locks_on_stop(
-        hook_input: StopHookInput,
+        hook_input: Any,  # noqa: ANN401 - SDK type, avoid import
         stderr: str | None,
-        context: HookContext,
-    ) -> SyncHookJSONOutput:
+        context: Any,  # noqa: ANN401 - SDK type, avoid import
+    ) -> dict[str, Any]:
         """Stop hook to release all locks held by this agent."""
         script = SCRIPTS_DIR / "lock-release-all.sh"
         try:
