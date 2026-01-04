@@ -163,7 +163,7 @@ class IssueExecutionCoordinator:
 
         while True:
             logger.debug(
-                "Loop iteration: active=%d pending=%d",
+                "Loop iteration: active=%d completed=%d",
                 len(self.active_tasks),
                 len(self.completed_ids),
             )

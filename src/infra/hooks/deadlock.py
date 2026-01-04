@@ -382,12 +382,6 @@ def make_lock_wait_hook(
             if result is not None:
                 await result
 
-            logger.debug(
-                "Lock event emitted: type=WAITING agent_id=%s lock_path=%s (pre-tool)",
-                agent_id,
-                lock_path,
-            )
-
         # Always allow the command to proceed
         return {}
 
