@@ -681,6 +681,7 @@ class MalaOrchestrator:
                         agent_id=self.agent_ids.get(issue_id, "unknown"),
                         success=False,
                         summary=f"Aborted due to unrecoverable error: {reason}",
+                        session_log_path=self._active_session_log_paths.get(issue_id),
                     )
                 except Exception as e:
                     result = IssueResult(
@@ -688,6 +689,7 @@ class MalaOrchestrator:
                         agent_id=self.agent_ids.get(issue_id, "unknown"),
                         success=False,
                         summary=str(e),
+                        session_log_path=self._active_session_log_paths.get(issue_id),
                     )
             else:
                 # Task was still running - mark as aborted
@@ -696,6 +698,7 @@ class MalaOrchestrator:
                     agent_id=self.agent_ids.get(issue_id, "unknown"),
                     success=False,
                     summary=f"Aborted due to unrecoverable error: {reason}",
+                    session_log_path=self._active_session_log_paths.get(issue_id),
                 )
             await self._finalize_issue_result(issue_id, result, run_metadata)
             # Mark completed in coordinator to keep state consistent
@@ -847,6 +850,7 @@ class MalaOrchestrator:
                         if self.issue_coordinator.abort_reason
                         else "Aborted due to unrecoverable error"
                     ),
+                    session_log_path=self._active_session_log_paths.get(issue_id),
                 )
             except Exception as e:
                 result = IssueResult(
@@ -854,6 +858,7 @@ class MalaOrchestrator:
                     agent_id=self.agent_ids.get(issue_id, "unknown"),
                     success=False,
                     summary=str(e),
+                    session_log_path=self._active_session_log_paths.get(issue_id),
                 )
             await self._finalize_issue_result(issue_id, result, run_metadata)
             self.issue_coordinator.mark_completed(issue_id)
