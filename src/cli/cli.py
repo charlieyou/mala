@@ -316,6 +316,7 @@ def _apply_config_overrides(
     max_epic_verification_retries: int | None,
     braintrust_enabled: bool,
     disable_review: bool,
+    deadlock_detection_enabled: bool,
 ) -> ConfigOverrideResult:
     """Apply CLI overrides to MalaConfig, returning error on parse failures.
 
@@ -328,6 +329,7 @@ def _apply_config_overrides(
         max_epic_verification_retries: Optional max retries override.
         braintrust_enabled: Whether braintrust is enabled.
         disable_review: Whether review is disabled.
+        deadlock_detection_enabled: Whether deadlock detection is enabled.
 
     Returns:
         ConfigOverrideResult with resolved config and updated MalaConfig on success,
@@ -357,6 +359,7 @@ def _apply_config_overrides(
         cerberus_wait_args=resolved.cerberus_wait_args,
         cerberus_env=resolved.cerberus_env,
         max_epic_verification_retries=resolved.max_epic_verification_retries,
+        deadlock_detection_enabled=deadlock_detection_enabled,
     )
 
     return ConfigOverrideResult(resolved=resolved, updated_config=updated_config)
@@ -664,6 +667,13 @@ def run(
             help="Maximum retries for epic verification loop (default: 3)",
         ),
     ] = None,
+    deadlock_detection: Annotated[
+        bool,
+        typer.Option(
+            "--deadlock-detection/--no-deadlock-detection",
+            help="Enable deadlock detection (default: on); --no-deadlock-detection disables it",
+        ),
+    ] = True,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -712,6 +722,7 @@ def run(
         max_epic_verification_retries=max_epic_verification_retries,
         braintrust_enabled=_braintrust_enabled,
         disable_review="review" in (disable_set or set()),
+        deadlock_detection_enabled=deadlock_detection,
     )
     if override_result.is_error:
         assert override_result.error is not None  # for type narrowing

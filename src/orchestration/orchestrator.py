@@ -213,8 +213,11 @@ class MalaOrchestrator:
             self.repo_path
         )
         self._prompts: PromptProvider = load_prompts(PROMPTS_DIR)
-        # Deadlock detection (T004: always initialize, T007 will add feature flag)
-        self.deadlock_monitor: DeadlockMonitor | None = DeadlockMonitor()
+        # Deadlock detection (T007: gate on config flag)
+        if self._mala_config.deadlock_detection_enabled:
+            self.deadlock_monitor: DeadlockMonitor | None = DeadlockMonitor()
+        else:
+            self.deadlock_monitor = None
         self._deadlock_resolution_lock = asyncio.Lock()
 
     def _init_pipeline_runners(self) -> None:
