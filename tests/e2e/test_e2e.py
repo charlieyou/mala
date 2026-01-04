@@ -374,7 +374,9 @@ class TestE2ERunnerIntegration:
     """Integration coverage for real E2E runs."""
 
     @pytest.mark.e2e
-    def test_run_real_fixture(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_run_real_fixture(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from src.infra.tools.command_runner import CommandRunner
         from src.infra.tools.env import EnvConfig
 

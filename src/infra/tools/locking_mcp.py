@@ -19,12 +19,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from claude_agent_sdk import SdkMcpTool
     from claude_agent_sdk.types import McpSdkServerConfig
 
     from src.core.models import LockEvent
 
-    # Type alias for async tool handlers
-    ToolHandler = Callable[[dict], Awaitable[dict]]
+    # Type alias for emit_lock_event callback (sync or async)
+    LockEventCallback = Callable[[LockEvent], None | Awaitable[Any]]
 
 from .locking import (
     canonicalize_path,
@@ -51,8 +52,8 @@ class LockingToolHandlers:
 
     def __init__(
         self,
-        lock_acquire: ToolHandler,
-        lock_release: ToolHandler,
+        lock_acquire: SdkMcpTool[Any],
+        lock_release: SdkMcpTool[Any],
     ) -> None:
         self.lock_acquire = lock_acquire
         self.lock_release = lock_release
