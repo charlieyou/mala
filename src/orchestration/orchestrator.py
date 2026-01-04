@@ -35,6 +35,7 @@ from src.infra.tools.env import (
     get_runs_dir,
 )
 from src.domain.deadlock import DeadlockMonitor
+from src.orchestration.orchestrator_state import OrchestratorState
 from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.locking import (
     LockManager,
@@ -203,12 +204,7 @@ class MalaOrchestrator:
         Note: per_issue_spec and last_gate_results are delegated to
         async_gate_runner.
         """
-        self.agent_ids: dict[str, str] = {}
-        self.completed: list[IssueResult] = []
-        # Active session log paths for deadlock handling (cleared after session completes)
-        self._active_session_log_paths: dict[str, Path] = {}
-        # Track agents whose locks were cleaned during deadlock handling to avoid double cleanup
-        self._deadlock_cleaned_agents: set[str] = set()
+        self._state = OrchestratorState()
         self._lint_tools: frozenset[str] | None = None
         self._prompt_validation_commands = build_prompt_validation_commands(
             self.repo_path
@@ -365,7 +361,9 @@ class MalaOrchestrator:
                 ),
                 on_warning=lambda msg: self.event_sink.on_warning(msg),
                 has_epic_verifier=lambda: self.epic_verifier is not None,
-                get_agent_id=lambda issue_id: self.agent_ids.get(issue_id, "unknown"),
+                get_agent_id=lambda issue_id: self._state.agent_ids.get(
+                    issue_id, "unknown"
+                ),
             )
         )
         return EpicVerificationCoordinator(
@@ -477,7 +475,7 @@ class MalaOrchestrator:
             # Clean up victim's locks first (before any await that could raise)
             # Track that we cleaned this agent to avoid double cleanup in run_implementer
             self._cleanup_agent_locks(info.victim_id)
-            self._deadlock_cleaned_agents.add(info.victim_id)
+            self._state.deadlock_cleaned_agents.add(info.victim_id)
 
             # Use shield to protect resolution from cancellation
             # Track whether cancellation occurred during shielded section
@@ -542,7 +540,7 @@ class MalaOrchestrator:
                 f"Deadlock victim: blocked on {info.blocked_on} "
                 f"held by {info.blocker_id}"
             )
-            log_path = self._active_session_log_paths.get(victim_issue_id)
+            log_path = self._state.active_session_log_paths.get(victim_issue_id)
             await self.beads.mark_needs_followup_async(
                 victim_issue_id, reason, log_path=log_path
             )
@@ -572,7 +570,7 @@ class MalaOrchestrator:
             issue_id: The issue ID.
             log_path: Path to the session log file.
         """
-        self._active_session_log_paths[issue_id] = log_path
+        self._state.active_session_log_paths[issue_id] = log_path
 
     def _on_review_log_path(self, issue_id: str, log_path: str) -> None:
         """Handle review log path notification (currently unused).
@@ -592,7 +590,7 @@ class MalaOrchestrator:
         Args:
             issue_id: The issue ID to clean up.
         """
-        self._active_session_log_paths.pop(issue_id, None)
+        self._state.active_session_log_paths.pop(issue_id, None)
 
     async def _finalize_issue_result(
         self,
@@ -632,7 +630,7 @@ class MalaOrchestrator:
             await self.issue_finalizer.finalize(finalize_input)
         finally:
             # Update tracking state (active_tasks is updated by mark_completed in finalize_callback)
-            self.completed.append(result)
+            self._state.completed.append(result)
 
             # Cleanup active session path and gate result
             self._cleanup_active_session_path(issue_id)
@@ -640,7 +638,7 @@ class MalaOrchestrator:
 
             # Remove agent_id from tracking now that finalization is complete
             # (deferred from run_implementer.finally to keep it available for get_agent_id callback)
-            self.agent_ids.pop(issue_id, None)
+            self._state.agent_ids.pop(issue_id, None)
 
     async def _abort_active_tasks(self, run_metadata: RunMetadata) -> None:
         """Cancel active tasks and mark them as failed.
@@ -666,27 +664,31 @@ class MalaOrchestrator:
                 except asyncio.CancelledError:
                     result = IssueResult(
                         issue_id=issue_id,
-                        agent_id=self.agent_ids.get(issue_id, "unknown"),
+                        agent_id=self._state.agent_ids.get(issue_id, "unknown"),
                         success=False,
                         summary=f"Aborted due to unrecoverable error: {reason}",
-                        session_log_path=self._active_session_log_paths.get(issue_id),
+                        session_log_path=self._state.active_session_log_paths.get(
+                            issue_id
+                        ),
                     )
                 except Exception as e:
                     result = IssueResult(
                         issue_id=issue_id,
-                        agent_id=self.agent_ids.get(issue_id, "unknown"),
+                        agent_id=self._state.agent_ids.get(issue_id, "unknown"),
                         success=False,
                         summary=str(e),
-                        session_log_path=self._active_session_log_paths.get(issue_id),
+                        session_log_path=self._state.active_session_log_paths.get(
+                            issue_id
+                        ),
                     )
             else:
                 # Task was still running - mark as aborted
                 result = IssueResult(
                     issue_id=issue_id,
-                    agent_id=self.agent_ids.get(issue_id, "unknown"),
+                    agent_id=self._state.agent_ids.get(issue_id, "unknown"),
                     success=False,
                     summary=f"Aborted due to unrecoverable error: {reason}",
-                    session_log_path=self._active_session_log_paths.get(issue_id),
+                    session_log_path=self._state.active_session_log_paths.get(issue_id),
                 )
             await self._finalize_issue_result(issue_id, result, run_metadata)
             # Mark completed in coordinator to keep state consistent
@@ -714,7 +716,7 @@ class MalaOrchestrator:
         Delegates to AgentSessionRunner for SDK-specific session handling.
         """
         temp_agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
-        self.agent_ids[issue_id] = temp_agent_id
+        self._state.agent_ids[issue_id] = temp_agent_id
 
         # Register with deadlock monitor
         if self.deadlock_monitor is not None:
@@ -769,7 +771,7 @@ class MalaOrchestrator:
             with tracer:
                 tracer.log_input(prompt)
                 output = await runner.run_session(session_input, tracer=tracer)
-                self.agent_ids[issue_id] = output.agent_id
+                self._state.agent_ids[issue_id] = output.agent_id
                 if output.success:
                     tracer.set_success(True)
                 else:
@@ -777,15 +779,15 @@ class MalaOrchestrator:
         finally:
             # Get agent_id for lock cleanup but don't pop - entry needed for get_agent_id callback
             # until finalization completes (see _finalize_issue_result)
-            agent_id = self.agent_ids.get(issue_id, temp_agent_id)
+            agent_id = self._state.agent_ids.get(issue_id, temp_agent_id)
             # Skip cleanup if already done during deadlock handling (avoid double unregister)
-            if agent_id not in self._deadlock_cleaned_agents:
+            if agent_id not in self._state.deadlock_cleaned_agents:
                 self._cleanup_agent_locks(agent_id)
             else:
                 logger.debug(
                     "Skipped cleanup for %s (handled during deadlock)", agent_id
                 )
-                self._deadlock_cleaned_agents.discard(agent_id)
+                self._state.deadlock_cleaned_agents.discard(agent_id)
 
         return IssueResult(
             issue_id=issue_id,
@@ -830,22 +832,22 @@ class MalaOrchestrator:
             except asyncio.CancelledError:
                 result = IssueResult(
                     issue_id=issue_id,
-                    agent_id=self.agent_ids.get(issue_id, "unknown"),
+                    agent_id=self._state.agent_ids.get(issue_id, "unknown"),
                     success=False,
                     summary=(
                         f"Aborted due to unrecoverable error: {self.issue_coordinator.abort_reason}"
                         if self.issue_coordinator.abort_reason
                         else "Aborted due to unrecoverable error"
                     ),
-                    session_log_path=self._active_session_log_paths.get(issue_id),
+                    session_log_path=self._state.active_session_log_paths.get(issue_id),
                 )
             except Exception as e:
                 result = IssueResult(
                     issue_id=issue_id,
-                    agent_id=self.agent_ids.get(issue_id, "unknown"),
+                    agent_id=self._state.agent_ids.get(issue_id, "unknown"),
                     success=False,
                     summary=str(e),
-                    session_log_path=self._active_session_log_paths.get(issue_id),
+                    session_log_path=self._state.active_session_log_paths.get(issue_id),
                 )
             await self._finalize_issue_result(issue_id, result, run_metadata)
             self.issue_coordinator.mark_completed(issue_id)
@@ -866,8 +868,8 @@ class MalaOrchestrator:
         run_validation_passed: bool,
     ) -> tuple[int, int]:
         """Log summary and return final results."""
-        success_count = sum(1 for r in self.completed if r.success)
-        total = len(self.completed)
+        success_count = sum(1 for r in self._state.completed if r.success)
+        total = len(self._state.completed)
 
         # Emit run completed event
         abort_reason = (
@@ -949,7 +951,7 @@ class MalaOrchestrator:
             try:
                 await self._run_main_loop(run_metadata)
             finally:
-                released = release_run_locks(list(self.agent_ids.values()))
+                released = release_run_locks(list(self._state.agent_ids.values()))
                 # Only emit event if released is a positive integer
                 # (release_run_locks returns int, but tests may mock it)
                 if isinstance(released, int) and released > 0:
@@ -958,7 +960,7 @@ class MalaOrchestrator:
 
             # Run-level validation and finalization happen after lock cleanup
             # but before debug log cleanup (so they're captured in the debug log)
-            success_count = sum(1 for r in self.completed if r.success)
+            success_count = sum(1 for r in self._state.completed if r.success)
             run_validation_passed = True
             if success_count > 0 and not self.abort_run:
                 validation_input = RunLevelValidationInput(run_metadata=run_metadata)

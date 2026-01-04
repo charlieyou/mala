@@ -466,7 +466,7 @@ class TestRunOrchestrationLoop:
             result = await orchestrator.run()
 
         assert result == (0, 0)
-        assert len(orchestrator.completed) == 0
+        assert len(orchestrator._state.completed) == 0
 
     @pytest.mark.asyncio
     async def test_respects_max_issues_limit(
@@ -1356,7 +1356,7 @@ class TestOrchestratorQualityGateIntegration:
             # Populate log path so quality gate runs
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             # Gate failure now returns success=False from run_implementer
             return IssueResult(
                 issue_id=issue_id,
@@ -1423,7 +1423,7 @@ class TestOrchestratorQualityGateIntegration:
             # Populate log path so quality gate runs
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -1474,7 +1474,7 @@ class TestOrchestratorQualityGateIntegration:
             success_count, _total = await orchestrator.run()
 
         assert success_count == 1
-        assert any(r.issue_id == "issue-pass" for r in orchestrator.completed)
+        assert any(r.issue_id == "issue-pass" for r in orchestrator._state.completed)
 
 
 class TestAsyncBeadsClientWithTimeout:
@@ -2034,7 +2034,7 @@ class TestGateFlowSequencing:
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -2117,7 +2117,7 @@ class TestGateFlowSequencing:
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -2201,7 +2201,7 @@ class TestRetryExhaustion:
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             # Gate always fails
             return IssueResult(
                 issue_id=issue_id,
@@ -2273,7 +2273,7 @@ class TestRetryExhaustion:
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             # Gate fails with no_progress - should stop retrying
             return IssueResult(
                 issue_id=issue_id,
@@ -2438,7 +2438,7 @@ class TestRunLevelValidation:
             # Populate log path so quality gate runs
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -2524,7 +2524,7 @@ class TestRunLevelValidation:
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -2864,7 +2864,7 @@ class TestResolutionRecordingInMetadata:
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -2957,7 +2957,7 @@ class TestResolutionRecordingInMetadata:
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -3043,7 +3043,7 @@ class TestResolutionRecordingInMetadata:
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             # Normal success - no resolution marker
             return IssueResult(
                 issue_id=issue_id,
@@ -3148,7 +3148,7 @@ class TestEpicClosureAfterChildCompletion:
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -3236,7 +3236,7 @@ class TestEpicClosureAfterChildCompletion:
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -3328,7 +3328,7 @@ class TestEpicClosureAfterChildCompletion:
             issues_processed.append(issue_id)
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -3433,7 +3433,7 @@ class TestEpicClosureAfterChildCompletion:
             issues_processed.append(issue_id)
             log_path = tmp_path / f"{issue_id}.jsonl"
             log_path.touch()
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -3607,7 +3607,7 @@ class TestFailedRunQualityGateEvidence:
                 }
             )
             log_path.write_text(log_content + "\n")
-            orchestrator._active_session_log_paths[issue_id] = log_path
+            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
