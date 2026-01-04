@@ -1079,3 +1079,23 @@ class TestCLIEntryPoint:
             assert result == 2
         finally:
             sys.argv = original_argv
+
+    @pytest.mark.parametrize("command", ["try", "check", "holder", "release"])
+    def test_cli_rejects_extra_args(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch, command: str
+    ) -> None:
+        """CLI should return 2 when extra arguments are passed to single-arg commands."""
+        from src.infra.tools.locking import _cli_main
+        import sys
+
+        monkeypatch.setenv("LOCK_DIR", str(lock_env))
+        monkeypatch.setenv("AGENT_ID", "test-agent")
+        monkeypatch.delenv("REPO_NAMESPACE", raising=False)
+
+        original_argv = sys.argv
+        try:
+            sys.argv = ["locking", command, "test.py", "extra-arg"]
+            result = _cli_main()
+            assert result == 2
+        finally:
+            sys.argv = original_argv

@@ -658,6 +658,13 @@ def _cli_main() -> int:
             )
             return 2
         filepath = sys.argv[2]
+        # Enforce exact arg count for commands without optional arguments
+        if command != "wait" and len(sys.argv) > 3:
+            print(
+                f"Usage: python -m src.infra.tools.locking {command} <filepath>",
+                file=sys.stderr,
+            )
+            return 2
     elif command == "release-all" and len(sys.argv) != 2:
         print("Usage: python -m src.infra.tools.locking release-all", file=sys.stderr)
         return 2
