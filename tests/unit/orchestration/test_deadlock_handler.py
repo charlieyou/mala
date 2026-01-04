@@ -442,7 +442,8 @@ class TestAbortActiveTasks:
 
         # Should use the real result, not an aborted result
         # finalize_issue_result signature: (issue_id, result, run_metadata)
-        finalize_args = mock_callbacks.finalize_issue_result.call_args
+        mock_callbacks.finalize_issue_result.assert_awaited_once()
+        finalize_args = mock_callbacks.finalize_issue_result.await_args
         assert finalize_args is not None
         result = (
             finalize_args.kwargs["result"]
@@ -477,7 +478,8 @@ class TestAbortActiveTasks:
         )
 
         # finalize_issue_result signature: (issue_id, result, run_metadata)
-        finalize_args = mock_callbacks.finalize_issue_result.call_args
+        mock_callbacks.finalize_issue_result.assert_awaited_once()
+        finalize_args = mock_callbacks.finalize_issue_result.await_args
         assert finalize_args is not None
         result = (
             finalize_args.kwargs["result"]
@@ -561,7 +563,8 @@ class TestAbortActiveTasks:
         )
 
         # finalize_issue_result signature: (issue_id, result, run_metadata)
-        finalize_args = mock_callbacks.finalize_issue_result.call_args
+        mock_callbacks.finalize_issue_result.assert_awaited_once()
+        finalize_args = mock_callbacks.finalize_issue_result.await_args
         assert finalize_args is not None
         result = (
             finalize_args.kwargs["result"]
