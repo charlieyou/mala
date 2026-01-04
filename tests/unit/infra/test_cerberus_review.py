@@ -21,9 +21,8 @@ from src.infra.clients.cerberus_review import (
 )
 from src.infra.clients.review_output_parser import (
     ReviewIssue,
+    ReviewOutputParser,
     ReviewResult,
-    map_exit_code_to_result,
-    parse_cerberus_json,
 )
 from src.infra.io.base_sink import BaseEventSink
 
@@ -32,6 +31,27 @@ if TYPE_CHECKING:
 
 # Path to golden files captured from real Cerberus output
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "cerberus"
+
+# Shared parser instance for tests
+_parser = ReviewOutputParser()
+
+
+def parse_cerberus_json(output: str) -> tuple[bool, list[ReviewIssue], str | None]:
+    """Test helper that delegates to parser.parse_json."""
+    return _parser.parse_json(output)
+
+
+def map_exit_code_to_result(
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    review_log_path: Path | None = None,
+    event_sink: MalaEventSink | None = None,
+) -> ReviewResult:
+    """Test helper that delegates to parser.map_exit_code_to_result."""
+    return _parser.map_exit_code_to_result(
+        exit_code, stdout, stderr, review_log_path, event_sink
+    )
 
 
 class MockEventSink(BaseEventSink):

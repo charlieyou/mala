@@ -286,8 +286,8 @@ def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) ->
         fd, tmp_path = tempfile.mkstemp(
             prefix=f".locktmp.{agent_id}.", dir=lock_dir, text=True
         )
-        # Write only agent_id to lock file for backward compatibility
-        # Old code uses .strip() on entire file, so single line is required
+        # Lock file contains only agent_id (simple, atomic reads)
+        # Filepath is stored in companion .meta file for diagnostics
         canonical = _canonicalize_path(filepath, repo_namespace)
         os.write(fd, f"{agent_id}\n".encode())
         os.close(fd)

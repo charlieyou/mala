@@ -20,8 +20,6 @@ from src.infra.clients.review_output_parser import (
     ReviewIssue,
     ReviewOutputParser,
     ReviewResult,
-    map_exit_code_to_result,
-    parse_cerberus_json,
 )
 from src.infra.io.base_sink import BaseEventSink
 
@@ -102,28 +100,6 @@ class TestReviewOutputParserClass:
         result2 = parser.parse_json(output)
 
         assert result1 == result2
-
-    def test_parser_parse_json_matches_module_function(self) -> None:
-        """Parser.parse_json produces same result as module-level function."""
-        parser = ReviewOutputParser()
-        output = _make_valid_response(verdict="FAIL", issues=[_make_issue()])
-
-        class_result = parser.parse_json(output)
-        func_result = parse_cerberus_json(output)
-
-        assert class_result == func_result
-
-    def test_parser_map_exit_code_matches_module_function(self) -> None:
-        """Parser.map_exit_code_to_result produces same result as module-level function."""
-        parser = ReviewOutputParser()
-        output = _make_valid_response(verdict="PASS")
-
-        class_result = parser.map_exit_code_to_result(0, output, "")
-        func_result = map_exit_code_to_result(0, output, "")
-
-        assert class_result.passed == func_result.passed
-        assert class_result.issues == func_result.issues
-        assert class_result.parse_error == func_result.parse_error
 
 
 class TestParseJson:

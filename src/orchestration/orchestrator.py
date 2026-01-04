@@ -391,17 +391,6 @@ class MalaOrchestrator:
             parent_epic_id=parent_epic_id,
         )
 
-    # Backward compatibility: expose _config as alias for _mala_config
-    @property
-    def _config(self) -> MalaConfig:
-        """Backward compatibility property for accessing MalaConfig."""
-        return self._mala_config
-
-    @_config.setter
-    def _config(self, value: MalaConfig) -> None:
-        """Backward compatibility setter for MalaConfig."""
-        self._mala_config = value
-
     # Delegate state to issue_coordinator (single source of truth)
     # These properties return empty containers if accessed before coordinator init
     @property
