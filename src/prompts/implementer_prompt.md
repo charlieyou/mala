@@ -11,7 +11,7 @@ Implement the assigned issue completely before returning.
 
 1. **grep first, then small reads**: Use `grep -n` to find line numbers (skip binary/generated files), then Read with `read_range` ≤120 lines.
 2. **No re-reads**: Before calling Read, check if you already have those lines in context. Reuse what you saw.
-3. **Lock before edit**: Acquire locks before editing. Use a single `lock_acquire` call with `timeout_seconds≥300`—no retries.
+3. **Lock before edit**: Acquire locks before editing. First try without timeout; if blocked, finish other work, then wait with `timeout_seconds≥300` (one wait attempt per file).
 4. **Minimal responses**: No narration ("Let me...", "I understand..."). No large code dumps. Reference as `file:line`.
 5. **Validate once per revision**: Run validations once per code revision. Re-run only after fixing code.
 6. **Know when to stop**: If no changes needed, return ISSUE_* marker. If blocked on locks >15 min, return BLOCKED.
