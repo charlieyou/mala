@@ -770,7 +770,10 @@ class TestAlreadyActiveGateError:
 
         reviewer = DefaultReviewer(repo_path=Path("/tmp"))
 
-        with patch.object(reviewer, "_validate_review_gate_bin", return_value=None):
+        with patch(
+            "src.infra.clients.cerberus_gate_cli.CerberusGateCLI.validate_binary",
+            return_value=None,
+        ):
             # First spawn fails with "already active"
             spawn_fail_result = MagicMock()
             spawn_fail_result.returncode = 1
@@ -816,16 +819,16 @@ class TestAlreadyActiveGateError:
                 with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
                     result = await reviewer("baseline..HEAD")
 
-        assert result.passed is True
-        assert result.fatal_error is False
-        assert result.parse_error is None
+            assert result.passed is True
+            assert result.fatal_error is False
+            assert result.parse_error is None
 
-        # Verify call sequence
-        calls = [call[0][0] for call in mock_runner.run_async.call_args_list]
-        assert any("diff" in str(c) for c in calls)
-        assert any("spawn-code-review" in str(c) for c in calls)
-        assert any("resolve" in str(c) for c in calls)
-        assert any("wait" in str(c) for c in calls)
+            # Verify call sequence
+            calls = [call[0][0] for call in mock_runner.run_async.call_args_list]
+            assert any("diff" in str(c) for c in calls)
+            assert any("spawn-code-review" in str(c) for c in calls)
+            assert any("resolve" in str(c) for c in calls)
+            assert any("wait" in str(c) for c in calls)
 
     async def test_already_active_after_resolve_is_fatal(self) -> None:
         """Returns fatal error if still 'already active' after resolve (another session)."""
@@ -833,7 +836,10 @@ class TestAlreadyActiveGateError:
 
         reviewer = DefaultReviewer(repo_path=Path("/tmp"))
 
-        with patch.object(reviewer, "_validate_review_gate_bin", return_value=None):
+        with patch(
+            "src.infra.clients.cerberus_gate_cli.CerberusGateCLI.validate_binary",
+            return_value=None,
+        ):
             # First spawn fails with "already active"
             spawn_fail_result = MagicMock()
             spawn_fail_result.returncode = 1
@@ -875,11 +881,11 @@ class TestAlreadyActiveGateError:
                 with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
                     result = await reviewer("baseline..HEAD")
 
-        # Should be fatal error (another session owns the gate)
-        assert result.passed is False
-        assert result.fatal_error is True
-        assert result.parse_error is not None
-        assert "not from this session" in result.parse_error
+            # Should be fatal error (another session owns the gate)
+            assert result.passed is False
+            assert result.fatal_error is True
+            assert result.parse_error is not None
+            assert "not from this session" in result.parse_error
 
     async def test_resolve_failure_is_retryable(self) -> None:
         """If resolve fails, returns retryable error (not fatal)."""
@@ -887,7 +893,10 @@ class TestAlreadyActiveGateError:
 
         reviewer = DefaultReviewer(repo_path=Path("/tmp"))
 
-        with patch.object(reviewer, "_validate_review_gate_bin", return_value=None):
+        with patch(
+            "src.infra.clients.cerberus_gate_cli.CerberusGateCLI.validate_binary",
+            return_value=None,
+        ):
             spawn_fail_result = MagicMock()
             spawn_fail_result.returncode = 1
             spawn_fail_result.timed_out = False
@@ -918,8 +927,8 @@ class TestAlreadyActiveGateError:
                 with patch.dict("os.environ", {"CLAUDE_SESSION_ID": "test-session"}):
                     result = await reviewer("baseline..HEAD")
 
-        # Retryable error (not fatal)
-        assert result.passed is False
-        assert result.fatal_error is False
-        assert result.parse_error is not None
-        assert "auto-resolve failed" in result.parse_error
+            # Retryable error (not fatal)
+            assert result.passed is False
+            assert result.fatal_error is False
+            assert result.parse_error is not None
+            assert "auto-resolve failed" in result.parse_error

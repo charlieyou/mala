@@ -7,18 +7,18 @@ It handles:
 - Issue formatting for follow-up prompts
 
 The adapter includes DefaultReviewer for CLI execution in the repo_path.
+DefaultReviewer uses CerberusGateCLI for subprocess management.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.infra.clients.cerberus_gate_cli import CerberusGateCLI
 from src.infra.tools.command_runner import CommandRunner
 
 if TYPE_CHECKING:
@@ -67,6 +67,9 @@ class DefaultReviewer:
     The reviewer spawns review-gate CLI processes and parses their output.
     Extra args/env can be provided to customize review-gate behavior.
     For initial review with an empty diff, short-circuits to PASS without spawning.
+
+    Subprocess management is delegated to CerberusGateCLI; this class handles
+    orchestration logic, stale gate recovery, and result mapping.
     """
 
     repo_path: Path
@@ -76,83 +79,29 @@ class DefaultReviewer:
     env: dict[str, str] = field(default_factory=dict)
     event_sink: MalaEventSink | None = None
 
-    def _review_gate_bin(self) -> str:
-        if self.bin_path is not None:
-            return str(self.bin_path / "review-gate")
-        return "review-gate"
+    def _get_cli(self) -> CerberusGateCLI:
+        """Get the CerberusGateCLI instance for subprocess operations."""
+        return CerberusGateCLI(
+            repo_path=self.repo_path,
+            bin_path=self.bin_path,
+            env=self.env,
+        )
 
     def _validate_review_gate_bin(self) -> str | None:
         """Validate that the review-gate binary exists and is executable.
 
-        Uses the merged env's PATH (respecting self.env) when checking for
-        the binary to avoid false negatives when callers inject PATH via cerberus_env.
+        Delegates to CerberusGateCLI.validate_binary().
 
         Returns:
             None if the binary is valid, or an error message if not.
         """
-        if self.bin_path is not None:
-            # Explicit bin_path provided - check that the binary exists and is executable
-            binary_path = self.bin_path / "review-gate"
-            if not binary_path.exists():
-                return f"review-gate binary not found at {binary_path}"
-            if not os.access(binary_path, os.X_OK):
-                return f"review-gate binary at {binary_path} is not executable"
-        else:
-            # Bare "review-gate" - check if it's in PATH (respecting self.env)
-            # Build effective PATH by merging self.env with current os.environ
-            if "PATH" in self.env:
-                # Prepend self.env PATH to current PATH (matches CommandRunner._merge_env behavior)
-                effective_path = (
-                    self.env["PATH"] + os.pathsep + os.environ.get("PATH", "")
-                )
-            else:
-                effective_path = os.environ.get("PATH", "")
-            if shutil.which("review-gate", path=effective_path) is None:
-                return "review-gate binary not found in PATH"
-        return None
-
-    def _build_env(self, claude_session_id: str | None) -> dict[str, str]:
-        merged = dict(self.env)
-        claude_session = (
-            claude_session_id
-            or merged.get("CLAUDE_SESSION_ID")
-            or os.environ.get("CLAUDE_SESSION_ID")
-        )
-        if claude_session:
-            merged["CLAUDE_SESSION_ID"] = claude_session
-        return merged
-
-    async def _is_diff_empty(self, diff_range: str, runner: CommandRunner) -> bool:
-        """Check if the diff range has no changes.
-
-        Uses git diff --stat to check if there are any changes in the range.
-        If the command fails, returns False to proceed with review (fail-open).
-
-        Args:
-            diff_range: Git diff range to check (e.g., "baseline..HEAD").
-            runner: CommandRunner instance to execute git command.
-
-        Returns:
-            True if the diff is empty (no changes), False otherwise.
-        """
-        try:
-            result = await runner.run_async(
-                ["git", "diff", "--stat", diff_range],
-                timeout=30,
-            )
-            if result.returncode == 0 and not result.stdout.strip():
-                return True
-        except Exception:
-            # If diff check fails, proceed with review anyway (fail-open)
-            pass
-        return False
+        return self._get_cli().validate_binary()
 
     @staticmethod
     def _extract_wait_timeout(args: tuple[str, ...]) -> int | None:
         """Extract --timeout value from wait args if provided.
 
-        Parses args to detect if a --timeout flag is already specified.
-        Supports both '--timeout VALUE' and '--timeout=VALUE' formats.
+        Delegates to CerberusGateCLI.extract_wait_timeout().
 
         Args:
             args: Tuple of command-line arguments to search.
@@ -160,59 +109,7 @@ class DefaultReviewer:
         Returns:
             The timeout value as int if found and valid, None otherwise.
         """
-        i = 0
-        while i < len(args):
-            arg = args[i]
-            if arg.startswith("--timeout="):
-                value = arg.split("=", 1)[1]
-                if value.isdigit():
-                    return int(value)
-                return None
-            if arg == "--timeout" and i + 1 < len(args):
-                value = args[i + 1]
-                if value.isdigit():
-                    return int(value)
-                return None
-            i += 1
-        return None
-
-    async def _resolve_stale_gate(
-        self, runner: CommandRunner, env: dict[str, str]
-    ) -> tuple[bool, str]:
-        """Resolve a stale/pending gate to allow retry.
-
-        Called when spawn-code-review fails with "already active" error.
-        This is safe within a retry cycle because we use the same CLAUDE_SESSION_ID,
-        meaning we're resolving our own session's stale gate (e.g., from a prior
-        attempt that hit a parse error like invalid_verdict).
-
-        Args:
-            runner: CommandRunner instance for executing commands.
-            env: Environment variables for the command (must include CLAUDE_SESSION_ID).
-
-        Returns:
-            Tuple of (success, error_detail). If success is False, error_detail
-            contains the stderr/stdout from the failed resolve command.
-        """
-        if self.event_sink is not None:
-            self.event_sink.on_review_warning(
-                "Resolving stale gate from previous attempt"
-            )
-        resolve_cmd = [
-            self._review_gate_bin(),
-            "resolve",
-            "--reason",
-            "mala: auto-clearing stale gate for retry",
-        ]
-        try:
-            result = await runner.run_async(resolve_cmd, env=env, timeout=30)
-            if result.returncode == 0:
-                return True, ""
-            stderr = result.stderr.strip() if result.stderr else ""
-            stdout = result.stdout.strip() if result.stdout else ""
-            return False, stderr or stdout or "resolve failed"
-        except Exception as e:
-            return False, str(e)
+        return CerberusGateCLI.extract_wait_timeout(args)
 
     async def __call__(
         self,
@@ -223,8 +120,10 @@ class DefaultReviewer:
         *,
         commit_shas: Sequence[str] | None = None,
     ) -> ReviewResult:
+        cli = self._get_cli()
+
         # Validate review-gate binary exists and is executable before proceeding
-        validation_error = self._validate_review_gate_bin()
+        validation_error = cli.validate_binary()
         if validation_error is not None:
             return ReviewResult(
                 passed=False,
@@ -235,7 +134,7 @@ class DefaultReviewer:
             )
 
         runner = CommandRunner(cwd=self.repo_path)
-        env = self._build_env(claude_session_id)
+        env = cli.build_env(claude_session_id)
         if "CLAUDE_SESSION_ID" not in env:
             return ReviewResult(
                 passed=False,
@@ -250,7 +149,7 @@ class DefaultReviewer:
         # Check for empty diff (short-circuit without spawning review-gate)
         # This avoids parse errors or failures when there's nothing to review.
         # Only applies to range-based reviews; commit lists are reviewed directly.
-        if not use_commits and await self._is_diff_empty(diff_range, runner):
+        if not use_commits and await cli.check_diff_empty(diff_range, runner):
             return ReviewResult(
                 passed=True,
                 issues=[],
@@ -259,22 +158,17 @@ class DefaultReviewer:
                 review_log_path=None,
             )
 
-        spawn_cmd = [self._review_gate_bin(), "spawn-code-review"]
-        # Always exclude .beads/ directory (auto-generated issue tracker files)
-        # Use directory path instead of glob for robust exclusion of hidden files and nested subdirs
-        spawn_cmd.extend(["--exclude", ".beads/"])
-        if context_file is not None:
-            spawn_cmd.extend(["--context-file", str(context_file)])
-        if self.spawn_args:
-            spawn_cmd.extend(self.spawn_args)
-        if use_commits:
-            spawn_cmd.append("--commit")
-            spawn_cmd.extend(commit_shas or [])
-        else:
-            # Diff range is a positional argument (review-gate does not accept --diff).
-            spawn_cmd.append(diff_range)
+        # Spawn code review
+        spawn_result = await cli.spawn_code_review(
+            diff_range=diff_range,
+            runner=runner,
+            env=env,
+            timeout=timeout,
+            spawn_args=self.spawn_args,
+            context_file=context_file,
+            commit_shas=commit_shas,
+        )
 
-        spawn_result = await runner.run_async(spawn_cmd, env=env, timeout=timeout)
         if spawn_result.timed_out:
             return ReviewResult(
                 passed=False,
@@ -282,22 +176,25 @@ class DefaultReviewer:
                 parse_error="spawn timeout",
                 fatal_error=False,
             )
-        if spawn_result.returncode != 0:
-            stderr = spawn_result.stderr_tail()
-            stdout = spawn_result.stdout_tail()
-            detail = stderr or stdout or "spawn failed"
 
+        if not spawn_result.success:
             # Check for stale gate from a previous attempt in this session.
-            # This happens when a prior review hit a parse error (e.g., invalid_verdict
-            # from one model) and we're retrying. Since we use the same CLAUDE_SESSION_ID,
-            # we're resolving our own session's gate, not interfering with other runs.
-            combined = f"{stderr or ''} {stdout or ''}".lower()
-            if "already active" in combined:
-                resolved, resolve_error = await self._resolve_stale_gate(runner, env)
-                if resolved:
+            if spawn_result.already_active:
+                if self.event_sink is not None:
+                    self.event_sink.on_review_warning(
+                        "Resolving stale gate from previous attempt"
+                    )
+                resolve_result = await cli.resolve_gate(runner, env)
+                if resolve_result.success:
                     # Retry spawn after resolving the stale gate
-                    spawn_result = await runner.run_async(
-                        spawn_cmd, env=env, timeout=timeout
+                    spawn_result = await cli.spawn_code_review(
+                        diff_range=diff_range,
+                        runner=runner,
+                        env=env,
+                        timeout=timeout,
+                        spawn_args=self.spawn_args,
+                        context_file=context_file,
+                        commit_shas=commit_shas,
                     )
                     if spawn_result.timed_out:
                         return ReviewResult(
@@ -306,12 +203,9 @@ class DefaultReviewer:
                             parse_error="spawn timeout",
                             fatal_error=False,
                         )
-                    if spawn_result.returncode != 0:
-                        stderr = spawn_result.stderr_tail()
-                        stdout = spawn_result.stdout_tail()
-                        detail = stderr or stdout or "spawn failed after gate resolve"
+                    if not spawn_result.success:
                         # If still "already active", another session owns the gate
-                        if "already active" in f"{stderr or ''} {stdout or ''}".lower():
+                        if spawn_result.already_active:
                             return ReviewResult(
                                 passed=False,
                                 issues=[],
@@ -325,7 +219,7 @@ class DefaultReviewer:
                         return ReviewResult(
                             passed=False,
                             issues=[],
-                            parse_error=f"spawn failed: {detail}",
+                            parse_error=f"spawn failed: {spawn_result.error_detail}",
                             fatal_error=False,
                         )
                     # Successfully spawned after clearing gate - continue to wait phase
@@ -333,14 +227,14 @@ class DefaultReviewer:
                     return ReviewResult(
                         passed=False,
                         issues=[],
-                        parse_error=f"spawn failed: {detail} (auto-resolve failed: {resolve_error})",
+                        parse_error=f"spawn failed: {spawn_result.error_detail} (auto-resolve failed: {resolve_result.error_detail})",
                         fatal_error=False,
                     )
             else:
                 return ReviewResult(
                     passed=False,
                     issues=[],
-                    parse_error=f"spawn failed: {detail}",
+                    parse_error=f"spawn failed: {spawn_result.error_detail}",
                     fatal_error=False,
                 )
 
@@ -350,28 +244,18 @@ class DefaultReviewer:
         session_id = env["CLAUDE_SESSION_ID"]
 
         # Check if wait_args already specifies --timeout to avoid duplicates
-        user_timeout = self._extract_wait_timeout(self.wait_args)
-        cli_timeout = user_timeout if user_timeout is not None else timeout
+        user_timeout = CerberusGateCLI.extract_wait_timeout(self.wait_args)
 
-        wait_cmd = [
-            self._review_gate_bin(),
-            "wait",
-            "--json",
-            "--session-id",
-            session_id,
-        ]
-        # Only add --timeout if not already specified in wait_args
-        if user_timeout is None:
-            wait_cmd.extend(["--timeout", str(timeout)])
-        if self.wait_args:
-            wait_cmd.extend(self.wait_args)
-
-        # Use CLI timeout + grace period for subprocess timeout
-        # This allows the CLI's internal timeout to trigger first with a proper error message
-        subprocess_timeout = cli_timeout + 30
-        wait_result = await runner.run_async(
-            wait_cmd, env=env, timeout=subprocess_timeout
+        # Wait for review completion
+        wait_result = await cli.wait_for_review(
+            session_id=session_id,
+            runner=runner,
+            env=env,
+            cli_timeout=timeout,
+            wait_args=self.wait_args,
+            user_timeout=user_timeout,
         )
+
         if wait_result.timed_out:
             return ReviewResult(
                 passed=False,
