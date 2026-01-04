@@ -1449,56 +1449,33 @@ class TestMakeLintCacheHook:
         assert cache.cache_size == 0
 
 
-class TestMakeStopHookWithCommandRunner:
-    """Tests for make_stop_hook that verify CommandRunner integration."""
+class TestMakeStopHookWithCleanupAgentLocks:
+    """Tests for make_stop_hook that verify cleanup_agent_locks integration."""
 
     @pytest.mark.asyncio
-    async def test_uses_run_command_for_lock_cleanup(self) -> None:
-        """Stop hook should use run_command instead of subprocess.run."""
-        hook = make_stop_hook("test-agent-123")
-        context = make_context()
-        hook_input = cast("StopHookInput", {"stop_hook_type": "natural"})
-
-        with patch("src.infra.hooks.locking.run_command") as mock_run_command:
-            mock_run_command.return_value = CommandResult(
-                command=["lock-release-all.sh"],
-                returncode=0,
-            )
-            result = await hook(hook_input, None, context)
-
-        assert result == {}  # Hook returns empty dict
-        mock_run_command.assert_called_once()
-        # Verify the script path is passed
-        call_args = mock_run_command.call_args
-        assert "lock-release-all.sh" in call_args[0][0][0]
-
-    @pytest.mark.asyncio
-    async def test_passes_agent_id_in_env(self) -> None:
-        """Stop hook should pass AGENT_ID in environment."""
-        agent_id = "my-special-agent"
+    async def test_calls_cleanup_agent_locks(self) -> None:
+        """Stop hook should call cleanup_agent_locks with agent_id."""
+        agent_id = "test-agent-123"
         hook = make_stop_hook(agent_id)
         context = make_context()
         hook_input = cast("StopHookInput", {"stop_hook_type": "natural"})
 
-        with patch("src.infra.hooks.locking.run_command") as mock_run_command:
-            mock_run_command.return_value = CommandResult(
-                command=["lock-release-all.sh"],
-                returncode=0,
-            )
-            await hook(hook_input, None, context)
+        with patch("src.infra.hooks.locking.cleanup_agent_locks") as mock_cleanup:
+            mock_cleanup.return_value = (2, ["file1.py", "file2.py"])
+            result = await hook(hook_input, None, context)
 
-        call_kwargs = mock_run_command.call_args[1]
-        assert call_kwargs["env"]["AGENT_ID"] == agent_id
+        assert result == {}  # Hook returns empty dict
+        mock_cleanup.assert_called_once_with(agent_id)
 
     @pytest.mark.asyncio
-    async def test_ignores_run_command_failure(self) -> None:
-        """Stop hook should not raise on run_command failure."""
+    async def test_ignores_cleanup_failure(self) -> None:
+        """Stop hook should not raise on cleanup_agent_locks failure."""
         hook = make_stop_hook("test-agent")
         context = make_context()
         hook_input = cast("StopHookInput", {"stop_hook_type": "natural"})
 
-        with patch("src.infra.hooks.locking.run_command") as mock_run_command:
-            mock_run_command.side_effect = Exception("Command failed")
+        with patch("src.infra.hooks.locking.cleanup_agent_locks") as mock_cleanup:
+            mock_cleanup.side_effect = Exception("Cleanup failed")
             result = await hook(hook_input, None, context)
 
         assert result == {}  # Should return empty dict despite failure

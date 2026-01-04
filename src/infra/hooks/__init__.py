@@ -46,7 +46,6 @@ from .locking import (
     get_lock_holder,
     make_lock_enforcement_hook,
     make_stop_hook,
-    run_command,
 )
 
 __all__ = [
@@ -74,5 +73,4 @@ __all__ = [
     "make_lock_enforcement_hook",
     "make_lock_event_hook",
     "make_stop_hook",
-    "run_command",
 ]

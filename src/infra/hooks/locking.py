@@ -7,15 +7,12 @@ on agent stop.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .dangerous_commands import PreToolUseHook
 
-from ..tools.command_runner import run_command
-from ..tools.env import SCRIPTS_DIR, get_lock_dir
-from ..tools.locking import get_lock_holder
+from ..tools.locking import cleanup_agent_locks, get_lock_holder
 from .file_cache import FILE_PATH_KEYS, FILE_WRITE_TOOLS
 
 # Type alias for Stop hooks (using Any to avoid SDK import)
@@ -100,16 +97,8 @@ def make_stop_hook(agent_id: str) -> StopHook:
         context: Any,  # noqa: ANN401 - SDK type, avoid import
     ) -> dict[str, Any]:
         """Stop hook to release all locks held by this agent."""
-        script = SCRIPTS_DIR / "lock-release-all.sh"
         try:
-            run_command(
-                [str(script)],
-                cwd=Path.cwd(),
-                env={
-                    "LOCK_DIR": str(get_lock_dir()),
-                    "AGENT_ID": agent_id,
-                },
-            )
+            cleanup_agent_locks(agent_id)
         except Exception:
             pass  # Best effort cleanup, orchestrator has fallback
         return {}
