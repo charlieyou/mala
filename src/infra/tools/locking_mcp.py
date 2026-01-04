@@ -295,17 +295,13 @@ def create_locking_mcp_server(
                 "filepaths": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of file paths to unlock",
+                    "description": "List of file paths to unlock (mutually exclusive with 'all')",
                 },
                 "all": {
                     "type": "boolean",
-                    "description": "Release ALL locks held by this agent",
+                    "description": "Release ALL locks held by this agent (mutually exclusive with 'filepaths')",
                 },
             },
-            "oneOf": [
-                {"required": ["filepaths"]},
-                {"required": ["all"]},
-            ],
         },
     )
     async def lock_release(args: dict) -> dict:
