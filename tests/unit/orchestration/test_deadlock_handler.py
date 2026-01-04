@@ -115,7 +115,14 @@ class TestHandleDeadlock:
             call_order.append("add_dependency")
             return True
 
+        async def track_mark_needs_followup(
+            issue_id: str, summary: str, log_path: Path | None
+        ) -> bool:
+            call_order.append("mark_needs_followup")
+            return True
+
         mock_callbacks.add_dependency.side_effect = track_add_dependency
+        mock_callbacks.mark_needs_followup.side_effect = track_mark_needs_followup
         # Recreate handler with updated callbacks
         handler = DeadlockHandler(callbacks=mock_callbacks.as_callbacks())
 
@@ -129,6 +136,7 @@ class TestHandleDeadlock:
             "do_cleanup_agent_locks",
             "on_locks_cleaned",
             "add_dependency",
+            "mark_needs_followup",
         ]
 
     @pytest.mark.asyncio
@@ -359,8 +367,10 @@ class TestAbortActiveTasks:
             active_tasks, "Test abort", state, mock_run_metadata
         )
 
-        # Await task to terminal state deterministically
-        await asyncio.gather(task, return_exceptions=True)
+        # Await task with timeout to avoid hanging if cancellation fails
+        await asyncio.wait_for(
+            asyncio.gather(task, return_exceptions=True), timeout=2.0
+        )
         assert task.cancelled() or task.done()
         mock_callbacks.on_tasks_aborting.assert_called_once_with(1, "Test abort")
         mock_callbacks.finalize_issue_result.assert_awaited_once()
@@ -639,9 +649,12 @@ class TestResolutionLockSerialization:
         # Due to serialization, one should complete before the other starts
         # Either [start_1, end_1, start_2, end_2] or [start_2, end_2, start_1, end_1]
         assert len(call_order) == 4
-        # Check that operations don't interleave
-        if call_order[0] == "start_issue-1":
-            assert call_order[1] == "end_issue-1"
-        else:
-            assert call_order[0] == "start_issue-2"
-            assert call_order[1] == "end_issue-2"
+        # Check that both pairs don't interleave (each start followed by its end)
+        assert call_order[:2] == [
+            call_order[0],
+            call_order[0].replace("start_", "end_"),
+        ]
+        assert call_order[2:] == [
+            call_order[2],
+            call_order[2].replace("start_", "end_"),
+        ]
