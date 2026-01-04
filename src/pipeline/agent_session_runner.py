@@ -40,9 +40,11 @@ from src.domain.lifecycle import (
     LifecycleState,
 )
 from src.domain.prompts import (
-    build_continuation_prompt,
-    extract_checkpoint,
     get_default_validation_commands as _get_default_validation_commands,
+)
+from src.pipeline.context_pressure_handler import (
+    ContextPressureConfig,
+    ContextPressureHandler,
 )
 from src.infra.clients.cerberus_review import format_review_issues
 from src.infra.clients.review_output_parser import ReviewResult
@@ -525,6 +527,17 @@ class AgentSessionRunner:
     sdk_client_factory: SDKClientFactoryProtocol
     callbacks: SessionCallbacks = field(default_factory=SessionCallbacks)
     event_sink: MalaEventSink | None = None
+    _context_pressure_handler: ContextPressureHandler = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Initialize derived components."""
+        self._context_pressure_handler = ContextPressureHandler(
+            config=ContextPressureConfig(
+                checkpoint_request_prompt=self.config.prompts.checkpoint_request,
+                continuation_template=self.config.prompts.continuation,
+            ),
+            sdk_client_factory=self.sdk_client_factory,
+        )
 
     def _initialize_session(
         self,
@@ -1436,71 +1449,6 @@ class AgentSessionRunner:
         # Should not reach here
         return MessageIterationResult(success=False)
 
-    async def _get_checkpoint_from_agent(
-        self,
-        session_id: str,
-        issue_id: str,
-        options: object,
-    ) -> str:
-        """Query agent for checkpoint before context restart.
-
-        Sends checkpoint_request prompt to the current session and extracts
-        the checkpoint block from the response.
-
-        Args:
-            session_id: SDK session ID from ContextPressureError.
-            issue_id: Issue ID for logging.
-            options: SDK client options.
-
-        Returns:
-            Extracted checkpoint text, or fallback if extraction fails.
-        """
-        logger.info(
-            "Session %s: requesting checkpoint from session %s...",
-            issue_id,
-            session_id[:8] if session_id else "unknown",
-        )
-
-        checkpoint_prompt = self.config.prompts.checkpoint_request
-        if not checkpoint_prompt:
-            logger.warning(
-                "Session %s: no checkpoint_request prompt configured, using empty checkpoint",
-                issue_id,
-            )
-            return ""
-
-        # Create client to query for checkpoint
-        client = self.sdk_client_factory.create(options)
-
-        response_text = ""
-        try:
-            async with client:
-                await client.query(checkpoint_prompt, session_id=session_id)
-                async for message in client.receive_response():
-                    # Extract text from AssistantMessage
-                    content = getattr(message, "content", None)
-                    if content is not None:
-                        for block in cast("list[Any]", content):
-                            text = getattr(block, "text", None)
-                            if text is not None:
-                                response_text += text
-        except Exception as e:
-            logger.warning(
-                "Session %s: checkpoint query failed: %s, using empty checkpoint",
-                issue_id,
-                e,
-            )
-            return ""
-
-        # Extract checkpoint from response
-        checkpoint = extract_checkpoint(response_text)
-        logger.debug(
-            "Session %s: extracted checkpoint (%d chars)",
-            issue_id,
-            len(checkpoint),
-        )
-        return checkpoint
-
     async def run_session(
         self,
         input: AgentSessionInput,
@@ -1525,8 +1473,6 @@ class AgentSessionRunner:
         start_time = asyncio.get_event_loop().time()
         continuation_count = 0
         current_prompt = input.prompt
-        # Timeout for checkpoint fetch operations (30 seconds)
-        checkpoint_timeout_seconds = 30
         # Use provided agent_id or generate one to preserve lock continuity across restarts
         agent_id = input.agent_id or f"{input.issue_id}-{uuid.uuid4().hex[:8]}"
 
@@ -1556,43 +1502,20 @@ class AgentSessionRunner:
                 # Normal completion - exit loop
                 break
             except ContextPressureError as e:
-                # Get checkpoint from current session before it's gone
-                # Use dedicated timeout bounded by remaining session time
-                checkpoint_elapsed = loop.time() - start_time
-                checkpoint_remaining = self.config.timeout_seconds - checkpoint_elapsed
-                effective_checkpoint_timeout = max(
-                    0, min(checkpoint_remaining, checkpoint_timeout_seconds)
+                # Delegate to handler for checkpoint fetch and continuation prompt
+                checkpoint_remaining = self.config.timeout_seconds - (
+                    loop.time() - start_time
                 )
-                try:
-                    async with asyncio.timeout(effective_checkpoint_timeout):
-                        checkpoint = await self._get_checkpoint_from_agent(
-                            e.session_id,
-                            input.issue_id,
-                            session_cfg.options,
-                        )
-                except TimeoutError:
-                    logger.warning(
-                        "Session %s: checkpoint fetch timed out after %.1fs, using empty checkpoint",
-                        input.issue_id,
-                        effective_checkpoint_timeout,
-                    )
-                    checkpoint = ""
-                continuation_count += 1
-                logger.info(
-                    "Session %s: context restart #%d at %.1f%%",
-                    input.issue_id,
+                (
+                    current_prompt,
                     continuation_count,
-                    e.pressure_ratio * 100,
+                ) = await self._context_pressure_handler.handle_pressure_error(
+                    error=e,
+                    issue_id=input.issue_id,
+                    options=session_cfg.options,
+                    continuation_count=continuation_count,
+                    remaining_time=checkpoint_remaining,
                 )
-                # Build continuation prompt for next iteration
-                continuation_template = self.config.prompts.continuation
-                if continuation_template:
-                    current_prompt = build_continuation_prompt(
-                        continuation_template, checkpoint
-                    )
-                else:
-                    # Fallback: just use checkpoint as prompt
-                    current_prompt = f"Continue from checkpoint:\n\n{checkpoint}"
                 # Loop continues with fresh lifecycle and continuation prompt
             except IdleTimeoutError as e:
                 state.lifecycle.on_error(state.lifecycle_ctx, e)
