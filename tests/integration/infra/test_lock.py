@@ -1099,3 +1099,129 @@ class TestCLIEntryPoint:
             assert result == 2
         finally:
             sys.argv = original_argv
+
+
+class TestWaitForLockAsync:
+    """Tests for async lock waiting."""
+
+    @pytest.mark.asyncio
+    async def test_wait_for_lock_async_acquires_free_lock(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """wait_for_lock_async should acquire a free lock immediately."""
+        from src.infra.tools.locking import wait_for_lock_async
+
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+
+        test_file = lock_env / "test.py"
+        test_file.touch()
+
+        result = await wait_for_lock_async(
+            str(test_file), "test-agent", timeout_seconds=1.0
+        )
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_wait_for_lock_async_times_out_on_held_lock(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """wait_for_lock_async should return False after timeout."""
+        from src.infra.tools.locking import try_lock, wait_for_lock_async
+
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+
+        test_file = lock_env / "test.py"
+        test_file.touch()
+
+        # First agent acquires lock
+        assert try_lock(str(test_file), "agent-1") is True
+
+        # Second agent times out waiting
+        result = await wait_for_lock_async(
+            str(test_file),
+            "agent-2",
+            timeout_seconds=0.1,
+            poll_interval_ms=10,
+        )
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_wait_for_lock_async_acquires_after_release(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """wait_for_lock_async should acquire lock once released."""
+        import asyncio
+
+        from src.infra.tools.locking import (
+            release_lock,
+            try_lock,
+            wait_for_lock_async,
+        )
+
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+
+        test_file = lock_env / "test.py"
+        test_file.touch()
+
+        # First agent acquires lock
+        assert try_lock(str(test_file), "agent-1") is True
+
+        async def release_after_delay() -> None:
+            await asyncio.sleep(0.05)
+            release_lock(str(test_file), "agent-1")
+
+        # Start release task and wait concurrently
+        release_task = asyncio.create_task(release_after_delay())
+        result = await wait_for_lock_async(
+            str(test_file),
+            "agent-2",
+            timeout_seconds=1.0,
+            poll_interval_ms=10,
+        )
+        await release_task
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_wait_for_lock_async_uses_asyncio_sleep(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """wait_for_lock_async should use asyncio.sleep, not time.sleep."""
+        import asyncio
+        from unittest.mock import patch
+
+        from src.infra.tools.locking import try_lock, wait_for_lock_async
+
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+
+        test_file = lock_env / "test.py"
+        test_file.touch()
+
+        # Lock the file so we have to wait
+        assert try_lock(str(test_file), "agent-1") is True
+
+        # Mock asyncio.sleep to verify it's called
+        sleep_calls: list[float] = []
+
+        async def tracking_sleep(delay: float) -> None:
+            sleep_calls.append(delay)
+            # Return immediately to speed up test
+            if len(sleep_calls) >= 3:
+                raise asyncio.CancelledError()
+
+        with patch("asyncio.sleep", side_effect=tracking_sleep):
+            try:
+                await wait_for_lock_async(
+                    str(test_file),
+                    "agent-2",
+                    timeout_seconds=1.0,
+                    poll_interval_ms=50,
+                )
+            except asyncio.CancelledError:
+                pass
+
+        # Should have called asyncio.sleep with the poll interval
+        assert len(sleep_calls) >= 1
+        assert all(delay == 0.05 for delay in sleep_calls)

@@ -20,8 +20,10 @@ __all__ = [
     "canonicalize_path",
     "get_all_locks",
     "get_lock_dir",
+    "get_lock_holder",
     "lock_path",
     "parse_lock_file",
+    "wait_for_lock_async",
 ]
 
 
@@ -352,6 +354,50 @@ def wait_for_lock(
             return False
 
         time.sleep(poll_interval_sec)
+
+
+async def wait_for_lock_async(
+    filepath: str,
+    agent_id: str,
+    repo_namespace: str | None = None,
+    timeout_seconds: float = 30.0,
+    poll_interval_ms: int = 100,
+) -> bool:
+    """Wait for and acquire a lock on a file asynchronously.
+
+    Non-blocking async version of wait_for_lock. Uses asyncio.sleep
+    instead of time.sleep to avoid blocking the event loop.
+
+    Args:
+        filepath: The file path to lock.
+        agent_id: The agent ID to record in the lock.
+        repo_namespace: Optional repo namespace for cross-repo disambiguation.
+        timeout_seconds: Maximum time to wait for the lock (default 30).
+        poll_interval_ms: Polling interval in milliseconds (default 100).
+
+    Returns:
+        True if lock was acquired, False if timeout.
+    """
+    import asyncio
+    import time
+
+    deadline = time.monotonic() + timeout_seconds
+    poll_interval_sec = poll_interval_ms / 1000.0
+
+    while True:
+        if try_lock(filepath, agent_id, repo_namespace):
+            return True
+
+        if time.monotonic() >= deadline:
+            logger.warning(
+                "Lock timeout: path=%s agent_id=%s after=%.1fs",
+                filepath,
+                agent_id,
+                timeout_seconds,
+            )
+            return False
+
+        await asyncio.sleep(poll_interval_sec)
 
 
 def is_locked(filepath: str, repo_namespace: str | None = None) -> bool:
