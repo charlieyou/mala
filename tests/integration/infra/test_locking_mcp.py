@@ -288,43 +288,44 @@ class TestLockReleaseAll:
     @pytest.mark.asyncio
     async def test_release_all_locks(self, lock_dir: Path) -> None:
         """Release all locks held by agent."""
-        from src.infra.tools.locking import try_lock
+        from src.infra.tools.locking import get_lock_holder, try_lock
 
         agent_id = "all-releaser"
-        # Note: cleanup_agent_locks doesn't use namespace, uses agent_id prefix
+        repo_ns = str(lock_dir)
         files = [str(lock_dir / f"all{i}.py") for i in range(5)]
 
         for f in files:
-            assert try_lock(f, agent_id) is True
+            assert try_lock(f, agent_id, repo_namespace=repo_ns) is True
 
-        handlers = _create_handlers(agent_id=agent_id, repo_namespace=str(lock_dir))
+        handlers = _create_handlers(agent_id=agent_id, repo_namespace=repo_ns)
         result = await handlers.lock_release.handler({"all": True})
 
         content = json.loads(result["content"][0]["text"])
         assert content["count"] == 5
 
-        # Verify all locks released
-        locks = list(lock_dir.glob("*.lock"))
-        assert len(locks) == 0
+        # Verify each specific file is released (more robust than counting all locks)
+        for f in files:
+            assert get_lock_holder(f, repo_namespace=repo_ns) is None
 
     @pytest.mark.asyncio
     async def test_release_all_preserves_other_agents(self, lock_dir: Path) -> None:
         """Release all only affects own locks."""
         from src.infra.tools.locking import get_lock_holder, try_lock
 
+        repo_ns = str(lock_dir)
         our_file = str(lock_dir / "ours.py")
         other_file = str(lock_dir / "theirs.py")
 
-        # cleanup_agent_locks works without namespace
-        assert try_lock(our_file, "our-agent") is True
-        assert try_lock(other_file, "other-agent") is True
+        # Use consistent namespace for all lock operations
+        assert try_lock(our_file, "our-agent", repo_namespace=repo_ns) is True
+        assert try_lock(other_file, "other-agent", repo_namespace=repo_ns) is True
 
-        handlers = _create_handlers(agent_id="our-agent", repo_namespace=str(lock_dir))
+        handlers = _create_handlers(agent_id="our-agent", repo_namespace=repo_ns)
         await handlers.lock_release.handler({"all": True})
 
         # Our lock released, theirs preserved
-        assert get_lock_holder(our_file) is None
-        assert get_lock_holder(other_file) == "other-agent"
+        assert get_lock_holder(our_file, repo_namespace=repo_ns) is None
+        assert get_lock_holder(other_file, repo_namespace=repo_ns) == "other-agent"
 
 
 class TestWaitingEvents:
@@ -573,18 +574,29 @@ class TestCanonicalOrdering:
     @pytest.mark.asyncio
     async def test_deduplicates_canonical_paths(self, lock_dir: Path) -> None:
         """Duplicate canonical paths are deduplicated."""
-        # Same file referenced multiple ways - use relative path within lock_dir
-        # to ensure proper deduplication
-        base_file = "dup.py"
-        base = str(lock_dir / base_file)
-        # Use paths that resolve to the same canonical path
-        files = [base, str(lock_dir / f"./{base_file}")]
+        import os
+
+        # Create test file so os.path.realpath can resolve it
+        dup_file = lock_dir / "dup.py"
+        dup_file.touch()
+
+        # Use non-normalized path strings that require realpath resolution
+        # These are different string representations that resolve to the same file
+        base = str(dup_file)
+        with_dot = str(lock_dir) + "/./dup.py"  # Contains ./ that needs resolution
+        with_parent = str(lock_dir) + "/../" + os.path.basename(lock_dir) + "/dup.py"
+
+        # Verify paths are not pre-normalized (the point of this test)
+        assert base != with_dot
+        assert base != with_parent
+
+        files = [base, with_dot, with_parent]
 
         handlers = _create_handlers(repo_namespace=str(lock_dir))
         result = await handlers.lock_acquire.handler({"filepaths": files})
 
         content = json.loads(result["content"][0]["text"])
-        # Should only have one result after dedup
+        # Should only have one result after dedup - tool must resolve canonical paths
         assert len(content["results"]) == 1
 
 
