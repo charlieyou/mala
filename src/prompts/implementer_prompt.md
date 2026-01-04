@@ -26,7 +26,7 @@ Implement the assigned issue completely before returning.
 - Check context before Read—don't re-fetch ranges you already have.
 - Batch independent Read/Grep calls in a single message.
 - Skip `grep` on binary/large generated files.
-- **Lock handling**: If a file is locked, complete all edits on other files first, then run ONE `lock-wait.sh` (≥300s). Do not retry or investigate.
+- **Lock handling**: If a file is locked, complete all edits on other files first, then call `lock_acquire` once with `timeout_seconds≥300`. Do not retry or investigate.
 - **Locks are for editing only**: Reading, grep, planning, and tests don't require locks—do those while blocked.
 - No narration ("Let me...", "Now I will..."). Reference code as `file:line`.
 - Outside Output template, keep explanations to ≤3 sentences.
@@ -67,7 +67,7 @@ If subagent is blocked on locks, return: "BLOCKED: <file> held by <holder>".
 ### Validation Split
 
 - **Subagents**: Run NO repo-level commands (`{lint_command}`, `{test_command}`, etc.). May run targeted file-level checks only.
-- **Main implementer**: Solely responsible for final repo-level validations, commit, and lock-release. Subagents never commit or release locks.
+- **Main implementer**: Solely responsible for final repo-level validations, commit, and releasing locks. Subagents never commit or release locks.
 
 ### Cross-Cutting Files
 
@@ -92,44 +92,42 @@ bd show {issue_id}     # View issue details
 
 ### 2. File Locking Protocol
 
-Lock scripts are pre-configured in your environment (LOCK_DIR, AGENT_ID, REPO_NAMESPACE, PATH are set).
+Use the MCP locking tools to coordinate file access with other agents.
 
-**Lock commands:**
-| Command | Description |
-|---------|-------------|
-| `lock-try.sh <file>` | Acquire lock (exit 0=success, 1=blocked) |
-| `lock-wait.sh <file> [timeout] [poll_ms]` | Wait for and acquire lock (exit 0=acquired, 1=timeout) |
-| `lock-check.sh <file>` | Check if you hold the lock |
-| `lock-holder.sh <file>` | Get agent ID holding the lock |
-| `lock-release.sh <file>` | Release a specific lock |
-| `lock-release-all.sh` | Release all your locks |
+**Lock tools:**
+| Tool | Parameters | Description |
+|------|------------|-------------|
+| `lock_acquire` | `filepaths: list[str]`, `timeout_seconds?: int` | Acquire locks. `timeout_seconds=0` (default) returns immediately; >0 waits. Returns `{acquired: [...], blocked: [...]}` |
+| `lock_release` | `filepaths?: list[str]` | Release locks. Omit `filepaths` to release all your locks. |
 
 **Acquisition strategy - mandatory protocol:**
 
-1. Try `lock-try.sh` for ALL files you need (batch in one message if possible)
-2. For blocked files, note the holder and **complete all edits on files you DO have locked**
-3. Once all other work is done, run ONE `lock-wait.sh <file> 300` for each blocked file
-4. If `lock-wait.sh` times out, return BLOCKED—do not retry or investigate
+1. Call `lock_acquire` with ALL files you need (one call, list all paths)
+2. For files in `blocked`, note the holder and **complete all edits on files in `acquired`**
+3. Once all other work is done, call `lock_acquire` with blocked files and `timeout_seconds=300`
+4. If still blocked after timeout, return BLOCKED—do not retry or investigate
 
 **Hard rules:**
-- **No retries**: Do not call `lock-try.sh` multiple times for the same file
-- **`lock-wait.sh` is single-shot**: Run at most once per file. If it times out, return BLOCKED
+- **No retries**: Do not call `lock_acquire` multiple times for the same file (except one wait attempt)
+- **Timeout is single-shot**: Call with timeout at most once per file. If it times out, return BLOCKED
 - **15 min total cap**: After 15 min cumulative wait, return BLOCKED
 
 **Example workflow:**
-```bash
-# Need: [config.py, utils.py, main.py]
+```json
+// Need: [config.py, utils.py, main.py]
 
-lock-try.sh config.py  # exit 0 → SUCCESS
-lock-try.sh utils.py   # exit 1 → BLOCKED (holder: bd-43)
-lock-try.sh main.py    # exit 0 → SUCCESS
+// Step 1: Try to acquire all at once
+lock_acquire(filepaths=["config.py", "utils.py", "main.py"])
+// Returns: {acquired: ["config.py", "main.py"], blocked: [{path: "utils.py", holder: "bd-43"}]}
 
-# → Edit config.py (all changes needed)
-# → Edit main.py (all changes needed)
-# → Run any other non-lock work (grep, read, tests)
-# → lock-wait.sh utils.py 300
-# → If acquired: edit utils.py
-# → If timeout: return "BLOCKED: utils.py held by bd-43"
+// → Edit config.py (all changes needed)
+// → Edit main.py (all changes needed)
+// → Run any other non-lock work (grep, read, tests)
+
+// Step 2: Wait for blocked file
+lock_acquire(filepaths=["utils.py"], timeout_seconds=300)
+// Returns: {acquired: ["utils.py"], blocked: []} → edit utils.py
+// OR: {acquired: [], blocked: [...]} → return "BLOCKED: utils.py held by bd-43"
 ```
 
 ### Parallel Work Rules
@@ -144,7 +142,7 @@ lock-try.sh main.py    # exit 0 → SUCCESS
 
 1. **Acquire all locks you can** - note which are blocked and who holds them
 2. **Complete all work on files you have locked** - write code, don't commit yet
-3. **Run `lock-wait.sh`** for each blocked file (one call per file, no retries)
+3. **Call `lock_acquire` with timeout** for blocked files (one call per file, no retries)
 4. **If wait times out**, return BLOCKED
 5. **Once all locks acquired**, complete remaining implementation
 6. Handle edge cases, add tests if appropriate
@@ -205,9 +203,9 @@ git commit -m "bd-{issue_id}: <summary>"
 - Only release locks AFTER successful commit
 
 ### 8. Release Locks
-```bash
-# Release locks (commit exit code already confirmed success)
-lock-release-all.sh
+```json
+// Release all locks (commit exit code already confirmed success)
+lock_release()
 ```
 
 Skip `git log -1` verification—trust the commit exit code. Only inspect git log if a commit fails.

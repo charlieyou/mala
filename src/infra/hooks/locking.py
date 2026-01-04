@@ -69,7 +69,7 @@ def make_lock_enforcement_hook(
         if lock_holder is None:
             return {
                 "decision": "block",
-                "reason": f"File {file_path} is not locked. Acquire lock with: lock-try.sh {file_path}",
+                "reason": f'File {file_path} is not locked. Use lock_acquire tool with filepaths: ["{file_path}"]',
             }
 
         if lock_holder != agent_id:
