@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 
 # Path to JSONL fixture file
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
+FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures"
 SDK_LOG_SAMPLES = FIXTURES_DIR / "sdk_log_samples.jsonl"
 
 

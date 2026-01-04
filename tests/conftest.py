@@ -53,7 +53,8 @@ def pytest_collection_modifyitems(
 ) -> None:
     """Apply markers based on test file path."""
     for item in items:
-        if any(marker in item.keywords for marker in ("unit", "integration", "e2e")):
+        # Check if test already has an explicit marker (not just package name in keywords)
+        if any(item.get_closest_marker(m) for m in ("unit", "integration", "e2e")):
             continue
         # Path-based auto-marking (use item.path for pytest 7+ compatibility)
         # Normalize path separators for cross-platform compatibility (Windows uses backslashes)
