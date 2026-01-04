@@ -163,6 +163,14 @@ class SlowSDKClient(FakeSDKClient):
         yield self.result_message
 
 
+class FakeHookMatcher:
+    """Fake HookMatcher for tests."""
+
+    def __init__(self, matcher: object, hooks: list[object]):
+        self.matcher = matcher
+        self.hooks = hooks
+
+
 class FakeSDKClientFactory:
     """Factory for creating fake SDK clients in tests."""
 
@@ -173,6 +181,38 @@ class FakeSDKClientFactory:
     def create(self, options: object) -> SDKClientProtocol:
         self.create_calls.append(options)
         return cast("SDKClientProtocol", self.client)
+
+    def create_options(
+        self,
+        *,
+        cwd: str,
+        permission_mode: str = "bypassPermissions",
+        model: str = "opus",
+        system_prompt: dict[str, str] | None = None,
+        setting_sources: list[str] | None = None,
+        mcp_servers: object | None = None,
+        disallowed_tools: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        hooks: dict[str, list[object]] | None = None,
+    ) -> object:
+        return {
+            "cwd": cwd,
+            "permission_mode": permission_mode,
+            "model": model,
+            "system_prompt": system_prompt,
+            "setting_sources": setting_sources,
+            "mcp_servers": mcp_servers,
+            "disallowed_tools": disallowed_tools,
+            "env": env,
+            "hooks": hooks,
+        }
+
+    def create_hook_matcher(
+        self,
+        matcher: object | None,
+        hooks: list[object],
+    ) -> object:
+        return FakeHookMatcher(matcher, hooks)
 
 
 class SequencedSDKClientFactory:
@@ -193,6 +233,38 @@ class SequencedSDKClientFactory:
         client = self.clients[min(self._index, len(self.clients) - 1)]
         self._index += 1
         return cast("SDKClientProtocol", client)
+
+    def create_options(
+        self,
+        *,
+        cwd: str,
+        permission_mode: str = "bypassPermissions",
+        model: str = "opus",
+        system_prompt: dict[str, str] | None = None,
+        setting_sources: list[str] | None = None,
+        mcp_servers: object | None = None,
+        disallowed_tools: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        hooks: dict[str, list[object]] | None = None,
+    ) -> object:
+        return {
+            "cwd": cwd,
+            "permission_mode": permission_mode,
+            "model": model,
+            "system_prompt": system_prompt,
+            "setting_sources": setting_sources,
+            "mcp_servers": mcp_servers,
+            "disallowed_tools": disallowed_tools,
+            "env": env,
+            "hooks": hooks,
+        }
+
+    def create_hook_matcher(
+        self,
+        matcher: object | None,
+        hooks: list[object],
+    ) -> object:
+        return FakeHookMatcher(matcher, hooks)
 
 
 class TestAgentSessionRunnerBasics:
@@ -2277,6 +2349,28 @@ class TestIdleTimeoutRetry:
                 self.idx += 1
                 return cast("SDKClientProtocol", make_client_for_session(sid))
 
+            def create_options(
+                self,
+                *,
+                cwd: str,
+                permission_mode: str = "bypassPermissions",
+                model: str = "opus",
+                system_prompt: dict[str, str] | None = None,
+                setting_sources: list[str] | None = None,
+                mcp_servers: object | None = None,
+                disallowed_tools: list[str] | None = None,
+                env: dict[str, str] | None = None,
+                hooks: dict[str, list[object]] | None = None,
+            ) -> object:
+                return {"cwd": cwd, "hooks": hooks}
+
+            def create_hook_matcher(
+                self,
+                matcher: object | None,
+                hooks: list[object],
+            ) -> object:
+                return FakeHookMatcher(matcher, hooks)
+
         fake_factory = SessionChangingFactory()
 
         # Track log_offset values passed to gate check
@@ -2363,9 +2457,11 @@ class TestInitializeSession:
     @pytest.fixture
     def runner(self, session_config: AgentSessionConfig) -> AgentSessionRunner:
         """Create a runner for testing initialization."""
+        fake_client = FakeSDKClient()
         return AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
+            sdk_client_factory=FakeSDKClientFactory(fake_client),
         )
 
     @pytest.mark.unit
@@ -2460,7 +2556,12 @@ class TestInitializeSession:
             prompts=make_test_prompts(),
             idle_timeout_seconds=None,  # Let it be computed
         )
-        runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
+        fake_client = FakeSDKClient()
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),
+            sdk_client_factory=FakeSDKClientFactory(fake_client),
+        )
 
         input_data = AgentSessionInput(issue_id="test-123", prompt="Test")
         session_cfg, _ = runner._initialize_session(input_data)
@@ -2480,7 +2581,12 @@ class TestInitializeSession:
             prompts=make_test_prompts(),
             idle_timeout_seconds=None,
         )
-        runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
+        fake_client = FakeSDKClient()
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),
+            sdk_client_factory=FakeSDKClientFactory(fake_client),
+        )
 
         input_data = AgentSessionInput(issue_id="test-123", prompt="Test")
         session_cfg, _ = runner._initialize_session(input_data)
@@ -2500,7 +2606,12 @@ class TestInitializeSession:
             prompts=make_test_prompts(),
             idle_timeout_seconds=None,
         )
-        runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
+        fake_client = FakeSDKClient()
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),
+            sdk_client_factory=FakeSDKClientFactory(fake_client),
+        )
 
         input_data = AgentSessionInput(issue_id="test-123", prompt="Test")
         session_cfg, _ = runner._initialize_session(input_data)
@@ -2520,7 +2631,12 @@ class TestInitializeSession:
             prompts=make_test_prompts(),
             idle_timeout_seconds=0,  # Explicitly disabled
         )
-        runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
+        fake_client = FakeSDKClient()
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),
+            sdk_client_factory=FakeSDKClientFactory(fake_client),
+        )
 
         input_data = AgentSessionInput(issue_id="test-123", prompt="Test")
         session_cfg, _ = runner._initialize_session(input_data)
@@ -2540,7 +2656,12 @@ class TestInitializeSession:
             prompts=make_test_prompts(),
             idle_timeout_seconds=42.5,  # Explicit value
         )
-        runner = AgentSessionRunner(config=session_config, callbacks=SessionCallbacks())
+        fake_client = FakeSDKClient()
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=SessionCallbacks(),
+            sdk_client_factory=FakeSDKClientFactory(fake_client),
+        )
 
         input_data = AgentSessionInput(issue_id="test-123", prompt="Test")
         session_cfg, _ = runner._initialize_session(input_data)

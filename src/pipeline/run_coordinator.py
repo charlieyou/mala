@@ -45,7 +45,7 @@ from src.domain.validation.spec import extract_lint_tools_from_spec
 from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
-    from src.core.protocols import MalaEventSink
+    from src.core.protocols import MalaEventSink, SDKClientFactoryProtocol
     from src.infra.io.log_output.run_metadata import (
         RunMetadata,
         ValidationResult as MetaValidationResult,
@@ -208,6 +208,7 @@ class RunCoordinator:
     env_config: EnvConfigPort
     lock_manager: LockManagerPort
     event_sink: MalaEventSink | None = None
+    sdk_client_factory: SDKClientFactoryProtocol | None = None
     _active_fixer_ids: list[str] = field(default_factory=list, init=False)
 
     async def run_validation(
@@ -394,17 +395,6 @@ class RunCoordinator:
         Returns:
             True if fixer agent completed successfully, False otherwise.
         """
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ClaudeAgentOptions,
-            ClaudeSDKClient,
-            ResultMessage,
-            TextBlock,
-            ToolResultBlock,
-            ToolUseBlock,
-        )
-        from claude_agent_sdk.types import HookMatcher
-
         agent_id = f"fixer-{uuid.uuid4().hex[:8]}"
         self._active_fixer_ids.append(agent_id)
 
@@ -430,66 +420,67 @@ class RunCoordinator:
         file_read_cache = FileReadCache()
         lint_tools = extract_lint_tools_from_spec(spec)
         lint_cache = LintCache(repo_path=fixer_cwd, lint_tools=lint_tools)
-        pre_tool_hooks: list = [
+        pre_tool_hooks: list[object] = [
             block_dangerous_commands,
             make_lock_enforcement_hook(agent_id, str(self.config.repo_path)),
             make_file_read_cache_hook(file_read_cache),
             make_lint_cache_hook(lint_cache),
         ]
 
-        options = ClaudeAgentOptions(
+        # Build options using factory (required)
+        if self.sdk_client_factory is None:
+            raise RuntimeError(
+                "sdk_client_factory is required for fixer agent. "
+                "Use SDKClientFactory from src.infra.sdk_adapter."
+            )
+        make_matcher = self.sdk_client_factory.create_hook_matcher
+        options = self.sdk_client_factory.create_options(
             cwd=str(fixer_cwd),
-            permission_mode="bypassPermissions",
-            model="opus",
-            system_prompt={"type": "preset", "preset": "claude_code"},
-            setting_sources=["project", "user"],
-            mcp_servers=get_mcp_servers(
-                fixer_cwd,
-            ),
+            mcp_servers=get_mcp_servers(fixer_cwd),
             disallowed_tools=get_disallowed_tools(),
             env=agent_env,
             hooks={
-                "PreToolUse": [
-                    HookMatcher(
-                        matcher=None,
-                        hooks=pre_tool_hooks,  # type: ignore[arg-type]
-                    )
-                ],
-                "Stop": [
-                    HookMatcher(matcher=None, hooks=[make_stop_hook(agent_id)])  # type: ignore[arg-type]
-                ],
+                "PreToolUse": [make_matcher(None, pre_tool_hooks)],
+                "Stop": [make_matcher(None, [make_stop_hook(agent_id)])],
             },
         )
+        client = self.sdk_client_factory.create(options)
 
         pending_lint_commands: dict[str, tuple[str, str]] = {}
 
         try:
             async with asyncio.timeout(self.config.timeout_seconds):
-                async with ClaudeSDKClient(options=options) as client:
+                async with client:
                     await client.query(prompt)
 
                     async for message in client.receive_response():
-                        if isinstance(message, AssistantMessage):
-                            for block in message.content:
-                                if isinstance(block, TextBlock):
+                        # Use duck typing to avoid SDK imports
+                        msg_type = type(message).__name__
+                        if msg_type == "AssistantMessage":
+                            content = getattr(message, "content", [])
+                            for block in content:
+                                block_type = type(block).__name__
+                                if block_type == "TextBlock":
+                                    text = getattr(block, "text", "")
                                     if self.event_sink is not None:
-                                        self.event_sink.on_fixer_text(
-                                            attempt, block.text
-                                        )
-                                elif isinstance(block, ToolUseBlock):
+                                        self.event_sink.on_fixer_text(attempt, text)
+                                elif block_type == "ToolUseBlock":
+                                    name = getattr(block, "name", "")
+                                    block_input = getattr(block, "input", {})
                                     if self.event_sink is not None:
                                         self.event_sink.on_fixer_tool_use(
-                                            attempt, block.name, block.input
+                                            attempt, name, block_input
                                         )
-                                    if block.name.lower() == "bash":
-                                        cmd = block.input.get("command", "")
+                                    if name.lower() == "bash":
+                                        cmd = block_input.get("command", "")
                                         lint_type = lint_cache.detect_lint_command(cmd)
                                         if lint_type:
-                                            pending_lint_commands[block.id] = (
+                                            block_id = getattr(block, "id", "")
+                                            pending_lint_commands[block_id] = (
                                                 lint_type,
                                                 cmd,
                                             )
-                                elif isinstance(block, ToolResultBlock):
+                                elif block_type == "ToolResultBlock":
                                     tool_use_id = getattr(block, "tool_use_id", None)
                                     if tool_use_id in pending_lint_commands:
                                         lint_type, cmd = pending_lint_commands.pop(
@@ -497,9 +488,10 @@ class RunCoordinator:
                                         )
                                         if not getattr(block, "is_error", False):
                                             lint_cache.mark_success(lint_type, cmd)
-                        elif isinstance(message, ResultMessage):
+                        elif msg_type == "ResultMessage":
+                            result = getattr(message, "result", "") or ""
                             if self.event_sink is not None:
-                                self.event_sink.on_fixer_completed(message.result or "")
+                                self.event_sink.on_fixer_completed(result)
 
             return True
 

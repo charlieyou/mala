@@ -1,0 +1,116 @@
+"""SDK adapter for Claude Agent SDK.
+
+This module provides a factory for creating Claude SDK clients, isolating
+SDK imports to the infra layer. The pipeline layer uses SDKClientProtocol
+from core.protocols instead of importing SDK types directly.
+
+Design principles:
+- All SDK imports are local (inside methods, not at module level)
+- Factory pattern enables dependency injection and testing
+- TYPE_CHECKING imports for SDK types avoid runtime dependency
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from src.core.protocols import SDKClientProtocol
+
+
+class SDKClientFactory:
+    """Factory for creating Claude SDK clients.
+
+    This factory encapsulates SDK imports and client creation, allowing
+    the pipeline layer to use SDK clients without importing SDK directly.
+
+    Usage:
+        factory = SDKClientFactory()
+        client = factory.create(options)
+        async with client:
+            await client.query(prompt)
+            async for msg in client.receive_response():
+                ...
+    """
+
+    def create(self, options: object) -> SDKClientProtocol:
+        """Create a new SDK client with the given options.
+
+        Args:
+            options: ClaudeAgentOptions (or compatible) for the client.
+                The type is `object` to avoid requiring SDK import in
+                the caller's type annotations.
+
+        Returns:
+            SDKClientProtocol wrapping a ClaudeSDKClient.
+        """
+        from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient  # noqa: TC002
+
+        return cast(
+            "SDKClientProtocol",
+            ClaudeSDKClient(options=cast("ClaudeAgentOptions", options)),
+        )
+
+    def create_options(
+        self,
+        *,
+        cwd: str,
+        permission_mode: str = "bypassPermissions",
+        model: str = "opus",
+        system_prompt: dict[str, str] | None = None,
+        setting_sources: list[str] | None = None,
+        mcp_servers: object | None = None,
+        disallowed_tools: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        hooks: dict[str, list[object]] | None = None,
+    ) -> object:
+        """Create SDK options without requiring SDK import in caller.
+
+        This method encapsulates the ClaudeAgentOptions construction,
+        allowing callers to build options without SDK imports.
+
+        Args:
+            cwd: Working directory for the agent.
+            permission_mode: Permission mode (default "bypassPermissions").
+            model: Model to use (default "opus").
+            system_prompt: System prompt configuration.
+            setting_sources: List of setting sources.
+            mcp_servers: List of MCP server configurations.
+            disallowed_tools: List of tools to disallow.
+            env: Environment variables for the agent.
+            hooks: Hook configurations keyed by event type.
+
+        Returns:
+            ClaudeAgentOptions instance.
+        """
+        from claude_agent_sdk import ClaudeAgentOptions
+
+        return ClaudeAgentOptions(
+            cwd=cwd,
+            permission_mode=permission_mode,  # type: ignore[arg-type]
+            model=model,
+            system_prompt=system_prompt or {"type": "preset", "preset": "claude_code"},  # type: ignore[arg-type]
+            setting_sources=setting_sources or ["project", "user"],  # type: ignore[arg-type]
+            mcp_servers=mcp_servers,  # type: ignore[arg-type]
+            disallowed_tools=disallowed_tools,  # type: ignore[arg-type]
+            env=env,  # type: ignore[arg-type]
+            hooks=hooks,  # type: ignore[arg-type]
+        )
+
+    def create_hook_matcher(
+        self,
+        matcher: object | None,
+        hooks: list[object],
+    ) -> object:
+        """Create a HookMatcher for SDK hook registration.
+
+        Args:
+            matcher: Optional matcher configuration.
+            hooks: List of hook callables.
+
+        Returns:
+            HookMatcher instance.
+        """
+        from claude_agent_sdk.types import HookMatcher
+
+        return HookMatcher(matcher=matcher, hooks=hooks)  # type: ignore[arg-type]

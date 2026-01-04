@@ -30,10 +30,8 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
-    Protocol,
     TypeVar,
     cast,
-    runtime_checkable,
 )
 
 from src.infra.hooks import (
@@ -65,13 +63,14 @@ from src.infra.clients.cerberus_review import format_review_issues, ReviewResult
 from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 
 if TYPE_CHECKING:
-    from claude_agent_sdk.types import HookEvent
     from collections.abc import AsyncIterator
     from typing import Self
 
-    from claude_agent_sdk import ClaudeAgentOptions
-
-    from src.core.protocols import MalaEventSink
+    from src.core.protocols import (
+        MalaEventSink,
+        SDKClientFactoryProtocol,
+        SDKClientProtocol,
+    )
     from src.domain.deadlock import DeadlockMonitor
     from src.domain.lifecycle import (
         GateOutcome,
@@ -167,74 +166,6 @@ class IdleTimeoutStream(Generic[_T]):
             raise IdleTimeoutError(
                 f"SDK stream idle for {self._timeout_seconds:.0f} seconds"
             ) from exc
-
-
-@runtime_checkable
-class SDKClientProtocol(Protocol):
-    """Protocol for SDK client interactions.
-
-    This protocol abstracts the Claude Agent SDK client, enabling testing
-    with fake implementations that don't require actual SDK/API calls.
-
-    The protocol matches the subset of ClaudeSDKClient used by AgentSessionRunner.
-    """
-
-    async def __aenter__(self) -> Self:
-        """Enter async context."""
-        ...
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        """Exit async context."""
-        ...
-
-    async def query(self, prompt: str, session_id: str | None = None) -> None:
-        """Send a query to the agent.
-
-        Args:
-            prompt: The prompt to send.
-            session_id: Optional session ID to resume.
-        """
-        ...
-
-    def receive_response(self) -> AsyncIterator[object]:
-        """Receive streaming response messages.
-
-        Yields:
-            SDK message objects (AssistantMessage, ResultMessage, etc.)
-        """
-        ...
-
-    async def disconnect(self) -> None:
-        """Disconnect and terminate the subprocess.
-
-        This should be called when an idle timeout is detected to ensure
-        the hung subprocess is terminated before creating a new client.
-        """
-        ...
-
-
-@runtime_checkable
-class SDKClientFactory(Protocol):
-    """Protocol for creating SDK clients.
-
-    This factory pattern allows injection of fake clients for testing.
-    """
-
-    def create(self, options: object) -> SDKClientProtocol:
-        """Create a new SDK client with the given options.
-
-        Args:
-            options: SDK-specific options (ClaudeAgentOptions or equivalent).
-
-        Returns:
-            An SDK client conforming to SDKClientProtocol.
-        """
-        ...
 
 
 # Type aliases for callbacks
@@ -717,7 +648,7 @@ class AgentSessionRunner:
 
     config: AgentSessionConfig
     callbacks: SessionCallbacks = field(default_factory=SessionCallbacks)
-    sdk_client_factory: SDKClientFactory | None = None
+    sdk_client_factory: SDKClientFactoryProtocol | None = None
     event_sink: MalaEventSink | None = None
 
     def _build_agent_env(self, agent_id: str) -> dict[str, str]:
@@ -804,37 +735,23 @@ class AgentSessionRunner:
         Returns:
             ClaudeAgentOptions configured for this session.
         """
-        from claude_agent_sdk import ClaudeAgentOptions
-        from claude_agent_sdk.types import HookMatcher
-
-        hooks_dict: dict[HookEvent, list[HookMatcher]] = {
-            "PreToolUse": [
-                HookMatcher(
-                    matcher=None,
-                    hooks=pre_tool_hooks,  # type: ignore[arg-type]
-                )
-            ],
-            "Stop": [HookMatcher(matcher=None, hooks=stop_hooks)],  # type: ignore[arg-type]
+        # Build hooks dict using factory (required)
+        if self.sdk_client_factory is None:
+            raise RuntimeError(
+                "sdk_client_factory is required. Use SDKClientFactory from "
+                "src.infra.sdk_adapter or inject via orchestration wiring."
+            )
+        make_matcher = self.sdk_client_factory.create_hook_matcher
+        hooks_dict: dict[str, list[object]] = {
+            "PreToolUse": [make_matcher(None, pre_tool_hooks)],
+            "Stop": [make_matcher(None, stop_hooks)],
         }
-
-        # Only register PostToolUse hooks if any are configured
         if post_tool_hooks:
-            hooks_dict["PostToolUse"] = [
-                HookMatcher(
-                    matcher=None,
-                    hooks=post_tool_hooks,  # type: ignore[arg-type]
-                )
-            ]
+            hooks_dict["PostToolUse"] = [make_matcher(None, post_tool_hooks)]
 
-        return ClaudeAgentOptions(
+        return self.sdk_client_factory.create_options(
             cwd=str(self.config.repo_path),
-            permission_mode="bypassPermissions",
-            model="opus",
-            system_prompt={"type": "preset", "preset": "claude_code"},
-            setting_sources=["project", "user"],
-            mcp_servers=get_mcp_servers(
-                self.config.repo_path,
-            ),
+            mcp_servers=get_mcp_servers(self.config.repo_path),
             disallowed_tools=get_disallowed_tools(),
             env=agent_env,
             hooks=hooks_dict,
@@ -1628,14 +1545,7 @@ class AgentSessionRunner:
         Returns:
             MessageIterationResult with success status.
         """
-        from claude_agent_sdk import (
-            AssistantMessage,
-            ResultMessage,
-            TextBlock,
-            ToolResultBlock,
-            ToolUseBlock,
-        )
-
+        # Use duck typing to avoid SDK imports - check type name instead of isinstance
         async for message in stream:
             if not state.first_message_received:
                 state.first_message_received = True
@@ -1648,27 +1558,32 @@ class AgentSessionRunner:
             if tracer is not None:
                 tracer.log_message(message)
 
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
+            msg_type = type(message).__name__
+            if msg_type == "AssistantMessage":
+                content = getattr(message, "content", [])
+                for block in content:
+                    block_type = type(block).__name__
+                    if block_type == "TextBlock":
+                        text = getattr(block, "text", "")
                         if self.callbacks.on_agent_text is not None:
-                            self.callbacks.on_agent_text(issue_id, block.text)
-                    elif isinstance(block, ToolUseBlock):
+                            self.callbacks.on_agent_text(issue_id, text)
+                    elif block_type == "ToolUseBlock":
                         state.tool_calls_this_turn += 1
-                        state.pending_tool_ids.add(block.id)
+                        block_id = getattr(block, "id", "")
+                        state.pending_tool_ids.add(block_id)
+                        name = getattr(block, "name", "")
+                        block_input = getattr(block, "input", {})
                         if self.callbacks.on_tool_use is not None:
-                            self.callbacks.on_tool_use(
-                                issue_id, block.name, block.input
-                            )
-                        if block.name.lower() == "bash":
-                            cmd = block.input.get("command", "")
+                            self.callbacks.on_tool_use(issue_id, name, block_input)
+                        if name.lower() == "bash":
+                            cmd = block_input.get("command", "")
                             lint_type = lint_cache.detect_lint_command(cmd)
                             if lint_type:
-                                state.pending_lint_commands[block.id] = (
+                                state.pending_lint_commands[block_id] = (
                                     lint_type,
                                     cmd,
                                 )
-                    elif isinstance(block, ToolResultBlock):
+                    elif block_type == "ToolResultBlock":
                         tool_use_id = getattr(block, "tool_use_id", None)
                         if tool_use_id:
                             state.pending_tool_ids.discard(tool_use_id)
@@ -1679,10 +1594,10 @@ class AgentSessionRunner:
                             if not getattr(block, "is_error", False):
                                 lint_cache.mark_success(lint_type, cmd)
 
-            elif isinstance(message, ResultMessage):
-                state.session_id = message.session_id
-                lifecycle_ctx.session_id = message.session_id
-                lifecycle_ctx.final_result = message.result or ""
+            elif msg_type == "ResultMessage":
+                state.session_id = getattr(message, "session_id", None)
+                lifecycle_ctx.session_id = state.session_id
+                lifecycle_ctx.final_result = getattr(message, "result", "") or ""
 
                 # Extract token usage from SDK for context pressure detection
                 usage = getattr(message, "usage", None)
@@ -1768,8 +1683,6 @@ class AgentSessionRunner:
         Raises:
             IdleTimeoutError: If max idle retries exceeded.
         """
-        from claude_agent_sdk import ClaudeSDKClient
-
         pending_query: str | None = query
         state.tool_calls_this_turn = 0
         state.first_message_received = False
@@ -1780,14 +1693,13 @@ class AgentSessionRunner:
             if state.idle_retry_count > 0:
                 await self._apply_retry_backoff(state.idle_retry_count)
 
-            # Create client for this attempt
-            if self.sdk_client_factory is not None:
-                client = self.sdk_client_factory.create(options)
-            else:
-                client = cast(
-                    "SDKClientProtocol",
-                    ClaudeSDKClient(options=cast("ClaudeAgentOptions", options)),
+            # Create client for this attempt - factory required
+            if self.sdk_client_factory is None:
+                raise RuntimeError(
+                    "sdk_client_factory is required. Use SDKClientFactory from "
+                    "src.infra.sdk_adapter or inject via orchestration wiring."
                 )
+            client = self.sdk_client_factory.create(options)
 
             try:
                 async with client:
@@ -1884,16 +1796,13 @@ class AgentSessionRunner:
             )
             return ""
 
-        # Create client to query for checkpoint
-        if self.sdk_client_factory is not None:
-            client = self.sdk_client_factory.create(options)
-        else:
-            from claude_agent_sdk import ClaudeSDKClient
-
-            client = cast(
-                "SDKClientProtocol",
-                ClaudeSDKClient(options=cast("ClaudeAgentOptions", options)),
+        # Create client to query for checkpoint - factory required
+        if self.sdk_client_factory is None:
+            raise RuntimeError(
+                "sdk_client_factory is required. Use SDKClientFactory from "
+                "src.infra.sdk_adapter or inject via orchestration wiring."
             )
+        client = self.sdk_client_factory.create(options)
 
         response_text = ""
         try:

@@ -23,8 +23,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
     from pathlib import Path
+    from types import TracebackType
+    from typing import Self
 
 
 # =============================================================================
@@ -826,6 +828,125 @@ class EpicVerificationModel(Protocol):
 
         Returns:
             Structured verdict with pass/fail and unmet criteria details.
+        """
+        ...
+
+
+# =============================================================================
+# SDK Client Protocol
+# =============================================================================
+
+
+@runtime_checkable
+class SDKClientProtocol(Protocol):
+    """Protocol for Claude SDK client abstraction.
+
+    Enables the pipeline layer to use SDK clients without importing
+    claude_agent_sdk directly. The canonical implementation is
+    ClaudeSDKClient, wrapped by SDKClientFactory in infra.
+
+    This protocol captures the async context manager and streaming
+    interface used by AgentSessionRunner.
+    """
+
+    async def __aenter__(self) -> Self:
+        """Enter async context."""
+        ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Exit async context."""
+        ...
+
+    async def query(self, prompt: str, session_id: str | None = None) -> None:
+        """Send a query to the agent.
+
+        Args:
+            prompt: The prompt text to send.
+            session_id: Optional session ID for continuation.
+        """
+        ...
+
+    def receive_response(self) -> AsyncIterator[object]:
+        """Get an async iterator of response messages.
+
+        Returns:
+            AsyncIterator yielding AssistantMessage, ResultMessage, etc.
+        """
+        ...
+
+    async def disconnect(self) -> None:
+        """Disconnect the client."""
+        ...
+
+
+@runtime_checkable
+class SDKClientFactoryProtocol(Protocol):
+    """Protocol for SDK client factory.
+
+    Enables dependency injection of the factory into pipeline components,
+    allowing tests to provide mock factories.
+    """
+
+    def create(self, options: object) -> SDKClientProtocol:
+        """Create a new SDK client with the given options.
+
+        Args:
+            options: ClaudeAgentOptions for the client.
+
+        Returns:
+            SDKClientProtocol instance.
+        """
+        ...
+
+    def create_options(
+        self,
+        *,
+        cwd: str,
+        permission_mode: str = "bypassPermissions",
+        model: str = "opus",
+        system_prompt: dict[str, str] | None = None,
+        setting_sources: list[str] | None = None,
+        mcp_servers: object | None = None,
+        disallowed_tools: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        hooks: dict[str, list[object]] | None = None,
+    ) -> object:
+        """Create SDK options without requiring SDK import in caller.
+
+        Args:
+            cwd: Working directory for the agent.
+            permission_mode: Permission mode.
+            model: Model to use.
+            system_prompt: System prompt configuration.
+            setting_sources: List of setting sources.
+            mcp_servers: List of MCP server configurations.
+            disallowed_tools: List of tools to disallow.
+            env: Environment variables for the agent.
+            hooks: Hook configurations keyed by event type.
+
+        Returns:
+            ClaudeAgentOptions instance.
+        """
+        ...
+
+    def create_hook_matcher(
+        self,
+        matcher: object | None,
+        hooks: list[object],
+    ) -> object:
+        """Create a HookMatcher for SDK hook registration.
+
+        Args:
+            matcher: Optional matcher configuration.
+            hooks: List of hook callables.
+
+        Returns:
+            HookMatcher instance.
         """
         ...
 

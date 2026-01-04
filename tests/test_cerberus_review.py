@@ -16,10 +16,12 @@ from typing import TYPE_CHECKING, cast
 
 from src.infra.clients.cerberus_review import (
     DefaultReviewer,
-    ReviewIssue,
-    ReviewResult,
     _to_relative_path,
     format_review_issues,
+)
+from src.infra.clients.review_output_parser import (
+    ReviewIssue,
+    ReviewResult,
     map_exit_code_to_result,
     parse_cerberus_json,
 )

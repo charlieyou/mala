@@ -18,9 +18,11 @@ from src.infra.clients.braintrust_integration import (
 )
 from src.infra.clients.cerberus_review import (
     DefaultReviewer,
+    format_review_issues,
+)
+from src.infra.clients.review_output_parser import (
     ReviewIssue,
     ReviewResult,
-    format_review_issues,
     map_exit_code_to_result,
     parse_cerberus_json,
 )

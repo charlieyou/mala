@@ -42,6 +42,7 @@ from src.infra.tools.locking import (
     cleanup_agent_locks,
     release_run_locks,
 )
+from src.infra.sdk_adapter import SDKClientFactory
 from src.pipeline.agent_session_runner import (
     AgentSessionInput,
     AgentSessionRunner,
@@ -187,6 +188,7 @@ class MalaOrchestrator:
         self.epic_verifier = epic_verifier
         self.code_reviewer = code_reviewer
         self.telemetry_provider = telemetry_provider
+        self._sdk_client_factory = SDKClientFactory()
         self._init_pipeline_runners()
 
     def _init_runtime_state(self) -> None:
@@ -227,7 +229,7 @@ class MalaOrchestrator:
         # Build core runners
         self.gate_runner, self.async_gate_runner = build_gate_runner(deps)
         self.review_runner = build_review_runner(deps)
-        self.run_coordinator = build_run_coordinator(deps)
+        self.run_coordinator = build_run_coordinator(deps, self._sdk_client_factory)
         self.issue_coordinator = build_issue_coordinator(deps)
 
         # Build coordinators with callbacks (callbacks need self references)
@@ -741,6 +743,7 @@ class MalaOrchestrator:
         runner = AgentSessionRunner(
             config=self._session_config,
             callbacks=self._build_session_callbacks(issue_id),
+            sdk_client_factory=self._sdk_client_factory,
             event_sink=self.event_sink,
         )
         tracer = self.telemetry_provider.create_span(

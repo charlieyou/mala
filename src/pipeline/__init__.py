@@ -17,8 +17,6 @@ from src.pipeline.agent_session_runner import (
     AgentSessionInput,
     AgentSessionOutput,
     AgentSessionRunner,
-    SDKClientFactory,
-    SDKClientProtocol,
     SessionCallbacks,
 )
 from src.pipeline.epic_verification_coordinator import (
@@ -75,8 +73,6 @@ __all__ = [
     "RunCoordinatorConfig",
     "RunLevelValidationInput",
     "RunLevelValidationOutput",
-    "SDKClientFactory",
-    "SDKClientProtocol",
     "SessionCallbackFactory",
     "SessionCallbacks",
     "SpecResultBuilder",

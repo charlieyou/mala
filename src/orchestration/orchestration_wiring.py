@@ -55,7 +55,9 @@ if TYPE_CHECKING:
         GateChecker,
         IssueProvider,
         LockManagerPort,
+        MalaEventSink,
         ReviewIssueProtocol,
+        SDKClientFactoryProtocol,
     )
     from src.domain.prompts import (
         PromptProvider as DomainPromptProvider,
@@ -63,7 +65,6 @@ if TYPE_CHECKING:
     )
     from src.infra.epic_verifier import EpicVerificationResult
     from src.infra.io.config import MalaConfig
-    from src.core.protocols import MalaEventSink
     from src.domain.deadlock import DeadlockMonitor
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.pipeline.issue_result import IssueResult
@@ -141,7 +142,10 @@ def build_review_runner(deps: WiringDependencies) -> ReviewRunner:
     )
 
 
-def build_run_coordinator(deps: WiringDependencies) -> RunCoordinator:
+def build_run_coordinator(
+    deps: WiringDependencies,
+    sdk_client_factory: SDKClientFactoryProtocol | None = None,
+) -> RunCoordinator:
     """Build RunCoordinator."""
     config = RunCoordinatorConfig(
         repo_path=deps.repo_path,
@@ -158,6 +162,7 @@ def build_run_coordinator(deps: WiringDependencies) -> RunCoordinator:
         env_config=deps.env_config,
         lock_manager=deps.lock_manager,
         event_sink=deps.event_sink,
+        sdk_client_factory=sdk_client_factory,
     )
 
 

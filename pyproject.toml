@@ -173,6 +173,7 @@ source_modules = [
 forbidden_modules = [
     "anthropic",
     "braintrust",
+    "claude_agent_sdk",
     "src.infra.clients.anthropic_client",
     "src.infra.clients.braintrust_integration",
 ]
