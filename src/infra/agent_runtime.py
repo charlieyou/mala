@@ -15,11 +15,21 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 
 logger = logging.getLogger(__name__)
+
+
+class _Unset(Enum):
+    """Sentinel for distinguishing 'not provided' from 'explicitly None'."""
+
+    TOKEN = auto()
+
+
+_UNSET = _Unset.TOKEN
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -165,21 +175,24 @@ class AgentRuntimeBuilder:
         self,
         servers: object | None = None,
         *,
-        emit_lock_event: Callable[[LockEvent], object] | None = None,
+        emit_lock_event: Callable[[LockEvent], object] | _Unset | None = _UNSET,
     ) -> AgentRuntimeBuilder:
         """Configure MCP servers.
 
         Args:
-            servers: MCP server configuration. If None, uses get_mcp_servers().
-            emit_lock_event: Optional callback for lock events. When provided with
-                agent_id, enables locking MCP server.
+            servers: MCP server configuration. If None, defers to build() for
+                late-binding with deadlock monitor (if configured).
+            emit_lock_event: Callback for lock events. When _UNSET (default),
+                defers to build() for late-binding. Pass None explicitly to
+                disable locking, or a callback to enable it.
 
         Returns:
             Self for chaining.
         """
         if servers is not None:
             self._mcp_servers = servers
-        else:
+        elif emit_lock_event is not _UNSET:
+            # Explicit emit_lock_event provided (including None) - configure now
             from src.infra.mcp import get_mcp_servers
 
             self._mcp_servers = get_mcp_servers(
@@ -187,6 +200,7 @@ class AgentRuntimeBuilder:
                 agent_id=self._agent_id,
                 emit_lock_event=emit_lock_event,
             )
+        # else: emit_lock_event is _UNSET, defer to build() for late-binding
         return self
 
     def with_disallowed_tools(
