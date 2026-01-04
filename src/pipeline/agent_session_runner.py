@@ -159,8 +159,8 @@ class SessionExecutionState:
 
 
 @dataclass
-class PromptProvider:
-    """Provider for session prompts, injected at construction time.
+class SessionPrompts:
+    """Prompt templates for agent session execution.
 
     Holds prompt templates loaded from files. This keeps file I/O at the
     orchestration boundary and allows tests to inject custom prompts.
@@ -212,7 +212,7 @@ class AgentSessionConfig:
 
     repo_path: Path
     timeout_seconds: int
-    prompts: PromptProvider
+    prompts: SessionPrompts
     max_gate_retries: int = 3
     max_review_retries: int = 3
     review_enabled: bool = True

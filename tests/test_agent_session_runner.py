@@ -22,8 +22,8 @@ from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
     AgentSessionRunner,
-    PromptProvider,
     SessionCallbacks,
+    SessionPrompts,
 )
 from src.pipeline.message_stream_processor import (
     ContextPressureError,
@@ -41,9 +41,9 @@ if TYPE_CHECKING:
     from src.domain.lifecycle import RetryState
 
 
-def make_test_prompts() -> PromptProvider:
-    """Create a PromptProvider with stub templates for testing."""
-    return PromptProvider(
+def make_test_prompts() -> SessionPrompts:
+    """Create a SessionPrompts with stub templates for testing."""
+    return SessionPrompts(
         gate_followup=(
             "Gate followup: {issue_id} attempt {attempt}/{max_attempts}\n"
             "Failures: {failure_reasons}\n"
@@ -4519,9 +4519,9 @@ class TestSessionRestartLoop:
         log_path.write_text("")
         return log_path
 
-    def make_prompts_with_continuation(self) -> PromptProvider:
+    def make_prompts_with_continuation(self) -> SessionPrompts:
         """Create prompts with checkpoint_request and continuation templates."""
-        return PromptProvider(
+        return SessionPrompts(
             gate_followup="Gate followup stub",
             review_followup="Review followup stub",
             idle_resume="Idle resume stub",

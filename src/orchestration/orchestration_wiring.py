@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from src.infra.io.log_output.console import is_verbose_enabled
-from src.pipeline.agent_session_runner import AgentSessionConfig, PromptProvider
+from src.pipeline.agent_session_runner import AgentSessionConfig, SessionPrompts
 from src.pipeline.gate_runner import (
     AsyncGateRunner,
     GateRunner,
@@ -60,7 +60,7 @@ if TYPE_CHECKING:
         SDKClientFactoryProtocol,
     )
     from src.domain.prompts import (
-        PromptProvider as DomainPromptProvider,
+        PromptProvider,
         PromptValidationCommands,
     )
     from src.infra.epic_verifier import EpicVerificationResult
@@ -102,7 +102,7 @@ class WiringDependencies:
     orphans_only: bool
     epic_override_ids: set[str]
     prompt_validation_commands: PromptValidationCommands
-    prompts: DomainPromptProvider
+    prompts: PromptProvider
     context_restart_threshold: float
     context_limit: int
     # Deadlock detection (None until T004 wires DeadlockMonitor into orchestrator)
@@ -271,7 +271,7 @@ def build_session_config(
     review_enabled: bool,
 ) -> AgentSessionConfig:
     """Build AgentSessionConfig for agent sessions."""
-    prompts = PromptProvider(
+    prompts = SessionPrompts(
         gate_followup=deps.prompts.gate_followup_prompt,
         review_followup=deps.prompts.review_followup_prompt,
         idle_resume=deps.prompts.idle_resume_prompt,
