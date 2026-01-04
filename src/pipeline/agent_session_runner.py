@@ -46,13 +46,15 @@ from src.pipeline.context_pressure_handler import (
     ContextPressureConfig,
     ContextPressureHandler,
 )
+from src.pipeline.idle_retry_policy import (
+    IdleTimeoutRetryPolicy,
+    RetryConfig,
+)
 from src.infra.clients.cerberus_review import format_review_issues
 from src.infra.clients.review_output_parser import ReviewResult
 from src.pipeline.message_stream_processor import (
     ContextPressureError,
     IdleTimeoutError,
-    IdleTimeoutStream,
-    MessageIterationResult,
     MessageIterationState,
     MessageStreamProcessor,
     StreamProcessorCallbacks,
@@ -60,14 +62,11 @@ from src.pipeline.message_stream_processor import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from src.core.models import IssueResolution
     from src.core.protocols import (
         MalaEventSink,
         ReviewIssueProtocol,
         SDKClientFactoryProtocol,
-        SDKClientProtocol,
     )
     from src.domain.deadlock import DeadlockMonitor
     from src.domain.lifecycle import (
@@ -88,9 +87,6 @@ if TYPE_CHECKING:
 
 # Module-level logger for idle retry messages
 logger = logging.getLogger(__name__)
-
-# Timeout for disconnect() call
-DISCONNECT_TIMEOUT = 10.0
 
 
 # Type aliases for callbacks
@@ -528,6 +524,7 @@ class AgentSessionRunner:
     callbacks: SessionCallbacks = field(default_factory=SessionCallbacks)
     event_sink: MalaEventSink | None = None
     _context_pressure_handler: ContextPressureHandler = field(init=False, repr=False)
+    _retry_policy: IdleTimeoutRetryPolicy = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize derived components."""
@@ -537,6 +534,17 @@ class AgentSessionRunner:
                 continuation_template=self.config.prompts.continuation,
             ),
             sdk_client_factory=self.sdk_client_factory,
+        )
+        # Initialize retry policy with stream processor
+        retry_config = RetryConfig(
+            max_idle_retries=self.config.max_idle_retries,
+            idle_retry_backoff=self.config.idle_retry_backoff,
+            idle_resume_prompt=self.config.prompts.idle_resume,
+        )
+        self._retry_policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=self.sdk_client_factory,
+            message_stream_processor=self._get_stream_processor(),
+            config=retry_config,
         )
 
     def _initialize_session(
@@ -639,7 +647,7 @@ class AgentSessionRunner:
         while not lifecycle.is_terminal:
             # === QUERY + MESSAGE ITERATION ===
             if pending_query is not None:
-                iter_result = await self._run_message_iteration(
+                iter_result = await self._retry_policy.execute_iteration(
                     query=pending_query,
                     issue_id=input.issue_id,
                     options=session_cfg.options,
@@ -1199,106 +1207,6 @@ class AgentSessionRunner:
             pending_query,
         )
 
-    async def _apply_retry_backoff(self, retry_count: int) -> None:
-        """Apply backoff delay before an idle retry attempt.
-
-        Args:
-            retry_count: Current retry count (1-based).
-        """
-        if self.config.idle_retry_backoff:
-            backoff_idx = min(
-                retry_count - 1,
-                len(self.config.idle_retry_backoff) - 1,
-            )
-            backoff = self.config.idle_retry_backoff[backoff_idx]
-        else:
-            backoff = 0.0
-        if backoff > 0:
-            logger.info(f"Idle retry {retry_count}: waiting {backoff}s")
-            await asyncio.sleep(backoff)
-
-    async def _disconnect_client_safely(
-        self, client: SDKClientProtocol, issue_id: str
-    ) -> None:
-        """Disconnect SDK client with timeout, logging any failures."""
-        try:
-            await asyncio.wait_for(
-                client.disconnect(),
-                timeout=DISCONNECT_TIMEOUT,
-            )
-        except TimeoutError:
-            logger.warning("disconnect() timed out, subprocess abandoned")
-        except Exception as e:
-            logger.debug(f"Error during disconnect: {e}")
-
-    def _prepare_idle_retry(
-        self,
-        state: MessageIterationState,
-        lifecycle_ctx: LifecycleContext,
-        issue_id: str,
-    ) -> str:
-        """Prepare state for idle retry and return the next query.
-
-        Updates state.idle_retry_count, state.pending_session_id, and clears
-        state.pending_tool_ids.
-
-        Raises:
-            IdleTimeoutError: If retry is not possible (max retries exceeded,
-                or tool calls occurred without session context).
-
-        Returns:
-            The query to use for the retry attempt.
-        """
-        # Check if we can retry
-        if state.idle_retry_count >= self.config.max_idle_retries:
-            logger.error(
-                f"Session {issue_id}: max idle retries "
-                f"({self.config.max_idle_retries}) exceeded"
-            )
-            raise IdleTimeoutError(
-                f"Max idle retries ({self.config.max_idle_retries}) exceeded"
-            )
-
-        # Prepare for retry
-        state.idle_retry_count += 1
-        # Clear pending state from previous attempt to avoid
-        # hanging on stale tool IDs (they won't resolve on new stream)
-        state.pending_tool_ids.clear()
-        state.first_message_received = False
-        resume_id = state.session_id or lifecycle_ctx.session_id
-
-        if resume_id is not None:
-            state.pending_session_id = resume_id
-            pending_query = self.config.prompts.idle_resume.format(issue_id=issue_id)
-            logger.info(
-                f"Session {issue_id}: retrying with resume "
-                f"(session_id={resume_id[:8]}..., "
-                f"attempt {state.idle_retry_count})"
-            )
-            # Reset tool calls after decision to preserve safety check
-            state.tool_calls_this_turn = 0
-            return pending_query
-        elif state.tool_calls_this_turn == 0:
-            state.pending_session_id = None
-            # Keep original query - caller must provide it
-            logger.info(
-                f"Session {issue_id}: retrying with fresh session "
-                f"(no session_id, no side effects, "
-                f"attempt {state.idle_retry_count})"
-            )
-            # Return empty string to signal caller to keep original query
-            return ""
-        else:
-            logger.error(
-                f"Session {issue_id}: cannot retry - "
-                f"{state.tool_calls_this_turn} tool calls "
-                "occurred without session_id"
-            )
-            raise IdleTimeoutError(
-                f"Cannot retry: {state.tool_calls_this_turn} tool calls "
-                "occurred without session context"
-            )
-
     def _get_stream_processor(self) -> MessageStreamProcessor:
         """Create a MessageStreamProcessor with current config/callbacks."""
         config = StreamProcessorConfig(
@@ -1310,144 +1218,6 @@ class AgentSessionRunner:
             on_agent_text=self.callbacks.on_agent_text,
         )
         return MessageStreamProcessor(config, callbacks)
-
-    async def _process_message_stream(
-        self,
-        stream: AsyncIterator[Any],
-        issue_id: str,
-        state: MessageIterationState,
-        lifecycle_ctx: LifecycleContext,
-        lint_cache: LintCache,
-        query_start: float,
-        tracer: TelemetrySpan | None,
-    ) -> MessageIterationResult:
-        """Process SDK message stream and update state.
-
-        Delegates to MessageStreamProcessor for stream iteration logic.
-
-        Args:
-            stream: The message stream to process.
-            issue_id: Issue ID for logging.
-            state: Mutable state for the iteration.
-            lifecycle_ctx: Lifecycle context for session state.
-            lint_cache: Cache for lint command results.
-            query_start: Timestamp when query was sent.
-            tracer: Optional telemetry span context.
-
-        Returns:
-            MessageIterationResult with success status.
-        """
-        processor = self._get_stream_processor()
-        return await processor.process_stream(
-            stream, issue_id, state, lifecycle_ctx, lint_cache, query_start, tracer
-        )
-
-    async def _run_message_iteration(
-        self,
-        query: str,
-        issue_id: str,
-        options: object,
-        state: MessageIterationState,
-        lifecycle_ctx: LifecycleContext,
-        lint_cache: LintCache,
-        idle_timeout_seconds: float | None,
-        tracer: TelemetrySpan | None = None,
-    ) -> MessageIterationResult:
-        """Run a single message iteration with idle retry handling.
-
-        Sends a query to the SDK and processes the response stream.
-        Handles idle timeouts with automatic retry logic.
-
-        Args:
-            query: The query to send to the agent.
-            issue_id: Issue ID for logging.
-            options: SDK client options.
-            state: Mutable state for the iteration.
-            lifecycle_ctx: Lifecycle context for session state.
-            lint_cache: Cache for lint command results.
-            idle_timeout_seconds: Idle timeout (None to disable).
-            tracer: Optional telemetry span context.
-
-        Returns:
-            MessageIterationResult with success status and updated state.
-
-        Raises:
-            IdleTimeoutError: If max idle retries exceeded.
-        """
-        pending_query: str | None = query
-        state.tool_calls_this_turn = 0
-        state.first_message_received = False
-        state.pending_tool_ids.clear()
-
-        while pending_query is not None:
-            # Backoff before retry (not on first attempt)
-            if state.idle_retry_count > 0:
-                await self._apply_retry_backoff(state.idle_retry_count)
-
-            # Create client for this attempt
-            client = self.sdk_client_factory.create(options)
-
-            try:
-                async with client:
-                    # Send query
-                    query_start = time.time()
-                    if state.pending_session_id is not None:
-                        logger.debug(
-                            "Session %s: sending query with session_id=%s...",
-                            issue_id,
-                            state.pending_session_id[:8],
-                        )
-                        await client.query(
-                            pending_query, session_id=state.pending_session_id
-                        )
-                    else:
-                        logger.debug(
-                            "Session %s: sending query (new session)",
-                            issue_id,
-                        )
-                        await client.query(pending_query)
-
-                    # Wrap stream with idle timeout handling
-                    stream = IdleTimeoutStream(
-                        client.receive_response(),
-                        idle_timeout_seconds,
-                        state.pending_tool_ids,
-                    )
-
-                    try:
-                        return await self._process_message_stream(
-                            stream,
-                            issue_id,
-                            state,
-                            lifecycle_ctx,
-                            lint_cache,
-                            query_start,
-                            tracer,
-                        )
-
-                    except IdleTimeoutError:
-                        # Disconnect on idle timeout
-                        idle_duration = time.time() - query_start
-                        logger.warning(
-                            f"Session {issue_id}: idle timeout after "
-                            f"{idle_duration:.1f}s, first_msg={state.first_message_received}, "
-                            f"{state.tool_calls_this_turn} tool calls, disconnecting subprocess"
-                        )
-                        await self._disconnect_client_safely(client, issue_id)
-
-                        # Prepare state for retry (may raise IdleTimeoutError)
-                        retry_query = self._prepare_idle_retry(
-                            state, lifecycle_ctx, issue_id
-                        )
-                        # Empty string means keep original query
-                        if retry_query:
-                            pending_query = retry_query
-
-            except IdleTimeoutError:
-                raise
-
-        # Should not reach here
-        return MessageIterationResult(success=False)
 
     async def run_session(
         self,

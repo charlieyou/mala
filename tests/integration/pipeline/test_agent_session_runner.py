@@ -27,14 +27,13 @@ from src.pipeline.agent_session_runner import (
 )
 from src.pipeline.message_stream_processor import (
     ContextPressureError,
+    IdleTimeoutStream,
     MessageIterationState,
 )
 from src.domain.quality_gate import GateResult
 
 if TYPE_CHECKING:
-    from src.pipeline.agent_session_runner import (
-        SDKClientProtocol,
-    )
+    from src.core.protocols import SDKClientProtocol
     from collections.abc import AsyncIterator
     from pathlib import Path
 
@@ -1806,8 +1805,10 @@ class TestContextPressureDetection:
         lint_cache = MagicMock()
 
         with pytest.raises(ContextPressureError) as exc_info:
-            await runner._process_message_stream(
-                mock_stream(),
+            # Wrap stream with IdleTimeoutStream (no timeout, empty pending_tool_ids)
+            stream = IdleTimeoutStream(mock_stream(), None, set())
+            await runner._retry_policy._process_message_stream(
+                stream,
                 "test-pressure",
                 state,
                 lifecycle_ctx,
