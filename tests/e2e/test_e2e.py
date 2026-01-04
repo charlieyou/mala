@@ -375,6 +375,9 @@ class TestE2ERunnerIntegration:
 
     @pytest.mark.e2e
     def test_run_real_fixture(self, tmp_path: Path) -> None:
+        from src.infra.tools.command_runner import CommandRunner
+        from src.infra.tools.env import EnvConfig
+
         if shutil.which("mala") is None or shutil.which("bd") is None:
             pytest.skip("E2E requires mala and bd CLIs")
         if not is_claude_cli_available():
@@ -384,8 +387,12 @@ class TestE2ERunnerIntegration:
                 "Claude Code CLI not logged in or token expired - run `claude` and login"
             )
 
+        env_config = EnvConfig()
+        if env_config.find_cerberus_bin_path() is None:
+            pytest.skip("Cerberus review-gate not installed")
+
         config = E2EConfig(keep_fixture=True, timeout_seconds=300.0)
-        runner = E2ERunner(make_mock_env_config(), make_mock_command_runner(), config)
+        runner = E2ERunner(env_config, CommandRunner(), config)
 
         result = runner.run(cwd=tmp_path)
 
