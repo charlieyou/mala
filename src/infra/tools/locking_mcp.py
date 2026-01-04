@@ -124,25 +124,33 @@ def create_locking_mcp_server(
                 ]
             }
 
-        # Sort by canonical path to reduce deadlock risk
-        sorted_paths = sorted(filepaths, key=_canonical)
+        # Deduplicate and sort by canonical path to reduce deadlock risk
+        # Use dict to preserve first occurrence while deduping by canonical path
+        seen_canonical: dict[str, str] = {}  # canonical -> original
+        for fp in filepaths:
+            canon = _canonical(fp)
+            if canon not in seen_canonical:
+                seen_canonical[canon] = fp
+        sorted_canonical = sorted(seen_canonical.keys())
 
-        # First pass: try all locks
+        # First pass: try all locks (using canonical paths)
         results: list[dict[str, Any]] = []
         blocked_paths: list[str] = []
 
-        for fp in sorted_paths:
-            acquired = try_lock(fp, agent_id, repo_namespace)
-            holder = None if acquired else get_lock_holder(fp, repo_namespace)
+        for canon in sorted_canonical:
+            original = seen_canonical[canon]
+            acquired = try_lock(canon, agent_id, repo_namespace)
+            holder = None if acquired else get_lock_holder(canon, repo_namespace)
             results.append(
                 {
-                    "filepath": fp,
+                    "filepath": original,
+                    "canonical": canon,
                     "acquired": acquired,
                     "holder": holder,
                 }
             )
             if not acquired:
-                blocked_paths.append(fp)
+                blocked_paths.append(canon)
 
         # If all acquired or non-blocking mode, return immediately
         if not blocked_paths or timeout_seconds == 0:
@@ -162,24 +170,24 @@ def create_locking_mcp_server(
             }
 
         # Emit WAITING events for blocked files (once per file per call)
-        for fp in blocked_paths:
-            _emit_waiting(fp)
+        for canon in blocked_paths:
+            _emit_waiting(canon)
 
         # Wait until ANY blocked file becomes available
-        # Spawn wait tasks for each blocked file
-        wait_tasks: dict[asyncio.Task, str] = {}  # task -> filepath
+        # Spawn wait tasks for each blocked file (using canonical paths)
+        wait_tasks: dict[asyncio.Task[bool], str] = {}  # task -> canonical path
 
-        for fp in blocked_paths:
+        for canon in blocked_paths:
             task = asyncio.create_task(
                 wait_for_lock_async(
-                    fp,
+                    canon,
                     agent_id,
                     repo_namespace,
                     timeout_seconds=timeout_seconds,
                     poll_interval_ms=100,
                 )
             )
-            wait_tasks[task] = fp
+            wait_tasks[task] = canon
 
         try:
             # Wait for FIRST_COMPLETED - returns when ANY task finishes
@@ -191,6 +199,8 @@ def create_locking_mcp_server(
             # Cancel remaining wait tasks to prevent unwanted acquisitions
             for task in pending:
                 task.cancel()
+            # Await cancelled tasks to ensure clean shutdown
+            for task in pending:
                 try:
                     await task
                 except asyncio.CancelledError:
@@ -198,25 +208,33 @@ def create_locking_mcp_server(
 
             # Process completed tasks
             for task in done:
-                fp = wait_tasks[task]
+                canon = wait_tasks[task]
                 try:
                     acquired = task.result()
                 except Exception:
                     acquired = False
 
-                # Update result for this filepath
+                # Update result for this canonical path
                 for r in results:
-                    if r["filepath"] == fp:
+                    if r["canonical"] == canon:
                         r["acquired"] = acquired
                         r["holder"] = (
-                            None if acquired else get_lock_holder(fp, repo_namespace)
+                            None if acquired else get_lock_holder(canon, repo_namespace)
                         )
                         break
 
-        except Exception as e:
-            logger.exception("Error waiting for locks: %s", e)
-            # On error, update all blocked as still blocked
-            pass
+        except BaseException:
+            # On any exception (including CancelledError), cancel all wait tasks
+            for task in wait_tasks:
+                if not task.done():
+                    task.cancel()
+            # Await all tasks to ensure clean shutdown
+            for task in wait_tasks:
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            raise
 
         all_acquired = all(r["acquired"] for r in results)
         return {
@@ -319,11 +337,17 @@ def create_locking_mcp_server(
                 ]
             }
 
+        # Deduplicate by canonical path
+        seen_canonical: set[str] = set()
         released: list[str] = []
         for fp in filepaths:
+            canon = _canonical(fp)
+            if canon in seen_canonical:
+                continue
+            seen_canonical.add(canon)
             # release_lock returns True if released, False if not held
             # We track the path regardless (idempotent behavior)
-            release_lock(fp, agent_id, repo_namespace)
+            release_lock(canon, agent_id, repo_namespace)
             released.append(fp)
 
         return {
