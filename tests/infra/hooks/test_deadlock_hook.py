@@ -465,6 +465,24 @@ class TestIsSafeBatchCommand:
         assert _is_safe_batch_command("lock-try.sh 'file|name.py'") is True
         assert _is_safe_batch_command('echo "a || b" && lock-try.sh c.py') is True
 
+    def test_redirection_ampersand_safe(self) -> None:
+        """Ampersand in redirections is safe, not a background operator."""
+        # 2>&1 redirect stderr to stdout
+        assert (
+            _is_safe_batch_command("lock-try.sh a.py 2>&1 && lock-try.sh b.py") is True
+        )
+        # >&2 redirect stdout to stderr
+        assert _is_safe_batch_command("lock-try.sh a.py >&2") is True
+        # &> redirect both stdout and stderr to file
+        assert _is_safe_batch_command("lock-try.sh a.py &>/dev/null") is True
+        # Combined with && chaining
+        assert (
+            _is_safe_batch_command(
+                "lock-try.sh a.py 2>&1 && lock-try.sh b.py 2>&1 && lock-try.sh c.py"
+            )
+            is True
+        )
+
 
 @pytest.mark.unit
 class TestExtractAllLockPathsOrder:

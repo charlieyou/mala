@@ -89,9 +89,16 @@ def _is_safe_batch_command(command: str) -> bool:
                     return False  # ||
                 return False  # single |
             if char == "&":
-                # Check if it's && (safe) or just & (unsafe)
+                # Check if it's && (safe), redirection (safe), or background (unsafe)
                 if i + 1 < len(command) and command[i + 1] == "&":
                     i += 1  # Skip the second &, && is safe
+                elif i > 0 and command[i - 1] in ">0123456789":
+                    # Part of redirection: 2>&1, >&, &> patterns
+                    # The & here is part of file descriptor redirection, not backgrounding
+                    pass
+                elif i + 1 < len(command) and command[i + 1] == ">":
+                    # &> redirection (stdout+stderr to file)
+                    pass
                 else:
                     return False  # single & (background)
 
