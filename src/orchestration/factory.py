@@ -49,6 +49,8 @@ __all__ = [
     "create_orchestrator",
 ]
 
+import logging
+
 if TYPE_CHECKING:
     from src.core.protocols import (
         CodeReviewer,
@@ -63,6 +65,8 @@ if TYPE_CHECKING:
     from src.infra.telemetry import TelemetryProvider
 
     from .orchestrator import MalaOrchestrator
+
+logger = logging.getLogger(__name__)
 
 
 def _derive_config(
@@ -112,6 +116,11 @@ def _derive_config(
         else:
             braintrust_disabled_reason = "disabled by config"
 
+    logger.debug(
+        "Derived config: braintrust=%s timeout=%ds",
+        braintrust_enabled,
+        timeout_seconds,
+    )
     return _DerivedConfig(
         timeout_seconds=timeout_seconds,
         braintrust_enabled=braintrust_enabled,
@@ -147,13 +156,21 @@ def _check_review_availability(
         else:
             effective_path = os.environ.get("PATH", "")
         if shutil.which("review-gate", path=effective_path) is None:
-            return "cerberus plugin not detected (review-gate unavailable)"
+            reason = "cerberus plugin not detected (review-gate unavailable)"
+            logger.info("Review disabled: reason=%s", reason)
+            return reason
     elif not review_gate_path.exists():
-        return f"review-gate missing at {review_gate_path}"
+        reason = f"review-gate missing at {review_gate_path}"
+        logger.info("Review disabled: reason=%s", reason)
+        return reason
     elif not review_gate_path.is_file():
-        return f"review-gate path is not a file: {review_gate_path}"
+        reason = f"review-gate path is not a file: {review_gate_path}"
+        logger.info("Review disabled: reason=%s", reason)
+        return reason
     elif not os.access(review_gate_path, os.X_OK):
-        return f"review-gate not executable at {review_gate_path}"
+        reason = f"review-gate not executable at {review_gate_path}"
+        logger.info("Review disabled: reason=%s", reason)
+        return reason
 
     return None
 
@@ -365,6 +382,11 @@ def create_orchestrator(
     ) = _build_dependencies(config, mala_config, derived, deps)
 
     # Create orchestrator using internal constructor
+    logger.info(
+        "Orchestrator created: max_agents=%d timeout=%ds",
+        config.max_agents or 0,
+        derived.timeout_seconds,
+    )
     return MalaOrchestrator(
         _config=config,
         _mala_config=mala_config,

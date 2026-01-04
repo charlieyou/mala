@@ -3,10 +3,13 @@
 Provides helpers for getting git repository information.
 """
 
+import logging
 import re
 from pathlib import Path
 
 from src.infra.tools.command_runner import CommandRunner, run_command_async
+
+logger = logging.getLogger(__name__)
 
 # Default timeout for git commands (seconds)
 DEFAULT_GIT_TIMEOUT = 5.0
@@ -87,7 +90,9 @@ async def get_baseline_for_issue(
     if not parent_result.ok:
         return None  # Root commit (no parent)
 
-    return parent_result.stdout.strip()
+    baseline = parent_result.stdout.strip()
+    logger.debug("Baseline resolved: issue_id=%s commit=%s", issue_id, baseline)
+    return baseline
 
 
 async def get_issue_commits_async(

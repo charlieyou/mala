@@ -17,9 +17,12 @@ Design principles:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.infra.clients.review_output_parser import ReviewResult
@@ -156,6 +159,9 @@ class ReviewRunner:
         # This ensures historical reviews compare against the correct base
         baseline = input.baseline_commit or f"{input.commit_sha}~1"
         diff_range = f"{baseline}..{input.commit_sha}"
+        logger.info(
+            "Review started: issue_id=%s diff_range=%s", input.issue_id, diff_range
+        )
 
         # Create context file if issue_description provided
         # Use NamedTemporaryFile to avoid permission issues on shared systems
@@ -187,6 +193,13 @@ class ReviewRunner:
             session_log_path = None
             if result.review_log_path:
                 session_log_path = str(result.review_log_path)
+
+            logger.info(
+                "Review result: issue_id=%s passed=%s issues=%d",
+                input.issue_id,
+                result.passed,
+                len(result.issues),
+            )
 
             return ReviewOutput(
                 result=result,

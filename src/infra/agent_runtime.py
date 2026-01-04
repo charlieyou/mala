@@ -12,11 +12,14 @@ Design principles:
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -260,6 +263,7 @@ class AgentRuntimeBuilder:
 
         # Add deadlock monitor hooks if configured
         if self._deadlock_monitor is not None:
+            logger.info("Wiring deadlock monitor hooks: agent_id=%s", self._agent_id)
             monitor = self._deadlock_monitor
             # PreToolUse hook for real-time WAITING detection on lock-wait.sh
             pre_tool_hooks.append(
@@ -277,6 +281,8 @@ class AgentRuntimeBuilder:
                     repo_namespace=str(self._repo_path),
                 )
             )
+        else:
+            logger.info("No deadlock monitor configured; skipping lock event hooks")
 
         # Build environment if not explicitly set
         if self._env is None:
@@ -292,6 +298,13 @@ class AgentRuntimeBuilder:
             hooks_dict["Stop"] = [make_matcher(None, stop_hooks)]
         if post_tool_hooks:
             hooks_dict["PostToolUse"] = [make_matcher(None, post_tool_hooks)]
+
+        logger.debug(
+            "Built hooks: PreToolUse=%d PostToolUse=%d Stop=%d",
+            len(pre_tool_hooks),
+            len(post_tool_hooks),
+            len(stop_hooks),
+        )
 
         # Build SDK options
         options = self._sdk_client_factory.create_options(

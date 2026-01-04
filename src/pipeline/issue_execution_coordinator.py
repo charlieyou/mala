@@ -12,11 +12,14 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from src.core.protocols import IssueProvider, MalaEventSink
+
+logger = logging.getLogger(__name__)
 
 
 class SpawnCallback(Protocol):
@@ -133,6 +136,7 @@ class IssueExecutionCoordinator:
             return
         self.abort_run = True
         self.abort_reason = reason
+        logger.warning("Abort requested: reason=%s", reason)
         self.event_sink.on_abort_requested(reason)
 
     async def run_loop(
@@ -158,6 +162,11 @@ class IssueExecutionCoordinator:
         issues_spawned = 0
 
         while True:
+            logger.debug(
+                "Loop iteration: active=%d pending=%d",
+                len(self.active_tasks),
+                len(self.completed_ids),
+            )
             # Check for abort
             if self.abort_run:
                 await abort_callback()
@@ -254,6 +263,7 @@ class IssueExecutionCoordinator:
             task: The asyncio task running the agent.
         """
         self.active_tasks[issue_id] = task
+        logger.debug("Task registered: issue_id=%s", issue_id)
 
     def mark_failed(self, issue_id: str) -> None:
         """Mark an issue as failed (e.g., claim failed).
@@ -262,6 +272,7 @@ class IssueExecutionCoordinator:
             issue_id: The issue ID that failed.
         """
         self.failed_issues.add(issue_id)
+        logger.info("Issue marked failed: issue_id=%s", issue_id)
 
     def mark_completed(self, issue_id: str) -> None:
         """Mark an issue as completed and remove from active.
@@ -271,3 +282,4 @@ class IssueExecutionCoordinator:
         """
         self.completed_ids.add(issue_id)
         self.active_tasks.pop(issue_id, None)
+        logger.debug("Issue marked completed: issue_id=%s", issue_id)

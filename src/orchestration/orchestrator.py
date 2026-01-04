@@ -218,8 +218,10 @@ class MalaOrchestrator:
         # Deadlock detection (T007: gate on config flag)
         if self._mala_config.deadlock_detection_enabled:
             self.deadlock_monitor: DeadlockMonitor | None = DeadlockMonitor()
+            logger.info("Deadlock detection enabled")
         else:
             self.deadlock_monitor = None
+            logger.info("Deadlock detection disabled by config")
         self._deadlock_resolution_lock = asyncio.Lock()
 
     def _init_pipeline_runners(self) -> None:
@@ -448,6 +450,7 @@ class MalaOrchestrator:
         """Remove locks held by a specific agent (crash/timeout cleanup)."""
         cleaned = cleanup_agent_locks(agent_id)
         if cleaned:
+            logger.info("Victim locks cleaned: agent_id=%s count=%d", agent_id, cleaned)
             self.event_sink.on_locks_cleaned(agent_id, cleaned)
         # Unregister agent from deadlock monitor
         if self.deadlock_monitor is not None:
@@ -462,13 +465,13 @@ class MalaOrchestrator:
         Args:
             info: DeadlockInfo with cycle, victim, and blocker details.
         """
+        logger.debug("Acquiring deadlock resolution lock for victim %s", info.victim_id)
         async with self._deadlock_resolution_lock:
-            logger.warning(
-                "Deadlock detected: cycle=%s, victim=%s, blocked_on=%s, blocker=%s",
-                info.cycle,
+            logger.info(
+                "Deadlock resolution started: victim_id=%s issue_id=%s blocked_on=%s",
                 info.victim_id,
+                info.victim_issue_id,
                 info.blocked_on,
-                info.blocker_id,
             )
             self.event_sink.on_deadlock_detected(info)
 
@@ -506,18 +509,10 @@ class MalaOrchestrator:
                     # Defer self-cancellation to avoid interrupting this handler
                     loop = asyncio.get_running_loop()
                     loop.call_soon(task_to_cancel.cancel)
-                    logger.info(
-                        "Deferred cancellation for self (victim issue %s, agent %s)",
-                        victim_issue_id,
-                        info.victim_id,
-                    )
+                    logger.info("Victim killed: agent_id=%s", info.victim_id)
                 else:
                     task_to_cancel.cancel()
-                    logger.info(
-                        "Cancelled task for victim issue %s (agent %s)",
-                        victim_issue_id,
-                        info.victim_id,
-                    )
+                    logger.info("Victim killed: agent_id=%s", info.victim_id)
 
             # If we caught CancelledError in self-cancel case but it arrived before
             # we scheduled our deferred cancellation, it was from an external source.
@@ -797,6 +792,9 @@ class MalaOrchestrator:
             if agent_id not in self._deadlock_cleaned_agents:
                 self._cleanup_agent_locks(agent_id)
             else:
+                logger.debug(
+                    "Skipped cleanup for %s (handled during deadlock)", agent_id
+                )
                 self._deadlock_cleaned_agents.discard(agent_id)
 
         return IssueResult(

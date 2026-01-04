@@ -12,6 +12,7 @@ Subprocess management is delegated to CerberusGateCLI.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,6 +24,8 @@ from src.infra.clients.review_output_parser import (
     map_exit_code_to_result,
 )
 from src.infra.tools.command_runner import CommandRunner
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -159,6 +162,7 @@ class DefaultReviewer:
                     )
                 resolve_result = await cli.resolve_gate(runner, env)
                 if resolve_result.success:
+                    logger.info("Stale gate resolved: diff_range=%s", diff_range)
                     # Retry spawn after resolving the stale gate
                     spawn_result = await cli.spawn_code_review(
                         diff_range=diff_range,
@@ -230,6 +234,9 @@ class DefaultReviewer:
         )
 
         if wait_result.timed_out:
+            logger.warning(
+                "Review timeout: diff_range=%s after=%ds", diff_range, timeout
+            )
             return ReviewResult(
                 passed=False,
                 issues=[],
@@ -249,13 +256,20 @@ class DefaultReviewer:
             # If we can't parse, let map_exit_code_to_result handle it
             pass
 
-        return map_exit_code_to_result(
+        result = map_exit_code_to_result(
             wait_result.returncode,
             wait_result.stdout,
             wait_result.stderr,
             review_log_path=review_log_path,
             event_sink=self.event_sink,
         )
+        logger.info(
+            "Review completed: diff_range=%s passed=%s issues=%d",
+            diff_range,
+            result.passed,
+            len(result.issues),
+        )
+        return result
 
 
 def _to_relative_path(file_path: str, base_path: Path | None = None) -> str:

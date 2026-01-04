@@ -19,11 +19,14 @@ This module provides the canonical RetryState and lifecycle state machine:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .validation.spec import ResolutionOutcome
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .validation.spec import IssueResolution
@@ -334,6 +337,7 @@ class ImplementerLifecycle:
         if self._state != LifecycleState.INITIAL:
             raise ValueError(f"Cannot start from state {self._state}")
         self._state = LifecycleState.PROCESSING
+        logger.info("Lifecycle started: state=%s", self._state.name)
         return TransitionResult(
             state=self._state,
             effect=Effect.CONTINUE,
@@ -363,6 +367,7 @@ class ImplementerLifecycle:
             )
 
         self._state = LifecycleState.AWAITING_LOG
+        logger.debug("Messages complete: effect=%s", Effect.WAIT_FOR_LOG.name)
         return TransitionResult(
             state=self._state,
             effect=Effect.WAIT_FOR_LOG,
@@ -416,6 +421,13 @@ class ImplementerLifecycle:
         ctx.last_gate_result = gate_result
         ctx.resolution = gate_result.resolution
 
+        logger.info(
+            "Gate result: outcome=%s attempt=%d state=%s",
+            "passed" if gate_result.passed else "failed",
+            ctx.retry_state.gate_attempt,
+            self._state.name,
+        )
+
         if gate_result.passed:
             # Gate passed - should we run review?
             # Skip review for resolutions with no new code (no_change, obsolete, already_complete)
@@ -460,6 +472,11 @@ class ImplementerLifecycle:
             ctx.retry_state.log_offset = new_log_offset
             ctx.retry_state.previous_commit_hash = gate_result.commit_hash
             self._state = LifecycleState.PROCESSING
+            logger.debug(
+                "Retry triggered: reason=gate_failed attempt=%d/%d",
+                ctx.retry_state.gate_attempt,
+                self.config.max_gate_retries,
+            )
             return TransitionResult(
                 state=self._state,
                 effect=Effect.SEND_GATE_RETRY,
@@ -472,6 +489,11 @@ class ImplementerLifecycle:
         )
         ctx.success = False
         self._state = LifecycleState.FAILED
+        logger.info(
+            "Lifecycle terminal: state=%s message=%s",
+            self._state.name,
+            "Gate failed, no retries left",
+        )
         return TransitionResult(
             state=self._state,
             effect=Effect.COMPLETE_FAILURE,
@@ -504,6 +526,13 @@ class ImplementerLifecycle:
             raise ValueError(f"Unexpected state for review_result: {self._state}")
 
         ctx.last_review_result = review_result
+
+        logger.info(
+            "Review result: outcome=%s attempt=%d state=%s",
+            "passed" if review_result.passed else "failed",
+            ctx.retry_state.review_attempt,
+            self._state.name,
+        )
 
         # Check for blocking issues (P0/P1 only). P2/P3 issues are acceptable
         # and can be tracked as beads issues later.

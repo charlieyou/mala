@@ -245,6 +245,12 @@ def make_lock_event_hook(
 
         # If unsafe batch, only process the last command (whose exit code we have)
         commands_to_process = lock_infos if is_safe_batch else lock_infos[-1:]
+        logger.debug(
+            "Batch safety: safe=%s, processing %d/%d commands",
+            is_safe_batch,
+            len(commands_to_process),
+            len(lock_infos),
+        )
 
         for cmd_type, raw_path in commands_to_process:
             # Canonicalize the path
@@ -273,6 +279,11 @@ def make_lock_event_hook(
                     event_type = LockEventType.RELEASED
 
             if event_type is None:
+                logger.debug(
+                    "Skipping event: cmd_type=%s exit_code=%s (no event type)",
+                    cmd_type,
+                    exit_code,
+                )
                 continue
 
             # Create and emit the event
@@ -288,6 +299,13 @@ def make_lock_event_hook(
             if result is not None:
                 # It's a coroutine, await it
                 await result
+
+            logger.debug(
+                "Lock event emitted: type=%s agent_id=%s lock_path=%s",
+                event_type.value,
+                agent_id,
+                lock_path,
+            )
 
         return {}
 
@@ -335,7 +353,13 @@ def make_lock_wait_hook(
             return {}
 
         # Look for lock-wait.sh commands
-        for match in _LOCK_WAIT_PATTERN.finditer(command):
+        wait_matches = list(_LOCK_WAIT_PATTERN.finditer(command))
+        if len(wait_matches) > 1:
+            logger.warning(
+                "Multiple lock-wait commands found; emitting %d waits (may overwrite graph)",
+                len(wait_matches),
+            )
+        for match in wait_matches:
             raw_path = _strip_quotes(match.group(1))
 
             # Canonicalize the path
@@ -357,6 +381,12 @@ def make_lock_wait_hook(
             result = emit_event(event)
             if result is not None:
                 await result
+
+            logger.debug(
+                "Lock event emitted: type=WAITING agent_id=%s lock_path=%s (pre-tool)",
+                agent_id,
+                lock_path,
+            )
 
         # Always allow the command to proceed
         return {}

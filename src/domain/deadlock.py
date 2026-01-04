@@ -13,6 +13,7 @@ Cycle detection uses DFS from waiting agents to find circular dependencies.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -20,6 +21,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+logger = logging.getLogger(__name__)
 
 # Type alias for the deadlock callback
 DeadlockCallback = Callable[["DeadlockInfo"], Awaitable[None] | None]
@@ -109,7 +112,17 @@ class WaitForGraph:
             agent_id: The agent that acquired the lock.
             lock_path: Path to the lock.
         """
+        existing_holder = self._holds.get(lock_path)
+        if existing_holder is not None and existing_holder != agent_id:
+            logger.warning(
+                "Invariant: ACQUIRED for lock held by other agent: "
+                "lock=%s holder=%s new_agent=%s",
+                lock_path,
+                existing_holder,
+                agent_id,
+            )
         self._holds[lock_path] = agent_id
+        logger.debug("Lock acquired: agent_id=%s lock_path=%s", agent_id, lock_path)
         # Clear wait if this agent was waiting for this lock
         if self._waits.get(agent_id) == lock_path:
             del self._waits[agent_id]
@@ -121,7 +134,24 @@ class WaitForGraph:
             agent_id: The agent that is waiting.
             lock_path: Path to the lock being waited on.
         """
+        # Check for invariant violations
+        if self._holds.get(lock_path) == agent_id:
+            logger.warning(
+                "Invariant: WAITING on lock already held by same agent: "
+                "agent=%s lock=%s",
+                agent_id,
+                lock_path,
+            )
+        old_wait = self._waits.get(agent_id)
+        if old_wait is not None and old_wait != lock_path:
+            logger.warning(
+                "Wait edge overwritten: agent_id=%s old_lock=%s new_lock=%s",
+                agent_id,
+                old_wait,
+                lock_path,
+            )
         self._waits[agent_id] = lock_path
+        logger.debug("Wait added: agent_id=%s lock_path=%s", agent_id, lock_path)
 
     def remove_hold(self, agent_id: str, lock_path: str) -> None:
         """Remove a hold record when a lock is released.
@@ -130,8 +160,18 @@ class WaitForGraph:
             agent_id: The agent releasing the lock.
             lock_path: Path to the lock being released.
         """
-        if self._holds.get(lock_path) == agent_id:
+        current_holder = self._holds.get(lock_path)
+        if current_holder != agent_id:
+            logger.warning(
+                "Invariant: RELEASED for lock not held by agent: "
+                "lock=%s holder=%s agent=%s",
+                lock_path,
+                current_holder,
+                agent_id,
+            )
+        if current_holder == agent_id:
             del self._holds[lock_path]
+            logger.debug("Lock released: agent_id=%s lock_path=%s", agent_id, lock_path)
 
     def remove_agent(self, agent_id: str) -> None:
         """Remove all state for an agent.
@@ -283,6 +323,7 @@ class DeadlockMonitor:
             issue_id=issue_id,
             start_time=start_time,
         )
+        logger.info("Agent registered: agent_id=%s issue_id=%s", agent_id, issue_id)
 
     def unregister_agent(self, agent_id: str) -> None:
         """Unregister an agent and clear its state.
@@ -293,6 +334,7 @@ class DeadlockMonitor:
         self._graph.remove_agent(agent_id)
         if agent_id in self._agents:
             del self._agents[agent_id]
+        logger.info("Agent unregistered: agent_id=%s", agent_id)
 
     async def handle_event(self, event: LockEvent) -> DeadlockInfo | None:
         """Process a lock event and check for deadlocks.
@@ -307,6 +349,17 @@ class DeadlockMonitor:
         Returns:
             DeadlockInfo if a deadlock is detected, None otherwise.
         """
+        # Check for events from unregistered agents
+        if event.agent_id not in self._agents:
+            logger.warning("Event for unregistered agent: agent_id=%s", event.agent_id)
+
+        logger.debug(
+            "Event received: type=%s agent_id=%s lock_path=%s",
+            event.event_type.value,
+            event.agent_id,
+            event.lock_path,
+        )
+
         if event.event_type == LockEventType.ACQUIRED:
             self._graph.add_hold(event.agent_id, event.lock_path)
         elif event.event_type == LockEventType.WAITING:
@@ -321,6 +374,11 @@ class DeadlockMonitor:
         elif event.event_type == LockEventType.RELEASED:
             self._graph.remove_hold(event.agent_id, event.lock_path)
 
+        logger.debug(
+            "Graph updated: holds=%d waits=%d",
+            len(self._graph._holds),
+            len(self._graph._waits),
+        )
         return None
 
     def _check_for_deadlock(
@@ -336,8 +394,11 @@ class DeadlockMonitor:
             DeadlockInfo with victim selection if deadlock detected.
         """
         cycle = self._graph.detect_cycle()
+        logger.debug("Cycle check: found=%s", cycle is not None)
         if not cycle:
             return None
+
+        logger.warning("Cycle detected: agents=%s", cycle)
 
         # Select victim: youngest agent (max start_time) in cycle
         victim = self._select_victim(cycle)
@@ -375,4 +436,10 @@ class DeadlockMonitor:
         candidates = [self._agents[a] for a in cycle if a in self._agents]
         if not candidates:
             return None
-        return max(candidates, key=lambda a: a.start_time)
+        victim = max(candidates, key=lambda a: a.start_time)
+        logger.info(
+            "Victim selected: agent_id=%s start_time=%f (youngest in cycle)",
+            victim.agent_id,
+            victim.start_time,
+        )
+        return victim

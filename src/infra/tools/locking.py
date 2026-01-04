@@ -4,6 +4,7 @@ Consolidates locking behavior from shell scripts.
 """
 
 import hashlib
+import logging
 import os
 import sys
 from collections.abc import Callable
@@ -11,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .env import get_lock_dir
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "LockManager",
@@ -263,6 +266,17 @@ def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) ->
 
     # Fast-path if already locked
     if lp.exists():
+        # Get holder for contention logging
+        try:
+            holder = lp.read_text().strip()
+            logger.debug(
+                "Lock contention: path=%s holder=%s requester=%s",
+                filepath,
+                holder,
+                agent_id,
+            )
+        except OSError:
+            pass
         return False
 
     # Atomic lock creation using temp file + rename
@@ -289,6 +303,7 @@ def try_lock(filepath: str, agent_id: str, repo_namespace: str | None = None) ->
                 meta_path.write_text(f"{canonical}\n")
             except OSError:
                 pass  # Lock acquired; meta is optional
+            logger.debug("Lock acquired: path=%s agent_id=%s", filepath, agent_id)
             return True
         except OSError:
             os.unlink(tmp_path)
@@ -328,6 +343,12 @@ def wait_for_lock(
             return True
 
         if time.monotonic() >= deadline:
+            logger.warning(
+                "Lock timeout: path=%s agent_id=%s after=%.1fs",
+                filepath,
+                agent_id,
+                timeout_seconds,
+            )
             return False
 
         time.sleep(poll_interval_sec)
@@ -370,6 +391,7 @@ def release_lock(
     # Also remove companion .meta file
     lp.with_suffix(".meta").unlink(missing_ok=True)
     lp.unlink(missing_ok=True)
+    logger.debug("Lock released: path=%s agent_id=%s", filepath, agent_id)
     return True
 
 
@@ -469,6 +491,7 @@ def cleanup_agent_locks(agent_id: str) -> int:
         except OSError:
             pass
 
+    logger.info("Agent locks cleaned: agent_id=%s count=%d", agent_id, cleaned)
     return cleaned
 
 

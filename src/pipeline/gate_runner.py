@@ -18,6 +18,7 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
@@ -26,6 +27,8 @@ from src.domain.validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -156,6 +159,11 @@ class GateRunner:
             PerIssueGateOutput with gate_result and new_log_offset.
         """
         spec = self._get_or_build_spec(input.spec)
+        logger.debug(
+            "Gate check: issue_id=%s attempt=%d",
+            input.issue_id,
+            input.retry_state.gate_attempt,
+        )
 
         # Run gate check via injected checker
         gate_result = self.gate_checker.check_with_resolution(
@@ -181,6 +189,7 @@ class GateRunner:
                 spec=cast("ValidationSpecProtocol | None", spec),
             )
             if no_progress:
+                logger.warning("No progress detected: issue_id=%s", input.issue_id)
                 # Add no-progress to failure reasons
                 updated_reasons = list(gate_result.failure_reasons)
                 updated_reasons.append(
@@ -221,6 +230,7 @@ class GateRunner:
             spec: ValidationSpec to cache.
         """
         self.per_issue_spec = spec
+        logger.debug("Validation spec cached: issue_id=*")
 
 
 @dataclass
