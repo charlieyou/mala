@@ -4798,3 +4798,61 @@ class TestBuildGateMetadataFromLogs:
         # commands_run and commands_failed are lists (may be empty if no commands detected)
         assert isinstance(result.validation_result.commands_run, list)
         assert isinstance(result.validation_result.commands_failed, list)
+
+
+class TestContextConfigWiring:
+    """Test that context threshold config propagates correctly."""
+
+    def test_context_thresholds_propagate_to_wiring_dependencies(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Verify context_restart_threshold and context_limit reach WiringDependencies."""
+        # Create orchestrator with non-default values
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            context_restart_threshold=0.75,
+            context_limit=150_000,
+        )
+
+        # Build wiring dependencies
+        deps = orchestrator._build_wiring_dependencies()
+
+        # Verify values propagated
+        assert deps.context_restart_threshold == 0.75
+        assert deps.context_limit == 150_000
+
+    def test_context_thresholds_propagate_to_session_config(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Verify context config propagates from OrchestratorConfig to AgentSessionConfig."""
+        from src.orchestration.orchestration_wiring import build_session_config
+
+        # Create orchestrator with non-default values
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            context_restart_threshold=0.85,
+            context_limit=180_000,
+        )
+
+        # Build wiring dependencies and session config
+        deps = orchestrator._build_wiring_dependencies()
+        session_config = build_session_config(deps, review_enabled=False)
+
+        # Verify values propagated through entire path
+        assert session_config.context_restart_threshold == 0.85
+        assert session_config.context_limit == 180_000
+
+    def test_context_thresholds_use_defaults_when_not_specified(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """Verify default values when context config not explicitly set."""
+        from src.orchestration.orchestration_wiring import build_session_config
+
+        orchestrator = make_orchestrator(repo_path=tmp_path)
+
+        deps = orchestrator._build_wiring_dependencies()
+        session_config = build_session_config(deps, review_enabled=False)
+
+        # Default values from OrchestratorConfig
+        assert session_config.context_restart_threshold == 0.90
+        assert session_config.context_limit == 200_000
