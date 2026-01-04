@@ -1626,6 +1626,11 @@ class TestContextPressureDetection:
         log_path.write_text("")
         return log_path
 
+    @pytest.fixture
+    def mock_sdk_client_factory(self) -> MagicMock:
+        """Create a mock SDK client factory (not used but required)."""
+        return MagicMock()
+
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_extracts_usage_from_result_message(
@@ -1749,6 +1754,7 @@ class TestContextPressureDetection:
         self,
         tmp_path: Path,
         tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """ContextPressureError raised when pressure >= threshold.
 
@@ -1785,7 +1791,9 @@ class TestContextPressureDetection:
             context_restart_threshold=0.90,
             context_limit=200_000,
         )
-        runner = AgentSessionRunner(config=config)
+        runner = AgentSessionRunner(
+            config=config, sdk_client_factory=mock_sdk_client_factory
+        )
 
         # Create a simple async generator that yields the result message
         async def mock_stream() -> AsyncIterator[Any]:
@@ -2688,10 +2696,18 @@ class TestBuildSessionOutput:
         )
 
     @pytest.fixture
-    def runner(self, session_config: AgentSessionConfig) -> AgentSessionRunner:
+    def mock_sdk_client_factory(self) -> MagicMock:
+        """Create a mock SDK client factory (not used but required)."""
+        return MagicMock()
+
+    @pytest.fixture
+    def runner(
+        self, session_config: AgentSessionConfig, mock_sdk_client_factory: MagicMock
+    ) -> AgentSessionRunner:
         """Create a runner for testing output building."""
         return AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=SessionCallbacks(),
         )
 
@@ -3179,12 +3195,18 @@ class TestHandleGateCheck:
             review_enabled=False,
         )
 
+    @pytest.fixture
+    def mock_sdk_client_factory(self) -> MagicMock:
+        """Create a mock SDK client factory (not used but required)."""
+        return MagicMock()
+
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_handle_gate_check_passed(
         self,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_handle_gate_check should emit events and return no retry on pass."""
         from src.pipeline.agent_session_runner import (
@@ -3210,6 +3232,7 @@ class TestHandleGateCheck:
         callbacks = SessionCallbacks(on_gate_check=on_gate_check)
         runner = AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=callbacks,
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -3247,6 +3270,7 @@ class TestHandleGateCheck:
         self,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_handle_gate_check should return retry query on failure with retries left."""
         from src.pipeline.agent_session_runner import (
@@ -3276,6 +3300,7 @@ class TestHandleGateCheck:
         callbacks = SessionCallbacks(on_gate_check=on_gate_check)
         runner = AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=callbacks,
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -3312,6 +3337,7 @@ class TestHandleGateCheck:
         self,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_handle_gate_check should raise ValueError if callback not set."""
         from src.pipeline.agent_session_runner import (
@@ -3325,6 +3351,7 @@ class TestHandleGateCheck:
 
         runner = AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=SessionCallbacks(),  # No on_gate_check
         )
 
@@ -3369,12 +3396,18 @@ class TestHandleReviewCheck:
             review_enabled=True,
         )
 
+    @pytest.fixture
+    def mock_sdk_client_factory(self) -> MagicMock:
+        """Create a mock SDK client factory (not used but required)."""
+        return MagicMock()
+
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_handle_review_check_passed(
         self,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_handle_review_check should emit events and return no retry on pass."""
         from src.pipeline.agent_session_runner import (
@@ -3402,6 +3435,7 @@ class TestHandleReviewCheck:
         callbacks = SessionCallbacks(on_review_check=on_review_check)
         runner = AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=callbacks,
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -3442,6 +3476,7 @@ class TestHandleReviewCheck:
         self,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_handle_review_check should return retry query on failure with retries left."""
         from src.pipeline.agent_session_runner import (
@@ -3483,6 +3518,7 @@ class TestHandleReviewCheck:
         callbacks = SessionCallbacks(on_review_check=on_review_check)
         runner = AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=callbacks,
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -3521,6 +3557,7 @@ class TestHandleReviewCheck:
         self,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_handle_review_check should skip review on no-progress detection."""
         from src.pipeline.agent_session_runner import (
@@ -3564,6 +3601,7 @@ class TestHandleReviewCheck:
         )
         runner = AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=callbacks,
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -3606,6 +3644,7 @@ class TestHandleReviewCheck:
         self,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_handle_review_check should raise ValueError if callback not set."""
         from src.pipeline.agent_session_runner import (
@@ -3620,6 +3659,7 @@ class TestHandleReviewCheck:
 
         runner = AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=SessionCallbacks(),  # No on_review_check
         )
 
@@ -3665,9 +3705,17 @@ class TestCheckReviewNoProgress:
         log_path.write_text("")
         return log_path
 
+    @pytest.fixture
+    def mock_sdk_client_factory(self) -> MagicMock:
+        """Create a mock SDK client factory (not used but required)."""
+        return MagicMock()
+
     @pytest.mark.unit
     def test_returns_none_on_first_attempt(
-        self, session_config: AgentSessionConfig, tmp_log_path: Path
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Returns None on first review attempt."""
         from src.domain.lifecycle import (
@@ -3682,7 +3730,11 @@ class TestCheckReviewNoProgress:
             raise AssertionError("Should not be called")
 
         callbacks = SessionCallbacks(on_review_no_progress=on_review_no_progress)
-        runner = AgentSessionRunner(config=session_config, callbacks=callbacks)
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=mock_sdk_client_factory,
+        )
 
         lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
         lifecycle_ctx = LifecycleContext()
@@ -3696,7 +3748,10 @@ class TestCheckReviewNoProgress:
 
     @pytest.mark.unit
     def test_returns_none_when_callback_not_set(
-        self, session_config: AgentSessionConfig, tmp_log_path: Path
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Returns None when callback not configured."""
         from src.domain.lifecycle import (
@@ -3706,7 +3761,11 @@ class TestCheckReviewNoProgress:
         )
 
         callbacks = SessionCallbacks()
-        runner = AgentSessionRunner(config=session_config, callbacks=callbacks)
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=mock_sdk_client_factory,
+        )
 
         lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
         lifecycle_ctx = LifecycleContext()
@@ -3720,7 +3779,10 @@ class TestCheckReviewNoProgress:
 
     @pytest.mark.unit
     def test_returns_none_when_progress_detected(
-        self, session_config: AgentSessionConfig, tmp_log_path: Path
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Returns None when progress is detected."""
         from src.domain.lifecycle import (
@@ -3736,7 +3798,11 @@ class TestCheckReviewNoProgress:
             return False
 
         callbacks = SessionCallbacks(on_review_no_progress=on_review_no_progress)
-        runner = AgentSessionRunner(config=session_config, callbacks=callbacks)
+        runner = AgentSessionRunner(
+            config=session_config,
+            callbacks=callbacks,
+            sdk_client_factory=mock_sdk_client_factory,
+        )
 
         lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=True))
         lifecycle.start()
@@ -3755,7 +3821,10 @@ class TestCheckReviewNoProgress:
 
     @pytest.mark.unit
     def test_returns_result_on_no_progress(
-        self, session_config: AgentSessionConfig, tmp_log_path: Path
+        self,
+        session_config: AgentSessionConfig,
+        tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Returns ReviewEffectResult on no progress."""
         from src.domain.lifecycle import (
@@ -3776,6 +3845,7 @@ class TestCheckReviewNoProgress:
         callbacks = SessionCallbacks(on_review_no_progress=on_review_no_progress)
         runner = AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=callbacks,
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -3871,14 +3941,14 @@ class TestRunLifecycleLoop:
 
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            callbacks=callbacks,
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
         session_cfg = SessionConfig(
             agent_id="test-loop-abc",
-            options=runner._build_sdk_options([], [], [], {}),
+            options=MagicMock(),  # Mock SDK options
             lint_cache=LintCache(repo_path=session_config.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -3936,13 +4006,13 @@ class TestRunLifecycleLoop:
 
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=SessionCallbacks(),
             sdk_client_factory=fake_factory,
+            callbacks=SessionCallbacks(),
         )
 
         session_cfg = SessionConfig(
             agent_id="test-no-session",
-            options=runner._build_sdk_options([], [], [], {}),
+            options=MagicMock(),  # Mock SDK options
             lint_cache=LintCache(repo_path=session_config.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -4007,14 +4077,14 @@ class TestRunLifecycleLoop:
 
         runner = AgentSessionRunner(
             config=session_config,
-            callbacks=callbacks,
             sdk_client_factory=fake_factory,
+            callbacks=callbacks,
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
 
         session_cfg = SessionConfig(
             agent_id="test-events-abc",
-            options=runner._build_sdk_options([], [], [], {}),
+            options=MagicMock(),  # Mock SDK options
             lint_cache=LintCache(repo_path=session_config.repo_path),
             log_file_wait_timeout=60.0,
             log_file_poll_interval=0.5,
@@ -4135,12 +4205,18 @@ class TestHandleReviewEffectIntegration:
             review_enabled=True,
         )
 
+    @pytest.fixture
+    def mock_sdk_client_factory(self) -> MagicMock:
+        """Create a mock SDK client factory (not used but required)."""
+        return MagicMock()
+
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_review_effect_success_path(
         self,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_handle_review_effect should return success when review passes."""
         from src.domain.lifecycle import (
@@ -4165,6 +4241,7 @@ class TestHandleReviewEffectIntegration:
         callbacks = SessionCallbacks(on_review_check=on_review_check)
         runner = AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=callbacks,
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -4202,6 +4279,7 @@ class TestHandleReviewEffectIntegration:
         self,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_handle_review_effect should return retry prompt on failure."""
         from src.domain.lifecycle import (
@@ -4240,6 +4318,7 @@ class TestHandleReviewEffectIntegration:
         callbacks = SessionCallbacks(on_review_check=on_review_check)
         runner = AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=callbacks,
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -4278,6 +4357,7 @@ class TestHandleReviewEffectIntegration:
         self,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_handle_review_effect should return failure when retries exhausted."""
         from src.domain.lifecycle import (
@@ -4316,6 +4396,7 @@ class TestHandleReviewEffectIntegration:
         callbacks = SessionCallbacks(on_review_check=on_review_check)
         runner = AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=callbacks,
             event_sink=fake_sink,  # type: ignore[arg-type]
         )
@@ -4349,6 +4430,7 @@ class TestHandleReviewEffectIntegration:
         self,
         session_config: AgentSessionConfig,
         tmp_log_path: Path,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_handle_review_effect should skip review on no-progress detection."""
         from src.domain.lifecycle import (
@@ -4387,6 +4469,7 @@ class TestHandleReviewEffectIntegration:
         )
         runner = AgentSessionRunner(
             config=session_config,
+            sdk_client_factory=mock_sdk_client_factory,
             callbacks=callbacks,
             event_sink=fake_sink,  # type: ignore[arg-type]
         )

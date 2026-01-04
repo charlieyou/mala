@@ -144,7 +144,7 @@ def build_review_runner(deps: WiringDependencies) -> ReviewRunner:
 
 def build_run_coordinator(
     deps: WiringDependencies,
-    sdk_client_factory: SDKClientFactoryProtocol | None = None,
+    sdk_client_factory: SDKClientFactoryProtocol,
 ) -> RunCoordinator:
     """Build RunCoordinator."""
     config = RunCoordinatorConfig(
@@ -161,8 +161,8 @@ def build_run_coordinator(
         command_runner=deps.command_runner,
         env_config=deps.env_config,
         lock_manager=deps.lock_manager,
-        event_sink=deps.event_sink,
         sdk_client_factory=sdk_client_factory,
+        event_sink=deps.event_sink,
     )
 
 

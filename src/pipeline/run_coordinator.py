@@ -188,6 +188,7 @@ class RunCoordinator:
         command_runner: CommandRunner for executing validation commands.
         env_config: Environment configuration for paths.
         lock_manager: Lock manager for file locking.
+        sdk_client_factory: Factory for creating SDK clients (required).
         event_sink: Optional event sink for structured logging.
     """
 
@@ -196,8 +197,8 @@ class RunCoordinator:
     command_runner: CommandRunnerPort
     env_config: EnvConfigPort
     lock_manager: LockManagerPort
+    sdk_client_factory: SDKClientFactoryProtocol
     event_sink: MalaEventSink | None = None
-    sdk_client_factory: SDKClientFactoryProtocol | None = None
     _active_fixer_ids: list[str] = field(default_factory=list, init=False)
 
     async def run_validation(
@@ -396,11 +397,6 @@ class RunCoordinator:
         fixer_cwd = self.config.repo_path
 
         # Build runtime using AgentRuntimeBuilder
-        if self.sdk_client_factory is None:
-            raise RuntimeError(
-                "sdk_client_factory is required for fixer agent. "
-                "Use SDKClientFactory from src.infra.sdk_adapter."
-            )
         lint_tools = extract_lint_tools_from_spec(spec)
         runtime = (
             AgentRuntimeBuilder(fixer_cwd, agent_id, self.sdk_client_factory)

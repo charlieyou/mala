@@ -48,6 +48,12 @@ def mock_lock_manager() -> MagicMock:
     return mock
 
 
+@pytest.fixture
+def mock_sdk_client_factory() -> MagicMock:
+    """Create a mock SDKClientFactoryProtocol."""
+    return MagicMock()
+
+
 class TestRunLevelValidation:
     """Test Gate 4 (run-level validation) in RunCoordinator."""
 
@@ -58,6 +64,7 @@ class TestRunLevelValidation:
         mock_command_runner: MagicMock,
         mock_env_config: MagicMock,
         mock_lock_manager: MagicMock,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Run-level validation should be skipped when disabled."""
         # Create a mock gate_checker
@@ -74,6 +81,7 @@ class TestRunLevelValidation:
             command_runner=mock_command_runner,
             env_config=mock_env_config,
             lock_manager=mock_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
         )
 
         run_config = RunConfig(
@@ -101,6 +109,7 @@ class TestRunLevelValidation:
         mock_command_runner: MagicMock,
         mock_env_config: MagicMock,
         mock_lock_manager: MagicMock,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Run-level validation should pass when validation runner succeeds."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
@@ -117,6 +126,7 @@ class TestRunLevelValidation:
             command_runner=mock_command_runner,
             env_config=mock_env_config,
             lock_manager=mock_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
         )
 
         run_config = RunConfig(
@@ -171,6 +181,7 @@ class TestRunLevelValidation:
         mock_command_runner: MagicMock,
         mock_env_config: MagicMock,
         mock_lock_manager: MagicMock,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Run-level validation should spawn fixer agent on failure."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
@@ -188,6 +199,7 @@ class TestRunLevelValidation:
             command_runner=mock_command_runner,
             env_config=mock_env_config,
             lock_manager=mock_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
         )
 
         run_config = RunConfig(
@@ -256,6 +268,7 @@ class TestRunLevelValidation:
         mock_command_runner: MagicMock,
         mock_env_config: MagicMock,
         mock_lock_manager: MagicMock,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Run-level validation should record results to run metadata."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
@@ -273,6 +286,7 @@ class TestRunLevelValidation:
             command_runner=mock_command_runner,
             env_config=mock_env_config,
             lock_manager=mock_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
         )
 
         run_config = RunConfig(
@@ -337,6 +351,7 @@ class TestRunLevelValidation:
         mock_command_runner: MagicMock,
         mock_env_config: MagicMock,
         mock_lock_manager: MagicMock,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_build_validation_failure_output should format failure details."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
@@ -349,6 +364,7 @@ class TestRunLevelValidation:
             command_runner=mock_command_runner,
             env_config=mock_env_config,
             lock_manager=mock_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
         )
 
         result = ValidationResult(
@@ -379,6 +395,7 @@ class TestRunLevelValidation:
         mock_command_runner: MagicMock,
         mock_env_config: MagicMock,
         mock_lock_manager: MagicMock,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_build_validation_failure_output should handle None result."""
         mock_gate_checker = MagicMock()
@@ -389,6 +406,7 @@ class TestRunLevelValidation:
             command_runner=mock_command_runner,
             env_config=mock_env_config,
             lock_manager=mock_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
         )
 
         output = coordinator._build_validation_failure_output(None)
@@ -402,6 +420,7 @@ class TestRunLevelValidation:
         mock_command_runner: MagicMock,
         mock_env_config: MagicMock,
         mock_lock_manager: MagicMock,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """e2e_passed should be None when E2E is disabled via disable_validations."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
@@ -420,6 +439,7 @@ class TestRunLevelValidation:
             command_runner=mock_command_runner,
             env_config=mock_env_config,
             lock_manager=mock_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
         )
 
         run_config = RunConfig(
@@ -478,6 +498,7 @@ class TestRunLevelValidation:
         mock_command_runner: MagicMock,
         mock_env_config: MagicMock,
         mock_lock_manager: MagicMock,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """e2e_passed should be None when E2E was skipped (status=SKIPPED)."""
         from src.domain.validation.e2e import E2EResult, E2EStatus
@@ -491,6 +512,7 @@ class TestRunLevelValidation:
             command_runner=mock_command_runner,
             env_config=mock_env_config,
             lock_manager=mock_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
         )
 
         run_config = RunConfig(
@@ -553,6 +575,7 @@ class TestRunLevelValidation:
         mock_command_runner: MagicMock,
         mock_env_config: MagicMock,
         mock_lock_manager: MagicMock,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """e2e_passed should be True when E2E is enabled and actually passes."""
         from src.domain.validation.e2e import E2EResult, E2EStatus
@@ -566,6 +589,7 @@ class TestRunLevelValidation:
             command_runner=mock_command_runner,
             env_config=mock_env_config,
             lock_manager=mock_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
         )
 
         run_config = RunConfig(
@@ -627,6 +651,7 @@ class TestRunLevelValidation:
         mock_command_runner: MagicMock,
         mock_env_config: MagicMock,
         mock_lock_manager: MagicMock,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """e2e_passed should be False when E2E is enabled and actually fails."""
         from src.domain.validation.e2e import E2EResult, E2EStatus
@@ -646,6 +671,7 @@ class TestRunLevelValidation:
             command_runner=mock_command_runner,
             env_config=mock_env_config,
             lock_manager=mock_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
         )
 
         run_config = RunConfig(
@@ -709,6 +735,7 @@ class TestRunLevelValidation:
         mock_command_runner: MagicMock,
         mock_env_config: MagicMock,
         mock_lock_manager: MagicMock,
+        mock_sdk_client_factory: MagicMock,
     ) -> None:
         """e2e_passed should be None when validation fails before E2E runs."""
         from src.domain.validation.result import ValidationResult, ValidationStepResult
@@ -727,6 +754,7 @@ class TestRunLevelValidation:
             command_runner=mock_command_runner,
             env_config=mock_env_config,
             lock_manager=mock_lock_manager,
+            sdk_client_factory=mock_sdk_client_factory,
         )
 
         run_config = RunConfig(

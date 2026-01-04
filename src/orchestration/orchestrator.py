@@ -742,8 +742,8 @@ class MalaOrchestrator:
 
         runner = AgentSessionRunner(
             config=self._session_config,
-            callbacks=self._build_session_callbacks(issue_id),
             sdk_client_factory=self._sdk_client_factory,
+            callbacks=self._build_session_callbacks(issue_id),
             event_sink=self.event_sink,
         )
         tracer = self.telemetry_provider.create_span(

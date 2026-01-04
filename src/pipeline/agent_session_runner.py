@@ -624,19 +624,20 @@ class AgentSessionRunner:
         runner = AgentSessionRunner(
             config=AgentSessionConfig(repo_path=repo_path, ...),
             callbacks=SessionCallbacks(on_gate_check=..., ...),
+            sdk_client_factory=SDKClientFactory(),
         )
         output = await runner.run_session(input)
 
     Attributes:
         config: Session configuration.
         callbacks: Callbacks for external operations.
-        sdk_client_factory: Factory for creating SDK clients (injectable for testing).
+        sdk_client_factory: Factory for creating SDK clients (required).
         event_sink: Optional event sink for structured logging.
     """
 
     config: AgentSessionConfig
+    sdk_client_factory: SDKClientFactoryProtocol
     callbacks: SessionCallbacks = field(default_factory=SessionCallbacks)
-    sdk_client_factory: SDKClientFactoryProtocol | None = None
     event_sink: MalaEventSink | None = None
 
     def _initialize_session(
@@ -671,11 +672,6 @@ class AgentSessionRunner:
         lifecycle_ctx.retry_state.baseline_timestamp = int(time.time())
 
         # Build session components using AgentRuntimeBuilder
-        if self.sdk_client_factory is None:
-            raise RuntimeError(
-                "sdk_client_factory is required. Use SDKClientFactory from "
-                "src.infra.sdk_adapter or inject via orchestration wiring."
-            )
         runtime = (
             AgentRuntimeBuilder(
                 self.config.repo_path, agent_id, self.sdk_client_factory
@@ -1579,12 +1575,7 @@ class AgentSessionRunner:
             if state.idle_retry_count > 0:
                 await self._apply_retry_backoff(state.idle_retry_count)
 
-            # Create client for this attempt - factory required
-            if self.sdk_client_factory is None:
-                raise RuntimeError(
-                    "sdk_client_factory is required. Use SDKClientFactory from "
-                    "src.infra.sdk_adapter or inject via orchestration wiring."
-                )
+            # Create client for this attempt
             client = self.sdk_client_factory.create(options)
 
             try:
@@ -1682,12 +1673,7 @@ class AgentSessionRunner:
             )
             return ""
 
-        # Create client to query for checkpoint - factory required
-        if self.sdk_client_factory is None:
-            raise RuntimeError(
-                "sdk_client_factory is required. Use SDKClientFactory from "
-                "src.infra.sdk_adapter or inject via orchestration wiring."
-            )
+        # Create client to query for checkpoint
         client = self.sdk_client_factory.create(options)
 
         response_text = ""
