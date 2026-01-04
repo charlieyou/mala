@@ -397,10 +397,15 @@ class RunCoordinator:
         fixer_cwd = self.config.repo_path
 
         # Build runtime using AgentRuntimeBuilder
+        # Note: include_mala_disallowed_tools_hook=False matches original fixer behavior
         lint_tools = extract_lint_tools_from_spec(spec)
         runtime = (
             AgentRuntimeBuilder(fixer_cwd, agent_id, self.sdk_client_factory)
-            .with_hooks(deadlock_monitor=None, include_stop_hook=True)
+            .with_hooks(
+                deadlock_monitor=None,
+                include_stop_hook=True,
+                include_mala_disallowed_tools_hook=False,
+            )
             .with_env()
             .with_mcp()
             .with_disallowed_tools()

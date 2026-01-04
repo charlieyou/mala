@@ -5,7 +5,7 @@ Tests the centralized agent runtime configuration builder.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,6 +16,8 @@ from src.infra.hooks import LintCache
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from src.core.protocols import SDKClientProtocol
+
 
 class FakeSDKClientFactory:
     """Fake SDK client factory for testing."""
@@ -24,18 +26,22 @@ class FakeSDKClientFactory:
         self.created_options: list[dict] = []
         self.created_matchers: list[tuple] = []
 
+    def create(self, options: object) -> SDKClientProtocol:
+        """Create a mock client (not used in these tests)."""
+        return cast("SDKClientProtocol", MagicMock())
+
     def create_options(
         self,
         *,
         cwd: str,
         permission_mode: str = "bypassPermissions",
         model: str = "opus",
-        system_prompt: dict | None = None,
+        system_prompt: dict[str, str] | None = None,
         setting_sources: list[str] | None = None,
         mcp_servers: object | None = None,
         disallowed_tools: list[str] | None = None,
         env: dict[str, str] | None = None,
-        hooks: dict[str, list] | None = None,
+        hooks: dict[str, list[object]] | None = None,
     ) -> object:
         opts = {
             "cwd": cwd,
@@ -57,9 +63,6 @@ class FakeSDKClientFactory:
         result = ("matcher", matcher, hooks)
         self.created_matchers.append(result)
         return result
-
-    def create(self, options: object) -> object:
-        return MagicMock()
 
 
 class TestAgentRuntimeBuilder:

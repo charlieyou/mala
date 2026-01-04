@@ -16,16 +16,6 @@ import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from src.infra.hooks import (
-    FileReadCache,
-    LintCache,
-    block_dangerous_commands,
-    block_mala_disallowed_tools,
-    make_file_read_cache_hook,
-    make_lint_cache_hook,
-    make_lock_enforcement_hook,
-    make_stop_hook,
-)
 from src.infra.mcp import get_disallowed_tools, get_mcp_servers
 from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 
@@ -34,6 +24,7 @@ if TYPE_CHECKING:
 
     from src.core.protocols import SDKClientFactoryProtocol
     from src.domain.deadlock import DeadlockMonitor
+    from src.infra.hooks import FileReadCache, LintCache
 
 
 @dataclass
@@ -114,6 +105,7 @@ class AgentRuntimeBuilder:
         # Hook configuration
         self._deadlock_monitor: DeadlockMonitor | None = None
         self._include_stop_hook: bool = True
+        self._include_mala_disallowed_tools_hook: bool = True
 
         # Environment and options
         self._env: dict[str, str] | None = None
@@ -125,18 +117,23 @@ class AgentRuntimeBuilder:
         *,
         deadlock_monitor: DeadlockMonitor | None = None,
         include_stop_hook: bool = True,
+        include_mala_disallowed_tools_hook: bool = True,
     ) -> AgentRuntimeBuilder:
         """Configure hook behavior.
 
         Args:
             deadlock_monitor: Optional DeadlockMonitor for lock event hooks.
             include_stop_hook: Whether to include stop hook (default True).
+            include_mala_disallowed_tools_hook: Whether to include the
+                block_mala_disallowed_tools hook (default True). Set False
+                for fixer agents which don't need this restriction.
 
         Returns:
             Self for chaining.
         """
         self._deadlock_monitor = deadlock_monitor
         self._include_stop_hook = include_stop_hook
+        self._include_mala_disallowed_tools_hook = include_mala_disallowed_tools_hook
         return self
 
     def with_env(self, extra: dict[str, str] | None = None) -> AgentRuntimeBuilder:
@@ -217,8 +214,19 @@ class AgentRuntimeBuilder:
         Raises:
             RuntimeError: If required configuration is missing.
         """
-        # Import SDK types locally (lazy import)
-        from src.infra.hooks import make_lock_event_hook, make_lock_wait_hook
+        # Import hooks locally for lazy-import guarantees
+        from src.infra.hooks import (
+            FileReadCache,
+            LintCache,
+            block_dangerous_commands,
+            block_mala_disallowed_tools,
+            make_file_read_cache_hook,
+            make_lint_cache_hook,
+            make_lock_enforcement_hook,
+            make_lock_event_hook,
+            make_lock_wait_hook,
+            make_stop_hook,
+        )
 
         # Create caches
         file_read_cache = FileReadCache()
@@ -230,11 +238,14 @@ class AgentRuntimeBuilder:
         # Build pre-tool hooks (order matters)
         pre_tool_hooks: list[object] = [
             block_dangerous_commands,
-            block_mala_disallowed_tools,
             make_lock_enforcement_hook(self._agent_id, str(self._repo_path)),
             make_file_read_cache_hook(file_read_cache),
             make_lint_cache_hook(lint_cache),
         ]
+
+        # Conditionally add mala disallowed tools hook (not needed for fixer agents)
+        if self._include_mala_disallowed_tools_hook:
+            pre_tool_hooks.insert(1, block_mala_disallowed_tools)
 
         post_tool_hooks: list[object] = []
         stop_hooks: list[object] = []
