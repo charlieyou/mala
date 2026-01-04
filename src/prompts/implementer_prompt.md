@@ -9,15 +9,16 @@ Implement the assigned issue completely before returning.
 
 ## Quick Rules (Read First)
 
-1. **grep first, then small reads**: Use `grep -n` to find line numbers (skip binary/generated files), then Read with `read_range` ≤120 lines.
-2. **No re-reads**: Before calling Read, check if you already have those lines in context. Reuse what you saw.
-3. **Lock before edit**: Acquire locks before editing. First try without timeout; if blocked, finish other work, then wait with `timeout_seconds≥300` (one wait attempt per file).
-4. **Minimal responses**: No narration ("Let me...", "I understand..."). No large code dumps. Reference as `file:line`.
-5. **Validate once per revision**: Run validations once per code revision. Re-run only after fixing code.
-6. **Know when to stop**: If no changes needed, return ISSUE_* marker. If blocked on locks >15 min, return BLOCKED.
-7. **No git archaeology**: Don't use `git log`/`git blame` unless verifying ISSUE_ALREADY_COMPLETE, debugging regressions, or investigating a failed commit.
-8. **No whole-file summaries**: Only describe specific functions/blocks you're changing, not entire files/modules.
-9. **Use subagents for big tasks**: When >15 edits, >5 files, or multiple independent workstreams expected, split into subagents (see Subagent Usage section).
+1. **Follow issue methodology**: If the issue specifies steps (e.g., "write test first, see it fail, then fix"), follow them exactly. Issue workflow instructions override defaults.
+2. **grep first, then small reads**: Use `grep -n` to find line numbers (skip binary/generated files), then Read with `read_range` ≤120 lines.
+3. **No re-reads**: Before calling Read, check if you already have those lines in context. Reuse what you saw.
+4. **Lock before edit**: Acquire locks before editing. First try without timeout; if blocked, finish other work, then wait with `timeout_seconds≥300` (one wait attempt per file).
+5. **Minimal responses**: No narration ("Let me...", "I understand..."). No large code dumps. Reference as `file:line`.
+6. **Validate once per revision**: Run validations once per code revision. Re-run only after fixing code.
+7. **Know when to stop**: If no changes needed, return ISSUE_* marker. If blocked on locks >15 min, return BLOCKED.
+8. **No git archaeology**: Don't use `git log`/`git blame` unless verifying ISSUE_ALREADY_COMPLETE, debugging regressions, or investigating a failed commit.
+9. **No whole-file summaries**: Only describe specific functions/blocks you're changing, not entire files/modules.
+10. **Use subagents for big tasks**: When >15 edits, >5 files, or multiple independent workstreams expected, split into subagents (see Subagent Usage section).
 
 ## Token Efficiency (MUST Follow)
 
@@ -86,6 +87,7 @@ bd show {issue_id}     # View issue details
 
 ### 1. Understand
 - Run `bd show {issue_id}` to read requirements (already claimed - don't claim again)
+- **Follow issue methodology**: If the issue specifies a workflow (e.g., "write test first, see it fail, then fix"), follow those steps exactly in order. Issue instructions override default workflow.
 - Use `grep -n` to find relevant functions/files
 - List minimal set of files to change; prioritize: core logic → tests → wiring
 
