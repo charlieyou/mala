@@ -241,7 +241,7 @@ class ValidatedRunArgs:
 
     only_ids: set[str] | None
     disable_set: set[str] | None
-    epic_override_ids: set[str] | None
+    epic_override_ids: set[str]
 
 
 @dataclass(frozen=True)
@@ -482,7 +482,7 @@ def _validate_run_args(
         raise typer.Exit(1)
 
     # Parse --epic-override flag into a set of epic IDs
-    epic_override_ids: set[str] | None = None
+    epic_override_ids: set[str] = set()
     if epic_override:
         epic_override_ids = {
             eid.strip() for eid in epic_override.split(",") if eid.strip()
