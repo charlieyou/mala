@@ -11,6 +11,7 @@ enabling real-time deadlock detection.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import time
@@ -105,8 +106,16 @@ def create_locking_mcp_server(
             lock_path=canonical_path,
             timestamp=time.time(),
         )
-        result = emit_lock_event(event)
-        if asyncio.iscoroutine(result):
+        try:
+            result = emit_lock_event(event)
+        except Exception:
+            logger.exception(
+                "Error in sync emit_lock_event: agent=%s path=%s",
+                agent_id,
+                canonical_path,
+            )
+            return
+        if inspect.isawaitable(result):
             try:
                 await result
             except Exception:
@@ -115,6 +124,7 @@ def create_locking_mcp_server(
                     agent_id,
                     canonical_path,
                 )
+                return
         logger.debug(
             "WAITING emitted: agent=%s path=%s",
             agent_id,
@@ -212,9 +222,9 @@ def create_locking_mcp_server(
                 ]
             }
 
-        # Emit WAITING events for blocked files (once per file per call)
-        for canon in blocked_paths:
-            await _emit_waiting(canon)
+        # Emit WAITING events for blocked files in parallel (non-blocking)
+        if blocked_paths:
+            await asyncio.gather(*[_emit_waiting(canon) for canon in blocked_paths])
 
         # Wait until ANY blocked file becomes available
         # Spawn wait tasks for each blocked file (using canonical paths)

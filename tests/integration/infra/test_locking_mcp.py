@@ -655,10 +655,14 @@ class TestAgentRuntimeBuilderIntegration:
         mcp_servers = call_kwargs["mcp_servers"]
         assert "mala-locking" in mcp_servers
 
-    def test_build_excludes_locking_server_without_monitor(
+    def test_build_includes_locking_server_without_monitor(
         self, lock_dir: Path, tmp_path: Path
     ) -> None:
-        """Runtime excludes locking MCP when no deadlock monitor."""
+        """Runtime includes locking MCP even without deadlock monitor.
+
+        Locking tools are available for file coordination, but events
+        are not tracked for deadlock detection.
+        """
         from src.infra.agent_runtime import AgentRuntimeBuilder
 
         mock_factory = MagicMock()
@@ -669,8 +673,8 @@ class TestAgentRuntimeBuilderIntegration:
 
         call_kwargs = mock_factory.create_options.call_args.kwargs
         mcp_servers = call_kwargs.get("mcp_servers", {})
-        # Empty dict when no monitor
-        assert mcp_servers == {} or "mala-locking" not in mcp_servers
+        # Locking server included even without monitor (uses no-op handler)
+        assert "mala-locking" in mcp_servers
 
     def test_runtime_has_all_components(self, lock_dir: Path, tmp_path: Path) -> None:
         """AgentRuntime has all expected components."""
