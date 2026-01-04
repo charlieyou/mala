@@ -231,7 +231,6 @@ class AgentRuntimeBuilder:
             make_lint_cache_hook,
             make_lock_enforcement_hook,
             make_lock_event_hook,
-            make_lock_wait_hook,
             make_stop_hook,
         )
 
@@ -267,17 +266,8 @@ class AgentRuntimeBuilder:
             from src.core.models import LockEvent, LockEventType
 
             monitor = self._deadlock_monitor
-            # PreToolUse hook for real-time WAITING detection on lock-wait.sh
-            pre_tool_hooks.append(
-                make_lock_wait_hook(
-                    agent_id=self._agent_id,
-                    emit_event=monitor.handle_event,
-                    repo_namespace=str(self._repo_path),
-                    lock_event_class=LockEvent,
-                    lock_event_type_enum=LockEventType,
-                )
-            )
-            # PostToolUse hook for ACQUIRED/RELEASED events
+            # PostToolUse hook for ACQUIRED/RELEASED events from MCP locking tools
+            # (WAITING events are emitted by the MCP tool handlers directly)
             post_tool_hooks.append(
                 make_lock_event_hook(
                     agent_id=self._agent_id,

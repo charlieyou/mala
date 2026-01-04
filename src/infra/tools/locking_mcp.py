@@ -17,11 +17,14 @@ import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from claude_agent_sdk.types import McpSdkServerConfig
 
     from src.core.models import LockEvent
+
+    # Type alias for async tool handlers
+    ToolHandler = Callable[[dict], Awaitable[dict]]
 
 from .locking import (
     canonicalize_path,
@@ -39,11 +42,29 @@ LOCK_ACQUIRE_TOOL = "lock_acquire"
 LOCK_RELEASE_TOOL = "lock_release"
 
 
+class LockingToolHandlers:
+    """Container for lock tool handlers, exposed for testing.
+
+    Use create_locking_mcp_server() to get the MCP server config.
+    Access .lock_acquire and .lock_release handlers for direct testing.
+    """
+
+    def __init__(
+        self,
+        lock_acquire: ToolHandler,
+        lock_release: ToolHandler,
+    ) -> None:
+        self.lock_acquire = lock_acquire
+        self.lock_release = lock_release
+
+
 def create_locking_mcp_server(
     agent_id: str,
     repo_namespace: str | None,
     emit_lock_event: Callable[[LockEvent], None],
-) -> McpSdkServerConfig:
+    *,
+    _return_handlers: bool = False,
+) -> McpSdkServerConfig | tuple[McpSdkServerConfig, LockingToolHandlers]:
     """Create MCP server config with locking tools bound to agent context.
 
     The emit_lock_event callback is captured by tool handler closures,
@@ -53,9 +74,11 @@ def create_locking_mcp_server(
         agent_id: The agent ID for lock ownership.
         repo_namespace: Optional repo namespace for cross-repo disambiguation.
         emit_lock_event: Callback to emit lock events (captured in closures).
+        _return_handlers: If True, also return handler objects for testing.
 
     Returns:
         MCP server configuration dict for Claude Agent SDK.
+        If _return_handlers=True, returns (config, handlers) tuple.
     """
     from claude_agent_sdk import create_sdk_mcp_server, tool
 
@@ -371,8 +394,17 @@ def create_locking_mcp_server(
             ]
         }
 
-    return create_sdk_mcp_server(
+    config = create_sdk_mcp_server(
         name="mala-locking",
         version="1.0.0",
         tools=[lock_acquire, lock_release],
     )
+
+    if _return_handlers:
+        handlers = LockingToolHandlers(
+            lock_acquire=lock_acquire,
+            lock_release=lock_release,
+        )
+        return config, handlers
+
+    return config
