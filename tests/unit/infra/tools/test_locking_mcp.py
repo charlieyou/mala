@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from claude_agent_sdk.types import McpSdkServerConfig
 
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.unit
 def _create_handlers(
     agent_id: str = "test-agent",
     repo_namespace: str | None = "/test/repo",
-    emit_lock_event: Callable[[LockEvent], None] | None = None,
+    emit_lock_event: Callable[[LockEvent], None | Awaitable[None]] | None = None,
 ) -> LockingToolHandlers:
     """Create MCP server and return the handlers object.
 
@@ -308,6 +308,75 @@ class TestLockAcquireWaitingEvents:
             await handlers.lock_acquire.handler({"filepaths": ["a.py", "b.py"]})
 
         assert len(events) == 0
+
+
+class TestAsyncEmitLockEvent:
+    """Test async emit_lock_event callback support."""
+
+    @pytest.mark.asyncio
+    async def test_async_emit_lock_event_awaited(self) -> None:
+        """Async emit_lock_event callback is awaited, not dropped."""
+        from src.core.models import LockEventType
+
+        events: list[Any] = []
+        emit_awaited = False
+
+        async def async_emit(event: LockEvent) -> None:
+            nonlocal emit_awaited
+            emit_awaited = True
+            events.append(event)
+
+        def mock_try_lock(filepath: str, agent_id: str, namespace: str | None) -> bool:
+            return False  # All blocked to trigger WAITING
+
+        with (
+            patch("src.infra.tools.locking_mcp.try_lock", side_effect=mock_try_lock),
+            patch("src.infra.tools.locking_mcp.get_lock_holder", return_value="other"),
+            patch(
+                "src.infra.tools.locking_mcp.wait_for_lock_async",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            handlers = _create_handlers(emit_lock_event=async_emit)
+
+            await handlers.lock_acquire.handler(
+                {"filepaths": ["blocked.py"], "timeout_seconds": 0.1}
+            )
+
+        # Verify async callback was awaited
+        assert emit_awaited, "async emit_lock_event was not awaited"
+        assert len(events) == 1
+        assert events[0].event_type == LockEventType.WAITING
+
+    @pytest.mark.asyncio
+    async def test_async_emit_error_logged_not_raised(self) -> None:
+        """Errors in async emit_lock_event are logged, not raised."""
+
+        async def failing_emit(event: LockEvent) -> None:
+            raise RuntimeError("emit failed")
+
+        def mock_try_lock(filepath: str, agent_id: str, namespace: str | None) -> bool:
+            return False
+
+        with (
+            patch("src.infra.tools.locking_mcp.try_lock", side_effect=mock_try_lock),
+            patch("src.infra.tools.locking_mcp.get_lock_holder", return_value="other"),
+            patch(
+                "src.infra.tools.locking_mcp.wait_for_lock_async",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            handlers = _create_handlers(emit_lock_event=failing_emit)
+
+            # Should not raise even though emit callback raises
+            result = await handlers.lock_acquire.handler(
+                {"filepaths": ["file.py"], "timeout_seconds": 0.1}
+            )
+
+        # Should return a result (even if emit failed)
+        assert "content" in result
 
 
 class TestLockReleaseWiring:

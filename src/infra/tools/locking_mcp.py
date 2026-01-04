@@ -90,8 +90,11 @@ def create_locking_mcp_server(
         """Canonicalize path for consistent deadlock graph nodes."""
         return canonicalize_path(filepath, repo_namespace)
 
-    def _emit_waiting(canonical_path: str) -> None:
+    async def _emit_waiting(canonical_path: str) -> None:
         """Emit WAITING event for a blocked file.
+
+        Supports both sync and async emit_lock_event callbacks.
+        If the callback is async, awaits it; otherwise calls synchronously.
 
         Args:
             canonical_path: Already-canonicalized path (from _canonical()).
@@ -102,7 +105,16 @@ def create_locking_mcp_server(
             lock_path=canonical_path,
             timestamp=time.time(),
         )
-        emit_lock_event(event)
+        result = emit_lock_event(event)
+        if asyncio.iscoroutine(result):
+            try:
+                await result
+            except Exception:
+                logger.exception(
+                    "Error in async emit_lock_event: agent=%s path=%s",
+                    agent_id,
+                    canonical_path,
+                )
         logger.debug(
             "WAITING emitted: agent=%s path=%s",
             agent_id,
@@ -202,7 +214,7 @@ def create_locking_mcp_server(
 
         # Emit WAITING events for blocked files (once per file per call)
         for canon in blocked_paths:
-            _emit_waiting(canon)
+            await _emit_waiting(canon)
 
         # Wait until ANY blocked file becomes available
         # Spawn wait tasks for each blocked file (using canonical paths)
