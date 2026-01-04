@@ -36,6 +36,7 @@ from src.infra.tools.env import (
 )
 from src.domain.deadlock import DeadlockMonitor
 from src.orchestration.orchestrator_state import OrchestratorState
+from src.orchestration.deadlock_handler import DeadlockHandler, DeadlockHandlerCallbacks
 from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.locking import (
     LockManager,
@@ -79,7 +80,6 @@ if TYPE_CHECKING:
         IssueProvider,
         LogProvider,
     )
-    from src.domain.deadlock import DeadlockInfo
     from src.domain.prompts import PromptProvider
     from src.infra.epic_verifier import EpicVerifier
     from src.infra.io.config import MalaConfig
@@ -116,6 +116,7 @@ class MalaOrchestrator:
 
     # Type annotations for attributes set during initialization
     _max_issues: int | None
+    _deadlock_handler: DeadlockHandler
 
     def __init__(
         self,
@@ -217,7 +218,6 @@ class MalaOrchestrator:
         else:
             self.deadlock_monitor = None
             logger.info("Deadlock detection disabled by config")
-        self._deadlock_resolution_lock = asyncio.Lock()
 
     def _init_pipeline_runners(self) -> None:
         """Initialize pipeline runner components using wiring functions."""
@@ -247,9 +247,14 @@ class MalaOrchestrator:
             deps, review_enabled=self._is_review_enabled()
         )
 
-        # Wire deadlock callback now that all dependencies are available
+        # Wire deadlock handler now that all dependencies are available
+        self._deadlock_handler = self._build_deadlock_handler()
         if self.deadlock_monitor is not None:
-            self.deadlock_monitor.on_deadlock = self._handle_deadlock
+            self.deadlock_monitor.on_deadlock = (
+                lambda info: self._deadlock_handler.handle_deadlock(
+                    info, self._state, self.active_tasks
+                )
+            )
 
     def _build_wiring_dependencies(self) -> WiringDependencies:
         """Build WiringDependencies from orchestrator state."""
@@ -372,6 +377,31 @@ class MalaOrchestrator:
             epic_override_ids=self.epic_override_ids,
         )
 
+    def _build_deadlock_handler(self) -> DeadlockHandler:
+        """Build DeadlockHandler with callbacks."""
+        callbacks = DeadlockHandlerCallbacks(
+            add_dependency=self.beads.add_dependency_async,
+            mark_needs_followup=lambda issue_id, summary, log_path: (
+                self.beads.mark_needs_followup_async(
+                    issue_id, summary, log_path=log_path
+                )
+            ),
+            on_deadlock_detected=self.event_sink.on_deadlock_detected,
+            on_locks_cleaned=self.event_sink.on_locks_cleaned,
+            on_tasks_aborting=self.event_sink.on_tasks_aborting,
+            do_cleanup_agent_locks=cleanup_agent_locks,
+            unregister_agent=(
+                self.deadlock_monitor.unregister_agent
+                if self.deadlock_monitor is not None
+                else None
+            ),
+            finalize_issue_result=self._finalize_issue_result,
+            mark_completed=lambda issue_id: self.issue_coordinator.mark_completed(
+                issue_id
+            ),
+        )
+        return DeadlockHandler(callbacks=callbacks)
+
     async def _create_review_tracking_issues(
         self,
         issue_id: str,
@@ -433,118 +463,11 @@ class MalaOrchestrator:
         return self.issue_coordinator.abort_reason
 
     def _cleanup_agent_locks(self, agent_id: str) -> None:
-        """Remove locks held by a specific agent (crash/timeout cleanup)."""
-        count, _released_paths = cleanup_agent_locks(agent_id)
-        if count:
-            logger.info("Agent locks cleaned: agent_id=%s count=%d", agent_id, count)
-            self.event_sink.on_locks_cleaned(agent_id, count)
-        # Unregister agent from deadlock monitor
-        if self.deadlock_monitor is not None:
-            self.deadlock_monitor.unregister_agent(agent_id)
+        """Remove locks held by a specific agent (crash/timeout cleanup).
 
-    async def _handle_deadlock(self, info: DeadlockInfo) -> None:
-        """Handle a detected deadlock by cancelling victim and recording dependency.
-
-        Called by DeadlockMonitor when a cycle is detected. Uses an asyncio.Lock
-        to prevent concurrent resolution of multiple deadlocks.
-
-        Args:
-            info: DeadlockInfo with cycle, victim, and blocker details.
+        Delegates to DeadlockHandler.cleanup_agent_locks.
         """
-        logger.debug("Acquiring deadlock resolution lock for victim %s", info.victim_id)
-        async with self._deadlock_resolution_lock:
-            logger.info(
-                "Deadlock resolution started: victim_id=%s issue_id=%s blocked_on=%s",
-                info.victim_id,
-                info.victim_issue_id,
-                info.blocked_on,
-            )
-            self.event_sink.on_deadlock_detected(info)
-
-            victim_issue_id = info.victim_issue_id
-            task_to_cancel: asyncio.Task[object] | None = None
-            is_self_cancel = False
-
-            # Identify victim task for cancellation
-            if victim_issue_id and victim_issue_id in self.active_tasks:
-                task = self.active_tasks[victim_issue_id]
-                if not task.done():
-                    task_to_cancel = task
-                    is_self_cancel = task is asyncio.current_task()
-
-            # Clean up victim's locks first (before any await that could raise)
-            # Track that we cleaned this agent to avoid double cleanup in run_implementer
-            self._cleanup_agent_locks(info.victim_id)
-            self._state.deadlock_cleaned_agents.add(info.victim_id)
-
-            # Use shield to protect resolution from cancellation
-            # Track whether cancellation occurred during shielded section
-            cancelled_during_shield = False
-            try:
-                await asyncio.shield(self._resolve_deadlock(info))
-            except asyncio.CancelledError:
-                cancelled_during_shield = True
-                # In self-cancel case, we'll schedule deferred cancellation below,
-                # so don't re-raise yet. For external cancellation, re-raise.
-                if not is_self_cancel:
-                    raise
-
-            # Cancel victim task after resolution is complete
-            if task_to_cancel is not None:
-                if is_self_cancel:
-                    # Defer self-cancellation to avoid interrupting this handler
-                    loop = asyncio.get_running_loop()
-                    loop.call_soon(task_to_cancel.cancel)
-                    logger.info("Victim killed: agent_id=%s", info.victim_id)
-                else:
-                    task_to_cancel.cancel()
-                    logger.info("Victim killed: agent_id=%s", info.victim_id)
-
-            # If we caught CancelledError in self-cancel case but it arrived before
-            # we scheduled our deferred cancellation, it was from an external source.
-            # Re-raise after scheduling our own cancellation to not mask it.
-            if cancelled_during_shield and is_self_cancel:
-                raise asyncio.CancelledError()
-
-    async def _resolve_deadlock(self, info: DeadlockInfo) -> None:
-        """Perform dependency and needs-followup updates for deadlock resolution.
-
-        Separated from _handle_deadlock to allow shielding from cancellation.
-
-        Args:
-            info: DeadlockInfo with cycle, victim, and blocker details.
-        """
-        victim_issue_id = info.victim_issue_id
-
-        # Add dependency: victim issue depends on blocker issue
-        if victim_issue_id and info.blocker_issue_id:
-            success = await self.beads.add_dependency_async(
-                victim_issue_id, info.blocker_issue_id
-            )
-            if success:
-                logger.info(
-                    "Added dependency: %s depends on %s",
-                    victim_issue_id,
-                    info.blocker_issue_id,
-                )
-            else:
-                logger.warning(
-                    "Failed to add dependency: %s depends on %s",
-                    victim_issue_id,
-                    info.blocker_issue_id,
-                )
-
-        # Mark victim issue as needs-followup
-        if victim_issue_id:
-            reason = (
-                f"Deadlock victim: blocked on {info.blocked_on} "
-                f"held by {info.blocker_id}"
-            )
-            log_path = self._state.active_session_log_paths.get(victim_issue_id)
-            await self.beads.mark_needs_followup_async(
-                victim_issue_id, reason, log_path=log_path
-            )
-            logger.info("Marked issue %s as needs-followup", victim_issue_id)
+        self._deadlock_handler.cleanup_agent_locks(agent_id)
 
     def _request_abort(self, reason: str) -> None:
         """Signal that the current run should stop due to a fatal error."""
@@ -643,56 +566,14 @@ class MalaOrchestrator:
     async def _abort_active_tasks(self, run_metadata: RunMetadata) -> None:
         """Cancel active tasks and mark them as failed.
 
-        Tasks that have already completed are finalized with their real results
-        rather than being marked as aborted.
+        Delegates to DeadlockHandler.abort_active_tasks.
         """
-        if not self.active_tasks:
-            return
-        reason = self.abort_reason or "Unrecoverable error"
-        self.event_sink.on_tasks_aborting(len(self.active_tasks), reason)
-        # Cancel tasks that are still running
-        for task in self.active_tasks.values():
-            if not task.done():
-                task.cancel()
-
-        # Finalize each remaining issue - use real result if already done
-        for issue_id, task in list(self.active_tasks.items()):
-            if task.done():
-                # Task completed before we could cancel - use real result
-                try:
-                    result = task.result()
-                except asyncio.CancelledError:
-                    result = IssueResult(
-                        issue_id=issue_id,
-                        agent_id=self._state.agent_ids.get(issue_id, "unknown"),
-                        success=False,
-                        summary=f"Aborted due to unrecoverable error: {reason}",
-                        session_log_path=self._state.active_session_log_paths.get(
-                            issue_id
-                        ),
-                    )
-                except Exception as e:
-                    result = IssueResult(
-                        issue_id=issue_id,
-                        agent_id=self._state.agent_ids.get(issue_id, "unknown"),
-                        success=False,
-                        summary=str(e),
-                        session_log_path=self._state.active_session_log_paths.get(
-                            issue_id
-                        ),
-                    )
-            else:
-                # Task was still running - mark as aborted
-                result = IssueResult(
-                    issue_id=issue_id,
-                    agent_id=self._state.agent_ids.get(issue_id, "unknown"),
-                    success=False,
-                    summary=f"Aborted due to unrecoverable error: {reason}",
-                    session_log_path=self._state.active_session_log_paths.get(issue_id),
-                )
-            await self._finalize_issue_result(issue_id, result, run_metadata)
-            # Mark completed in coordinator to keep state consistent
-            self.issue_coordinator.mark_completed(issue_id)
+        await self._deadlock_handler.abort_active_tasks(
+            self.active_tasks,
+            self.abort_reason,
+            self._state,
+            run_metadata,
+        )
 
     def _build_session_callbacks(self, issue_id: str) -> SessionCallbacks:
         """Build callbacks for session operations.
