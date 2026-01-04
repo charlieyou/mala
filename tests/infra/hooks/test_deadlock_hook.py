@@ -482,6 +482,21 @@ class TestIsSafeBatchCommand:
             )
             is True
         )
+        # <&3 input duplication
+        assert _is_safe_batch_command("lock-try.sh a.py <&3") is True
+
+    def test_digit_before_ampersand_is_backgrounding(self) -> None:
+        """Digit directly before & is backgrounding, not redirection (mala-ntpr.14).
+
+        In 2>&1, the & follows >, not the digit. Commands like 'cmd 1&' are
+        backgrounding, not redirection.
+        """
+        # These are backgrounding (unsafe), not redirection
+        assert _is_safe_batch_command("lock-try.sh a.py 1&") is False
+        assert _is_safe_batch_command("sleep 1&") is False
+        assert _is_safe_batch_command("lock-try.sh 1& lock-try.sh b.py") is False
+        # Contrast with actual redirection (already tested above)
+        assert _is_safe_batch_command("lock-try.sh a.py 2>&1") is True
 
 
 @pytest.mark.unit

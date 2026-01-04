@@ -92,9 +92,9 @@ def _is_safe_batch_command(command: str) -> bool:
                 # Check if it's && (safe), redirection (safe), or background (unsafe)
                 if i + 1 < len(command) and command[i + 1] == "&":
                     i += 1  # Skip the second &, && is safe
-                elif i > 0 and command[i - 1] in ">0123456789":
-                    # Part of redirection: 2>&1, >&, &> patterns
-                    # The & here is part of file descriptor redirection, not backgrounding
+                elif i > 0 and command[i - 1] in "><":
+                    # Part of redirection: >&1, <&3 patterns
+                    # In 2>&1, the & follows >, not the digit
                     pass
                 elif i + 1 < len(command) and command[i + 1] == ">":
                     # &> redirection (stdout+stderr to file)
