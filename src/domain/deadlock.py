@@ -370,6 +370,11 @@ class DeadlockMonitor:
                 result = self.on_deadlock(deadlock_info)
                 if asyncio.iscoroutine(result):
                     await result
+            logger.debug(
+                "Graph updated: holds=%d waits=%d",
+                len(self._graph._holds),
+                len(self._graph._waits),
+            )
             return deadlock_info
         elif event.event_type == LockEventType.RELEASED:
             self._graph.remove_hold(event.agent_id, event.lock_path)

@@ -92,6 +92,21 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         self.create_calls.append(options)
         return self.client
 
+    def create_options(
+        self,
+        *,
+        cwd: str,
+        permission_mode: str = "bypassPermissions",
+        model: str = "opus",
+        system_prompt: dict[str, str] | None = None,
+        setting_sources: list[str] | None = None,
+        mcp_servers: object | None = None,
+        disallowed_tools: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        hooks: dict[str, list[object]] | None = None,
+    ) -> object:
+        return {"cwd": cwd, "model": model}
+
 
 class DelayedSDKClient(FakeSDKClient):
     """SDK client that delays responses to test timeouts."""

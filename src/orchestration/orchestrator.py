@@ -450,7 +450,7 @@ class MalaOrchestrator:
         """Remove locks held by a specific agent (crash/timeout cleanup)."""
         cleaned = cleanup_agent_locks(agent_id)
         if cleaned:
-            logger.info("Victim locks cleaned: agent_id=%s count=%d", agent_id, cleaned)
+            logger.info("Agent locks cleaned: agent_id=%s count=%d", agent_id, cleaned)
             self.event_sink.on_locks_cleaned(agent_id, cleaned)
         # Unregister agent from deadlock monitor
         if self.deadlock_monitor is not None:
