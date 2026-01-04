@@ -351,8 +351,7 @@ class TestOrchestratorCleanup:
         self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Orchestrator cleans up locks when agent crashes/times out."""
-        from src.infra.io.base_sink import NullEventSink
-        from src.orchestration.orchestrator import MalaOrchestrator
+        from src.infra.tools.locking import cleanup_agent_locks
 
         agent_id = "bd-crashed-agent"
         env = {
@@ -369,12 +368,12 @@ class TestOrchestratorCleanup:
         # Set MALA_LOCK_DIR for the locking module
         monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
 
-        # Create orchestrator and run cleanup
-        orchestrator = MalaOrchestrator.__new__(MalaOrchestrator)
-        orchestrator.repo_path = Path("/tmp/fake")
-        orchestrator.event_sink = NullEventSink()
-        orchestrator.deadlock_monitor = None
-        orchestrator._cleanup_agent_locks(agent_id)
+        # Run cleanup directly (orchestrator delegates to this function)
+        count, paths = cleanup_agent_locks(agent_id)
+
+        # Should have cleaned 2 locks
+        assert count == 2
+        assert len(paths) == 2
 
         # Locks should be cleaned
         remaining = list(lock_env.glob("*.lock"))

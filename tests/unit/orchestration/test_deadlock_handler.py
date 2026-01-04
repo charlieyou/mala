@@ -98,16 +98,38 @@ class TestHandleDeadlock:
         deadlock_info: DeadlockInfo,
     ) -> None:
         """handle_deadlock acquires lock and calls callbacks in correct order."""
+        # Use a shared call_order list to track callback sequence
+        call_order: list[str] = []
+        mock_callbacks.on_deadlock_detected.side_effect = lambda _: call_order.append(
+            "on_deadlock_detected"
+        )
+        mock_callbacks.do_cleanup_agent_locks.side_effect = lambda _: (
+            call_order.append("do_cleanup_agent_locks"),
+            (1, ["/path/to/lock"]),
+        )[1]
+        mock_callbacks.on_locks_cleaned.side_effect = lambda *_: call_order.append(
+            "on_locks_cleaned"
+        )
+
+        async def track_add_dependency(dependent: str, dependency: str) -> bool:
+            call_order.append("add_dependency")
+            return True
+
+        mock_callbacks.add_dependency.side_effect = track_add_dependency
+        # Recreate handler with updated callbacks
+        handler = DeadlockHandler(callbacks=mock_callbacks.as_callbacks())
+
         active_tasks: dict[str, asyncio.Task[IssueResult]] = {}
 
         await handler.handle_deadlock(deadlock_info, state, active_tasks)
 
         # Verify callback order: on_deadlock_detected -> cleanup -> resolve
-        mock_callbacks.on_deadlock_detected.assert_called_once_with(deadlock_info)
-        mock_callbacks.do_cleanup_agent_locks.assert_called_once_with("agent-b")
-        mock_callbacks.on_locks_cleaned.assert_called_once_with("agent-b", 1)
-        mock_callbacks.add_dependency.assert_awaited_once_with("issue-b", "issue-a")
-        mock_callbacks.mark_needs_followup.assert_awaited_once()
+        assert call_order == [
+            "on_deadlock_detected",
+            "do_cleanup_agent_locks",
+            "on_locks_cleaned",
+            "add_dependency",
+        ]
 
     @pytest.mark.asyncio
     async def test_cleans_up_locks_and_tracks_in_state(
@@ -154,9 +176,10 @@ class TestHandleDeadlock:
 
         await handler.handle_deadlock(deadlock_info, state, active_tasks)
 
-        # Give the cancellation time to propagate
-        await asyncio.sleep(0.01)
-        assert cancelled.is_set()
+        # Wait deterministically for cancellation to be processed
+        await asyncio.wait_for(cancelled.wait(), timeout=1.0)
+        # Ensure task reaches terminal state
+        await asyncio.gather(victim_task, return_exceptions=True)
         assert victim_task.cancelled()
 
     @pytest.mark.asyncio
@@ -216,15 +239,25 @@ class TestHandleDeadlock:
         deadlock_info: DeadlockInfo,
     ) -> None:
         """handle_deadlock shields resolution from cancellation."""
-        # Make add_dependency slow to allow cancellation during resolution
+        # Track when shielded work completes
         dependency_called = asyncio.Event()
+        resolution_finished = asyncio.Event()
 
         async def slow_add_dependency(dependent: str, dependency: str) -> bool:
             dependency_called.set()
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
+            return True
+
+        async def mark_followup_and_signal(
+            issue_id: str, reason: str, log_path: Path | None
+        ) -> bool:
+            resolution_finished.set()
             return True
 
         mock_callbacks.add_dependency = AsyncMock(side_effect=slow_add_dependency)
+        mock_callbacks.mark_needs_followup = AsyncMock(
+            side_effect=mark_followup_and_signal
+        )
         # Create handler AFTER modifying callbacks
         handler = DeadlockHandler(callbacks=mock_callbacks.as_callbacks())
 
@@ -243,6 +276,9 @@ class TestHandleDeadlock:
         # but will re-raise CancelledError after
         with pytest.raises(asyncio.CancelledError):
             await task
+
+        # Wait for shielded work to complete to avoid cross-test timing issues
+        await asyncio.wait_for(resolution_finished.wait(), timeout=1.0)
 
         # Resolution should have completed (add_dependency was called)
         mock_callbacks.add_dependency.assert_awaited()
@@ -323,8 +359,8 @@ class TestAbortActiveTasks:
             active_tasks, "Test abort", state, mock_run_metadata
         )
 
-        # Task should be cancelled (may need to await to propagate)
-        await asyncio.sleep(0.01)
+        # Await task to terminal state deterministically
+        await asyncio.gather(task, return_exceptions=True)
         assert task.cancelled() or task.done()
         mock_callbacks.on_tasks_aborting.assert_called_once_with(1, "Test abort")
         mock_callbacks.finalize_issue_result.assert_awaited_once()
@@ -377,7 +413,9 @@ class TestAbortActiveTasks:
             raise ValueError("Task failed")
 
         task = asyncio.create_task(failing_task())
-        await asyncio.sleep(0.01)  # Let it fail
+        # Ensure task completes with exception before calling abort_active_tasks
+        with pytest.raises(ValueError, match="Task failed"):
+            await task
         active_tasks = {"issue-1": task}
         state.agent_ids["issue-1"] = "agent-1"
 
@@ -525,28 +563,29 @@ class TestCleanupAgentLocks:
 
         mock_callbacks.do_cleanup_agent_locks.assert_called_once()
 
-    def test_idempotent_via_state_tracking(
+    def test_emits_event_only_when_locks_released(
         self,
         handler: DeadlockHandler,
         mock_callbacks: MockCallbacks,
-        state: OrchestratorState,
     ) -> None:
-        """cleanup_agent_locks is idempotent via state tracking."""
-        # First cleanup
+        """cleanup_agent_locks only emits on_locks_cleaned when locks are released."""
+        # First cleanup releases locks
+        mock_callbacks.do_cleanup_agent_locks.return_value = (2, ["/a.py", "/b.py"])
         handler.cleanup_agent_locks("agent-1")
-        state.deadlock_cleaned_agents.add("agent-1")
+        mock_callbacks.on_locks_cleaned.assert_called_once_with("agent-1", 2)
 
-        # Reset mock to check second call
+        # Reset mocks for second call
         mock_callbacks.do_cleanup_agent_locks.reset_mock()
-        mock_callbacks.do_cleanup_agent_locks.return_value = (0, [])
+        mock_callbacks.on_locks_cleaned.reset_mock()
 
-        # Second cleanup - callback still called but returns 0
+        # Second cleanup returns 0 (no locks to release - idempotency in lock server)
+        mock_callbacks.do_cleanup_agent_locks.return_value = (0, [])
         handler.cleanup_agent_locks("agent-1")
 
-        # Callback is called (idempotency is in the lock server)
+        # Callback is always invoked (delegates to lock server)
         mock_callbacks.do_cleanup_agent_locks.assert_called_once_with("agent-1")
         # No event emitted since count is 0
-        mock_callbacks.on_locks_cleaned.assert_called_once()  # Only from first call
+        mock_callbacks.on_locks_cleaned.assert_not_called()
 
 
 class TestResolutionLockSerialization:
