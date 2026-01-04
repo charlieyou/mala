@@ -305,7 +305,9 @@ class AgentRuntimeBuilder:
                 )
             )
         else:
-            logger.info("No deadlock monitor configured; skipping lock event hooks")
+            logger.info(
+                "No deadlock monitor configured; locking MCP tools available but events not tracked"
+            )
 
         # Build environment if not explicitly set
         if self._env is None:

@@ -279,3 +279,36 @@ class TestAgentRuntimeBuilder:
         # Should still have env with required vars
         assert "AGENT_ID" in runtime.env
         assert runtime.env["AGENT_ID"] == "agent-default"
+
+    @pytest.mark.unit
+    def test_locking_mcp_registered_without_deadlock_monitor(
+        self, repo_path: Path, factory: FakeSDKClientFactory
+    ) -> None:
+        """Locking MCP server is registered even without deadlock monitor."""
+        # Build without deadlock monitor (the default)
+        AgentRuntimeBuilder(repo_path, "agent-no-monitor", factory).with_hooks(
+            deadlock_monitor=None
+        ).build()
+
+        assert len(factory.created_options) == 1
+        mcp_servers = factory.created_options[0]["mcp_servers"]
+
+        # Should have mala-locking server
+        assert "mala-locking" in mcp_servers
+
+    @pytest.mark.unit
+    def test_locking_mcp_registered_with_deadlock_monitor(
+        self, repo_path: Path, factory: FakeSDKClientFactory
+    ) -> None:
+        """Locking MCP server is registered with deadlock monitor."""
+        mock_monitor = MagicMock()
+
+        AgentRuntimeBuilder(repo_path, "agent-with-monitor", factory).with_hooks(
+            deadlock_monitor=mock_monitor
+        ).build()
+
+        assert len(factory.created_options) == 1
+        mcp_servers = factory.created_options[0]["mcp_servers"]
+
+        # Should have mala-locking server
+        assert "mala-locking" in mcp_servers
