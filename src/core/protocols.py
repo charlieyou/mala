@@ -444,6 +444,22 @@ class IssueProvider(Protocol):
         """
         ...
 
+    async def add_dependency_async(self, issue_id: str, depends_on_id: str) -> bool:
+        """Add a dependency between two issues.
+
+        Creates a "blocks" relationship where depends_on_id blocks issue_id.
+        Used by deadlock resolution to record that a victim issue depends on
+        the blocker's issue.
+
+        Args:
+            issue_id: The issue that depends on another.
+            depends_on_id: The issue that blocks issue_id.
+
+        Returns:
+            True if dependency added successfully, False otherwise.
+        """
+        ...
+
     async def get_issue_description_async(self, issue_id: str) -> str | None:
         """Get the description of an issue.
 

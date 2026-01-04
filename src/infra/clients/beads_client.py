@@ -583,6 +583,24 @@ class BeadsClient:
         result = await self._run_subprocess_async(["bd", "close", issue_id])
         return result.returncode == 0
 
+    async def add_dependency_async(self, issue_id: str, depends_on_id: str) -> bool:
+        """Add a dependency between two issues.
+
+        Creates a "blocks" relationship where depends_on_id blocks issue_id.
+        Uses `bd dep add <issue_id> <depends_on_id>`.
+
+        Args:
+            issue_id: The issue that depends on another.
+            depends_on_id: The issue that blocks issue_id.
+
+        Returns:
+            True if dependency added successfully, False otherwise.
+        """
+        result = await self._run_subprocess_async(
+            ["bd", "dep", "add", issue_id, depends_on_id]
+        )
+        return result.returncode == 0
+
     async def create_issue_async(
         self,
         title: str,

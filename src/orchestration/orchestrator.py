@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 import uuid
 from typing import TYPE_CHECKING
 
@@ -33,6 +35,7 @@ from src.infra.tools.env import (
     get_lock_dir,
     get_runs_dir,
 )
+from src.domain.deadlock import DeadlockMonitor
 from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.locking import (
     LockManager,
@@ -75,6 +78,7 @@ if TYPE_CHECKING:
         IssueProvider,
         LogProvider,
     )
+    from src.domain.deadlock import DeadlockInfo
     from src.domain.prompts import PromptProvider
     from src.infra.epic_verifier import EpicVerifier
     from src.infra.io.config import MalaConfig
@@ -92,6 +96,8 @@ if TYPE_CHECKING:
 from importlib.metadata import version as pkg_version
 
 __version__ = pkg_version("mala")
+
+logger = logging.getLogger(__name__)
 
 # Bounded wait for log file (seconds) - used by AgentSessionRunner
 # Re-exported here for backwards compatibility with tests.
@@ -205,6 +211,9 @@ class MalaOrchestrator:
             self.repo_path
         )
         self._prompts: PromptProvider = load_prompts(PROMPTS_DIR)
+        # Deadlock detection (T004: always initialize, T007 will add feature flag)
+        self.deadlock_monitor: DeadlockMonitor | None = DeadlockMonitor()
+        self._deadlock_resolution_lock = asyncio.Lock()
 
     def _init_pipeline_runners(self) -> None:
         """Initialize pipeline runner components using wiring functions."""
@@ -231,6 +240,10 @@ class MalaOrchestrator:
         self._session_config = build_session_config(
             deps, review_enabled=self._is_review_enabled()
         )
+
+        # Wire deadlock callback now that all dependencies are available
+        if self.deadlock_monitor is not None:
+            self.deadlock_monitor.on_deadlock = self._handle_deadlock
 
     def _build_wiring_dependencies(self) -> WiringDependencies:
         """Build WiringDependencies from orchestrator state."""
@@ -265,8 +278,7 @@ class MalaOrchestrator:
             context_limit=self.context_limit,
             session_log_paths=self.session_log_paths,
             review_log_paths=self.review_log_paths,
-            # T004 will wire actual DeadlockMonitor here
-            deadlock_monitor=None,
+            deadlock_monitor=self.deadlock_monitor,
         )
 
     def _build_issue_finalizer(self) -> IssueFinalizer:
@@ -430,6 +442,76 @@ class MalaOrchestrator:
         cleaned = cleanup_agent_locks(agent_id)
         if cleaned:
             self.event_sink.on_locks_cleaned(agent_id, cleaned)
+        # Unregister agent from deadlock monitor
+        if self.deadlock_monitor is not None:
+            self.deadlock_monitor.unregister_agent(agent_id)
+
+    async def _handle_deadlock(self, info: DeadlockInfo) -> None:
+        """Handle a detected deadlock by cancelling victim and recording dependency.
+
+        Called by DeadlockMonitor when a cycle is detected. Uses an asyncio.Lock
+        to prevent concurrent resolution of multiple deadlocks.
+
+        Args:
+            info: DeadlockInfo with cycle, victim, and blocker details.
+        """
+        async with self._deadlock_resolution_lock:
+            logger.warning(
+                "Deadlock detected: cycle=%s, victim=%s, blocked_on=%s, blocker=%s",
+                info.cycle,
+                info.victim_id,
+                info.blocked_on,
+                info.blocker_id,
+            )
+
+            # Cancel victim task if still running
+            victim_issue_id = info.victim_issue_id
+            if victim_issue_id and victim_issue_id in self.active_tasks:
+                task = self.active_tasks[victim_issue_id]
+                if not task.done():
+                    task.cancel()
+                    logger.info(
+                        "Cancelled task for victim issue %s (agent %s)",
+                        victim_issue_id,
+                        info.victim_id,
+                    )
+
+            # Clean up victim's locks
+            self._cleanup_agent_locks(info.victim_id)
+
+            # Add dependency: victim issue depends on blocker issue
+            if victim_issue_id and info.blocker_issue_id:
+                success = await self.beads.add_dependency_async(
+                    victim_issue_id, info.blocker_issue_id
+                )
+                if success:
+                    logger.info(
+                        "Added dependency: %s depends on %s",
+                        victim_issue_id,
+                        info.blocker_issue_id,
+                    )
+                else:
+                    logger.warning(
+                        "Failed to add dependency: %s depends on %s",
+                        victim_issue_id,
+                        info.blocker_issue_id,
+                    )
+
+            # Mark victim issue as needs-followup
+            if victim_issue_id:
+                reason = (
+                    f"Deadlock victim: blocked on {info.blocked_on} "
+                    f"held by {info.blocker_id}"
+                )
+                log_path = self.session_log_paths.get(victim_issue_id)
+                await self.beads.mark_needs_followup_async(
+                    victim_issue_id, reason, log_path=log_path
+                )
+                logger.info("Marked issue %s as needs-followup", victim_issue_id)
+
+            # Emit deadlock event to event sink
+            # Note: on_deadlock will be added in T006 (Event Protocol Updates)
+            # For now, log only. T006 will add: self.event_sink.on_deadlock(info)
 
     def _request_abort(self, reason: str) -> None:
         """Signal that the current run should stop due to a fatal error."""
@@ -573,6 +655,14 @@ class MalaOrchestrator:
         """
         temp_agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
         self.agent_ids[issue_id] = temp_agent_id
+
+        # Register with deadlock monitor
+        if self.deadlock_monitor is not None:
+            self.deadlock_monitor.register_agent(
+                agent_id=temp_agent_id,
+                issue_id=issue_id,
+                start_time=time.time(),
+            )
 
         # Prepare session inputs
         issue_description = await self.beads.get_issue_description_async(issue_id)

@@ -12,12 +12,16 @@ Cycle detection uses DFS from waiting agents to find circular dependencies.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+# Type alias for the deadlock callback
+DeadlockCallback = Callable[["DeadlockInfo"], Awaitable[None] | None]
 
 
 class LockEventType(Enum):
@@ -251,12 +255,17 @@ class DeadlockMonitor:
 
     Victim selection picks the youngest agent (highest start_time) in
     the cycle to minimize wasted work.
+
+    The on_deadlock callback is invoked when a deadlock is detected.
+    If set, handle_event will call it with the DeadlockInfo. The
+    callback may be sync or async.
     """
 
     def __init__(self) -> None:
         """Initialize the monitor with empty state."""
         self._graph = WaitForGraph()
         self._agents: dict[str, AgentInfo] = {}
+        self.on_deadlock: DeadlockCallback | None = None
 
     def register_agent(
         self, agent_id: str, issue_id: str | None, start_time: float
