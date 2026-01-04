@@ -44,6 +44,7 @@ from src.infra.hooks import (
     make_file_read_cache_hook,
     make_lint_cache_hook,
     make_lock_enforcement_hook,
+    make_lock_event_hook,
     make_stop_hook,
 )
 from src.infra.mcp import get_disallowed_tools, get_mcp_servers
@@ -70,6 +71,7 @@ if TYPE_CHECKING:
     from claude_agent_sdk import ClaudeAgentOptions
 
     from src.core.protocols import MalaEventSink
+    from src.domain.deadlock import DeadlockMonitor
     from src.domain.lifecycle import (
         GateOutcome,
         RetryState,
@@ -414,6 +416,7 @@ class AgentSessionConfig:
     prompt_validation_commands: PromptValidationCommands | None = None
     context_restart_threshold: float = 0.90
     context_limit: int = 200_000
+    deadlock_monitor: DeadlockMonitor | None = None
 
 
 @dataclass
@@ -427,12 +430,14 @@ class AgentSessionInput:
         prompt: The initial prompt to send to the agent.
         baseline_commit: Optional baseline commit for diff comparison.
         issue_description: Issue description for scope verification.
+        agent_id: Optional pre-generated agent ID for lock management.
     """
 
     issue_id: str
     prompt: str
     baseline_commit: str | None = None
     issue_description: str | None = None
+    agent_id: str | None = None
 
 
 @dataclass
@@ -757,6 +762,17 @@ class AgentSessionRunner:
         ]
         post_tool_hooks: list[object] = []
         stop_hooks: list[object] = [make_stop_hook(agent_id)]
+
+        # Add lock event hook if deadlock monitor is configured
+        if self.config.deadlock_monitor is not None:
+            monitor = self.config.deadlock_monitor
+            post_tool_hooks.append(
+                make_lock_event_hook(
+                    agent_id=agent_id,
+                    emit_event=monitor.handle_event,
+                    repo_namespace=str(self.config.repo_path),
+                )
+            )
 
         return pre_tool_hooks, post_tool_hooks, stop_hooks
 
@@ -1924,8 +1940,8 @@ class AgentSessionRunner:
         current_prompt = input.prompt
         # Timeout for checkpoint fetch operations (30 seconds)
         checkpoint_timeout_seconds = 30
-        # Generate agent_id once to preserve lock continuity across restarts
-        agent_id = f"{input.issue_id}-{uuid.uuid4().hex[:8]}"
+        # Use provided agent_id or generate one to preserve lock continuity across restarts
+        agent_id = input.agent_id or f"{input.issue_id}-{uuid.uuid4().hex[:8]}"
 
         while True:
             # Calculate remaining time to enforce overall session timeout

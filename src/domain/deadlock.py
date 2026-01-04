@@ -12,6 +12,7 @@ Cycle detection uses DFS from waiting agents to find circular dependencies.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -293,11 +294,12 @@ class DeadlockMonitor:
         if agent_id in self._agents:
             del self._agents[agent_id]
 
-    def handle_event(self, event: LockEvent) -> DeadlockInfo | None:
+    async def handle_event(self, event: LockEvent) -> DeadlockInfo | None:
         """Process a lock event and check for deadlocks.
 
         Updates the wait-for graph based on the event type, then checks
-        for cycles if the event indicates waiting.
+        for cycles if the event indicates waiting. If a deadlock is detected
+        and on_deadlock is set, invokes the callback.
 
         Args:
             event: The lock event to process.
@@ -310,7 +312,12 @@ class DeadlockMonitor:
         elif event.event_type == LockEventType.WAITING:
             self._graph.add_wait(event.agent_id, event.lock_path)
             # Check for deadlock after adding wait
-            return self._check_for_deadlock(event.agent_id, event.lock_path)
+            deadlock_info = self._check_for_deadlock(event.agent_id, event.lock_path)
+            if deadlock_info is not None and self.on_deadlock is not None:
+                result = self.on_deadlock(deadlock_info)
+                if asyncio.iscoroutine(result):
+                    await result
+            return deadlock_info
         elif event.event_type == LockEventType.RELEASED:
             self._graph.remove_hold(event.agent_id, event.lock_path)
 

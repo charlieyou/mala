@@ -376,6 +376,7 @@ class TestOrchestratorCleanup:
         orchestrator = MalaOrchestrator.__new__(MalaOrchestrator)
         orchestrator.repo_path = Path("/tmp/fake")
         orchestrator.event_sink = NullEventSink()
+        orchestrator.deadlock_monitor = None
         orchestrator._cleanup_agent_locks(agent_id)
 
         # Locks should be cleaned

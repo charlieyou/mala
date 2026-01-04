@@ -119,7 +119,7 @@ class TestDeadlockMonitor:
         monitor.unregister_agent("agent-1")
         # Should not raise
 
-    def test_handle_acquired_event(self) -> None:
+    async def test_handle_acquired_event(self) -> None:
         """ACQUIRED event updates graph but doesn't detect deadlock."""
         monitor = DeadlockMonitor()
         monitor.register_agent("agent-1", "issue-123", 1000.0)
@@ -130,26 +130,26 @@ class TestDeadlockMonitor:
             lock_path="/path/file.py",
             timestamp=1001.0,
         )
-        result = monitor.handle_event(event)
+        result = await monitor.handle_event(event)
 
         assert result is None
 
-    def test_handle_released_event(self) -> None:
+    async def test_handle_released_event(self) -> None:
         """RELEASED event clears hold."""
         monitor = DeadlockMonitor()
         monitor.register_agent("agent-1", "issue-123", 1000.0)
 
         # Acquire then release
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.ACQUIRED, "agent-1", "/path/file.py", 1001.0)
         )
-        result = monitor.handle_event(
+        result = await monitor.handle_event(
             LockEvent(LockEventType.RELEASED, "agent-1", "/path/file.py", 1002.0)
         )
 
         assert result is None
 
-    def test_no_deadlock_single_wait(self) -> None:
+    async def test_no_deadlock_single_wait(self) -> None:
         """Single agent waiting doesn't trigger deadlock."""
         monitor = DeadlockMonitor()
         monitor.register_agent("agent-1", "issue-123", 1000.0)
@@ -160,11 +160,11 @@ class TestDeadlockMonitor:
             lock_path="/path/file.py",
             timestamp=1001.0,
         )
-        result = monitor.handle_event(event)
+        result = await monitor.handle_event(event)
 
         assert result is None
 
-    def test_two_party_deadlock_detected(self) -> None:
+    async def test_two_party_deadlock_detected(self) -> None:
         """Two-party deadlock is detected with correct victim."""
         monitor = DeadlockMonitor()
         # agent-a started at 1000, agent-b at 2000 (younger)
@@ -172,21 +172,21 @@ class TestDeadlockMonitor:
         monitor.register_agent("agent-b", "issue-b", 2000.0)
 
         # A holds L1, B holds L2
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.ACQUIRED, "agent-a", "/path/l1.py", 1001.0)
         )
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.ACQUIRED, "agent-b", "/path/l2.py", 2001.0)
         )
 
         # A waits for L2 (held by B) - no deadlock yet
-        result = monitor.handle_event(
+        result = await monitor.handle_event(
             LockEvent(LockEventType.WAITING, "agent-a", "/path/l2.py", 1002.0)
         )
         assert result is None
 
         # B waits for L1 (held by A) - deadlock!
-        result = monitor.handle_event(
+        result = await monitor.handle_event(
             LockEvent(LockEventType.WAITING, "agent-b", "/path/l1.py", 2002.0)
         )
 
@@ -200,7 +200,7 @@ class TestDeadlockMonitor:
         assert result.blocker_id == "agent-a"
         assert result.blocker_issue_id == "issue-a"
 
-    def test_three_party_deadlock_victim_is_youngest(self) -> None:
+    async def test_three_party_deadlock_victim_is_youngest(self) -> None:
         """Three-party deadlock selects youngest agent as victim."""
         monitor = DeadlockMonitor()
         # Register with different start times
@@ -209,26 +209,26 @@ class TestDeadlockMonitor:
         monitor.register_agent("agent-c", "issue-c", 3000.0)  # Youngest
 
         # A holds L1, B holds L2, C holds L3
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.ACQUIRED, "agent-a", "/path/l1.py", 1001.0)
         )
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.ACQUIRED, "agent-b", "/path/l2.py", 2001.0)
         )
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.ACQUIRED, "agent-c", "/path/l3.py", 3001.0)
         )
 
         # A waits L2, B waits L3
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.WAITING, "agent-a", "/path/l2.py", 1002.0)
         )
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.WAITING, "agent-b", "/path/l3.py", 2002.0)
         )
 
         # C waits L1 - completes the cycle
-        result = monitor.handle_event(
+        result = await monitor.handle_event(
             LockEvent(LockEventType.WAITING, "agent-c", "/path/l1.py", 3002.0)
         )
 
@@ -237,22 +237,22 @@ class TestDeadlockMonitor:
         # Victim is agent-c (youngest, start_time=3000)
         assert result.victim_id == "agent-c"
 
-    def test_unregister_clears_graph_state(self) -> None:
+    async def test_unregister_clears_graph_state(self) -> None:
         """Unregistering an agent prevents deadlock detection involving it."""
         monitor = DeadlockMonitor()
         monitor.register_agent("agent-a", "issue-a", 1000.0)
         monitor.register_agent("agent-b", "issue-b", 2000.0)
 
         # A holds L1, B holds L2
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.ACQUIRED, "agent-a", "/path/l1.py", 1001.0)
         )
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.ACQUIRED, "agent-b", "/path/l2.py", 2001.0)
         )
 
         # A waits for L2
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.WAITING, "agent-a", "/path/l2.py", 1002.0)
         )
 
@@ -260,31 +260,99 @@ class TestDeadlockMonitor:
         monitor.unregister_agent("agent-a")
 
         # B waits for L1 - but A is gone, no deadlock
-        result = monitor.handle_event(
+        result = await monitor.handle_event(
             LockEvent(LockEventType.WAITING, "agent-b", "/path/l1.py", 2002.0)
         )
         assert result is None
 
-    def test_handle_event_with_none_issue_id(self) -> None:
+    async def test_handle_event_with_none_issue_id(self) -> None:
         """Agents with None issue_id are handled correctly."""
         monitor = DeadlockMonitor()
         monitor.register_agent("agent-a", None, 1000.0)
         monitor.register_agent("agent-b", None, 2000.0)
 
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.ACQUIRED, "agent-a", "/path/l1.py", 1001.0)
         )
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.ACQUIRED, "agent-b", "/path/l2.py", 2001.0)
         )
-        monitor.handle_event(
+        await monitor.handle_event(
             LockEvent(LockEventType.WAITING, "agent-a", "/path/l2.py", 1002.0)
         )
 
-        result = monitor.handle_event(
+        result = await monitor.handle_event(
             LockEvent(LockEventType.WAITING, "agent-b", "/path/l1.py", 2002.0)
         )
 
         assert result is not None
         assert result.victim_issue_id is None
         assert result.blocker_issue_id is None
+
+    async def test_on_deadlock_callback_invoked(self) -> None:
+        """on_deadlock callback is invoked when deadlock detected."""
+        monitor = DeadlockMonitor()
+        monitor.register_agent("agent-a", "issue-a", 1000.0)
+        monitor.register_agent("agent-b", "issue-b", 2000.0)
+
+        # Track callback invocations
+        callback_calls: list[DeadlockInfo] = []
+
+        async def on_deadlock(info: DeadlockInfo) -> None:
+            callback_calls.append(info)
+
+        monitor.on_deadlock = on_deadlock
+
+        # A holds L1, B holds L2
+        await monitor.handle_event(
+            LockEvent(LockEventType.ACQUIRED, "agent-a", "/path/l1.py", 1001.0)
+        )
+        await monitor.handle_event(
+            LockEvent(LockEventType.ACQUIRED, "agent-b", "/path/l2.py", 2001.0)
+        )
+
+        # A waits for L2
+        await monitor.handle_event(
+            LockEvent(LockEventType.WAITING, "agent-a", "/path/l2.py", 1002.0)
+        )
+        assert len(callback_calls) == 0  # No deadlock yet
+
+        # B waits for L1 - deadlock, callback should fire
+        result = await monitor.handle_event(
+            LockEvent(LockEventType.WAITING, "agent-b", "/path/l1.py", 2002.0)
+        )
+
+        assert result is not None
+        assert len(callback_calls) == 1
+        assert callback_calls[0] is result
+        assert callback_calls[0].victim_id == "agent-b"
+
+    async def test_on_deadlock_sync_callback_invoked(self) -> None:
+        """Sync on_deadlock callback is also invoked."""
+        monitor = DeadlockMonitor()
+        monitor.register_agent("agent-a", "issue-a", 1000.0)
+        monitor.register_agent("agent-b", "issue-b", 2000.0)
+
+        callback_calls: list[DeadlockInfo] = []
+
+        def on_deadlock(info: DeadlockInfo) -> None:
+            callback_calls.append(info)
+
+        monitor.on_deadlock = on_deadlock
+
+        # Setup deadlock
+        await monitor.handle_event(
+            LockEvent(LockEventType.ACQUIRED, "agent-a", "/path/l1.py", 1001.0)
+        )
+        await monitor.handle_event(
+            LockEvent(LockEventType.ACQUIRED, "agent-b", "/path/l2.py", 2001.0)
+        )
+        await monitor.handle_event(
+            LockEvent(LockEventType.WAITING, "agent-a", "/path/l2.py", 1002.0)
+        )
+        await monitor.handle_event(
+            LockEvent(LockEventType.WAITING, "agent-b", "/path/l1.py", 2002.0)
+        )
+
+        assert len(callback_calls) == 1
+        assert callback_calls[0].victim_id == "agent-b"

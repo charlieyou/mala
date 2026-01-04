@@ -285,4 +285,5 @@ def build_session_config(
         prompt_validation_commands=deps.prompt_validation_commands,
         context_restart_threshold=deps.context_restart_threshold,
         context_limit=deps.context_limit,
+        deadlock_monitor=deps.deadlock_monitor,
     )

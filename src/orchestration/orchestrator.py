@@ -685,6 +685,7 @@ class MalaOrchestrator:
             prompt=prompt,
             baseline_commit=baseline_commit,
             issue_description=issue_description,
+            agent_id=temp_agent_id,
         )
 
         runner = AgentSessionRunner(
