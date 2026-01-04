@@ -367,7 +367,7 @@ class MessageStreamProcessor:
                 self.config.context_limit
             )
             if pressure >= self.config.context_restart_threshold:
-                # session_id was already extracted at line 331
+                # session_id was already extracted above
                 raise ContextPressureError(
                     session_id=state.session_id or "",
                     input_tokens=input_tokens,

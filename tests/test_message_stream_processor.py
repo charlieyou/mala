@@ -32,7 +32,7 @@ from src.pipeline.message_stream_processor import (
     StreamProcessorCallbacks,
     StreamProcessorConfig,
 )
-from src.domain.lifecycle import ContextUsage, LifecycleContext
+from src.domain.lifecycle import LifecycleContext
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -96,15 +96,6 @@ class FakeLintCache:
     def mark_success(self, lint_type: str, command: str) -> None:
         """Mark a lint command as successful."""
         self.marked_successes.append((lint_type, command))
-
-
-class FakeLifecycleContext:
-    """Fake LifecycleContext for testing."""
-
-    def __init__(self) -> None:
-        self.session_id: str | None = None
-        self.final_result: str = ""
-        self.context_usage = ContextUsage()
 
 
 class FakeTracer:
