@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).parent.parent / "src" / "scripts"
+SCRIPTS_DIR = Path(__file__).parent.parent.parent.parent / "src" / "scripts"
 
 # Stable mutex key used by test-mutex.sh for repo-wide commands
 MUTEX_KEY = "__test_mutex__"

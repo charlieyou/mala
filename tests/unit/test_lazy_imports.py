@@ -13,8 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Compute repo root dynamically (tests/ is one level below repo root)
-REPO_ROOT = Path(__file__).parent.parent
+# Compute repo root dynamically (tests/unit/ is two levels below repo root)
+REPO_ROOT = Path(__file__).parent.parent.parent
 
 
 def test_import_src_does_not_load_sdk() -> None:

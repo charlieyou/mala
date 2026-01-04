@@ -26,7 +26,7 @@ from src.domain.validation.config_loader import (
 
 
 # Path to test fixtures
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "mala-configs"
+FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "mala-configs"
 
 
 class TestLoadConfig:

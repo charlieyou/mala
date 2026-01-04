@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from src.core.protocols import MalaEventSink
 
 # Path to golden files captured from real Cerberus output
-FIXTURES_DIR = Path(__file__).parent / "fixtures" / "cerberus"
+FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures" / "cerberus"
 
 
 class MockEventSink(BaseEventSink):
