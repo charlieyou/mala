@@ -1225,3 +1225,77 @@ class TestWaitForLockAsync:
         # Should have called asyncio.sleep with the poll interval
         assert len(sleep_calls) >= 1
         assert all(delay == 0.05 for delay in sleep_calls)
+
+
+class TestGetLockHolder:
+    """Tests for get_lock_holder function."""
+
+    def test_returns_agent_id_when_locked(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """get_lock_holder returns the agent_id of the lock holder."""
+        from src.infra.tools.locking import get_lock_holder, try_lock
+
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+
+        test_file = lock_env / "locked.py"
+        test_file.touch()
+
+        # Acquire lock
+        assert try_lock(str(test_file), "holder-agent-123") is True
+
+        # get_lock_holder returns the holder
+        holder = get_lock_holder(str(test_file))
+        assert holder == "holder-agent-123"
+
+    def test_returns_none_when_not_locked(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """get_lock_holder returns None when file is not locked."""
+        from src.infra.tools.locking import get_lock_holder
+
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+
+        test_file = lock_env / "not_locked.py"
+        test_file.touch()
+
+        # No lock exists
+        holder = get_lock_holder(str(test_file))
+        assert holder is None
+
+    def test_returns_none_for_nonexistent_file(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """get_lock_holder returns None for paths that don't exist."""
+        from src.infra.tools.locking import get_lock_holder
+
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+
+        # File doesn't exist and was never locked
+        holder = get_lock_holder("/nonexistent/path/file.py")
+        assert holder is None
+
+    def test_respects_repo_namespace(
+        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """get_lock_holder respects repo_namespace parameter."""
+        from src.infra.tools.locking import get_lock_holder, try_lock
+
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
+
+        test_file = "namespaced.py"
+
+        # Lock with namespace
+        assert try_lock(test_file, "ns-agent", repo_namespace="/repo/a") is True
+
+        # Query with same namespace - finds holder
+        holder = get_lock_holder(test_file, repo_namespace="/repo/a")
+        assert holder == "ns-agent"
+
+        # Query without namespace - returns None (different key)
+        holder_no_ns = get_lock_holder(test_file, repo_namespace=None)
+        assert holder_no_ns is None
+
+        # Query with different namespace - returns None
+        holder_diff_ns = get_lock_holder(test_file, repo_namespace="/repo/b")
+        assert holder_diff_ns is None
