@@ -22,10 +22,12 @@ from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
     AgentSessionRunner,
-    ContextPressureError,
-    MessageIterationState,
     PromptProvider,
     SessionCallbacks,
+)
+from src.pipeline.message_stream_processor import (
+    ContextPressureError,
+    MessageIterationState,
 )
 from src.domain.quality_gate import GateResult
 
