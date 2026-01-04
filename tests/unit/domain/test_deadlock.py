@@ -1,10 +1,9 @@
 """Unit tests for deadlock detection domain model."""
 
+from src.core.models import LockEvent, LockEventType
 from src.domain.deadlock import (
     DeadlockInfo,
     DeadlockMonitor,
-    LockEvent,
-    LockEventType,
     WaitForGraph,
 )
 

@@ -15,11 +15,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from src.domain.deadlock import (
-    DeadlockMonitor,
-    LockEvent,
-    LockEventType,
-)
+from src.core.models import LockEvent, LockEventType
+from src.domain.deadlock import DeadlockMonitor
 from src.infra.io.base_sink import NullEventSink
 
 if TYPE_CHECKING:

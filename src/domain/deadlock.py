@@ -18,21 +18,20 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.core.models import LockEvent, LockEventType
+from src.core.models import LockEventType
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from src.core.models import LockEvent
+
 logger = logging.getLogger(__name__)
 
-# Re-export for backward compatibility
 __all__ = [
     "AgentInfo",
     "DeadlockCallback",
     "DeadlockInfo",
     "DeadlockMonitor",
-    "LockEvent",
-    "LockEventType",
     "WaitForGraph",
 ]
 
