@@ -514,31 +514,41 @@ def get_all_locks() -> dict[str, list[str]]:
     return locks_by_agent
 
 
-def cleanup_agent_locks(agent_id: str) -> int:
+def cleanup_agent_locks(agent_id: str) -> tuple[int, list[str]]:
     """Remove locks held by a specific agent (crash/timeout cleanup).
 
     Args:
         agent_id: The agent ID whose locks should be cleaned up.
 
     Returns:
-        Number of locks cleaned up.
+        Tuple of (count cleaned, list of released file paths).
     """
     if not _get_lock_dir().exists():
-        return 0
+        return 0, []
 
     cleaned = 0
+    released_paths: list[str] = []
     for lock in _get_lock_dir().glob("*.lock"):
         try:
             if lock.is_file() and lock.read_text().strip() == agent_id:
-                # Also remove companion .meta file
-                lock.with_suffix(".meta").unlink(missing_ok=True)
+                # Extract original filepath from .meta file before deleting
+                meta_path = lock.with_suffix(".meta")
+                original_path: str | None = None
+                if meta_path.is_file():
+                    try:
+                        original_path = meta_path.read_text().strip()
+                    except OSError:
+                        pass
+                    meta_path.unlink(missing_ok=True)
                 lock.unlink()
                 cleaned += 1
+                if original_path:
+                    released_paths.append(original_path)
         except OSError:
             pass
 
     logger.info("Agent locks cleaned: agent_id=%s count=%d", agent_id, cleaned)
-    return cleaned
+    return cleaned, released_paths
 
 
 class LockManager:

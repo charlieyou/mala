@@ -315,12 +315,13 @@ class TestLockReleaseWiring:
 
     @pytest.mark.asyncio
     async def test_release_all_calls_cleanup_agent_locks(self) -> None:
-        """all=true calls cleanup_agent_locks."""
+        """all=true calls cleanup_agent_locks and returns released paths."""
         cleanup_called: list[str] = []
+        mock_released_paths = ["/path/to/file1.py", "/path/to/file2.py"]
 
-        def mock_cleanup(agent_id: str) -> int:
+        def mock_cleanup(agent_id: str) -> tuple[int, list[str]]:
             cleanup_called.append(agent_id)
-            return 5
+            return 5, mock_released_paths
 
         with patch(
             "src.infra.tools.locking_mcp.cleanup_agent_locks", side_effect=mock_cleanup
@@ -332,6 +333,7 @@ class TestLockReleaseWiring:
         assert cleanup_called == ["test-agent"]
         content = json.loads(result["content"][0]["text"])
         assert content["count"] == 5
+        assert content["released"] == mock_released_paths
 
     @pytest.mark.asyncio
     async def test_release_specific_calls_release_lock(self) -> None:

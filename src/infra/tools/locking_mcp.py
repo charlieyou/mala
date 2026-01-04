@@ -339,14 +339,14 @@ def create_locking_mcp_server(
 
         if release_all:
             # Release all locks held by this agent
-            count = cleanup_agent_locks(agent_id)
+            count, released_paths = cleanup_agent_locks(agent_id)
             return {
                 "content": [
                     {
                         "type": "text",
                         "text": json.dumps(
                             {
-                                "released": [],
+                                "released": released_paths,
                                 "count": count,
                             }
                         ),
