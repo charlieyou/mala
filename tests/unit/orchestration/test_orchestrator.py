@@ -4802,10 +4802,10 @@ class TestBuildGateMetadataFromLogs:
 class TestContextConfigWiring:
     """Test that context threshold config propagates correctly."""
 
-    def test_context_thresholds_propagate_to_wiring_dependencies(
+    def test_context_thresholds_propagate_to_pipeline_config(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """Verify context_restart_threshold and context_limit reach WiringDependencies."""
+        """Verify context_restart_threshold and context_limit reach PipelineConfig."""
         # Create orchestrator with non-default values
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
@@ -4813,12 +4813,12 @@ class TestContextConfigWiring:
             context_limit=150_000,
         )
 
-        # Build wiring dependencies
-        deps = orchestrator._build_wiring_dependencies()
+        # Build pipeline config
+        pipeline = orchestrator._build_pipeline_config()
 
         # Verify values propagated
-        assert deps.context_restart_threshold == 0.75
-        assert deps.context_limit == 150_000
+        assert pipeline.context_restart_threshold == 0.75
+        assert pipeline.context_limit == 150_000
 
     def test_context_thresholds_propagate_to_session_config(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
@@ -4833,9 +4833,9 @@ class TestContextConfigWiring:
             context_limit=180_000,
         )
 
-        # Build wiring dependencies and session config
-        deps = orchestrator._build_wiring_dependencies()
-        session_config = build_session_config(deps, review_enabled=False)
+        # Build pipeline config and session config
+        pipeline = orchestrator._build_pipeline_config()
+        session_config = build_session_config(pipeline, review_enabled=False)
 
         # Verify values propagated through entire path
         assert session_config.context_restart_threshold == 0.85
@@ -4849,8 +4849,8 @@ class TestContextConfigWiring:
 
         orchestrator = make_orchestrator(repo_path=tmp_path)
 
-        deps = orchestrator._build_wiring_dependencies()
-        session_config = build_session_config(deps, review_enabled=False)
+        pipeline = orchestrator._build_pipeline_config()
+        session_config = build_session_config(pipeline, review_enabled=False)
 
         # Default values from OrchestratorConfig
         assert session_config.context_restart_threshold == 0.90

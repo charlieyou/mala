@@ -49,134 +49,92 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.protocols import (
-        CodeReviewer,
-        CommandRunnerPort,
-        EnvConfigPort,
-        GateChecker,
-        IssueProvider,
-        LockManagerPort,
-        MalaEventSink,
         ReviewIssueProtocol,
         SDKClientFactoryProtocol,
     )
-    from src.domain.prompts import (
-        PromptProvider,
-        PromptValidationCommands,
-    )
     from src.infra.epic_verifier import EpicVerificationResult
-    from src.infra.io.config import MalaConfig
-    from src.domain.deadlock import DeadlockMonitor
     from src.infra.io.log_output.run_metadata import RunMetadata
+    from src.orchestration.types import (
+        IssueFilterConfig,
+        PipelineConfig,
+        RuntimeDeps,
+    )
     from src.pipeline.issue_result import IssueResult
 
 
-@dataclass
-class WiringDependencies:
-    """Dependencies required for pipeline component wiring.
-
-    All dependencies are provided by the orchestrator factory and passed
-    through to the wiring functions.
-    """
-
-    repo_path: Path
-    quality_gate: GateChecker
-    code_reviewer: CodeReviewer
-    beads: IssueProvider
-    event_sink: MalaEventSink
-    mala_config: MalaConfig
-    command_runner: CommandRunnerPort
-    env_config: EnvConfigPort
-    lock_manager: LockManagerPort
-    # Config values
-    max_agents: int | None
-    max_issues: int | None
-    timeout_seconds: int
-    max_gate_retries: int
-    max_review_retries: int
-    coverage_threshold: float | None
-    disabled_validations: set[str] | None
-    epic_id: str | None
-    only_ids: set[str] | None
-    prioritize_wip: bool
-    focus: bool
-    orphans_only: bool
-    epic_override_ids: set[str]
-    prompt_validation_commands: PromptValidationCommands
-    prompts: PromptProvider
-    context_restart_threshold: float
-    context_limit: int
-    # Deadlock detection (None until T004 wires DeadlockMonitor into orchestrator)
-    deadlock_monitor: DeadlockMonitor | None = None
-
-
-def build_gate_runner(deps: WiringDependencies) -> tuple[GateRunner, AsyncGateRunner]:
+def build_gate_runner(
+    runtime: RuntimeDeps, pipeline: PipelineConfig
+) -> tuple[GateRunner, AsyncGateRunner]:
     """Build GateRunner and AsyncGateRunner."""
     config = GateRunnerConfig(
-        max_gate_retries=deps.max_gate_retries,
-        disable_validations=deps.disabled_validations,
-        coverage_threshold=deps.coverage_threshold,
+        max_gate_retries=pipeline.max_gate_retries,
+        disable_validations=pipeline.disabled_validations,
+        coverage_threshold=pipeline.coverage_threshold,
     )
     gate_runner = GateRunner(
-        gate_checker=deps.quality_gate,
-        repo_path=deps.repo_path,
+        gate_checker=runtime.quality_gate,
+        repo_path=pipeline.repo_path,
         config=config,
     )
     async_gate_runner = AsyncGateRunner(gate_runner=gate_runner)
     return gate_runner, async_gate_runner
 
 
-def build_review_runner(deps: WiringDependencies) -> ReviewRunner:
+def build_review_runner(runtime: RuntimeDeps, pipeline: PipelineConfig) -> ReviewRunner:
     """Build ReviewRunner."""
     config = ReviewRunnerConfig(
-        max_review_retries=deps.max_review_retries,
+        max_review_retries=pipeline.max_review_retries,
         capture_session_log=False,
-        review_timeout=deps.mala_config.review_timeout,
+        review_timeout=runtime.mala_config.review_timeout,
     )
     return ReviewRunner(
-        code_reviewer=deps.code_reviewer,
+        code_reviewer=runtime.code_reviewer,
         config=config,
-        gate_checker=deps.quality_gate,
+        gate_checker=runtime.quality_gate,
     )
 
 
 def build_run_coordinator(
-    deps: WiringDependencies,
+    runtime: RuntimeDeps,
+    pipeline: PipelineConfig,
     sdk_client_factory: SDKClientFactoryProtocol,
 ) -> RunCoordinator:
     """Build RunCoordinator."""
     config = RunCoordinatorConfig(
-        repo_path=deps.repo_path,
-        timeout_seconds=deps.timeout_seconds,
-        max_gate_retries=deps.max_gate_retries,
-        disable_validations=deps.disabled_validations,
-        coverage_threshold=deps.coverage_threshold,
-        fixer_prompt=deps.prompts.fixer_prompt,
+        repo_path=pipeline.repo_path,
+        timeout_seconds=pipeline.timeout_seconds,
+        max_gate_retries=pipeline.max_gate_retries,
+        disable_validations=pipeline.disabled_validations,
+        coverage_threshold=pipeline.coverage_threshold,
+        fixer_prompt=pipeline.prompts.fixer_prompt,
     )
     return RunCoordinator(
         config=config,
-        gate_checker=deps.quality_gate,
-        command_runner=deps.command_runner,
-        env_config=deps.env_config,
-        lock_manager=deps.lock_manager,
+        gate_checker=runtime.quality_gate,
+        command_runner=runtime.command_runner,
+        env_config=runtime.env_config,
+        lock_manager=runtime.lock_manager,
         sdk_client_factory=sdk_client_factory,
-        event_sink=deps.event_sink,
+        event_sink=runtime.event_sink,
     )
 
 
-def build_issue_coordinator(deps: WiringDependencies) -> IssueExecutionCoordinator:
+def build_issue_coordinator(
+    filters: IssueFilterConfig, runtime: RuntimeDeps
+) -> IssueExecutionCoordinator:
     """Build IssueExecutionCoordinator."""
     config = CoordinatorConfig(
-        max_agents=deps.max_agents,
-        max_issues=deps.max_issues,
-        epic_id=deps.epic_id,
-        only_ids=deps.only_ids,
-        prioritize_wip=deps.prioritize_wip,
-        focus=deps.focus,
-        orphans_only=deps.orphans_only,
+        max_agents=filters.max_agents,
+        max_issues=filters.max_issues,
+        epic_id=filters.epic_id,
+        only_ids=filters.only_ids,
+        prioritize_wip=filters.prioritize_wip,
+        focus=filters.focus,
+        orphans_only=filters.orphans_only,
     )
     return IssueExecutionCoordinator(
-        beads=deps.beads,
-        event_sink=deps.event_sink,
+        beads=runtime.beads,
+        event_sink=runtime.event_sink,
         config=config,
     )
 
@@ -243,7 +201,8 @@ def build_epic_callbacks(refs: EpicCallbackRefs) -> EpicVerificationCallbacks:
 
 
 def build_session_callback_factory(
-    deps: WiringDependencies,
+    runtime: RuntimeDeps,
+    pipeline: PipelineConfig,
     async_gate_runner: AsyncGateRunner,
     review_runner: ReviewRunner,
     log_provider_getter: Callable,
@@ -256,9 +215,9 @@ def build_session_callback_factory(
         gate_async_runner=async_gate_runner,
         review_runner=review_runner,
         log_provider=log_provider_getter,
-        event_sink=lambda: deps.event_sink,
+        event_sink=lambda: runtime.event_sink,
         quality_gate=quality_gate_getter,
-        repo_path=deps.repo_path,
+        repo_path=pipeline.repo_path,
         on_session_log_path=on_session_log_path,
         on_review_log_path=on_review_log_path,
         get_per_issue_spec=lambda: async_gate_runner.per_issue_spec,
@@ -267,27 +226,27 @@ def build_session_callback_factory(
 
 
 def build_session_config(
-    deps: WiringDependencies,
+    pipeline: PipelineConfig,
     review_enabled: bool,
 ) -> AgentSessionConfig:
     """Build AgentSessionConfig for agent sessions."""
     prompts = SessionPrompts(
-        gate_followup=deps.prompts.gate_followup_prompt,
-        review_followup=deps.prompts.review_followup_prompt,
-        idle_resume=deps.prompts.idle_resume_prompt,
-        checkpoint_request=deps.prompts.checkpoint_request_prompt,
-        continuation=deps.prompts.continuation_prompt,
+        gate_followup=pipeline.prompts.gate_followup_prompt,
+        review_followup=pipeline.prompts.review_followup_prompt,
+        idle_resume=pipeline.prompts.idle_resume_prompt,
+        checkpoint_request=pipeline.prompts.checkpoint_request_prompt,
+        continuation=pipeline.prompts.continuation_prompt,
     )
     return AgentSessionConfig(
-        repo_path=deps.repo_path,
-        timeout_seconds=deps.timeout_seconds,
+        repo_path=pipeline.repo_path,
+        timeout_seconds=pipeline.timeout_seconds,
         prompts=prompts,
-        max_gate_retries=deps.max_gate_retries,
-        max_review_retries=deps.max_review_retries,
+        max_gate_retries=pipeline.max_gate_retries,
+        max_review_retries=pipeline.max_review_retries,
         review_enabled=review_enabled,
         lint_tools=None,  # Set at run start
-        prompt_validation_commands=deps.prompt_validation_commands,
-        context_restart_threshold=deps.context_restart_threshold,
-        context_limit=deps.context_limit,
-        deadlock_monitor=deps.deadlock_monitor,
+        prompt_validation_commands=pipeline.prompt_validation_commands,
+        context_restart_threshold=pipeline.context_restart_threshold,
+        context_limit=pipeline.context_limit,
+        deadlock_monitor=pipeline.deadlock_monitor,
     )
