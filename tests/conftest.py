@@ -136,7 +136,7 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
             focus=focus,
             orphans_only=orphans_only,
             cli_args=cli_args,
-            epic_override_ids=epic_override_ids,
+            epic_override_ids=epic_override_ids or set(),
             context_restart_threshold=context_restart_threshold,
             context_limit=context_limit,
         )
