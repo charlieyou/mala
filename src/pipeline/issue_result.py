@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from src.core.models import IssueResolution
     from src.core.protocols import ReviewIssueProtocol
 
@@ -28,3 +30,5 @@ class IssueResult:
     review_attempts: int = 0  # Number of Codex review attempts
     resolution: IssueResolution | None = None  # Resolution outcome if using markers
     low_priority_review_issues: list[ReviewIssueProtocol] | None = None  # P2/P3 issues
+    session_log_path: Path | None = None  # Path to session log file
+    review_log_path: str | None = None  # Path to Cerberus review session log

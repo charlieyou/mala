@@ -206,8 +206,8 @@ class MalaOrchestrator:
         """
         self.agent_ids: dict[str, str] = {}
         self.completed: list[IssueResult] = []
-        self.session_log_paths: dict[str, Path] = {}
-        self.review_log_paths: dict[str, str] = {}
+        # Active session log paths for deadlock handling (cleared after session completes)
+        self._active_session_log_paths: dict[str, Path] = {}
         # Track agents whose locks were cleaned during deadlock handling to avoid double cleanup
         self._deadlock_cleaned_agents: set[str] = set()
         self._lint_tools: frozenset[str] | None = None
@@ -243,6 +243,8 @@ class MalaOrchestrator:
             self.review_runner,
             lambda: self.log_provider,
             lambda: self.quality_gate,
+            on_session_log_path=self._on_session_log_path,
+            on_review_log_path=self._on_review_log_path,
         )
         self._session_config = build_session_config(
             deps, review_enabled=self._is_review_enabled()
@@ -283,8 +285,6 @@ class MalaOrchestrator:
             prompts=self._prompts,
             context_restart_threshold=self.context_restart_threshold,
             context_limit=self.context_limit,
-            session_log_paths=self.session_log_paths,
-            review_log_paths=self.review_log_paths,
             deadlock_monitor=self.deadlock_monitor,
         )
 
@@ -559,7 +559,7 @@ class MalaOrchestrator:
                 f"Deadlock victim: blocked on {info.blocked_on} "
                 f"held by {info.blocker_id}"
             )
-            log_path = self.session_log_paths.get(victim_issue_id)
+            log_path = self._active_session_log_paths.get(victim_issue_id)
             await self.beads.mark_needs_followup_async(
                 victim_issue_id, reason, log_path=log_path
             )
@@ -579,14 +579,37 @@ class MalaOrchestrator:
             return True
         return False
 
-    def _cleanup_session_paths(self, issue_id: str) -> None:
-        """Remove stored session and review log paths for an issue.
+    def _on_session_log_path(self, issue_id: str, log_path: Path) -> None:
+        """Store session log path for an active session.
+
+        Called by session callback factory when log path becomes available.
+        Used for deadlock handling during active sessions.
 
         Args:
-            issue_id: The issue ID to clean up paths for.
+            issue_id: The issue ID.
+            log_path: Path to the session log file.
         """
-        self.session_log_paths.pop(issue_id, None)
-        self.review_log_paths.pop(issue_id, None)
+        self._active_session_log_paths[issue_id] = log_path
+
+    def _on_review_log_path(self, issue_id: str, log_path: str) -> None:
+        """Handle review log path notification (currently unused).
+
+        Review log paths are now returned via IssueResult.review_log_path.
+        This callback exists for symmetry but can be a no-op.
+
+        Args:
+            issue_id: The issue ID.
+            log_path: Path to the review session log file.
+        """
+        pass  # Review log path flows through IssueResult
+
+    def _cleanup_active_session_path(self, issue_id: str) -> None:
+        """Remove stored session log path for a completed issue.
+
+        Args:
+            issue_id: The issue ID to clean up.
+        """
+        self._active_session_log_paths.pop(issue_id, None)
 
     async def _finalize_issue_result(
         self,
@@ -601,20 +624,19 @@ class MalaOrchestrator:
         validation parsing. Gate result includes validation_evidence
         already parsed during quality gate check.
         """
-        log_path = self.session_log_paths.get(issue_id)
         stored_gate_result = self.async_gate_runner.get_last_gate_result(issue_id)
 
         # Update finalizer's per_issue_spec if it has changed
         self.issue_finalizer.per_issue_spec = self.async_gate_runner.per_issue_spec
 
-        # Build finalization input
+        # Build finalization input - use log paths from IssueResult
         finalize_input = IssueFinalizeInput(
             issue_id=issue_id,
             result=result,
             run_metadata=run_metadata,
-            log_path=log_path,
+            log_path=result.session_log_path,
             stored_gate_result=stored_gate_result,
-            review_log_path=self.review_log_paths.get(issue_id),
+            review_log_path=result.review_log_path,
         )
 
         # Track failed issues before finalize to ensure they're recorded
@@ -629,8 +651,8 @@ class MalaOrchestrator:
             # Update tracking state (active_tasks is updated by mark_completed in finalize_callback)
             self.completed.append(result)
 
-            # Cleanup session paths and gate result
-            self._cleanup_session_paths(issue_id)
+            # Cleanup active session path and gate result
+            self._cleanup_active_session_path(issue_id)
             self.async_gate_runner.clear_gate_result(issue_id)
 
             # Remove agent_id from tracking now that finalization is complete
@@ -788,6 +810,8 @@ class MalaOrchestrator:
             review_attempts=output.review_attempts,
             resolution=output.resolution,
             low_priority_review_issues=output.low_priority_review_issues,
+            session_log_path=output.log_path,
+            review_log_path=output.review_log_path,
         )
 
     async def spawn_agent(self, issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]

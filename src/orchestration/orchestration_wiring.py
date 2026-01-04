@@ -105,9 +105,6 @@ class WiringDependencies:
     prompts: DomainPromptProvider
     context_restart_threshold: float
     context_limit: int
-    # Mutable state references (shared with orchestrator)
-    session_log_paths: dict[str, Path]
-    review_log_paths: dict[str, str]
     # Deadlock detection (None until T004 wires DeadlockMonitor into orchestrator)
     deadlock_monitor: DeadlockMonitor | None = None
 
@@ -251,6 +248,8 @@ def build_session_callback_factory(
     review_runner: ReviewRunner,
     log_provider_getter: Callable,
     quality_gate_getter: Callable,
+    on_session_log_path: Callable[[str, Path], None],
+    on_review_log_path: Callable[[str, str], None],
 ) -> SessionCallbackFactory:
     """Build SessionCallbackFactory."""
     return SessionCallbackFactory(
@@ -260,8 +259,8 @@ def build_session_callback_factory(
         event_sink=lambda: deps.event_sink,
         quality_gate=quality_gate_getter,
         repo_path=deps.repo_path,
-        session_log_paths=deps.session_log_paths,
-        review_log_paths=deps.review_log_paths,
+        on_session_log_path=on_session_log_path,
+        on_review_log_path=on_review_log_path,
         get_per_issue_spec=lambda: async_gate_runner.per_issue_spec,
         is_verbose=is_verbose_enabled,
     )

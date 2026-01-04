@@ -57,8 +57,8 @@ class SessionCallbackFactory:
             log_provider=...,
             event_sink=...,
             repo_path=...,
-            session_log_paths=...,  # Dict reference for path tracking
-            review_log_paths=...,   # Dict reference for review log tracking
+            on_session_log_path=...,  # Callback for session log path
+            on_review_log_path=...,   # Callback for review log path
         )
         callbacks = factory.build(issue_id)
     """
@@ -71,8 +71,8 @@ class SessionCallbackFactory:
         event_sink: Callable[[], MalaEventSink],
         quality_gate: Callable[[], GateChecker],
         repo_path: Path,
-        session_log_paths: dict[str, Path],
-        review_log_paths: dict[str, str],
+        on_session_log_path: Callable[[str, Path], None],
+        on_review_log_path: Callable[[str, str], None],
         get_per_issue_spec: GetPerIssueSpec,
         is_verbose: IsVerboseCheck,
     ) -> None:
@@ -85,8 +85,8 @@ class SessionCallbackFactory:
             event_sink: Callable returning the event sink (late-bound).
             quality_gate: Callable returning the gate checker (late-bound).
             repo_path: Repository path for git operations.
-            session_log_paths: Dict to store session log paths (mutated).
-            review_log_paths: Dict to store review log paths (mutated).
+            on_session_log_path: Callback when session log path becomes known.
+            on_review_log_path: Callback when review log path becomes known.
             get_per_issue_spec: Callable to get current per-issue spec.
             is_verbose: Callable to check verbose mode.
 
@@ -101,8 +101,8 @@ class SessionCallbackFactory:
         self._get_event_sink = event_sink
         self._get_quality_gate = quality_gate
         self._repo_path = repo_path
-        self._session_log_paths = session_log_paths
-        self._review_log_paths = review_log_paths
+        self._on_session_log_path = on_session_log_path
+        self._on_review_log_path = on_review_log_path
         self._get_per_issue_spec = get_per_issue_spec
         self._is_verbose = is_verbose
 
@@ -156,7 +156,7 @@ class SessionCallbackFactory:
             )
             output = await self._review_runner.run_review(review_input)
             if output.session_log_path:
-                self._review_log_paths[issue_id] = output.session_log_path
+                self._on_review_log_path(issue_id, output.session_log_path)
             return output.result
 
         def on_review_no_progress(
@@ -178,7 +178,7 @@ class SessionCallbackFactory:
             log_path = self._get_log_provider().get_log_path(
                 self._repo_path, session_id
             )
-            self._session_log_paths[issue_id] = log_path
+            self._on_session_log_path(issue_id, log_path)
             return log_path
 
         def get_log_offset(log_path: Path, start_offset: int) -> int:
