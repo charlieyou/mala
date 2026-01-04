@@ -16,7 +16,6 @@ import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from src.infra.mcp import get_disallowed_tools, get_mcp_servers
 from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 
 if TYPE_CHECKING:
@@ -97,9 +96,7 @@ class AgentRuntimeBuilder:
         self._agent_id = agent_id
         self._sdk_client_factory = sdk_client_factory
 
-        # Caches (created on first access)
-        self._file_read_cache: FileReadCache | None = None
-        self._lint_cache: LintCache | None = None
+        # Lint tools configuration
         self._lint_tools: set[str] | frozenset[str] | None = None
 
         # Hook configuration
@@ -169,9 +166,12 @@ class AgentRuntimeBuilder:
         Returns:
             Self for chaining.
         """
-        self._mcp_servers = (
-            servers if servers is not None else get_mcp_servers(self._repo_path)
-        )
+        if servers is not None:
+            self._mcp_servers = servers
+        else:
+            from src.infra.mcp import get_mcp_servers
+
+            self._mcp_servers = get_mcp_servers(self._repo_path)
         return self
 
     def with_disallowed_tools(
@@ -185,7 +185,12 @@ class AgentRuntimeBuilder:
         Returns:
             Self for chaining.
         """
-        self._disallowed_tools = tools if tools is not None else get_disallowed_tools()
+        if tools is not None:
+            self._disallowed_tools = tools
+        else:
+            from src.infra.mcp import get_disallowed_tools
+
+            self._disallowed_tools = get_disallowed_tools()
         return self
 
     def with_lint_tools(

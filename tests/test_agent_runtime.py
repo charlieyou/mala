@@ -11,7 +11,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.infra.agent_runtime import AgentRuntime, AgentRuntimeBuilder
-from src.infra.hooks import LintCache
+from src.infra.hooks import (
+    LintCache,
+    block_dangerous_commands,
+    block_mala_disallowed_tools,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -153,12 +157,18 @@ class TestAgentRuntimeBuilder:
     def test_pre_tool_hooks_ordering(
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
-        """Pre-tool hooks are in correct order."""
+        """Pre-tool hooks are in correct order (order matters for security)."""
         runtime = AgentRuntimeBuilder(repo_path, "agent-hooks", factory).build()
 
         # Should have at least: dangerous_commands, disallowed_tools, lock_enforcement,
         # file_cache, lint_cache
         assert len(runtime.pre_tool_hooks) >= 5
+
+        # Verify critical security hooks are at the beginning in correct order
+        # block_dangerous_commands must be first (index 0)
+        assert runtime.pre_tool_hooks[0] is block_dangerous_commands
+        # block_mala_disallowed_tools must be second (index 1)
+        assert runtime.pre_tool_hooks[1] is block_mala_disallowed_tools
 
     @pytest.mark.unit
     def test_stop_hook_included_by_default(
