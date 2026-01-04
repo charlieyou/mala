@@ -63,7 +63,12 @@ def pytest_collection_modifyitems(
             item.add_marker(pytest.mark.integration)
         elif "/unit/" in path:
             item.add_marker(pytest.mark.unit)
-        # No default — --strict-markers will fail if unmarked
+        else:
+            pytest.fail(
+                f"Test {item.nodeid} is not in a recognized test category "
+                f"(unit/, integration/, e2e/). Move it to the appropriate directory.",
+                pytrace=False,
+            )
 
 
 @pytest.fixture
