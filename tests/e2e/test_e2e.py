@@ -374,7 +374,7 @@ class TestE2ERunnerIntegration:
     """Integration coverage for real E2E runs."""
 
     @pytest.mark.e2e
-    def test_run_real_fixture(self, tmp_path: Path) -> None:
+    def test_run_real_fixture(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from src.infra.tools.command_runner import CommandRunner
         from src.infra.tools.env import EnvConfig
 
@@ -387,12 +387,12 @@ class TestE2ERunnerIntegration:
                 "Claude Code CLI not logged in or token expired - run `claude` and login"
             )
 
-        env_config = EnvConfig()
-        if env_config.find_cerberus_bin_path() is None:
-            pytest.skip("Cerberus review-gate not installed")
+        # Use real Claude config dir to find Cerberus (conftest overrides this for isolation)
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
+        env_config = EnvConfig()
         config = E2EConfig(keep_fixture=True, timeout_seconds=300.0)
-        runner = E2ERunner(env_config, CommandRunner(), config)
+        runner = E2ERunner(env_config, CommandRunner(cwd=tmp_path), config)
 
         result = runner.run(cwd=tmp_path)
 
