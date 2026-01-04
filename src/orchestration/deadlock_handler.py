@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
     from src.domain.deadlock import DeadlockInfo
     from src.orchestration.orchestrator_state import OrchestratorState
+    from src.infra.io.log_output.run_metadata import RunMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class DeadlockHandlerCallbacks:
             Returns: (count, paths).
         unregister_agent: Unregister agent from deadlock monitor. Args: (agent_id).
             Optional - only called when deadlock monitoring is enabled.
-        finalize_issue_result: Finalize an issue result. Args: (issue_id, result).
+        finalize_issue_result: Finalize an issue result. Args: (issue_id, result, run_metadata).
         mark_completed: Mark issue as completed in coordinator. Args: (issue_id).
     """
 
@@ -51,7 +52,7 @@ class DeadlockHandlerCallbacks:
     on_tasks_aborting: Callable[[int, str], None]
     do_cleanup_agent_locks: Callable[[str], tuple[int, list[str]]]
     unregister_agent: Callable[[str], None] | None
-    finalize_issue_result: Callable[[str, IssueResult], Awaitable[None]]
+    finalize_issue_result: Callable[[str, IssueResult, RunMetadata], Awaitable[None]]
     mark_completed: Callable[[str], None]
 
 
@@ -75,7 +76,7 @@ class DeadlockHandler:
         self,
         info: DeadlockInfo,
         state: OrchestratorState,
-        active_tasks: dict[str, asyncio.Task[object]],
+        active_tasks: dict[str, asyncio.Task[IssueResult]],
     ) -> None:
         """Handle a detected deadlock by cancelling victim and recording dependency.
 
@@ -188,6 +189,7 @@ class DeadlockHandler:
         active_tasks: dict[str, asyncio.Task[IssueResult]],
         abort_reason: str | None,
         state: OrchestratorState,
+        run_metadata: RunMetadata,
     ) -> None:
         """Cancel active tasks and mark them as failed.
 
@@ -198,6 +200,7 @@ class DeadlockHandler:
             active_tasks: Mapping of issue_id to asyncio.Task.
             abort_reason: Reason for aborting tasks.
             state: Orchestrator state for agent_ids and session log paths.
+            run_metadata: Run metadata for issue finalization.
         """
         if not active_tasks:
             return
@@ -239,7 +242,7 @@ class DeadlockHandler:
                     summary=f"Aborted due to unrecoverable error: {reason}",
                     session_log_path=state.active_session_log_paths.get(issue_id),
                 )
-            await self._callbacks.finalize_issue_result(issue_id, result)
+            await self._callbacks.finalize_issue_result(issue_id, result, run_metadata)
             # Mark completed in coordinator to keep state consistent
             self._callbacks.mark_completed(issue_id)
 
@@ -249,7 +252,7 @@ class DeadlockHandler:
         Args:
             agent_id: The agent whose locks should be cleaned up.
         """
-        count, _released_paths = self._callbacks.do_cleanup_agent_locks(agent_id)
+        count, _ = self._callbacks.do_cleanup_agent_locks(agent_id)
         if count:
             logger.info("Agent locks cleaned: agent_id=%s count=%d", agent_id, count)
             self._callbacks.on_locks_cleaned(agent_id, count)
