@@ -334,13 +334,18 @@ class TestLockAcquireWaitingEvents:
         )
 
         # First acquire - creates real lock file
-        result1 = await handlers.lock_acquire.handler({"filepaths": [test_file]})
+        # Use short timeout to fail fast if re-entrant behavior regresses
+        result1 = await handlers.lock_acquire.handler(
+            {"filepaths": [test_file], "timeout_seconds": 0.1}
+        )
         content1 = json.loads(result1["content"][0]["text"])
         assert content1["all_acquired"] is True
         assert len(events) == 0  # No WAITING on first acquire
 
         # Second acquire (re-entrant) - should succeed without WAITING
-        result2 = await handlers.lock_acquire.handler({"filepaths": [test_file]})
+        result2 = await handlers.lock_acquire.handler(
+            {"filepaths": [test_file], "timeout_seconds": 0.1}
+        )
         content2 = json.loads(result2["content"][0]["text"])
         assert content2["all_acquired"] is True
 
