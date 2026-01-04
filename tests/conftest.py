@@ -60,11 +60,19 @@ def pytest_configure(config: pytest.Config) -> None:
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Default unmarked tests to unit category."""
+    """Apply markers based on test file path."""
     for item in items:
         if any(marker in item.keywords for marker in ("unit", "integration", "e2e")):
             continue
-        item.add_marker(pytest.mark.unit)
+        # Path-based auto-marking (use item.path for pytest 7+ compatibility)
+        path = str(item.path)
+        if "/e2e/" in path:
+            item.add_marker(pytest.mark.e2e)
+        elif "/integration/" in path:
+            item.add_marker(pytest.mark.integration)
+        elif "/unit/" in path:
+            item.add_marker(pytest.mark.unit)
+        # No default — --strict-markers will fail if unmarked
 
 
 @pytest.fixture

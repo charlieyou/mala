@@ -99,7 +99,7 @@ asyncio_default_fixture_loop_scope = "function"
 # --tb=short: shorter tracebacks
 # --no-header: skip header
 # --disable-warnings: hide warnings
-addopts = "-m 'unit or integration' -q --tb=short --no-header --disable-warnings"
+addopts = "--strict-markers -m 'unit or integration' -q --tb=short --no-header --disable-warnings"
 markers = [
     "unit: fast, isolated tests (default)",
     "integration: tests that exercise multiple components or real tools locally",
