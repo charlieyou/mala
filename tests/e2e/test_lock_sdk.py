@@ -30,7 +30,7 @@ from claude_agent_sdk.types import HookMatcher
 
 from src.infra.hooks import make_stop_hook
 from src.infra.tools.env import SCRIPTS_DIR
-from tests.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
+from tests.e2e.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
 
 # All SDK tests are end-to-end (require CLI auth and API calls)
 pytestmark = [pytest.mark.e2e]

@@ -9,7 +9,7 @@ import subprocess
 import pytest
 
 from src.infra.epic_verifier import ClaudeEpicVerificationModel
-from tests.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
+from tests.e2e.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
 
 pytestmark = [pytest.mark.e2e]
 

@@ -106,7 +106,6 @@ class TestPresetRegistryIntegration:
         """Create a PresetRegistry instance."""
         return PresetRegistry()
 
-    @pytest.mark.integration
     def test_get_python_uv_preset(self, registry: PresetRegistry) -> None:
         """get('python-uv') returns valid ValidationConfig with isolation flags."""
         config = registry.get("python-uv")
@@ -140,7 +139,6 @@ class TestPresetRegistryIntegration:
         assert "pyproject.toml" in config.code_patterns
         assert "uv.lock" in config.setup_files
 
-    @pytest.mark.integration
     def test_get_node_npm_preset(self, registry: PresetRegistry) -> None:
         """get('node-npm') returns valid ValidationConfig."""
         config = registry.get("node-npm")
@@ -160,7 +158,6 @@ class TestPresetRegistryIntegration:
         assert "**/*.ts" in config.code_patterns
         assert "package-lock.json" in config.setup_files
 
-    @pytest.mark.integration
     def test_get_go_preset(self, registry: PresetRegistry) -> None:
         """get('go') returns valid ValidationConfig."""
         config = registry.get("go")
@@ -178,7 +175,6 @@ class TestPresetRegistryIntegration:
         assert "**/*.go" in config.code_patterns
         assert "go.mod" in config.setup_files
 
-    @pytest.mark.integration
     def test_get_rust_preset(self, registry: PresetRegistry) -> None:
         """get('rust') returns valid ValidationConfig."""
         config = registry.get("rust")
@@ -196,7 +192,6 @@ class TestPresetRegistryIntegration:
         assert "**/*.rs" in config.code_patterns
         assert "Cargo.toml" in config.setup_files
 
-    @pytest.mark.integration
     def test_all_presets_have_valid_yaml(self, registry: PresetRegistry) -> None:
         """All preset files have valid YAML syntax."""
         for preset_name in registry.list_presets():
@@ -205,14 +200,12 @@ class TestPresetRegistryIntegration:
             # All presets should have at least test command
             assert config.commands.test is not None
 
-    @pytest.mark.integration
     def test_all_presets_have_code_patterns(self, registry: PresetRegistry) -> None:
         """All presets define at least one code pattern."""
         for preset_name in registry.list_presets():
             config = registry.get(preset_name)
             assert len(config.code_patterns) > 0, f"{preset_name} missing code_patterns"
 
-    @pytest.mark.integration
     def test_all_presets_have_setup_files(self, registry: PresetRegistry) -> None:
         """All presets define at least one setup file."""
         for preset_name in registry.list_presets():

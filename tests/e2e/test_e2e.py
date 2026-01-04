@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from src.infra.tools.command_runner import CommandResult
-from tests.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
+from tests.e2e.claude_auth import is_claude_cli_available, has_valid_oauth_credentials
 from src.domain.validation.e2e import (
     E2EConfig,
     E2EPrereqResult,

@@ -1,0 +1,672 @@
+"""Unit tests for MalaConfig in src/config.py."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from src.infra.io.config import (
+    CLIOverrides,
+    ConfigurationError,
+    MalaConfig,
+    build_resolved_config,
+)
+
+
+class TestMalaConfigDefaults:
+    """Tests for MalaConfig default values."""
+
+    def test_default_runs_dir(self) -> None:
+        """Default runs_dir is ~/.config/mala/runs."""
+        config = MalaConfig()
+        assert config.runs_dir == Path.home() / ".config" / "mala" / "runs"
+
+    def test_default_lock_dir(self) -> None:
+        """Default lock_dir is /tmp/mala-locks."""
+        config = MalaConfig()
+        assert config.lock_dir == Path("/tmp/mala-locks")
+
+    def test_default_claude_config_dir(self) -> None:
+        """Default claude_config_dir is ~/.claude."""
+        config = MalaConfig()
+        assert config.claude_config_dir == Path.home() / ".claude"
+
+    def test_default_api_keys_are_none(self) -> None:
+        """API keys default to None."""
+        config = MalaConfig()
+        assert config.braintrust_api_key is None
+
+    def test_default_feature_flags_disabled(self) -> None:
+        """Feature flags are disabled when API keys are not provided."""
+        config = MalaConfig()
+        assert config.braintrust_enabled is False
+
+    def test_default_cerberus_overrides_empty(self) -> None:
+        """Cerberus override settings default to empty values."""
+        config = MalaConfig()
+        assert config.cerberus_spawn_args == ()
+        assert config.cerberus_wait_args == ()
+        assert config.cerberus_env == ()
+
+
+class TestMalaConfigFeatureFlags:
+    """Tests for feature flag derivation."""
+
+    def test_braintrust_enabled_when_api_key_provided(self) -> None:
+        """braintrust_enabled is True when braintrust_api_key is provided."""
+        config = MalaConfig(braintrust_api_key="test-api-key")
+        assert config.braintrust_enabled is True
+
+    def test_feature_flag_explicit_override_preserved(self) -> None:
+        """Explicit feature flag setting is preserved."""
+        # With explicit flag=True but no API key, validation will fail
+        # So we test that the flag is set, not that it's valid
+        config = MalaConfig(
+            braintrust_enabled=True,
+        )
+        assert config.braintrust_enabled is True
+        # But validation should fail due to missing API keys
+        errors = config.validate()
+        assert len(errors) == 1
+        assert any("BRAINTRUST_API_KEY" in e for e in errors)
+
+
+class TestMalaConfigFromEnv:
+    """Tests for from_env() classmethod."""
+
+    def test_from_env_with_no_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """from_env() uses defaults when no env vars are set."""
+        # Clear relevant env vars
+        monkeypatch.delenv("MALA_RUNS_DIR", raising=False)
+        monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+        monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
+
+        config = MalaConfig.from_env()
+
+        assert config.runs_dir == Path.home() / ".config" / "mala" / "runs"
+        assert config.lock_dir == Path("/tmp/mala-locks")
+        assert config.claude_config_dir == Path.home() / ".claude"
+        assert config.braintrust_api_key is None
+
+    def test_from_env_reads_mala_runs_dir(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads MALA_RUNS_DIR."""
+        monkeypatch.setenv("MALA_RUNS_DIR", "/custom/runs")
+        # Use validate=False since /custom doesn't exist
+        config = MalaConfig.from_env(validate=False)
+        assert config.runs_dir == Path("/custom/runs")
+
+    def test_from_env_reads_mala_lock_dir(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads MALA_LOCK_DIR."""
+        monkeypatch.setenv("MALA_LOCK_DIR", "/custom/locks")
+        # Use validate=False since /custom doesn't exist
+        config = MalaConfig.from_env(validate=False)
+        assert config.lock_dir == Path("/custom/locks")
+
+    def test_from_env_reads_claude_config_dir(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads CLAUDE_CONFIG_DIR."""
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/custom/claude")
+        # Use validate=False since /custom doesn't exist
+        config = MalaConfig.from_env(validate=False)
+        assert config.claude_config_dir == Path("/custom/claude")
+
+    def test_from_env_reads_braintrust_api_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads BRAINTRUST_API_KEY."""
+        monkeypatch.setenv("BRAINTRUST_API_KEY", "bt-test-key")
+        config = MalaConfig.from_env()
+        assert config.braintrust_api_key == "bt-test-key"
+        assert config.braintrust_enabled is True
+
+    def test_from_env_reads_review_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads MALA_REVIEW_TIMEOUT."""
+        monkeypatch.setenv("MALA_REVIEW_TIMEOUT", "450")
+        config = MalaConfig.from_env(validate=False)
+        assert config.review_timeout == 450
+
+    def test_from_env_rejects_invalid_review_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() rejects invalid MALA_REVIEW_TIMEOUT values."""
+        monkeypatch.setenv("MALA_REVIEW_TIMEOUT", "not-a-number")
+        with pytest.raises(ConfigurationError):
+            MalaConfig.from_env(validate=False)
+
+    def test_from_env_reads_cerberus_spawn_args(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads MALA_CERBERUS_SPAWN_ARGS."""
+        monkeypatch.setenv("MALA_CERBERUS_SPAWN_ARGS", "--foo bar --flag")
+        config = MalaConfig.from_env(validate=False)
+        assert config.cerberus_spawn_args == ("--foo", "bar", "--flag")
+
+    def test_from_env_reads_cerberus_wait_args(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads MALA_CERBERUS_WAIT_ARGS."""
+        monkeypatch.setenv("MALA_CERBERUS_WAIT_ARGS", "--baz qux")
+        config = MalaConfig.from_env(validate=False)
+        assert config.cerberus_wait_args == ("--baz", "qux")
+
+    def test_from_env_reads_cerberus_env_json(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads MALA_CERBERUS_ENV as JSON."""
+        monkeypatch.setenv("MALA_CERBERUS_ENV", '{"FOO":"bar","NUM":1}')
+        config = MalaConfig.from_env(validate=False)
+        assert dict(config.cerberus_env) == {"FOO": "bar", "NUM": "1"}
+
+    def test_from_env_reads_cerberus_env_kv(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() reads MALA_CERBERUS_ENV as KEY=VALUE list."""
+        monkeypatch.setenv("MALA_CERBERUS_ENV", "FOO=bar,BAZ=qux")
+        config = MalaConfig.from_env(validate=False)
+        assert dict(config.cerberus_env) == {"FOO": "bar", "BAZ": "qux"}
+
+    def test_from_env_detects_cerberus_bin_path_schema_v2(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() detects cerberus bin path with v2 plugins schema."""
+        plugins_dir = tmp_path / "plugins"
+        install_dir = plugins_dir / "cache" / "cerberus" / "cerberus" / "1.1.5"
+        bin_dir = install_dir / "bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "review-gate").write_text("#!/usr/bin/env bash\n")
+
+        installed = {
+            "version": 2,
+            "plugins": {
+                "cerberus@cerberus": [
+                    {
+                        "installPath": str(install_dir),
+                        "version": "1.1.5",
+                    }
+                ]
+            },
+        }
+        (plugins_dir / "installed_plugins.json").write_text(json.dumps(installed))
+
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+        config = MalaConfig.from_env(validate=False)
+        assert config.cerberus_bin_path == bin_dir
+
+    def test_from_env_rejects_invalid_cerberus_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() rejects invalid MALA_CERBERUS_ENV values."""
+        monkeypatch.setenv("MALA_CERBERUS_ENV", "NOT_A_KV")
+        with pytest.raises(ConfigurationError):
+            MalaConfig.from_env(validate=False)
+
+    def test_from_env_treats_empty_string_as_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() treats empty string API keys as None."""
+        monkeypatch.setenv("BRAINTRUST_API_KEY", "")
+        config = MalaConfig.from_env()
+        assert config.braintrust_api_key is None
+        assert config.braintrust_enabled is False
+
+    def test_from_env_validates_by_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """from_env() runs validation by default and raises on errors."""
+        # Set relative path which will fail validation
+        monkeypatch.setenv("MALA_RUNS_DIR", "relative/path")
+        monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            MalaConfig.from_env()
+
+        assert "runs_dir should be an absolute path" in str(exc_info.value)
+        assert len(exc_info.value.errors) >= 1
+
+    def test_from_env_skip_validation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """from_env(validate=False) skips validation."""
+        # Set relative path which would fail validation
+        monkeypatch.setenv("MALA_RUNS_DIR", "relative/path")
+
+        # Should not raise with validate=False
+        config = MalaConfig.from_env(validate=False)
+        assert config.runs_dir == Path("relative/path")
+
+
+class TestMalaConfigValidate:
+    """Tests for validate() method."""
+
+    def test_validate_default_config(self) -> None:
+        """Default config passes validation (assuming home dir exists)."""
+        config = MalaConfig()
+        errors = config.validate()
+        # Default config should be valid since home dir exists
+        assert len(errors) == 0
+
+    def test_validate_missing_braintrust_api_key(self) -> None:
+        """validate() reports missing BRAINTRUST_API_KEY when enabled."""
+        config = MalaConfig(braintrust_enabled=True)
+        errors = config.validate()
+        assert any("BRAINTRUST_API_KEY" in e for e in errors)
+
+    def test_validate_api_key_present_passes(self) -> None:
+        """validate() passes when API key is present for enabled feature."""
+        config = MalaConfig(
+            braintrust_api_key="test-key",
+        )
+        errors = config.validate()
+        # Should pass - API keys are present
+        assert not any("BRAINTRUST_API_KEY" in e for e in errors)
+
+    def test_validate_custom_absolute_paths(self, tmp_path: Path) -> None:
+        """Custom absolute paths pass validation."""
+        config = MalaConfig(
+            runs_dir=tmp_path / "runs",
+            lock_dir=tmp_path / "locks",
+            claude_config_dir=tmp_path / "claude",
+        )
+        errors = config.validate()
+        assert len(errors) == 0
+
+    def test_validate_relative_paths_produce_errors(self) -> None:
+        """Relative paths produce validation errors."""
+        config = MalaConfig(
+            runs_dir=Path("relative/runs"),
+            lock_dir=Path("relative/locks"),
+            claude_config_dir=Path("relative/claude"),
+        )
+        errors = config.validate()
+        # Relative paths produce "should be absolute" errors
+        assert len(errors) == 3
+        assert any("runs_dir" in e and "absolute" in e for e in errors)
+        assert any("lock_dir" in e and "absolute" in e for e in errors)
+        assert any("claude_config_dir" in e and "absolute" in e for e in errors)
+
+    def test_validate_negative_review_timeout(self) -> None:
+        """Negative review_timeout produces validation error."""
+        config = MalaConfig(review_timeout=-1)
+        errors = config.validate()
+        assert any("review_timeout" in e for e in errors)
+
+
+class TestMalaConfigEnsureDirectories:
+    """Tests for ensure_directories() method."""
+
+    def test_ensure_directories_creates_dirs(self, tmp_path: Path) -> None:
+        """ensure_directories() creates runs_dir and lock_dir."""
+        runs = tmp_path / "runs"
+        locks = tmp_path / "locks"
+
+        config = MalaConfig(
+            runs_dir=runs,
+            lock_dir=locks,
+        )
+
+        assert not runs.exists()
+        assert not locks.exists()
+
+        config.ensure_directories()
+
+        assert runs.exists()
+        assert runs.is_dir()
+        assert locks.exists()
+        assert locks.is_dir()
+
+    def test_ensure_directories_is_idempotent(self, tmp_path: Path) -> None:
+        """ensure_directories() can be called multiple times."""
+        runs = tmp_path / "runs"
+        locks = tmp_path / "locks"
+
+        config = MalaConfig(
+            runs_dir=runs,
+            lock_dir=locks,
+        )
+
+        config.ensure_directories()
+        config.ensure_directories()  # Should not raise
+
+        assert runs.exists()
+        assert locks.exists()
+
+
+class TestMalaConfigImmutability:
+    """Tests for frozen dataclass behavior."""
+
+    def test_config_is_frozen(self) -> None:
+        """MalaConfig is immutable after creation."""
+        config = MalaConfig()
+        with pytest.raises(AttributeError):
+            config.runs_dir = Path("/new/path")  # type: ignore[misc]
+
+    def test_config_is_hashable(self) -> None:
+        """Frozen MalaConfig is hashable and can be used in sets."""
+        config1 = MalaConfig(braintrust_api_key="key1")
+        config2 = MalaConfig(braintrust_api_key="key2")
+
+        # Should be hashable
+        config_set = {config1, config2}
+        assert len(config_set) == 2
+
+
+class TestBuildResolvedConfig:
+    """Tests for build_resolved_config() function."""
+
+    def test_base_config_only_no_overrides(self, tmp_path: Path) -> None:
+        """build_resolved_config with only base config, no CLI overrides."""
+        base = MalaConfig(
+            runs_dir=tmp_path / "runs",
+            lock_dir=tmp_path / "locks",
+            claude_config_dir=tmp_path / "claude",
+            braintrust_api_key="bt-key",
+        )
+        resolved = build_resolved_config(base, None)
+
+        assert resolved.runs_dir == tmp_path / "runs"
+        assert resolved.lock_dir == tmp_path / "locks"
+        assert resolved.claude_config_dir == tmp_path / "claude"
+        assert resolved.braintrust_api_key == "bt-key"
+        assert resolved.braintrust_enabled is True
+        assert resolved.braintrust_disabled_reason is None
+
+    def test_cli_overrides_only_default_base(self) -> None:
+        """build_resolved_config with default base and CLI overrides."""
+        base = MalaConfig()
+        overrides = CLIOverrides(
+            cerberus_spawn_args="--mode fast",
+            review_timeout=600,
+        )
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.cerberus_spawn_args == ("--mode", "fast")
+        assert resolved.review_timeout == 600
+
+    def test_cli_overrides_take_precedence(self, tmp_path: Path) -> None:
+        """CLI overrides win over base config values."""
+        base = MalaConfig(
+            runs_dir=tmp_path,
+            cerberus_spawn_args=("--base", "arg"),
+            cerberus_env=(("BASE_KEY", "base_value"),),
+            review_timeout=300,
+        )
+        overrides = CLIOverrides(
+            cerberus_spawn_args="--cli arg",
+            cerberus_env='{"CLI_KEY": "cli_value"}',
+            review_timeout=900,
+        )
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.cerberus_spawn_args == ("--cli", "arg")
+        assert dict(resolved.cerberus_env) == {"CLI_KEY": "cli_value"}
+        assert resolved.review_timeout == 900
+
+    def test_base_config_used_when_override_is_none(self, tmp_path: Path) -> None:
+        """Base config values used when corresponding override is None."""
+        base = MalaConfig(
+            runs_dir=tmp_path,
+            cerberus_spawn_args=("--base",),
+            cerberus_wait_args=("--wait-base",),
+            cerberus_env=(("KEY", "val"),),
+            review_timeout=450,
+            max_epic_verification_retries=5,
+        )
+        overrides = CLIOverrides()  # All None
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.cerberus_spawn_args == ("--base",)
+        assert resolved.cerberus_wait_args == ("--wait-base",)
+        assert resolved.cerberus_env == (("KEY", "val"),)
+        assert resolved.review_timeout == 450
+        assert resolved.max_epic_verification_retries == 5
+
+
+class TestCerberusArgsParsing:
+    """Tests for cerberus_spawn_args and cerberus_wait_args parsing."""
+
+    def test_simple_args(self) -> None:
+        """Parse simple space-separated args."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_spawn_args="--foo bar --flag")
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_spawn_args == ("--foo", "bar", "--flag")
+
+    def test_quoted_args_with_spaces(self) -> None:
+        """Parse args with quoted strings containing spaces."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_spawn_args='--message "hello world"')
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_spawn_args == ("--message", "hello world")
+
+    def test_escaped_quotes(self) -> None:
+        """Parse args with escaped quotes."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_spawn_args='--msg "it\'s fine"')
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_spawn_args == ("--msg", "it's fine")
+
+    def test_empty_string_gives_empty_tuple(self) -> None:
+        """Empty string produces empty tuple."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_spawn_args="")
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_spawn_args == ()
+
+    def test_whitespace_only_gives_empty_tuple(self) -> None:
+        """Whitespace-only string produces empty tuple."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_spawn_args="   ")
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_spawn_args == ()
+
+    def test_wait_args_parsed_same_as_spawn_args(self) -> None:
+        """cerberus_wait_args uses same parsing as spawn_args."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_wait_args='--timeout 60 --msg "wait"')
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_wait_args == ("--timeout", "60", "--msg", "wait")
+
+    def test_invalid_quotes_raises_value_error(self) -> None:
+        """Unbalanced quotes raise ValueError with CLI source."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_spawn_args='"unclosed')
+        with pytest.raises(ValueError) as exc_info:
+            build_resolved_config(base, overrides)
+        assert "CLI" in str(exc_info.value)
+
+
+class TestCerberusEnvParsing:
+    """Tests for cerberus_env parsing (JSON and KEY=VALUE formats)."""
+
+    def test_json_format_simple(self) -> None:
+        """Parse JSON object format."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env='{"FOO": "bar", "BAZ": "qux"}')
+        resolved = build_resolved_config(base, overrides)
+        assert dict(resolved.cerberus_env) == {"BAZ": "qux", "FOO": "bar"}
+
+    def test_json_format_with_numbers(self) -> None:
+        """JSON values converted to strings."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env='{"NUM": 42, "BOOL": true}')
+        resolved = build_resolved_config(base, overrides)
+        assert dict(resolved.cerberus_env) == {"BOOL": "True", "NUM": "42"}
+
+    def test_comma_separated_kv_format(self) -> None:
+        """Parse comma-separated KEY=VALUE format."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="FOO=bar,BAZ=qux")
+        resolved = build_resolved_config(base, overrides)
+        assert dict(resolved.cerberus_env) == {"BAZ": "qux", "FOO": "bar"}
+
+    def test_kv_format_with_equals_in_value(self) -> None:
+        """Values can contain equals signs."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="URL=http://host?a=1")
+        resolved = build_resolved_config(base, overrides)
+        assert dict(resolved.cerberus_env) == {"URL": "http://host?a=1"}
+
+    def test_empty_string_gives_empty_tuple(self) -> None:
+        """Empty string produces empty tuple."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="")
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_env == ()
+
+    def test_whitespace_only_gives_empty_tuple(self) -> None:
+        """Whitespace-only string produces empty tuple."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="   ")
+        resolved = build_resolved_config(base, overrides)
+        assert resolved.cerberus_env == ()
+
+    def test_invalid_json_raises_value_error(self) -> None:
+        """Invalid JSON raises ValueError with clear message."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env='{"invalid": }')
+        with pytest.raises(ValueError) as exc_info:
+            build_resolved_config(base, overrides)
+        assert "CLI" in str(exc_info.value)
+        assert "JSON" in str(exc_info.value)
+
+    def test_json_non_object_raises_value_error(self) -> None:
+        """JSON array raises ValueError."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env='["array", "not", "object"]')
+        with pytest.raises(ValueError) as exc_info:
+            build_resolved_config(base, overrides)
+        # Array starting with [ is parsed as KEY=VALUE format, not JSON
+        assert "KEY=VALUE" in str(exc_info.value)
+
+    def test_kv_missing_equals_raises_value_error(self) -> None:
+        """KEY=VALUE format without equals raises ValueError."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="INVALID_ENTRY")
+        with pytest.raises(ValueError) as exc_info:
+            build_resolved_config(base, overrides)
+        assert "KEY=VALUE" in str(exc_info.value)
+
+    def test_kv_empty_key_raises_value_error(self) -> None:
+        """Empty key in KEY=VALUE raises ValueError."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="=value")
+        with pytest.raises(ValueError) as exc_info:
+            build_resolved_config(base, overrides)
+        assert "empty key" in str(exc_info.value).lower()
+
+
+class TestDerivedDisabledReasons:
+    """Tests for braintrust_disabled_reason derivation."""
+
+    def test_braintrust_disabled_reason_no_braintrust_flag(self) -> None:
+        """--no-braintrust flag sets braintrust_disabled_reason."""
+        base = MalaConfig(braintrust_api_key="key")
+        overrides = CLIOverrides(no_braintrust=True)
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.braintrust_enabled is False
+        assert resolved.braintrust_disabled_reason == "--no-braintrust"
+
+    def test_braintrust_disabled_reason_missing_api_key(self) -> None:
+        """Missing BRAINTRUST_API_KEY sets appropriate disabled reason."""
+        base = MalaConfig(braintrust_api_key=None)
+        resolved = build_resolved_config(base, None)
+
+        assert resolved.braintrust_enabled is False
+        assert resolved.braintrust_disabled_reason is not None
+        assert "BRAINTRUST_API_KEY" in resolved.braintrust_disabled_reason
+
+    def test_braintrust_disabled_reason_config_disabled(self) -> None:
+        """Config with braintrust_enabled=False and no API key shows disabled by config."""
+        base = MalaConfig(braintrust_api_key=None, braintrust_enabled=False)
+        resolved = build_resolved_config(base, None)
+
+        assert resolved.braintrust_enabled is False
+        # With no API key and enabled=False, reason is "missing API key"
+        assert resolved.braintrust_disabled_reason is not None
+        assert "BRAINTRUST_API_KEY" in resolved.braintrust_disabled_reason
+
+    def test_braintrust_enabled_has_no_disabled_reason(self) -> None:
+        """Enabled braintrust has None disabled_reason."""
+        base = MalaConfig(braintrust_api_key="key")
+        resolved = build_resolved_config(base, None)
+
+        assert resolved.braintrust_enabled is True
+        assert resolved.braintrust_disabled_reason is None
+
+
+class TestResolvedConfigImmutability:
+    """Tests for ResolvedConfig frozen dataclass behavior."""
+
+    def test_resolved_config_is_frozen(self) -> None:
+        """ResolvedConfig is immutable after creation."""
+        base = MalaConfig()
+        resolved = build_resolved_config(base, None)
+
+        with pytest.raises(AttributeError):
+            resolved.runs_dir = Path("/new")  # type: ignore[misc]
+
+    def test_resolved_config_is_hashable(self) -> None:
+        """ResolvedConfig can be used in sets."""
+        base1 = MalaConfig(braintrust_api_key="key1")
+        base2 = MalaConfig(braintrust_api_key="key2")
+        resolved1 = build_resolved_config(base1, None)
+        resolved2 = build_resolved_config(base2, None)
+
+        config_set = {resolved1, resolved2}
+        assert len(config_set) == 2
+
+
+class TestBuildResolvedConfigIdempotency:
+    """Tests for idempotent and deterministic behavior."""
+
+    def test_same_inputs_same_outputs(self, tmp_path: Path) -> None:
+        """Same inputs produce identical outputs."""
+        base = MalaConfig(
+            runs_dir=tmp_path,
+            braintrust_api_key="key",
+            cerberus_spawn_args=("--arg",),
+        )
+        overrides = CLIOverrides(cerberus_env="FOO=bar")
+
+        resolved1 = build_resolved_config(base, overrides)
+        resolved2 = build_resolved_config(base, overrides)
+
+        assert resolved1 == resolved2
+
+    def test_env_ordering_is_stable(self) -> None:
+        """cerberus_env is sorted for stable ordering."""
+        base = MalaConfig()
+        overrides = CLIOverrides(cerberus_env="Z=1,A=2,M=3")
+        resolved = build_resolved_config(base, overrides)
+
+        # Should be sorted alphabetically
+        assert resolved.cerberus_env == (("A", "2"), ("M", "3"), ("Z", "1"))
+
+
+class TestBuildResolvedConfigReviewEnabled:
+    """Tests for review_enabled derivation."""
+
+    def test_review_disabled_by_cli_flag(self) -> None:
+        """--disable-validations review disables review."""
+        base = MalaConfig()  # review_enabled=True by default
+        overrides = CLIOverrides(disable_review=True)
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.review_enabled is False
+
+    def test_review_enabled_when_not_disabled(self) -> None:
+        """review remains enabled when not disabled."""
+        base = MalaConfig()
+        overrides = CLIOverrides(disable_review=False)
+        resolved = build_resolved_config(base, overrides)
+
+        assert resolved.review_enabled is True

@@ -9,7 +9,7 @@ These tests validate the end-to-end config-driven workflow including:
 - Tool name extraction (AC 10)
 
 All tests create realistic project structures using tmp_path fixture.
-Tests are marked with @pytest.mark.integration.
+Integration marker is applied automatically via path-based pytest configuration.
 """
 
 from __future__ import annotations
@@ -58,7 +58,6 @@ def _get_resolved_config(project_dir: Path) -> ValidationConfig:
 class TestGoPresetIntegration:
     """AC 1: Test Go project configuration with go preset."""
 
-    @pytest.mark.integration
     def test_go_project_with_preset(self, tmp_path: Path) -> None:
         """Go project using go preset loads correct commands."""
         _create_mala_yaml(
@@ -80,7 +79,6 @@ preset: go
         assert config.commands.format is not None
         assert 'test -z "$(gofmt -l .)"' in config.commands.format.command
 
-    @pytest.mark.integration
     def test_go_project_code_patterns(self, tmp_path: Path) -> None:
         """Go project has correct code patterns from preset."""
         _create_mala_yaml(tmp_path, "preset: go\n")
@@ -89,7 +87,6 @@ preset: go
 
         assert "**/*.go" in config.code_patterns
 
-    @pytest.mark.integration
     def test_go_project_setup_files(self, tmp_path: Path) -> None:
         """Go project has correct setup files from preset."""
         _create_mala_yaml(tmp_path, "preset: go\n")
@@ -108,7 +105,6 @@ preset: go
 class TestNodeNpmPresetIntegration:
     """AC 2: Test Node.js project configuration with node-npm preset."""
 
-    @pytest.mark.integration
     def test_node_project_with_preset(self, tmp_path: Path) -> None:
         """Node.js project using node-npm preset loads correct commands."""
         _create_mala_yaml(
@@ -132,7 +128,6 @@ preset: node-npm
         assert config.commands.typecheck is not None
         assert config.commands.typecheck.command == "npx tsc --noEmit"
 
-    @pytest.mark.integration
     def test_node_project_code_patterns(self, tmp_path: Path) -> None:
         """Node.js project has correct code patterns from preset."""
         _create_mala_yaml(tmp_path, "preset: node-npm\n")
@@ -144,7 +139,6 @@ preset: node-npm
         assert "**/*.jsx" in config.code_patterns
         assert "**/*.tsx" in config.code_patterns
 
-    @pytest.mark.integration
     def test_node_project_setup_files(self, tmp_path: Path) -> None:
         """Node.js project has correct setup files from preset."""
         _create_mala_yaml(tmp_path, "preset: node-npm\n")
@@ -163,7 +157,6 @@ preset: node-npm
 class TestPythonPresetWithOverrideIntegration:
     """AC 3: Test Python project with preset and custom test override."""
 
-    @pytest.mark.integration
     def test_python_project_with_test_override(self, tmp_path: Path) -> None:
         """Python project with python-uv preset and custom test command."""
         _create_mala_yaml(
@@ -197,7 +190,6 @@ commands:
         assert config.commands.typecheck is not None
         assert config.commands.typecheck.command == "uvx ty check"
 
-    @pytest.mark.integration
     def test_python_project_override_with_timeout(self, tmp_path: Path) -> None:
         """Python project can override test command with timeout."""
         _create_mala_yaml(
@@ -217,7 +209,6 @@ commands:
         assert config.commands.test.command == "uv run pytest -v"
         assert config.commands.test.timeout == 600
 
-    @pytest.mark.integration
     def test_python_project_code_patterns_inherited(self, tmp_path: Path) -> None:
         """Code patterns inherited from preset when not overridden."""
         _create_mala_yaml(
@@ -234,7 +225,6 @@ commands:
         assert "**/*.py" in config.code_patterns
         assert "pyproject.toml" in config.code_patterns
 
-    @pytest.mark.integration
     def test_python_project_code_patterns_overridden(self, tmp_path: Path) -> None:
         """Code patterns can be overridden explicitly."""
         _create_mala_yaml(
@@ -264,7 +254,6 @@ code_patterns:
 class TestMinimalConfigIntegration:
     """AC 4: Test minimal config behavior skipping optional commands."""
 
-    @pytest.mark.integration
     def test_minimal_config_only_setup_and_test(self, tmp_path: Path) -> None:
         """Minimal config with only setup and test skips lint/format/typecheck."""
         _create_mala_yaml(
@@ -290,7 +279,6 @@ commands:
         assert config.commands.typecheck is None
         assert config.commands.e2e is None
 
-    @pytest.mark.integration
     def test_minimal_config_only_test(self, tmp_path: Path) -> None:
         """Minimal config with only test command."""
         _create_mala_yaml(
@@ -310,7 +298,6 @@ commands:
         assert config.commands.format is None
         assert config.commands.typecheck is None
 
-    @pytest.mark.integration
     def test_preset_with_explicit_null_overrides(self, tmp_path: Path) -> None:
         """Preset with explicit null can disable inherited commands."""
         _create_mala_yaml(
@@ -344,7 +331,6 @@ commands:
 class TestMissingConfigIntegration:
     """AC 5: Test error handling for missing mala.yaml."""
 
-    @pytest.mark.integration
     def test_missing_mala_yaml_raises_config_error(self, tmp_path: Path) -> None:
         """Missing mala.yaml raises ConfigError with clear message."""
         # No mala.yaml created
@@ -357,7 +343,6 @@ class TestMissingConfigIntegration:
         assert str(tmp_path) in error_msg
         assert "Mala requires a configuration file" in error_msg
 
-    @pytest.mark.integration
     def test_missing_config_error_is_specific(self, tmp_path: Path) -> None:
         """Missing config error message format is exact."""
         with pytest.raises(ConfigError) as exc_info:
@@ -378,7 +363,6 @@ class TestMissingConfigIntegration:
 class TestInvalidYamlSyntaxIntegration:
     """AC 6: Test error handling for invalid YAML syntax."""
 
-    @pytest.mark.integration
     def test_invalid_yaml_syntax_raises_config_error(self, tmp_path: Path) -> None:
         """Invalid YAML syntax raises ConfigError with details."""
         _create_mala_yaml(
@@ -394,7 +378,6 @@ commands
 
         assert "Invalid YAML syntax in mala.yaml:" in str(exc_info.value)
 
-    @pytest.mark.integration
     def test_yaml_with_tabs_raises_error(self, tmp_path: Path) -> None:
         """YAML with tabs (invalid indentation) raises specific error."""
         _create_mala_yaml(tmp_path, "commands:\n\ttest: pytest\n")
@@ -404,7 +387,6 @@ commands
 
         assert "Invalid YAML syntax in mala.yaml:" in str(exc_info.value)
 
-    @pytest.mark.integration
     def test_unclosed_bracket_raises_error(self, tmp_path: Path) -> None:
         """Unclosed bracket in YAML raises error."""
         _create_mala_yaml(
@@ -423,7 +405,6 @@ code_patterns:
 
         assert "Invalid YAML syntax in mala.yaml:" in str(exc_info.value)
 
-    @pytest.mark.integration
     def test_unknown_field_raises_specific_error(self, tmp_path: Path) -> None:
         """Unknown field in config raises specific error."""
         _create_mala_yaml(
@@ -449,7 +430,6 @@ unknown_field: value
 class TestCoverageConfigIntegration:
     """AC 7: Test coverage configuration parsing."""
 
-    @pytest.mark.integration
     def test_coverage_config_xml_format(self, tmp_path: Path) -> None:
         """Coverage config with xml format, custom file, threshold."""
         _create_mala_yaml(
@@ -471,7 +451,6 @@ coverage:
         assert config.coverage.file == "coverage/coverage.xml"
         assert config.coverage.threshold == 85.0
 
-    @pytest.mark.integration
     def test_coverage_config_with_custom_command(self, tmp_path: Path) -> None:
         """Coverage config can specify a custom coverage command."""
         _create_mala_yaml(
@@ -492,7 +471,6 @@ coverage:
         assert config.coverage is not None
         assert config.coverage.command == "pytest --cov=src --cov-report=xml"
 
-    @pytest.mark.integration
     def test_coverage_config_with_timeout(self, tmp_path: Path) -> None:
         """Coverage config can specify timeout."""
         _create_mala_yaml(
@@ -513,7 +491,6 @@ coverage:
         assert config.coverage is not None
         assert config.coverage.timeout == 600
 
-    @pytest.mark.integration
     def test_coverage_config_threshold_as_float(self, tmp_path: Path) -> None:
         """Coverage threshold can be a float."""
         _create_mala_yaml(
@@ -533,7 +510,6 @@ coverage:
         assert config.coverage is not None
         assert config.coverage.threshold == 85.5
 
-    @pytest.mark.integration
     def test_coverage_invalid_format_raises_error(self, tmp_path: Path) -> None:
         """Unsupported coverage format raises error."""
         _create_mala_yaml(
@@ -562,7 +538,6 @@ coverage:
 class TestNoCoverageConfigIntegration:
     """AC 8: Test that missing coverage section results in no coverage."""
 
-    @pytest.mark.integration
     def test_no_coverage_section_results_in_none(self, tmp_path: Path) -> None:
         """Config without coverage section has coverage=None."""
         _create_mala_yaml(
@@ -577,7 +552,6 @@ commands:
 
         assert config.coverage is None
 
-    @pytest.mark.integration
     def test_explicit_null_coverage_results_in_none(self, tmp_path: Path) -> None:
         """Explicit null coverage section has coverage=None."""
         _create_mala_yaml(
@@ -593,7 +567,6 @@ coverage: null
 
         assert config.coverage is None
 
-    @pytest.mark.integration
     def test_preset_coverage_can_be_disabled(self, tmp_path: Path) -> None:
         """Coverage from preset can be disabled with explicit null."""
         # First, verify a preset with coverage
@@ -645,7 +618,6 @@ class TestCodePatternsIntegration:
 
         return MockSpec
 
-    @pytest.mark.integration
     def test_py_pattern_matches_only_python_files(self, tmp_path: Path) -> None:
         """*.py pattern matches only Python files."""
         _create_mala_yaml(
@@ -669,7 +641,6 @@ code_patterns:
         assert "README.md" not in matched
         assert "config.yaml" not in matched
 
-    @pytest.mark.integration
     def test_recursive_pattern_matches_nested(self, tmp_path: Path) -> None:
         """src/**/*.py matches Python files at any depth under src/."""
         _create_mala_yaml(
@@ -700,7 +671,6 @@ code_patterns:
         assert "tests/test_main.py" not in matched
         assert "README.md" not in matched
 
-    @pytest.mark.integration
     def test_multiple_patterns_or_logic(self, tmp_path: Path) -> None:
         """Multiple patterns use OR logic."""
         _create_mala_yaml(
@@ -728,7 +698,6 @@ code_patterns:
         assert "tests/test_main.py" in matched
         assert "README.md" not in matched
 
-    @pytest.mark.integration
     def test_validation_gating_with_code_patterns(
         self, tmp_path: Path, mock_spec: type
     ) -> None:
@@ -754,7 +723,6 @@ code_patterns:
         assert should_trigger_validation(["README.md"], spec) is False
         assert should_trigger_validation(["config.yaml"], spec) is False
 
-    @pytest.mark.integration
     def test_mala_yaml_change_always_triggers(
         self, tmp_path: Path, mock_spec: type
     ) -> None:
@@ -775,7 +743,6 @@ code_patterns:
         # mala.yaml change always triggers
         assert should_trigger_validation(["mala.yaml"], spec) is True
 
-    @pytest.mark.integration
     def test_config_files_invalidate_lint_cache(
         self, tmp_path: Path, mock_spec: type
     ) -> None:
@@ -811,54 +778,45 @@ config_files:
 class TestToolNameExtractionIntegration:
     """AC 10: Test tool name extraction for quality gate messaging."""
 
-    @pytest.mark.integration
     def test_npx_wrapper_extracts_tool(self) -> None:
         """npx eslint → eslint."""
         assert extract_tool_name("npx eslint .") == "eslint"
         assert extract_tool_name("npx prettier --check .") == "prettier"
 
-    @pytest.mark.integration
     def test_uvx_wrapper_extracts_tool(self) -> None:
         """uvx ruff check → ruff."""
         assert extract_tool_name("uvx ruff check .") == "ruff"
         assert extract_tool_name("uvx mypy src/") == "mypy"
 
-    @pytest.mark.integration
     def test_uv_run_wrapper_extracts_tool(self) -> None:
         """uv run pytest → pytest."""
         assert extract_tool_name("uv run pytest") == "pytest"
         assert extract_tool_name("uv run ruff check .") == "ruff"
 
-    @pytest.mark.integration
     def test_go_compound_command(self) -> None:
         """go test ./... → go test."""
         assert extract_tool_name("go test ./...") == "go test"
         assert extract_tool_name("go build .") == "go build"
 
-    @pytest.mark.integration
     def test_cargo_compound_command(self) -> None:
         """cargo clippy → cargo clippy."""
         assert extract_tool_name("cargo clippy") == "cargo clippy"
         assert extract_tool_name("cargo test") == "cargo test"
 
-    @pytest.mark.integration
     def test_npm_run_script(self) -> None:
         """npm run lint → npm run:lint."""
         assert extract_tool_name("npm run lint") == "npm run:lint"
         assert extract_tool_name("npm run test:unit") == "npm run:test:unit"
 
-    @pytest.mark.integration
     def test_npm_test_compound(self) -> None:
         """npm test → npm test."""
         assert extract_tool_name("npm test") == "npm test"
 
-    @pytest.mark.integration
     def test_path_prefix_stripped(self) -> None:
         """/usr/bin/eslint → eslint."""
         assert extract_tool_name("/usr/bin/eslint .") == "eslint"
         assert extract_tool_name("./node_modules/.bin/prettier") == "prettier"
 
-    @pytest.mark.integration
     def test_preset_commands_extract_correctly(self, tmp_path: Path) -> None:
         """Tool names extract correctly from preset commands."""
         _create_mala_yaml(tmp_path, "preset: python-uv\n")
@@ -893,7 +851,6 @@ class TestToolNameExtractionIntegration:
 class TestEndToEndScenarios:
     """Integration tests for realistic end-to-end scenarios."""
 
-    @pytest.mark.integration
     def test_full_python_project_workflow(self, tmp_path: Path) -> None:
         """Complete Python project setup with all features."""
         _create_mala_yaml(
@@ -935,7 +892,6 @@ setup_files:
         # Patterns overridden
         assert config.code_patterns == ("src/**/*.py", "tests/**/*.py")
 
-    @pytest.mark.integration
     def test_minimal_makefile_project(self, tmp_path: Path) -> None:
         """Minimal Makefile-based project without preset."""
         _create_mala_yaml(
@@ -957,7 +913,6 @@ commands:
         assert config.commands.lint is None
         assert config.coverage is None
 
-    @pytest.mark.integration
     def test_monorepo_with_custom_patterns(self, tmp_path: Path) -> None:
         """Monorepo with custom code patterns for multiple languages."""
         _create_mala_yaml(

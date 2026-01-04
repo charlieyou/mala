@@ -4213,7 +4213,6 @@ class TestHandleReviewEffectIntegration:
         return MagicMock()
 
     @pytest.mark.asyncio
-    @pytest.mark.integration
     async def test_review_effect_success_path(
         self,
         session_config: AgentSessionConfig,
@@ -4276,7 +4275,6 @@ class TestHandleReviewEffectIntegration:
         assert "on_review_passed" in event_names
 
     @pytest.mark.asyncio
-    @pytest.mark.integration
     async def test_review_effect_failure_with_retry(
         self,
         session_config: AgentSessionConfig,
@@ -4354,7 +4352,6 @@ class TestHandleReviewEffectIntegration:
         assert "on_review_retry" in event_names
 
     @pytest.mark.asyncio
-    @pytest.mark.integration
     async def test_review_effect_exhausted_retries(
         self,
         session_config: AgentSessionConfig,
@@ -4427,7 +4424,6 @@ class TestHandleReviewEffectIntegration:
         assert result.pending_query is None
 
     @pytest.mark.asyncio
-    @pytest.mark.integration
     async def test_review_effect_no_progress_path(
         self,
         session_config: AgentSessionConfig,
@@ -4566,7 +4562,6 @@ class TestSessionRestartLoop:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.integration
     async def test_restart_on_context_pressure(
         self,
         tmp_path: Path,
@@ -4661,7 +4656,6 @@ class TestSessionRestartLoop:
         assert "step 3 of 5" in continuation_prompt
 
     @pytest.mark.asyncio
-    @pytest.mark.integration
     async def test_multiple_restarts_increment_continuation_count(
         self,
         tmp_path: Path,
@@ -4750,7 +4744,6 @@ class TestSessionRestartLoop:
         assert "checkpoint-2" in continuation_prompt
 
     @pytest.mark.asyncio
-    @pytest.mark.integration
     async def test_fresh_lifecycle_on_restart(
         self,
         tmp_path: Path,
@@ -4852,7 +4845,6 @@ class TestSessionRestartLoop:
             AgentSessionRunner._initialize_session = original_init  # type: ignore[method-assign]
 
     @pytest.mark.asyncio
-    @pytest.mark.integration
     async def test_checkpoint_without_tags_uses_full_response(
         self,
         tmp_path: Path,

@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import os
-import shutil
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from src.core.protocols import (
         CodeReviewer,
@@ -47,14 +46,7 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ["MALA_RUNS_DIR"] = "/tmp/mala-test-runs"
 
     # Redirect Claude SDK logs to /tmp to avoid polluting user Claude config
-    test_claude_dir = Path("/tmp/mala-test-claude")
-    test_claude_dir.mkdir(parents=True, exist_ok=True)
-    os.environ["CLAUDE_CONFIG_DIR"] = str(test_claude_dir)
-
-    # Copy OAuth credentials to test config dir so SDK integration tests work
-    real_credentials = Path.home() / ".claude" / ".credentials.json"
-    if real_credentials.exists():
-        shutil.copy2(real_credentials, test_claude_dir / ".credentials.json")
+    os.environ["CLAUDE_CONFIG_DIR"] = "/tmp/mala-test-claude"
 
 
 def pytest_collection_modifyitems(

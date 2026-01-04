@@ -1093,7 +1093,6 @@ class TestModelErrorHandling:
 # ============================================================================
 
 
-@pytest.mark.integration
 class TestEpicVerifierOrchestratorIntegration:
     """Integration tests for EpicVerifier wiring in MalaOrchestrator."""
 
