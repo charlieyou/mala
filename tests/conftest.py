@@ -56,7 +56,8 @@ def pytest_collection_modifyitems(
         if any(marker in item.keywords for marker in ("unit", "integration", "e2e")):
             continue
         # Path-based auto-marking (use item.path for pytest 7+ compatibility)
-        path = str(item.path)
+        # Normalize path separators for cross-platform compatibility (Windows uses backslashes)
+        path = str(item.path).replace("\\", "/")
         if "/e2e/" in path:
             item.add_marker(pytest.mark.e2e)
         elif "/integration/" in path:
