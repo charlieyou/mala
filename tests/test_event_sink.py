@@ -1,10 +1,23 @@
 """Tests for event_sink module."""
 
+from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
 from src.infra.io.base_sink import BaseEventSink, NullEventSink
 from src.infra.io.console_sink import ConsoleEventSink
 from src.core.protocols import EventRunConfig, MalaEventSink
+
+
+@dataclass
+class FakeDeadlockInfo:
+    """Fake implementation of DeadlockInfoProtocol for testing."""
+
+    cycle: list[str]
+    victim_id: str
+    victim_issue_id: str | None
+    blocked_on: str
+    blocker_id: str
+    blocker_issue_id: str | None
 
 
 class TestEventRunConfig:
@@ -201,6 +214,17 @@ class TestBaseEventSink:
             is None
         )
 
+        # Deadlock detection
+        deadlock_info = FakeDeadlockInfo(
+            cycle=["agent-1", "agent-2"],
+            victim_id="agent-2",
+            victim_issue_id="issue-2",
+            blocked_on="/tmp/lock",
+            blocker_id="agent-1",
+            blocker_issue_id="issue-1",
+        )
+        assert sink.on_deadlock_detected(deadlock_info) is None
+
     def test_can_be_subclassed_for_selective_override(self) -> None:
         """BaseEventSink can be subclassed with selective method overrides."""
 
@@ -335,6 +359,17 @@ class TestNullEventSink:
             sink.on_epic_remediation_created("epic-1", "issue-4", "Criterion text here")
             is None
         )
+
+        # Deadlock detection
+        deadlock_info = FakeDeadlockInfo(
+            cycle=["agent-1", "agent-2"],
+            victim_id="agent-2",
+            victim_issue_id="issue-2",
+            blocked_on="/tmp/lock",
+            blocker_id="agent-1",
+            blocker_issue_id="issue-1",
+        )
+        assert sink.on_deadlock_detected(deadlock_info) is None
 
     def test_can_be_called_multiple_times(self) -> None:
         """NullEventSink methods can be called repeatedly."""
@@ -773,3 +808,53 @@ class TestConsoleEventSink:
 
         mock_log.assert_called_once()
         assert mock_log.call_args.kwargs.get("issue_id") == "issue-pqr"
+
+    @patch("src.infra.io.console_sink.log")
+    def test_on_deadlock_detected_logs_warning(self, mock_log: MagicMock) -> None:
+        """on_deadlock_detected logs deadlock info as warning."""
+        sink = ConsoleEventSink()
+        deadlock_info = FakeDeadlockInfo(
+            cycle=["agent-1", "agent-2", "agent-3"],
+            victim_id="agent-3",
+            victim_issue_id="issue-3",
+            blocked_on="/tmp/locks/file.py",
+            blocker_id="agent-1",
+            blocker_issue_id="issue-1",
+        )
+        sink.on_deadlock_detected(deadlock_info)
+
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        # Check warning icon
+        assert call_args[0][0] == "⚠"
+        # Check message contains key info
+        message = call_args[0][1]
+        assert "Deadlock detected" in message
+        assert "agent-1 → agent-2 → agent-3" in message
+        assert "victim=agent-3" in message
+        assert "issue-3" in message
+        assert "/tmp/locks/file.py" in message
+        assert "blocker=agent-1" in message
+        assert "issue-1" in message
+
+    @patch("src.infra.io.console_sink.log")
+    def test_on_deadlock_detected_handles_none_issue_ids(
+        self, mock_log: MagicMock
+    ) -> None:
+        """on_deadlock_detected handles None issue IDs gracefully."""
+        sink = ConsoleEventSink()
+        deadlock_info = FakeDeadlockInfo(
+            cycle=["agent-1", "agent-2"],
+            victim_id="agent-2",
+            victim_issue_id=None,
+            blocked_on="/tmp/lock",
+            blocker_id="agent-1",
+            blocker_issue_id=None,
+        )
+        sink.on_deadlock_detected(deadlock_info)
+
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        message = call_args[0][1]
+        # None values should display as "unknown"
+        assert "unknown" in message

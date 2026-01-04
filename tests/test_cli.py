@@ -1878,6 +1878,7 @@ class TestApplyConfigOverrides:
             max_epic_verification_retries=None,
             braintrust_enabled=False,
             disable_review=False,
+            deadlock_detection_enabled=False,
         )
 
         assert result.resolved is not None
@@ -1907,6 +1908,7 @@ class TestApplyConfigOverrides:
             max_epic_verification_retries=None,
             braintrust_enabled=False,
             disable_review=False,
+            deadlock_detection_enabled=False,
         )
 
         assert result.resolved is not None
@@ -1934,6 +1936,7 @@ class TestApplyConfigOverrides:
             max_epic_verification_retries=10,
             braintrust_enabled=False,
             disable_review=False,
+            deadlock_detection_enabled=False,
         )
 
         assert result.resolved is not None
@@ -1960,6 +1963,7 @@ class TestApplyConfigOverrides:
             max_epic_verification_retries=None,
             braintrust_enabled=False,
             disable_review=False,
+            deadlock_detection_enabled=False,
         )
 
         assert result.resolved is not None
@@ -1996,6 +2000,7 @@ class TestApplyConfigOverrides:
             max_epic_verification_retries=None,
             braintrust_enabled=False,
             disable_review=False,
+            deadlock_detection_enabled=False,
         )
 
         assert result.resolved is not None
@@ -2022,6 +2027,7 @@ class TestApplyConfigOverrides:
             max_epic_verification_retries=None,
             braintrust_enabled=False,
             disable_review=False,
+            deadlock_detection_enabled=False,
         )
 
         assert result.resolved is not None
@@ -2048,6 +2054,7 @@ class TestApplyConfigOverrides:
             max_epic_verification_retries=None,
             braintrust_enabled=False,
             disable_review=False,
+            deadlock_detection_enabled=False,
         )
 
         assert result.is_error
@@ -2074,6 +2081,7 @@ class TestApplyConfigOverrides:
             max_epic_verification_retries=None,
             braintrust_enabled=False,
             disable_review=False,
+            deadlock_detection_enabled=False,
         )
 
         assert result.is_error
@@ -2100,6 +2108,7 @@ class TestApplyConfigOverrides:
             max_epic_verification_retries=None,
             braintrust_enabled=False,
             disable_review=False,
+            deadlock_detection_enabled=False,
         )
 
         assert result.is_error
