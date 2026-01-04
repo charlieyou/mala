@@ -11,6 +11,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from src.pipeline.issue_result import IssueResult
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
@@ -37,15 +39,20 @@ class DeadlockHandlerCallbacks:
         do_cleanup_agent_locks: Clean up locks held by agent. Args: (agent_id).
             Returns: (count, paths).
         unregister_agent: Unregister agent from deadlock monitor. Args: (agent_id).
+            Optional - only called when deadlock monitoring is enabled.
+        finalize_issue_result: Finalize an issue result. Args: (issue_id, result).
+        mark_completed: Mark issue as completed in coordinator. Args: (issue_id).
     """
 
     add_dependency: Callable[[str, str], Awaitable[bool]]
-    mark_needs_followup: Callable[[str, str, Path | None], Awaitable[None]]
+    mark_needs_followup: Callable[[str, str, Path | None], Awaitable[bool]]
     on_deadlock_detected: Callable[[DeadlockInfo], None]
     on_locks_cleaned: Callable[[str, int], None]
     on_tasks_aborting: Callable[[int, str], None]
     do_cleanup_agent_locks: Callable[[str], tuple[int, list[str]]]
-    unregister_agent: Callable[[str], None]
+    unregister_agent: Callable[[str], None] | None
+    finalize_issue_result: Callable[[str, IssueResult], Awaitable[None]]
+    mark_completed: Callable[[str], None]
 
 
 class DeadlockHandler:
@@ -178,17 +185,19 @@ class DeadlockHandler:
 
     async def abort_active_tasks(
         self,
-        active_tasks: dict[str, asyncio.Task[object]],
+        active_tasks: dict[str, asyncio.Task[IssueResult]],
         abort_reason: str | None,
+        state: OrchestratorState,
     ) -> None:
-        """Cancel active tasks and prepare them for finalization.
+        """Cancel active tasks and mark them as failed.
 
-        Tasks that have already completed are left for the caller to finalize
-        with their real results rather than being marked as aborted.
+        Tasks that have already completed are finalized with their real results
+        rather than being marked as aborted.
 
         Args:
             active_tasks: Mapping of issue_id to asyncio.Task.
             abort_reason: Reason for aborting tasks.
+            state: Orchestrator state for agent_ids and session log paths.
         """
         if not active_tasks:
             return
@@ -198,6 +207,41 @@ class DeadlockHandler:
         for task in active_tasks.values():
             if not task.done():
                 task.cancel()
+
+        # Finalize each remaining issue - use real result if already done
+        for issue_id, task in list(active_tasks.items()):
+            if task.done():
+                # Task completed before we could cancel - use real result
+                try:
+                    result = task.result()
+                except asyncio.CancelledError:
+                    result = IssueResult(
+                        issue_id=issue_id,
+                        agent_id=state.agent_ids.get(issue_id, "unknown"),
+                        success=False,
+                        summary=f"Aborted due to unrecoverable error: {reason}",
+                        session_log_path=state.active_session_log_paths.get(issue_id),
+                    )
+                except Exception as e:
+                    result = IssueResult(
+                        issue_id=issue_id,
+                        agent_id=state.agent_ids.get(issue_id, "unknown"),
+                        success=False,
+                        summary=str(e),
+                        session_log_path=state.active_session_log_paths.get(issue_id),
+                    )
+            else:
+                # Task was still running - mark as aborted
+                result = IssueResult(
+                    issue_id=issue_id,
+                    agent_id=state.agent_ids.get(issue_id, "unknown"),
+                    success=False,
+                    summary=f"Aborted due to unrecoverable error: {reason}",
+                    session_log_path=state.active_session_log_paths.get(issue_id),
+                )
+            await self._callbacks.finalize_issue_result(issue_id, result)
+            # Mark completed in coordinator to keep state consistent
+            self._callbacks.mark_completed(issue_id)
 
     def cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup).
@@ -209,5 +253,6 @@ class DeadlockHandler:
         if count:
             logger.info("Agent locks cleaned: agent_id=%s count=%d", agent_id, count)
             self._callbacks.on_locks_cleaned(agent_id, count)
-        # Unregister agent from deadlock monitor
-        self._callbacks.unregister_agent(agent_id)
+        # Unregister agent from deadlock monitor (only when monitoring is enabled)
+        if self._callbacks.unregister_agent is not None:
+            self._callbacks.unregister_agent(agent_id)

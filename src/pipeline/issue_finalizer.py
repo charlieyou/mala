@@ -110,7 +110,7 @@ class IssueFinalizeCallbacks:
     """
 
     close_issue: Callable[[str], Awaitable[bool]]
-    mark_needs_followup: Callable[[str, str, Path | None], Awaitable[None]]
+    mark_needs_followup: Callable[[str, str, Path | None], Awaitable[bool]]
     on_issue_closed: Callable[[str, str], None]
     on_issue_completed: Callable[[str, str, bool, float, str], None]
     trigger_epic_closure: Callable[[str, RunMetadata], Awaitable[None]]
