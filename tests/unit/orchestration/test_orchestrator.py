@@ -121,7 +121,6 @@ class TestPromptTemplate:
             "issue_id",
             "repo_path",
             "lock_dir",
-            "scripts_dir",
             "agent_id",
             "lint_command",
             "format_command",

@@ -61,7 +61,6 @@ def format_implementer_prompt(
     agent_id: str,
     validation_commands: PromptValidationCommands,
     lock_dir: Path,
-    scripts_dir: Path,
 ) -> str:
     """Format the implementer prompt with runtime values.
 
@@ -72,7 +71,6 @@ def format_implementer_prompt(
         agent_id: The agent ID for this session.
         validation_commands: Validation commands for the prompt.
         lock_dir: Directory for lock files (from infra layer).
-        scripts_dir: Directory containing helper scripts (from infra layer).
 
     Returns:
         Formatted prompt string.
@@ -81,7 +79,6 @@ def format_implementer_prompt(
         issue_id=issue_id,
         repo_path=repo_path,
         lock_dir=lock_dir,
-        scripts_dir=scripts_dir,
         agent_id=agent_id,
         lint_command=validation_commands.lint,
         format_command=validation_commands.format,

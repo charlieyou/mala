@@ -31,7 +31,6 @@ from src.infra.io.log_output.run_metadata import (
 from src.infra.tools.env import (
     EnvConfig,
     PROMPTS_DIR,
-    SCRIPTS_DIR,
     get_lock_dir,
     get_runs_dir,
 )
@@ -738,7 +737,6 @@ class MalaOrchestrator:
             agent_id=temp_agent_id,
             validation_commands=self._prompt_validation_commands,
             lock_dir=get_lock_dir(),
-            scripts_dir=SCRIPTS_DIR,
         )
 
         session_input = AgentSessionInput(

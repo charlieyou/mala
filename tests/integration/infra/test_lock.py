@@ -117,31 +117,28 @@ def run_lock_script(
 class TestPromptTemplateIntegration:
     """Test that the prompt template correctly configures lock environment."""
 
-    def test_template_includes_scripts_dir_placeholder(self) -> None:
-        assert "{scripts_dir}" in _prompts.implementer_prompt
-
     def test_template_includes_lock_dir_placeholder(self) -> None:
         assert "{lock_dir}" in _prompts.implementer_prompt
 
     def test_template_includes_agent_id_placeholder(self) -> None:
         assert "{agent_id}" in _prompts.implementer_prompt
 
-    def test_template_formats_correctly(self, lock_env: Path) -> None:
-        prompt = _prompts.implementer_prompt.format(
-            issue_id="bd-99",
-            repo_path="/tmp/repo",
-            lock_dir=lock_env,
-            scripts_dir=SCRIPTS_DIR,
-            agent_id="bd-99-test1234",
-            lint_command="uvx ruff check .",
-            format_command="uvx ruff format .",
-            typecheck_command="uvx ty check",
-            test_command="uv run pytest",
-        )
-        # Verify the formatted values appear in the prompt
-        assert str(lock_env) in prompt
-        assert str(SCRIPTS_DIR) in prompt
-        assert "bd-99-test1234" in prompt
+    def test_template_has_required_placeholders(self) -> None:
+        # Verify all required placeholders exist in the template
+        required = [
+            "{issue_id}",
+            "{repo_path}",
+            "{lock_dir}",
+            "{agent_id}",
+            "{lint_command}",
+            "{format_command}",
+            "{typecheck_command}",
+            "{test_command}",
+        ]
+        for placeholder in required:
+            assert placeholder in _prompts.implementer_prompt, (
+                f"Missing placeholder: {placeholder}"
+            )
 
     def test_scripts_dir_exists_and_contains_scripts(self) -> None:
         assert SCRIPTS_DIR.exists()

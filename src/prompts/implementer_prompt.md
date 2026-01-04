@@ -5,14 +5,13 @@ Implement the assigned issue completely before returning.
 **Issue ID:** {issue_id}
 **Repository:** {repo_path}
 **Lock Directory:** {lock_dir}
-**Scripts Directory:** {scripts_dir}
 **Agent Lock Prefix:** {agent_id}
 
 ## Quick Rules (Read First)
 
 1. **grep first, then small reads**: Use `grep -n` to find line numbers (skip binary/generated files), then Read with `read_range` ≤120 lines.
 2. **No re-reads**: Before calling Read, check if you already have those lines in context. Reuse what you saw.
-3. **Lock before edit**: Acquire locks before editing. Use exponential backoff (2s, 4s, 8s...) not constant polling.
+3. **Lock before edit**: Acquire locks before editing. Use a single `lock_acquire` call with `timeout_seconds≥300`—no retries.
 4. **Minimal responses**: No narration ("Let me...", "I understand..."). No large code dumps. Reference as `file:line`.
 5. **Validate once per revision**: Run validations once per code revision. Re-run only after fixing code.
 6. **Know when to stop**: If no changes needed, return ISSUE_* marker. If blocked on locks >15 min, return BLOCKED.
@@ -97,7 +96,7 @@ Use the MCP locking tools to coordinate file access with other agents.
 **Lock tools:**
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `lock_acquire` | `filepaths: list[str]`, `timeout_seconds?: int` | Acquire locks. `timeout_seconds=0` (default) returns immediately; >0 waits. Returns `{acquired: [...], blocked: [...]}` |
+| `lock_acquire` | `filepaths: list[str]`, `timeout_seconds?: int` | Acquire locks. `timeout_seconds=0` (default) returns immediately; >0 waits. Returns `{{acquired: [...], blocked: [...]}}` |
 | `lock_release` | `filepaths?: list[str]` | Release locks. Omit `filepaths` to release all your locks. |
 
 **Acquisition strategy - mandatory protocol:**
@@ -118,7 +117,7 @@ Use the MCP locking tools to coordinate file access with other agents.
 
 // Step 1: Try to acquire all at once
 lock_acquire(filepaths=["config.py", "utils.py", "main.py"])
-// Returns: {acquired: ["config.py", "main.py"], blocked: [{path: "utils.py", holder: "bd-43"}]}
+// Returns: {{acquired: ["config.py", "main.py"], blocked: [{{path: "utils.py", holder: "bd-43"}}]}}
 
 // → Edit config.py (all changes needed)
 // → Edit main.py (all changes needed)
@@ -126,8 +125,8 @@ lock_acquire(filepaths=["config.py", "utils.py", "main.py"])
 
 // Step 2: Wait for blocked file
 lock_acquire(filepaths=["utils.py"], timeout_seconds=300)
-// Returns: {acquired: ["utils.py"], blocked: []} → edit utils.py
-// OR: {acquired: [], blocked: [...]} → return "BLOCKED: utils.py held by bd-43"
+// Returns: {{acquired: ["utils.py"], blocked: []}} → edit utils.py
+// OR: {{acquired: [], blocked: [...]}} → return "BLOCKED: utils.py held by bd-43"
 ```
 
 ### Parallel Work Rules
