@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Self
 import pytest
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
+from src.core.protocols import SDKClientFactoryProtocol, SDKClientProtocol
 from src.pipeline.context_pressure_handler import (
     CheckpointResult,
     ContextPressureConfig,
@@ -22,6 +23,7 @@ from src.pipeline.message_stream_processor import ContextPressureError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from types import TracebackType
 
 
 # --- Fake SDK Client and Factory ---
@@ -40,7 +42,7 @@ def make_result_message(session_id: str = "test-session") -> ResultMessage:
     )
 
 
-class FakeSDKClient:
+class FakeSDKClient(SDKClientProtocol):
     """Fake SDK client for testing checkpoint fetch."""
 
     def __init__(
@@ -61,7 +63,7 @@ class FakeSDKClient:
         self,
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
-        exc_tb: object,
+        exc_tb: TracebackType | None,
     ) -> None:
         pass
 
@@ -75,15 +77,18 @@ class FakeSDKClient:
             yield msg
         yield self.result_message
 
+    async def disconnect(self) -> None:
+        pass
 
-class FakeSDKClientFactory:
+
+class FakeSDKClientFactory(SDKClientFactoryProtocol):
     """Factory for creating fake SDK clients."""
 
-    def __init__(self, client: FakeSDKClient | None = None):
-        self.client = client or FakeSDKClient()
+    def __init__(self, client: SDKClientProtocol | None = None):
+        self.client: SDKClientProtocol = client or FakeSDKClient()
         self.create_calls: list[object] = []
 
-    def create(self, options: object) -> FakeSDKClient:
+    def create(self, options: object) -> SDKClientProtocol:
         self.create_calls.append(options)
         return self.client
 
