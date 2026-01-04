@@ -13,14 +13,15 @@ independent testing of subprocess logic.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from src.infra.tools.command_runner import CommandRunner
 
@@ -51,12 +52,14 @@ class WaitResult:
         stdout: Standard output (JSON).
         stderr: Standard error.
         timed_out: Whether wait timed out.
+        session_dir: Path to session directory (extracted from JSON output).
     """
 
     returncode: int
     stdout: str = ""
     stderr: str = ""
     timed_out: bool = False
+    session_dir: Path | None = None
 
 
 @dataclass
@@ -245,11 +248,23 @@ class CerberusGateCLI:
         ) + 30
         result = await runner.run_async(wait_cmd, env=env, timeout=effective_timeout)
 
+        # Extract session_dir from JSON output
+        session_dir: Path | None = None
+        try:
+            wait_data = json.loads(result.stdout)
+            if isinstance(wait_data, dict):
+                raw_session_dir = wait_data.get("session_dir")
+                if isinstance(raw_session_dir, str) and raw_session_dir:
+                    session_dir = Path(raw_session_dir)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
         return WaitResult(
             returncode=result.returncode,
             stdout=result.stdout,
             stderr=result.stderr,
             timed_out=result.timed_out,
+            session_dir=session_dir,
         )
 
     async def resolve_gate(

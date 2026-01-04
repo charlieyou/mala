@@ -11,7 +11,6 @@ Subprocess management is delegated to CerberusGateCLI.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -244,23 +243,11 @@ class DefaultReviewer:
                 fatal_error=False,
             )
 
-        # Try to extract session_dir from wait output for review_log_path
-        review_log_path: Path | None = None
-        try:
-            wait_data = json.loads(wait_result.stdout)
-            if isinstance(wait_data, dict):
-                session_dir = wait_data.get("session_dir")
-                if isinstance(session_dir, str) and session_dir:
-                    review_log_path = Path(session_dir)
-        except (json.JSONDecodeError, TypeError):
-            # If we can't parse, let map_exit_code_to_result handle it
-            pass
-
         result = map_exit_code_to_result(
             wait_result.returncode,
             wait_result.stdout,
             wait_result.stderr,
-            review_log_path=review_log_path,
+            review_log_path=wait_result.session_dir,
             event_sink=self.event_sink,
         )
         logger.info(
