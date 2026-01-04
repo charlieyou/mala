@@ -464,54 +464,86 @@ class MalaOrchestrator:
                 info.blocker_id,
             )
 
-            # Cancel victim task if still running
             victim_issue_id = info.victim_issue_id
+            task_to_cancel: asyncio.Task[object] | None = None
+            is_self_cancel = False
+
+            # Identify victim task for cancellation
             if victim_issue_id and victim_issue_id in self.active_tasks:
                 task = self.active_tasks[victim_issue_id]
                 if not task.done():
-                    task.cancel()
+                    task_to_cancel = task
+                    is_self_cancel = task is asyncio.current_task()
+
+            # Clean up victim's locks first (before any await that could raise)
+            self._cleanup_agent_locks(info.victim_id)
+
+            # Use shield to protect resolution from cancellation
+            try:
+                await asyncio.shield(self._resolve_deadlock(info))
+            except asyncio.CancelledError:
+                # Re-raise only if this wasn't a self-cancel scenario
+                if not is_self_cancel:
+                    raise
+
+            # Cancel victim task after resolution is complete
+            if task_to_cancel is not None:
+                if is_self_cancel:
+                    # Defer self-cancellation to avoid interrupting this handler
+                    loop = asyncio.get_running_loop()
+                    loop.call_soon(task_to_cancel.cancel)
+                    logger.info(
+                        "Deferred cancellation for self (victim issue %s, agent %s)",
+                        victim_issue_id,
+                        info.victim_id,
+                    )
+                else:
+                    task_to_cancel.cancel()
                     logger.info(
                         "Cancelled task for victim issue %s (agent %s)",
                         victim_issue_id,
                         info.victim_id,
                     )
 
-            # Clean up victim's locks
-            self._cleanup_agent_locks(info.victim_id)
+    async def _resolve_deadlock(self, info: DeadlockInfo) -> None:
+        """Perform dependency and needs-followup updates for deadlock resolution.
 
-            # Add dependency: victim issue depends on blocker issue
-            if victim_issue_id and info.blocker_issue_id:
-                success = await self.beads.add_dependency_async(
-                    victim_issue_id, info.blocker_issue_id
-                )
-                if success:
-                    logger.info(
-                        "Added dependency: %s depends on %s",
-                        victim_issue_id,
-                        info.blocker_issue_id,
-                    )
-                else:
-                    logger.warning(
-                        "Failed to add dependency: %s depends on %s",
-                        victim_issue_id,
-                        info.blocker_issue_id,
-                    )
+        Separated from _handle_deadlock to allow shielding from cancellation.
 
-            # Mark victim issue as needs-followup
-            if victim_issue_id:
-                reason = (
-                    f"Deadlock victim: blocked on {info.blocked_on} "
-                    f"held by {info.blocker_id}"
-                )
-                log_path = self.session_log_paths.get(victim_issue_id)
-                await self.beads.mark_needs_followup_async(
-                    victim_issue_id, reason, log_path=log_path
-                )
-                logger.info("Marked issue %s as needs-followup", victim_issue_id)
+        Args:
+            info: DeadlockInfo with cycle, victim, and blocker details.
+        """
+        victim_issue_id = info.victim_issue_id
 
-            # Emit deadlock event to event sink
-            # Note: on_deadlock will be added in T006 (Event Protocol Updates)
-            # For now, log only. T006 will add: self.event_sink.on_deadlock(info)
+        # Add dependency: victim issue depends on blocker issue
+        if victim_issue_id and info.blocker_issue_id:
+            success = await self.beads.add_dependency_async(
+                victim_issue_id, info.blocker_issue_id
+            )
+            if success:
+                logger.info(
+                    "Added dependency: %s depends on %s",
+                    victim_issue_id,
+                    info.blocker_issue_id,
+                )
+            else:
+                logger.warning(
+                    "Failed to add dependency: %s depends on %s",
+                    victim_issue_id,
+                    info.blocker_issue_id,
+                )
+
+        # Mark victim issue as needs-followup
+        if victim_issue_id:
+            reason = (
+                f"Deadlock victim: blocked on {info.blocked_on} "
+                f"held by {info.blocker_id}"
+            )
+            log_path = self.session_log_paths.get(victim_issue_id)
+            await self.beads.mark_needs_followup_async(
+                victim_issue_id, reason, log_path=log_path
+            )
+            logger.info("Marked issue %s as needs-followup", victim_issue_id)
 
     def _request_abort(self, reason: str) -> None:
         """Signal that the current run should stop due to a fatal error."""

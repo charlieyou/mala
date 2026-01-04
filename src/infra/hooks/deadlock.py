@@ -1,4 +1,8 @@
-"""PostToolUse hook for emitting lock events to the deadlock monitor.
+"""Hooks for emitting lock events to the deadlock monitor.
+
+Provides:
+- PreToolUse hook: Emits WAITING events when lock-wait.sh is invoked (real-time)
+- PostToolUse hook: Emits ACQUIRED/RELEASED events after lock commands complete
 
 Captures lock command outcomes (lock-try.sh, lock-wait.sh, lock-release.sh)
 and emits LockEvents for deadlock detection.
@@ -17,10 +21,11 @@ if TYPE_CHECKING:
     from claude_agent_sdk.types import (
         HookContext,
         PostToolUseHookInput,
+        PreToolUseHookInput,
         SyncHookJSONOutput,
     )
 
-    from .dangerous_commands import PostToolUseHook
+    from .dangerous_commands import PostToolUseHook, PreToolUseHook
 
 from src.domain.deadlock import LockEvent, LockEventType
 from src.infra.tools.locking import canonicalize_path
@@ -176,7 +181,7 @@ def _get_exit_code(tool_result: str) -> int | None:
 
 def make_lock_event_hook(
     agent_id: str,
-    emit_event: Callable[[LockEvent], Awaitable[None] | None],
+    emit_event: Callable[[LockEvent], Awaitable[object] | None],
     repo_namespace: str | None = None,
 ) -> PostToolUseHook:
     """Create a PostToolUse hook that emits lock events.
@@ -184,6 +189,7 @@ def make_lock_event_hook(
     Args:
         agent_id: The agent ID emitting events.
         emit_event: Callback to emit lock events. Can be sync or async.
+            Return value is awaited if async, but discarded.
         repo_namespace: Optional repo root for path canonicalization.
 
     Returns:
@@ -286,3 +292,73 @@ def make_lock_event_hook(
         return {}
 
     return lock_event_hook
+
+
+def make_lock_wait_hook(
+    agent_id: str,
+    emit_event: Callable[[LockEvent], Awaitable[object] | None],
+    repo_namespace: str | None = None,
+) -> PreToolUseHook:
+    """Create a PreToolUse hook that emits WAITING events for lock-wait.sh.
+
+    This hook enables real-time deadlock detection by emitting WAITING events
+    BEFORE lock-wait.sh executes. Without this, deadlocks would never be
+    detected because PostToolUse hooks only run after the tool completes,
+    but lock-wait.sh blocks indefinitely when waiting for a lock.
+
+    Args:
+        agent_id: The agent ID emitting events.
+        emit_event: Callback to emit lock events. Can be sync or async.
+            Return value is awaited if async, but discarded.
+        repo_namespace: Optional repo root for path canonicalization.
+
+    Returns:
+        An async hook function for PreToolUse events.
+    """
+
+    async def lock_wait_hook(
+        hook_input: PreToolUseHookInput,
+        stderr: str | None,
+        context: HookContext,
+    ) -> SyncHookJSONOutput:
+        """PreToolUse hook to emit WAITING events before lock-wait.sh runs."""
+        tool_name = hook_input["tool_name"]
+
+        # Only process bash tool calls
+        if tool_name not in ("Bash", "bash"):
+            return {}
+
+        # Get the command from tool input
+        tool_input = hook_input.get("tool_input", {})
+        command = tool_input.get("command", "")
+        if not command:
+            return {}
+
+        # Look for lock-wait.sh commands
+        for match in _LOCK_WAIT_PATTERN.finditer(command):
+            raw_path = _strip_quotes(match.group(1))
+
+            # Canonicalize the path
+            try:
+                lock_path = canonicalize_path(raw_path, repo_namespace)
+            except Exception:
+                logger.warning("Failed to canonicalize lock path: %s", raw_path)
+                continue
+
+            # Emit WAITING event before the command executes
+            event = LockEvent(
+                event_type=LockEventType.WAITING,
+                agent_id=agent_id,
+                lock_path=lock_path,
+                timestamp=time.time(),
+            )
+
+            # Call emit_event (may be sync or async)
+            result = emit_event(event)
+            if result is not None:
+                await result
+
+        # Always allow the command to proceed
+        return {}
+
+    return lock_wait_hook

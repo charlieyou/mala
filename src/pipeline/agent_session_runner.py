@@ -45,6 +45,7 @@ from src.infra.hooks import (
     make_lint_cache_hook,
     make_lock_enforcement_hook,
     make_lock_event_hook,
+    make_lock_wait_hook,
     make_stop_hook,
 )
 from src.infra.mcp import get_disallowed_tools, get_mcp_servers
@@ -763,9 +764,18 @@ class AgentSessionRunner:
         post_tool_hooks: list[object] = []
         stop_hooks: list[object] = [make_stop_hook(agent_id)]
 
-        # Add lock event hook if deadlock monitor is configured
+        # Add lock event hooks if deadlock monitor is configured
         if self.config.deadlock_monitor is not None:
             monitor = self.config.deadlock_monitor
+            # PreToolUse hook for real-time WAITING detection on lock-wait.sh
+            pre_tool_hooks.append(
+                make_lock_wait_hook(
+                    agent_id=agent_id,
+                    emit_event=monitor.handle_event,
+                    repo_namespace=str(self.config.repo_path),
+                )
+            )
+            # PostToolUse hook for ACQUIRED/RELEASED events
             post_tool_hooks.append(
                 make_lock_event_hook(
                     agent_id=agent_id,
