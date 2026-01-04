@@ -22,8 +22,10 @@ from src.infra.tools.env import SCRIPTS_DIR, get_lock_dir
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
+    from src.core.models import LockEvent
     from src.core.protocols import DeadlockMonitorProtocol, SDKClientFactoryProtocol
     from src.infra.hooks import FileReadCache, LintCache
 
@@ -159,11 +161,18 @@ class AgentRuntimeBuilder:
             self._env.update(extra)
         return self
 
-    def with_mcp(self, servers: object | None = None) -> AgentRuntimeBuilder:
+    def with_mcp(
+        self,
+        servers: object | None = None,
+        *,
+        emit_lock_event: Callable[[LockEvent], object] | None = None,
+    ) -> AgentRuntimeBuilder:
         """Configure MCP servers.
 
         Args:
             servers: MCP server configuration. If None, uses get_mcp_servers().
+            emit_lock_event: Optional callback for lock events. When provided with
+                agent_id, enables locking MCP server.
 
         Returns:
             Self for chaining.
@@ -173,7 +182,11 @@ class AgentRuntimeBuilder:
         else:
             from src.infra.mcp import get_mcp_servers
 
-            self._mcp_servers = get_mcp_servers(self._repo_path)
+            self._mcp_servers = get_mcp_servers(
+                self._repo_path,
+                agent_id=self._agent_id,
+                emit_lock_event=emit_lock_event,
+            )
         return self
 
     def with_disallowed_tools(
@@ -260,12 +273,12 @@ class AgentRuntimeBuilder:
             stop_hooks.append(make_stop_hook(self._agent_id))
 
         # Add deadlock monitor hooks if configured
-        if self._deadlock_monitor is not None:
+        monitor = self._deadlock_monitor
+        if monitor is not None:
             logger.info("Wiring deadlock monitor hooks: agent_id=%s", self._agent_id)
             # Import LockEvent types here to inject into hooks
             from src.core.models import LockEvent, LockEventType
 
-            monitor = self._deadlock_monitor
             # PostToolUse hook for ACQUIRED/RELEASED events from MCP locking tools
             # (WAITING events are emitted by the MCP tool handlers directly)
             post_tool_hooks.append(
@@ -284,6 +297,11 @@ class AgentRuntimeBuilder:
         if self._env is None:
             self.with_env()
         env = self._env or {}
+
+        # Build MCP servers if not explicitly set
+        if self._mcp_servers is None:
+            emit_lock_event = monitor.handle_event if monitor is not None else None
+            self.with_mcp(emit_lock_event=emit_lock_event)
 
         # Build hooks dict using factory
         make_matcher = self._sdk_client_factory.create_hook_matcher

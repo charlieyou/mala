@@ -61,7 +61,7 @@ class LockingToolHandlers:
 def create_locking_mcp_server(
     agent_id: str,
     repo_namespace: str | None,
-    emit_lock_event: Callable[[LockEvent], None],
+    emit_lock_event: Callable[[LockEvent], object],
     *,
     _return_handlers: bool = False,
 ) -> McpSdkServerConfig | tuple[McpSdkServerConfig, LockingToolHandlers]:
