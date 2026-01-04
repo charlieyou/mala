@@ -15,6 +15,7 @@ import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+    from pathlib import Path
 
     from claude_agent_sdk.types import McpSdkServerConfig
 
@@ -310,35 +311,41 @@ class TestLockAcquireWaitingEvents:
         assert len(events) == 0
 
     @pytest.mark.asyncio
-    async def test_no_waiting_for_reentrant_acquire(self) -> None:
-        """No WAITING events when same agent re-acquires lock it already holds."""
+    async def test_no_waiting_for_reentrant_acquire(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No WAITING events when same agent re-acquires lock it already holds.
+
+        Uses real lock dir (not mocked try_lock) to verify actual idempotent
+        re-acquire behavior: same agent holding a lock can re-acquire it without
+        blocking or emitting WAITING events.
+        """
+        # Set up real lock directory
+        lock_dir = tmp_path / "locks"
+        lock_dir.mkdir()
+        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_dir))
+
         events: list[Any] = []
-        call_count = 0
+        test_file = str(tmp_path / "reentrant_test.py")
+        handlers = _create_handlers(
+            agent_id="reentrant-agent",
+            repo_namespace=str(tmp_path),
+            emit_lock_event=events.append,
+        )
 
-        def mock_try_lock(filepath: str, agent_id: str, namespace: str | None) -> bool:
-            nonlocal call_count
-            call_count += 1
-            # First call returns True (initial acquire)
-            # Second call also returns True (idempotent re-acquire)
-            return True
+        # First acquire - creates real lock file
+        result1 = await handlers.lock_acquire.handler({"filepaths": [test_file]})
+        content1 = json.loads(result1["content"][0]["text"])
+        assert content1["all_acquired"] is True
+        assert len(events) == 0  # No WAITING on first acquire
 
-        with patch("src.infra.tools.locking_mcp.try_lock", side_effect=mock_try_lock):
-            handlers = _create_handlers(emit_lock_event=events.append)
-
-            # First acquire
-            result1 = await handlers.lock_acquire.handler({"filepaths": ["a.py"]})
-            content1 = json.loads(result1["content"][0]["text"])
-            assert content1["all_acquired"] is True
-
-            # Second acquire (re-entrant) - should succeed without WAITING
-            result2 = await handlers.lock_acquire.handler({"filepaths": ["a.py"]})
-            content2 = json.loads(result2["content"][0]["text"])
-            assert content2["all_acquired"] is True
+        # Second acquire (re-entrant) - should succeed without WAITING
+        result2 = await handlers.lock_acquire.handler({"filepaths": [test_file]})
+        content2 = json.loads(result2["content"][0]["text"])
+        assert content2["all_acquired"] is True
 
         # No WAITING events should be emitted for re-entrant acquire
         assert len(events) == 0
-        # try_lock was called twice (once per acquire call)
-        assert call_count == 2
 
 
 class TestAsyncEmitLockEvent:
