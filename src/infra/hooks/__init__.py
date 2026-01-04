@@ -40,7 +40,6 @@ from .lint_cache import (
 )
 from .deadlock import (
     make_lock_event_hook,
-    make_lock_wait_hook,
 )
 from .locking import (
     StopHook,
@@ -74,7 +73,6 @@ __all__ = [
     "make_lint_cache_hook",
     "make_lock_enforcement_hook",
     "make_lock_event_hook",
-    "make_lock_wait_hook",
     "make_stop_hook",
     "run_command",
 ]
