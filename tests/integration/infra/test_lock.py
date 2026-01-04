@@ -344,13 +344,13 @@ class TestStopHookIntegration:
         assert lock_file_path(lock_env, "other-file.py", cwd).exists()
 
 
-class TestOrchestratorCleanup:
-    """Test orchestrator's fallback lock cleanup."""
+class TestLockCleanupFunction:
+    """Test cleanup_agent_locks function for orphaned lock removal."""
 
     def test_cleanup_agent_locks_removes_orphaned_locks(
         self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Orchestrator cleans up locks when agent crashes/times out."""
+        """cleanup_agent_locks removes locks held by a crashed/timed-out agent."""
         from src.infra.tools.locking import cleanup_agent_locks
 
         agent_id = "bd-crashed-agent"

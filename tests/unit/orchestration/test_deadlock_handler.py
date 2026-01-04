@@ -111,13 +111,11 @@ class TestHandleDeadlock:
             "on_locks_cleaned"
         )
 
-        async def track_add_dependency(dependent: str, dependency: str) -> bool:
+        async def track_add_dependency(*args: object, **kwargs: object) -> bool:
             call_order.append("add_dependency")
             return True
 
-        async def track_mark_needs_followup(
-            issue_id: str, summary: str, log_path: Path | None
-        ) -> bool:
+        async def track_mark_needs_followup(*args: object, **kwargs: object) -> bool:
             call_order.append("mark_needs_followup")
             return True
 
@@ -138,6 +136,15 @@ class TestHandleDeadlock:
             "add_dependency",
             "mark_needs_followup",
         ]
+
+        # Verify key callbacks were called with correct arguments
+        mock_callbacks.add_dependency.assert_awaited_once_with(
+            deadlock_info.victim_issue_id, deadlock_info.blocker_issue_id
+        )
+        mock_callbacks.mark_needs_followup.assert_awaited_once()
+        # Check mark_needs_followup was called with victim issue_id
+        call_args = mock_callbacks.mark_needs_followup.call_args
+        assert call_args[0][0] == deadlock_info.victim_issue_id
 
     @pytest.mark.asyncio
     async def test_cleans_up_locks_and_tracks_in_state(
@@ -218,7 +225,8 @@ class TestHandleDeadlock:
                 active_tasks: dict[str, asyncio.Task[IssueResult]] = {}
                 current = asyncio.current_task()
                 assert current is not None
-                active_tasks["issue-b"] = current  # type: ignore[assignment]
+                # Use info.victim_issue_id as key to ensure consistency
+                active_tasks[info.victim_issue_id] = current  # type: ignore[assignment]
 
                 await handler.handle_deadlock(info, state, active_tasks)
                 resolution_completed = True
@@ -464,6 +472,9 @@ class TestAbortActiveTasks:
             1, "Unrecoverable error"
         )
 
+        # Ensure task reaches terminal state to avoid "Task was destroyed" warnings
+        await asyncio.gather(task, return_exceptions=True)
+
     @pytest.mark.asyncio
     async def test_handles_empty_active_tasks(
         self,
@@ -511,6 +522,9 @@ class TestAbortActiveTasks:
         call_args = mock_callbacks.finalize_issue_result.call_args
         result = call_args[0][1]
         assert result.session_log_path == log_path
+
+        # Ensure task reaches terminal state to avoid "Task was destroyed" warnings
+        await asyncio.gather(task, return_exceptions=True)
 
 
 class TestCleanupAgentLocks:
