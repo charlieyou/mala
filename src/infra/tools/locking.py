@@ -12,11 +12,27 @@ from .env import get_lock_dir
 
 __all__ = [
     "LockManager",
+    "canonicalize_path",
     "get_all_locks",
     "get_lock_dir",
     "lock_path",
     "parse_lock_file",
 ]
+
+
+def canonicalize_path(filepath: str, repo_namespace: str | None = None) -> str:
+    """Canonicalize a file path for consistent lock key generation.
+
+    Public wrapper for _canonicalize_path. See _canonicalize_path for details.
+
+    Args:
+        filepath: The file path to canonicalize.
+        repo_namespace: Optional repo root path for resolving relative paths.
+
+    Returns:
+        A canonicalized absolute path string, or the literal key as-is.
+    """
+    return _canonicalize_path(filepath, repo_namespace)
 
 
 def _get_lock_dir() -> Path:

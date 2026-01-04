@@ -250,6 +250,32 @@ class EpicVerdictProtocol(Protocol):
 
 
 @runtime_checkable
+class DeadlockInfoProtocol(Protocol):
+    """Protocol for deadlock detection information.
+
+    Matches the shape of domain.deadlock.DeadlockInfo for structural typing.
+    """
+
+    cycle: list[str]
+    """List of agent IDs forming the deadlock cycle."""
+
+    victim_id: str
+    """Agent ID selected to be killed (youngest in cycle)."""
+
+    victim_issue_id: str | None
+    """Issue ID the victim was working on."""
+
+    blocked_on: str
+    """Lock path the victim was waiting for."""
+
+    blocker_id: str
+    """Agent ID holding the lock the victim needs."""
+
+    blocker_issue_id: str | None
+    """Issue ID the blocker was working on."""
+
+
+@runtime_checkable
 class LogProvider(Protocol):
     """Protocol for abstracting SDK log storage and schema.
 
@@ -1719,5 +1745,15 @@ class MalaEventSink(Protocol):
             attempt: Current fixer attempt number.
             tool_name: Name of the tool being called.
             arguments: Tool arguments.
+        """
+        ...
+
+    def on_deadlock_detected(self, info: DeadlockInfoProtocol) -> None:
+        """Called when a deadlock is detected and resolved.
+
+        Args:
+            info: Information about the detected deadlock, including the cycle
+                of agents, the victim selected for cancellation, and the
+                blocker holding the needed resource.
         """
         ...

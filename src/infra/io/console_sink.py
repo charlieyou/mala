@@ -7,7 +7,7 @@ using the log helpers from log_output/console.py.
 import re
 from typing import Any
 
-from src.core.protocols import EventRunConfig, MalaEventSink
+from src.core.protocols import DeadlockInfoProtocol, EventRunConfig, MalaEventSink
 from src.infra.io.base_sink import BaseEventSink
 from src.infra.io.log_output.console import (
     Colors,
@@ -503,6 +503,17 @@ class ConsoleEventSink(BaseEventSink):
         arguments: dict[str, Any] | None = None,
     ) -> None:
         log_tool(tool_name, "", agent_id=f"fixer-{attempt}", arguments=arguments)
+
+    def on_deadlock_detected(self, info: DeadlockInfoProtocol) -> None:
+        cycle_str = " → ".join(info.cycle)
+        victim_issue = info.victim_issue_id or "unknown"
+        blocker_issue = info.blocker_issue_id or "unknown"
+        log(
+            "⚠",
+            f"{Colors.YELLOW}Deadlock detected:{Colors.RESET} cycle=[{cycle_str}] "
+            f"victim={info.victim_id}({victim_issue}) blocked_on={info.blocked_on} "
+            f"blocker={info.blocker_id}({blocker_issue})",
+        )
 
 
 # Protocol assertion to verify implementation compliance

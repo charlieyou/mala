@@ -6,7 +6,7 @@ methods, and NullEventSink for testing.
 
 from typing import Any
 
-from src.core.protocols import EventRunConfig, MalaEventSink
+from src.core.protocols import DeadlockInfoProtocol, EventRunConfig, MalaEventSink
 
 
 class BaseEventSink:
@@ -338,6 +338,9 @@ class BaseEventSink:
         tool_name: str,
         arguments: dict[str, Any] | None = None,
     ) -> None:
+        pass
+
+    def on_deadlock_detected(self, info: DeadlockInfoProtocol) -> None:
         pass
 
 

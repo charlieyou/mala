@@ -465,6 +465,7 @@ class MalaOrchestrator:
                 info.blocked_on,
                 info.blocker_id,
             )
+            self.event_sink.on_deadlock_detected(info)
 
             victim_issue_id = info.victim_issue_id
             task_to_cancel: asyncio.Task[object] | None = None
