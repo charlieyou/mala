@@ -222,7 +222,7 @@ def create_locking_mcp_server(
                 ]
             }
 
-        # Emit WAITING events for blocked files in parallel (non-blocking)
+        # Emit WAITING events for blocked files in parallel
         if blocked_paths:
             await asyncio.gather(*[_emit_waiting(canon) for canon in blocked_paths])
 
