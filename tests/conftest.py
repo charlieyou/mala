@@ -33,7 +33,6 @@ def pytest_configure(config: pytest.Config) -> None:
     - Disable Braintrust tracing
     - Redirect run metadata to /tmp to avoid polluting ~/.config/mala/runs/
     - Redirect Claude SDK logs to /tmp to avoid polluting ~/.claude/projects/
-    - Copy OAuth credentials to test config dir for SDK integration tests
     """
     # Remove BRAINTRUST_API_KEY to disable Braintrust tracing
     os.environ.pop("BRAINTRUST_API_KEY", None)
