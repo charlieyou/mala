@@ -6,6 +6,8 @@ Consolidates locking behavior from shell scripts.
 import hashlib
 import os
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from .env import get_lock_dir
@@ -507,6 +509,87 @@ class LockManager:
         return release_lock(filepath, agent_id, repo_namespace)
 
 
+# ---------------------------------------------------------------------------
+# CLI Command Dispatch
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CliContext:
+    """Parsed CLI context for command dispatch."""
+
+    command: str
+    lock_dir: str
+    agent_id: str
+    repo_namespace: str | None
+    filepath: str | None
+    timeout: float
+    poll_ms: int
+
+
+def _cmd_try(ctx: CliContext) -> int:
+    """Handle 'try' command: attempt to acquire lock."""
+    if try_lock(ctx.filepath, ctx.agent_id, ctx.repo_namespace):  # type: ignore[arg-type]
+        return 0
+    return 1
+
+
+def _cmd_wait(ctx: CliContext) -> int:
+    """Handle 'wait' command: wait for lock with timeout."""
+    if wait_for_lock(
+        ctx.filepath,  # type: ignore[arg-type]
+        ctx.agent_id,
+        ctx.repo_namespace,
+        ctx.timeout,
+        ctx.poll_ms,
+    ):
+        return 0
+    return 1
+
+
+def _cmd_check(ctx: CliContext) -> int:
+    """Handle 'check' command: check if we hold the lock."""
+    holder = get_lock_holder(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]
+    if holder == ctx.agent_id:
+        return 0
+    return 1
+
+
+def _cmd_holder(ctx: CliContext) -> int:
+    """Handle 'holder' command: print lock holder."""
+    holder = get_lock_holder(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]
+    if holder:
+        print(holder)
+    return 0
+
+
+def _cmd_release(ctx: CliContext) -> int:
+    """Handle 'release' command: release lock if we hold it."""
+    holder = get_lock_holder(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]
+    if holder == ctx.agent_id:
+        lp = lock_path(ctx.filepath, ctx.repo_namespace)  # type: ignore[arg-type]
+        lp.with_suffix(".meta").unlink(missing_ok=True)
+        lp.unlink(missing_ok=True)
+    return 0
+
+
+def _cmd_release_all(ctx: CliContext) -> int:
+    """Handle 'release-all' command: release all locks for agent."""
+    cleanup_agent_locks(ctx.agent_id)
+    return 0
+
+
+COMMANDS: dict[str, tuple[Callable[[CliContext], int], bool, bool]] = {
+    # command: (handler, requires_filepath, requires_agent_id)
+    "try": (_cmd_try, True, True),
+    "wait": (_cmd_wait, True, True),
+    "check": (_cmd_check, True, True),
+    "holder": (_cmd_holder, True, False),
+    "release": (_cmd_release, True, True),
+    "release-all": (_cmd_release_all, False, True),
+}
+
+
 def _cli_main() -> int:
     """CLI entry point for shell script delegation.
 
@@ -539,109 +622,67 @@ def _cli_main() -> int:
         return 2
 
     command = sys.argv[1]
-    lock_dir = os.environ.get("LOCK_DIR")
-    agent_id = os.environ.get("AGENT_ID")
-    repo_namespace = os.environ.get("REPO_NAMESPACE") or None
 
-    # Commands that require LOCK_DIR
-    if command in ("try", "wait", "check", "holder", "release", "release-all"):
-        if not lock_dir:
-            print("Error: LOCK_DIR must be set", file=sys.stderr)
-            return 2
-
-    # Commands that require AGENT_ID
-    if command in ("try", "wait", "check", "release", "release-all"):
-        if not agent_id:
-            print("Error: AGENT_ID must be set", file=sys.stderr)
-            return 2
-
-    # Set MALA_LOCK_DIR so our functions use the shell script's LOCK_DIR
-    os.environ["MALA_LOCK_DIR"] = lock_dir or ""
-
-    if command == "try":
-        if len(sys.argv) != 3:
-            print(
-                "Usage: python -m src.infra.tools.locking try <filepath>",
-                file=sys.stderr,
-            )
-            return 2
-        filepath = sys.argv[2]
-        if try_lock(filepath, agent_id, repo_namespace):  # type: ignore[arg-type]
-            return 0
-        return 1
-
-    elif command == "wait":
-        if len(sys.argv) < 3:
-            print(
-                "Usage: python -m src.infra.tools.locking wait <filepath> [timeout_seconds] [poll_interval_ms]",
-                file=sys.stderr,
-            )
-            return 2
-        filepath = sys.argv[2]
-        timeout = float(sys.argv[3]) if len(sys.argv) > 3 else 30.0
-        poll_ms = int(sys.argv[4]) if len(sys.argv) > 4 else 100
-        if wait_for_lock(filepath, agent_id, repo_namespace, timeout, poll_ms):  # type: ignore[arg-type]
-            return 0
-        return 1
-
-    elif command == "check":
-        if len(sys.argv) != 3:
-            print(
-                "Usage: python -m src.infra.tools.locking check <filepath>",
-                file=sys.stderr,
-            )
-            return 2
-        filepath = sys.argv[2]
-        holder = get_lock_holder(filepath, repo_namespace)
-        if holder == agent_id:
-            return 0
-        return 1
-
-    elif command == "holder":
-        if len(sys.argv) != 3:
-            print(
-                "Usage: python -m src.infra.tools.locking holder <filepath>",
-                file=sys.stderr,
-            )
-            return 2
-        filepath = sys.argv[2]
-        holder = get_lock_holder(filepath, repo_namespace)
-        if holder:
-            print(holder)
-        return 0
-
-    elif command == "release":
-        if len(sys.argv) != 3:
-            print(
-                "Usage: python -m src.infra.tools.locking release <filepath>",
-                file=sys.stderr,
-            )
-            return 2
-        filepath = sys.argv[2]
-        # Only release if we hold the lock
-        holder = get_lock_holder(filepath, repo_namespace)
-        if holder == agent_id:
-            lp = lock_path(filepath, repo_namespace)
-            # Also remove companion .meta file
-            lp.with_suffix(".meta").unlink(missing_ok=True)
-            lp.unlink(missing_ok=True)
-        return 0
-
-    elif command == "release-all":
-        if len(sys.argv) != 2:
-            print(
-                "Usage: python -m src.infra.tools.locking release-all", file=sys.stderr
-            )
-            return 2
-        cleanup_agent_locks(agent_id)  # type: ignore[arg-type]
-        return 0
-
-    else:
+    # Validate command exists
+    if command not in COMMANDS:
         print(f"Unknown command: {command}", file=sys.stderr)
         print(
             "Commands: try, wait, check, holder, release, release-all", file=sys.stderr
         )
         return 2
+
+    handler, requires_filepath, requires_agent_id = COMMANDS[command]
+
+    # Parse environment
+    lock_dir = os.environ.get("LOCK_DIR")
+    agent_id = os.environ.get("AGENT_ID")
+    repo_namespace = os.environ.get("REPO_NAMESPACE") or None
+
+    # Validate LOCK_DIR (required for all commands)
+    if not lock_dir:
+        print("Error: LOCK_DIR must be set", file=sys.stderr)
+        return 2
+
+    # Validate AGENT_ID (required for most commands)
+    if requires_agent_id and not agent_id:
+        print("Error: AGENT_ID must be set", file=sys.stderr)
+        return 2
+
+    # Parse filepath argument
+    filepath: str | None = None
+    if requires_filepath:
+        if len(sys.argv) < 3:
+            print(
+                f"Usage: python -m src.infra.tools.locking {command} <filepath>",
+                file=sys.stderr,
+            )
+            return 2
+        filepath = sys.argv[2]
+    elif command == "release-all" and len(sys.argv) != 2:
+        print("Usage: python -m src.infra.tools.locking release-all", file=sys.stderr)
+        return 2
+
+    # Parse wait-specific arguments
+    timeout = 30.0
+    poll_ms = 100
+    if command == "wait":
+        timeout = float(sys.argv[3]) if len(sys.argv) > 3 else 30.0
+        poll_ms = int(sys.argv[4]) if len(sys.argv) > 4 else 100
+
+    # Set MALA_LOCK_DIR so our functions use the shell script's LOCK_DIR
+    os.environ["MALA_LOCK_DIR"] = lock_dir
+
+    # Build context and dispatch
+    ctx = CliContext(
+        command=command,
+        lock_dir=lock_dir,
+        agent_id=agent_id or "",
+        repo_namespace=repo_namespace,
+        filepath=filepath,
+        timeout=timeout,
+        poll_ms=poll_ms,
+    )
+    return handler(ctx)
 
 
 if __name__ == "__main__":
