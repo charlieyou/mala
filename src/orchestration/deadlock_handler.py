@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.domain.deadlock import DeadlockInfo
+    from src.orchestration.orchestrator_state import OrchestratorState  # noqa: F401
 
 
 @dataclass
@@ -23,28 +24,25 @@ class DeadlockHandlerCallbacks:
 
     These are callable getters that allow late binding to orchestrator state
     and external services (beads, event_sink, lock server).
+
+    Attributes:
+        add_dependency: Add dependency between issues. Args: (dependent_id, dependency_id).
+        mark_needs_followup: Mark issue as needing followup. Args: (issue_id, summary, log_path).
+        on_deadlock_detected: Event callback when deadlock is detected.
+        on_locks_cleaned: Event callback when locks are cleaned. Args: (agent_id, count).
+        on_tasks_aborting: Event callback when tasks are being aborted. Args: (count, reason).
+        do_cleanup_agent_locks: Clean up locks held by agent. Args: (agent_id).
+            Returns: (count, paths).
+        unregister_agent: Unregister agent from deadlock monitor. Args: (agent_id).
     """
 
     add_dependency: Callable[[str, str], Awaitable[bool]]
-    """Add dependency between issues. Args: (dependent_id, dependency_id)."""
-
     mark_needs_followup: Callable[[str, str, Path | None], Awaitable[None]]
-    """Mark issue as needing followup. Args: (issue_id, summary, log_path)."""
-
     on_deadlock_detected: Callable[[DeadlockInfo], None]
-    """Event callback when deadlock is detected."""
-
     on_locks_cleaned: Callable[[str, int], None]
-    """Event callback when locks are cleaned. Args: (agent_id, count)."""
-
     on_tasks_aborting: Callable[[int, str], None]
-    """Event callback when tasks are being aborted. Args: (count, reason)."""
-
-    cleanup_agent_locks: Callable[[str], tuple[int, list[str]]]
-    """Clean up locks held by agent. Args: (agent_id). Returns: (count, paths)."""
-
+    do_cleanup_agent_locks: Callable[[str], tuple[int, list[str]]]
     unregister_agent: Callable[[str], None]
-    """Unregister agent from deadlock monitor. Args: (agent_id)."""
 
 
 class DeadlockHandler:
