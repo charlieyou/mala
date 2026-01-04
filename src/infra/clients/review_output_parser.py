@@ -16,11 +16,10 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path  # noqa: TC003 (runtime import for get_type_hints compatibility)
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from src.core.protocols import MalaEventSink
 
 

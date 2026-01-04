@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from src.infra.clients.cerberus_review import ReviewResult
+    from src.infra.clients.review_output_parser import ReviewResult
     from src.core.protocols import (
         CodeReviewer,
         GateChecker,

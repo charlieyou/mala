@@ -11,7 +11,7 @@ from typing import cast
 
 import pytest
 
-from src.infra.clients.cerberus_review import ReviewIssue, ReviewResult
+from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
 from src.pipeline.review_runner import (
     NoProgressInput,
     ReviewInput,

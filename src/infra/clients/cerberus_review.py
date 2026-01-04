@@ -18,10 +18,9 @@ from typing import TYPE_CHECKING
 
 from src.infra.clients.cerberus_gate_cli import CerberusGateCLI
 from src.infra.clients.review_output_parser import (
-    ReviewIssue,
+    ReviewIssue,  # noqa: TC001 (used at runtime in format_review_issues)
     ReviewResult,
     map_exit_code_to_result,
-    parse_cerberus_json,
 )
 from src.infra.tools.command_runner import CommandRunner
 
@@ -29,17 +28,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from src.core.protocols import MalaEventSink
-
-# Re-export for backward compatibility
-__all__ = [
-    "DefaultReviewer",
-    "ReviewIssue",
-    "ReviewResult",
-    "_to_relative_path",
-    "format_review_issues",
-    "map_exit_code_to_result",
-    "parse_cerberus_json",
-]
 
 
 @dataclass
