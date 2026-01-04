@@ -462,3 +462,159 @@ class TestMakeLockEventHook:
         await hook(hook_input, None, make_context())
 
         assert len(events) == 0
+
+    @pytest.mark.asyncio
+    async def test_empty_text_in_response_no_event(self) -> None:
+        """Empty text in response content emits no events."""
+        events: list[LockEvent] = []
+        emit = MagicMock(side_effect=lambda e: events.append(e))
+
+        hook = make_lock_event_hook(
+            "agent-1",
+            emit,
+            "/repo",
+            lock_event_class=LockEvent,
+            lock_event_type_enum=LockEventType,
+        )
+        hook_input = make_post_hook_input(
+            "mcp__mala-locking__lock_acquire",
+            {"filepaths": ["/path/file.py"]},
+            tool_response={"content": [{"type": "text", "text": ""}]},
+        )
+        await hook(hook_input, None, make_context())
+
+        assert len(events) == 0
+
+    @pytest.mark.asyncio
+    async def test_empty_filepath_in_acquire_ignored(self) -> None:
+        """Empty filepath in acquire results is skipped."""
+        events: list[LockEvent] = []
+        emit = MagicMock(side_effect=lambda e: events.append(e))
+
+        with patch(
+            "src.infra.hooks.deadlock.canonicalize_path",
+            return_value="/canonical/path/file.py",
+        ):
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
+            response = make_mcp_response(
+                {
+                    "results": [
+                        {"filepath": "", "acquired": True},  # Empty filepath
+                        {"filepath": "/valid.py", "acquired": True},  # Valid
+                    ]
+                }
+            )
+            hook_input = make_post_hook_input(
+                "mcp__mala-locking__lock_acquire",
+                {"filepaths": ["/valid.py"]},
+                tool_response=response,
+            )
+            await hook(hook_input, None, make_context())
+
+        # Only the valid filepath should emit an event
+        assert len(events) == 1
+        assert events[0].lock_path == "/canonical/path/file.py"
+
+    @pytest.mark.asyncio
+    async def test_empty_filepath_in_release_ignored(self) -> None:
+        """Empty filepath in release results is skipped."""
+        events: list[LockEvent] = []
+        emit = MagicMock(side_effect=lambda e: events.append(e))
+
+        with patch(
+            "src.infra.hooks.deadlock.canonicalize_path",
+            return_value="/canonical/path/file.py",
+        ):
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
+            response = make_mcp_response(
+                {
+                    "released": ["", "/valid.py"]  # First is empty
+                }
+            )
+            hook_input = make_post_hook_input(
+                "mcp__mala-locking__lock_release",
+                {"filepaths": ["/valid.py"]},
+                tool_response=response,
+            )
+            await hook(hook_input, None, make_context())
+
+        # Only the valid filepath should emit an event
+        assert len(events) == 1
+        assert events[0].lock_path == "/canonical/path/file.py"
+        assert events[0].event_type == LockEventType.RELEASED
+
+    @pytest.mark.asyncio
+    async def test_release_canonicalization_failure_logs_warning(self) -> None:
+        """Failed path canonicalization in release logs warning, no event."""
+        events: list[LockEvent] = []
+        emit = MagicMock(side_effect=lambda e: events.append(e))
+
+        with (
+            patch(
+                "src.infra.hooks.deadlock.canonicalize_path",
+                side_effect=ValueError("bad path"),
+            ),
+            patch("src.infra.hooks.deadlock.logger") as mock_logger,
+        ):
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
+            response = make_mcp_response({"released": ["/bad/path"]})
+            hook_input = make_post_hook_input(
+                "mcp__mala-locking__lock_release",
+                {"filepaths": ["/bad/path"]},
+                tool_response=response,
+            )
+            await hook(hook_input, None, make_context())
+
+        assert len(events) == 0
+        mock_logger.warning.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_release_async_emit_callback(self) -> None:
+        """Async emit callback is awaited for release events."""
+        events: list[LockEvent] = []
+
+        async def async_emit(event: LockEvent) -> None:
+            events.append(event)
+
+        emit = AsyncMock(side_effect=async_emit)
+
+        with patch(
+            "src.infra.hooks.deadlock.canonicalize_path",
+            return_value="/canonical/path/file.py",
+        ):
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
+            response = make_mcp_response({"released": ["/path/file.py"]})
+            hook_input = make_post_hook_input(
+                "mcp__mala-locking__lock_release",
+                {"filepaths": ["/path/file.py"]},
+                tool_response=response,
+            )
+            await hook(hook_input, None, make_context())
+
+        emit.assert_awaited_once()
+        assert len(events) == 1
+        assert events[0].event_type == LockEventType.RELEASED
