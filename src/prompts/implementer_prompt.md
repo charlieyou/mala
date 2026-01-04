@@ -98,8 +98,8 @@ Use the MCP locking tools to coordinate file access with other agents.
 **Lock tools:**
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `lock_acquire` | `filepaths: list[str]`, `timeout_seconds?: int` | Acquire locks. `timeout_seconds=0` (default) returns immediately; >0 waits. Returns `{{acquired: [...], blocked: [...]}}` |
-| `lock_release` | `filepaths?: list[str]` | Release locks. Omit `filepaths` to release all your locks. |
+| `lock_acquire` | `filepaths: list[str]`, `timeout_seconds?: int` | Acquire locks. `timeout_seconds=0` returns immediately; >0 waits. Returns `{{results: [...], all_acquired: bool}}` |
+| `lock_release` | `filepaths?: list[str]`, `all?: bool` | Release locks. Use filepaths to release specific files, or all=true to release all locks held by this agent. Idempotent (succeeds even if locks not held). |
 
 **Acquisition strategy - mandatory protocol:**
 
@@ -117,9 +117,13 @@ Use the MCP locking tools to coordinate file access with other agents.
 ```json
 // Need: [config.py, utils.py, main.py]
 
-// Step 1: Try to acquire all at once
-lock_acquire(filepaths=["config.py", "utils.py", "main.py"])
-// Returns: {{acquired: ["config.py", "main.py"], blocked: [{{path: "utils.py", holder: "bd-43"}}]}}
+// Step 1: Try to acquire all at once (timeout_seconds=0 for non-blocking)
+lock_acquire(filepaths=["config.py", "utils.py", "main.py"], timeout_seconds=0)
+// Returns: {{results: [
+//   {{filepath: "config.py", acquired: true, holder: null}},
+//   {{filepath: "main.py", acquired: true, holder: null}},
+//   {{filepath: "utils.py", acquired: false, holder: "bd-43"}}
+// ], all_acquired: false}}
 
 // → Edit config.py (all changes needed)
 // → Edit main.py (all changes needed)
@@ -127,8 +131,8 @@ lock_acquire(filepaths=["config.py", "utils.py", "main.py"])
 
 // Step 2: Wait for blocked file
 lock_acquire(filepaths=["utils.py"], timeout_seconds=300)
-// Returns: {{acquired: ["utils.py"], blocked: []}} → edit utils.py
-// OR: {{acquired: [], blocked: [...]}} → return "BLOCKED: utils.py held by bd-43"
+// Returns: {{results: [{{filepath: "utils.py", acquired: true, holder: null}}], all_acquired: true}} → edit utils.py
+// OR: {{results: [{{filepath: "utils.py", acquired: false, holder: "bd-43"}}], all_acquired: false}} → return "BLOCKED: utils.py held by bd-43"
 ```
 
 ### Parallel Work Rules
@@ -206,7 +210,7 @@ git commit -m "bd-{issue_id}: <summary>"
 ### 8. Release Locks
 ```json
 // Release all locks (commit exit code already confirmed success)
-lock_release()
+lock_release(all=true)
 ```
 
 Skip `git log -1` verification—trust the commit exit code. Only inspect git log if a commit fails.
