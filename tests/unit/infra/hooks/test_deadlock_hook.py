@@ -30,7 +30,7 @@ def make_mcp_response(data: dict[str, Any]) -> dict[str, Any]:
 def make_post_hook_input(
     tool_name: str,
     tool_input: dict[str, Any],
-    tool_response: dict[str, Any] | None = None,
+    tool_response: dict[str, Any] | list[dict[str, Any]] | None = None,
 ) -> PostToolUseHookInput:
     """Create a mock PostToolUseHookInput."""
     result: dict[str, Any] = {
@@ -71,6 +71,43 @@ class TestMakeLockEventHook:
             response = make_mcp_response(
                 {"results": [{"filepath": "/path/file.py", "acquired": True}]}
             )
+            hook_input = make_post_hook_input(
+                "mcp__mala-locking__lock_acquire",
+                {"filepaths": ["/path/file.py"]},
+                tool_response=response,
+            )
+            await hook(hook_input, None, make_context())
+
+        assert len(events) == 1
+        assert events[0].event_type == LockEventType.ACQUIRED
+        assert events[0].agent_id == "agent-1"
+        assert events[0].lock_path == "/canonical/path/file.py"
+
+    @pytest.mark.asyncio
+    async def test_lock_acquire_list_tool_response_emits_acquired(self) -> None:
+        """lock_acquire handles list-shaped tool_response content."""
+        events: list[LockEvent] = []
+        emit = MagicMock(side_effect=lambda e: events.append(e))
+
+        with patch(
+            "src.infra.hooks.deadlock.canonicalize_path",
+            return_value="/canonical/path/file.py",
+        ):
+            hook = make_lock_event_hook(
+                "agent-1",
+                emit,
+                "/repo",
+                lock_event_class=LockEvent,
+                lock_event_type_enum=LockEventType,
+            )
+            response = [
+                {
+                    "type": "text",
+                    "text": json.dumps(
+                        {"results": [{"filepath": "/path/file.py", "acquired": True}]}
+                    ),
+                }
+            ]
             hook_input = make_post_hook_input(
                 "mcp__mala-locking__lock_acquire",
                 {"filepaths": ["/path/file.py"]},

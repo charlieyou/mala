@@ -64,9 +64,14 @@ def make_lock_event_hook(
         if tool_name not in (_MCP_LOCK_ACQUIRE, _MCP_LOCK_RELEASE):
             return {}
 
-        # Extract JSON from tool response
+        # Extract JSON from tool response (tool_response may be a list or dict)
         tool_response = hook_input.get("tool_response", {})
-        content_list = tool_response.get("content", [])
+        if isinstance(tool_response, list):
+            content_list = tool_response
+        elif isinstance(tool_response, dict):
+            content_list = tool_response.get("content", [])
+        else:
+            content_list = []
         if not content_list:
             return {}
 
