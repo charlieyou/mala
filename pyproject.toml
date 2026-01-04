@@ -156,7 +156,54 @@ layers = [
 ]
 
 # -----------------------------------------------------------------------------
-# Contract 2: SDK confined to infra
+# Contract 14: CLI cannot bypass orchestration
+# -----------------------------------------------------------------------------
+# CLI should go through orchestration layer, not directly to pipeline/domain.
+
+[[tool.importlinter.contracts]]
+name = "CLI cannot bypass orchestration"
+type = "forbidden"
+source_modules = ["src.cli"]
+forbidden_modules = ["src.pipeline", "src.domain"]
+allow_indirect_imports = true
+
+# -----------------------------------------------------------------------------
+# Contract 11: Domain subpackages independent
+# -----------------------------------------------------------------------------
+# Domain concepts should not depend on each other (except validation which is shared).
+
+[[tool.importlinter.contracts]]
+name = "Domain subpackages independent"
+type = "independence"
+modules = [
+    "src.domain.deadlock",
+    "src.domain.lifecycle",
+]
+
+# -----------------------------------------------------------------------------
+# Contract 12: Infra clients isolated
+# -----------------------------------------------------------------------------
+# Client wrappers should not depend on IO, hooks, or telemetry abstractions.
+
+[[tool.importlinter.contracts]]
+name = "Infra clients isolated"
+type = "forbidden"
+source_modules = ["src.infra.clients"]
+forbidden_modules = ["src.infra.io", "src.infra.hooks", "src.infra.telemetry"]
+
+# -----------------------------------------------------------------------------
+# Contract 13: Agent runtime pure
+# -----------------------------------------------------------------------------
+# Runtime should only depend on core + low-level infra (hooks, mcp, tools.env).
+
+[[tool.importlinter.contracts]]
+name = "Agent runtime pure"
+type = "forbidden"
+source_modules = ["src.infra.agent_runtime"]
+forbidden_modules = ["src.pipeline", "src.domain", "src.orchestration", "src.infra.clients"]
+
+# -----------------------------------------------------------------------------
+# Contract 14: SDK confined to infra
 # -----------------------------------------------------------------------------
 # External SDKs (anthropic, braintrust) and their wrappers should only be
 # imported by CLI/orchestration/infra layers. Pipeline/domain/core cannot
@@ -179,7 +226,7 @@ forbidden_modules = [
 ]
 
 # -----------------------------------------------------------------------------
-# Contract 2b: CLI/Orchestration use SDK through wrappers only
+# Contract 6b: CLI/Orchestration use SDK through wrappers only
 # -----------------------------------------------------------------------------
 # CLI and orchestration can use SDK wrappers but should not directly import
 # the raw SDK packages. This is a future goal - currently cli imports
@@ -193,7 +240,7 @@ forbidden_modules = [
 # forbidden_modules = ["anthropic", "braintrust"]
 
 # -----------------------------------------------------------------------------
-# Contract 3: Only CLI imports typer
+# Contract 11: Only CLI imports typer
 # -----------------------------------------------------------------------------
 # typer is only for CLI argument parsing.
 
@@ -210,7 +257,7 @@ source_modules = [
 forbidden_modules = ["typer"]
 
 # -----------------------------------------------------------------------------
-# Contract 4: Pipeline modules acyclic
+# Contract 12: Pipeline modules acyclic
 # -----------------------------------------------------------------------------
 # No circular imports within pipeline modules.
 
@@ -225,7 +272,7 @@ modules = [
 ]
 
 # -----------------------------------------------------------------------------
-# Contract 5: Hooks isolated
+# Contract 13: Hooks isolated
 # -----------------------------------------------------------------------------
 # Hook modules should not import from pipeline/domain/orchestration layers.
 # Also cannot import from core.models (per P2 review feedback).
@@ -242,7 +289,7 @@ forbidden_modules = [
 ]
 
 # -----------------------------------------------------------------------------
-# Contract 6: Telemetry abstraction pure
+# Contract 14: Telemetry abstraction pure
 # -----------------------------------------------------------------------------
 # Telemetry module should only contain protocols and null implementations.
 # Concrete implementations (Braintrust) are in separate modules.
@@ -257,7 +304,7 @@ forbidden_modules = [
 ]
 
 # -----------------------------------------------------------------------------
-# Contract 7: Validation result minimal
+# Contract 11: Validation result minimal
 # -----------------------------------------------------------------------------
 # Validation result should not directly import heavy dependencies.
 # Layers would allow domain->infra, but this needs stricter isolation.
@@ -275,7 +322,7 @@ forbidden_modules = [
 allow_indirect_imports = true
 
 # -----------------------------------------------------------------------------
-# Contract 8: Models is leaf
+# Contract 12: Models is leaf
 # -----------------------------------------------------------------------------
 # Models should only contain data classes with no internal dependencies.
 # Leaf modules: constraint is no-src-imports (stdlib is allowed).
@@ -295,7 +342,7 @@ forbidden_modules = [
 ]
 
 # -----------------------------------------------------------------------------
-# Contract 9: Protocols is leaf
+# Contract 13: Protocols is leaf
 # -----------------------------------------------------------------------------
 # Protocols define interfaces only - no implementations.
 # Leaf modules: constraint is no-src-imports (stdlib is allowed).
@@ -315,7 +362,7 @@ forbidden_modules = [
 ]
 
 # -----------------------------------------------------------------------------
-# Contract 10: Log events is leaf
+# Contract 14: Log events is leaf
 # -----------------------------------------------------------------------------
 # Log events are pure data structures.
 # Leaf modules: constraint is no-src-imports (stdlib is allowed).
