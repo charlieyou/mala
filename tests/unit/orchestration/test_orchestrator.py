@@ -24,23 +24,10 @@ from src.orchestration.orchestrator import (
 from src.pipeline.issue_result import IssueResult
 from src.domain.prompts import load_prompts
 from src.infra.tools.env import PROMPTS_DIR
-from src.infra.tools.command_runner import CommandResult, CommandRunner
+from src.infra.tools.command_runner import CommandRunner
 
 from src.core.protocols import LogProvider
 from tests.fakes.issue_provider import FakeIssueProvider, FakeIssue
-from tests.fakes.event_sink import FakeEventSink
-
-
-@pytest.fixture
-def fake_issues() -> FakeIssueProvider:
-    """Create a FakeIssueProvider for testing."""
-    return FakeIssueProvider()
-
-
-@pytest.fixture
-def fake_events() -> FakeEventSink:
-    """Create a FakeEventSink for testing."""
-    return FakeEventSink()
 
 
 @pytest.fixture
@@ -88,39 +75,6 @@ def make_subprocess_result(
         stdout=stdout,
         stderr=stderr,
     )
-
-
-def make_command_result(
-    returncode: int = 0, stdout: str = "", stderr: str = ""
-) -> CommandResult:
-    """Create a mock CommandResult for run_command mocking."""
-    return CommandResult(
-        command=[],
-        returncode=returncode,
-        stdout=stdout,
-        stderr=stderr,
-    )
-
-
-def make_ready_mock(ready_json: str) -> AsyncMock:
-    """Create a mock for get_ready_async that handles both bd ready and bd list calls.
-
-    The get_ready_async method now makes two subprocess calls:
-    1. bd ready --json -t task (returns ready issues)
-    2. bd list --status in_progress --json (returns WIP issues to merge in)
-
-    This helper creates a mock that returns ready_json for bd ready
-    and an empty list for bd list --status in_progress.
-    """
-
-    async def mock_run(cmd: list[str]) -> subprocess.CompletedProcess:
-        if cmd == ["bd", "ready", "--json", "-t", "task"]:
-            return make_subprocess_result(stdout=ready_json)
-        elif cmd == ["bd", "list", "--status", "in_progress", "--json"]:
-            return make_subprocess_result(stdout="[]")
-        return make_subprocess_result(returncode=1)
-
-    return AsyncMock(side_effect=mock_run)
 
 
 class TestPromptTemplate:
@@ -196,7 +150,7 @@ class TestSpawnAgent:
         # Replace run_implementer to return immediately
         async def fake_run_implementer(issue_id: str) -> IssueResult:
             return IssueResult(
-                issue_id="test",
+                issue_id=issue_id,
                 agent_id="test-agent",
                 success=True,
                 summary="done",
@@ -205,15 +159,16 @@ class TestSpawnAgent:
         original_run_implementer = orchestrator.run_implementer
         orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]
         try:
-            result = await orchestrator.spawn_agent("claimable-issue")
+            task = await orchestrator.spawn_agent("claimable-issue")
+            # spawn_agent returns the Task on success (caller is responsible for registration)
+            assert task is not None
+            assert isinstance(task, asyncio.Task)
+            # Issue should be claimed
+            assert "claimable-issue" in fake_issues.claimed
+            # Await the task to ensure it completes before restoring run_implementer
+            await task
         finally:
             orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]
-
-        # spawn_agent returns the Task on success (caller is responsible for registration)
-        assert result is not None
-        assert isinstance(result, asyncio.Task)
-        # Issue should be claimed
-        assert "claimable-issue" in fake_issues.claimed
 
 
 class TestRunOrchestrationLoop:
@@ -484,16 +439,23 @@ class TestOrchestratorQualityGateIntegration:
 
     @pytest.mark.asyncio
     async def test_marks_needs_followup_on_gate_failure(
-        self, orchestrator: MalaOrchestrator, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """When quality gate fails (inside run_implementer), issue should be marked needs-followup."""
-        mark_followup_calls: list[tuple[str, str]] = []
+        fake_issues = FakeIssueProvider(
+            {"issue-123": FakeIssue(id="issue-123", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        async def mock_mark_followup_async(
-            issue_id: str, reason: str, log_path: Path | None = None
-        ) -> bool:
-            mark_followup_calls.append((issue_id, reason))
-            return True
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             # Populate log path so quality gate runs
@@ -508,59 +470,34 @@ class TestOrchestratorQualityGateIntegration:
                 summary="Quality gate failed: No commit with bd-issue-123 found",
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-123"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(
-                orchestrator.beads,
-                "mark_needs_followup_async",
-                side_effect=mock_mark_followup_async,
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
+        with patch.object(
+            orchestrator, "run_implementer", side_effect=mock_run_implementer
         ):
             await orchestrator.run()
 
-        # Should have been marked as needs-followup
-        assert len(mark_followup_calls) == 1
-        assert mark_followup_calls[0][0] == "issue-123"
+        # Should have been marked as needs-followup via FakeIssueProvider
+        assert len(fake_issues.followup_calls) == 1
+        assert fake_issues.followup_calls[0][0] == "issue-123"
 
     @pytest.mark.asyncio
     async def test_success_only_when_gate_passes(
-        self, orchestrator: MalaOrchestrator, tmp_path: Path
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Issue should only count as success when quality gate passes."""
+        fake_issues = FakeIssueProvider(
+            {"issue-pass": FakeIssue(id="issue-pass", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             # Populate log path so quality gate runs
@@ -574,45 +511,8 @@ class TestOrchestratorQualityGateIntegration:
                 summary="Completed successfully",
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-pass"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(
-                orchestrator.beads, "mark_needs_followup_async", return_value=True
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
+        with patch.object(
+            orchestrator, "run_implementer", side_effect=mock_run_implementer
         ):
             success_count, _total = await orchestrator.run()
 
