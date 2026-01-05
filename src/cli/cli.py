@@ -402,8 +402,11 @@ def _build_cli_args_metadata(
     Returns:
         Dictionary of CLI arguments for logging/metadata.
     """
+    # Normalize disable list for consistent metadata (handles mixed formats like
+    # --disable coverage --disable "review,e2e" → ["coverage", "e2e", "review"])
+    normalized_disable = sorted(_normalize_repeatable_option(disable))
     return {
-        "disable_validations": disable,  # Keep original key for backward compat
+        "disable_validations": normalized_disable if normalized_disable else None,
         "coverage_threshold": coverage_threshold,
         "wip": wip,
         "max_issues": max_issues,
@@ -768,6 +771,7 @@ def run(
             "--order",
             help="Issue ordering: 'focus' (default, epic-grouped), 'priority' (global priority), 'input' (preserve --scope ids: order)",
             rich_help_panel="Scope & Ordering",
+            hidden=True,  # Hidden until order_preference is actually consumed by orchestrator
         ),
     ] = None,
     dry_run: Annotated[
