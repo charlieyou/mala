@@ -5,18 +5,18 @@ and exhibits correct behavioral parity with the real LockManager.
 """
 
 from pathlib import Path
-from typing import _get_protocol_attrs  # type: ignore[attr-defined]
 
 import pytest
 
 from src.core.protocols import LockManagerPort
+from tests.contracts import get_protocol_members
 from tests.fakes.lock_manager import FakeLockManager
 
 
 @pytest.mark.unit
 def test_fake_lock_manager_implements_all_protocol_methods() -> None:
     """FakeLockManager must implement all public methods of LockManagerPort."""
-    protocol_methods = _get_protocol_attrs(LockManagerPort)
+    protocol_methods = get_protocol_members(LockManagerPort)
     fake_methods = {name for name in dir(FakeLockManager) if not name.startswith("_")}
 
     missing = protocol_methods - fake_methods

@@ -4,18 +4,17 @@ Ensures FakeSDKClient and FakeSDKClientFactory implement all methods of their
 respective protocols and exhibit correct behavioral parity.
 """
 
-from typing import _get_protocol_attrs  # type: ignore[attr-defined]
-
 import pytest
 
 from src.core.protocols import SDKClientFactoryProtocol, SDKClientProtocol
+from tests.contracts import get_protocol_members
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
 
 @pytest.mark.unit
 def test_fake_sdk_client_implements_all_protocol_methods() -> None:
     """FakeSDKClient must implement all public methods of SDKClientProtocol."""
-    protocol_methods = _get_protocol_attrs(SDKClientProtocol)
+    protocol_methods = get_protocol_members(SDKClientProtocol)
     fake_methods = {name for name in dir(FakeSDKClient) if not name.startswith("_")}
 
     # Filter out dunder methods from protocol (like __aenter__, __aexit__)
@@ -46,7 +45,7 @@ def test_fake_sdk_client_protocol_compliance() -> None:
 @pytest.mark.unit
 def test_fake_sdk_client_factory_implements_all_protocol_methods() -> None:
     """FakeSDKClientFactory must implement all public methods of SDKClientFactoryProtocol."""
-    protocol_methods = _get_protocol_attrs(SDKClientFactoryProtocol)
+    protocol_methods = get_protocol_members(SDKClientFactoryProtocol)
     fake_methods = {
         name for name in dir(FakeSDKClientFactory) if not name.startswith("_")
     }

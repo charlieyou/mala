@@ -9,11 +9,10 @@ EpicVerdictProtocol. This is due to return type variance in Python's Protocol
 system. See tests/fakes/epic_model.py:150-153 for details.
 """
 
-from typing import _get_protocol_attrs  # type: ignore[attr-defined]
-
 import pytest
 
 from src.core.protocols import EpicVerificationModel
+from tests.contracts import get_protocol_members
 from tests.fakes.epic_model import (
     FakeEpicVerificationModel,
     make_failing_verdict,
@@ -24,7 +23,7 @@ from tests.fakes.epic_model import (
 @pytest.mark.unit
 def test_fake_epic_verification_model_implements_all_protocol_methods() -> None:
     """FakeEpicVerificationModel must implement all public methods of EpicVerificationModel."""
-    protocol_methods = _get_protocol_attrs(EpicVerificationModel)
+    protocol_methods = get_protocol_members(EpicVerificationModel)
     fake_methods = {
         name for name in dir(FakeEpicVerificationModel) if not name.startswith("_")
     }

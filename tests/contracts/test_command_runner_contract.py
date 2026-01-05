@@ -4,18 +4,17 @@ Ensures FakeCommandRunner implements all methods of CommandRunnerPort protocol
 and exhibits correct behavioral parity with the real CommandRunner.
 """
 
-from typing import _get_protocol_attrs  # type: ignore[attr-defined]
-
 import pytest
 
 from src.core.protocols import CommandRunnerPort
+from tests.contracts import get_protocol_members
 from tests.fakes.command_runner import FakeCommandRunner
 
 
 @pytest.mark.unit
 def test_fake_command_runner_implements_all_protocol_methods() -> None:
     """FakeCommandRunner must implement all public methods of CommandRunnerPort."""
-    protocol_methods = _get_protocol_attrs(CommandRunnerPort)
+    protocol_methods = get_protocol_members(CommandRunnerPort)
     fake_methods = {name for name in dir(FakeCommandRunner) if not name.startswith("_")}
 
     missing = protocol_methods - fake_methods
