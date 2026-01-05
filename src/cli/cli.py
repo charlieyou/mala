@@ -488,6 +488,7 @@ def _handle_dry_run(
     wip: bool,
     focus: bool,
     orphans_only: bool,
+    fail_on_empty: bool = False,
 ) -> Never:
     """Execute dry-run mode: display task order and exit.
 
@@ -498,12 +499,15 @@ def _handle_dry_run(
         wip: Whether to prioritize WIP issues.
         focus: Whether focus mode is enabled.
         orphans_only: Whether to only process orphan issues.
+        fail_on_empty: If True, exit with code 1 when no issues found.
 
     Raises:
-        typer.Exit: Always exits with code 0 after displaying.
+        typer.Exit: Exits with code 0 (or 1 if fail_on_empty and no issues).
     """
+    issue_count = 0
 
-    async def _dry_run() -> None:
+    async def _dry_run() -> int:
+        nonlocal issue_count
         beads = _lazy("BeadsClient")(repo_path)
         # Convert list to set for BeadsClient compatibility
         ids_set = set(only_ids) if only_ids else None
@@ -515,9 +519,11 @@ def _handle_dry_run(
             orphans_only=orphans_only,
         )
         display_dry_run_tasks(issues, focus=focus)
+        return len(issues)
 
-    asyncio.run(_dry_run())
-    raise typer.Exit(0)
+    issue_count = asyncio.run(_dry_run())
+    exit_code = 1 if fail_on_empty and issue_count == 0 else 0
+    raise typer.Exit(exit_code)
 
 
 def _normalize_repeatable_option(values: list[str] | None) -> list[str]:
@@ -779,6 +785,7 @@ def run(
         bool,
         typer.Option(
             "--dry-run",
+            "-d",
             help="Preview task order without processing; shows what would be run",
             rich_help_panel="Debugging",
         ),
@@ -880,6 +887,14 @@ def run(
             rich_help_panel="Debugging",
         ),
     ] = True,
+    fail_on_empty: Annotated[
+        bool,
+        typer.Option(
+            "--fail-on-empty",
+            help="Exit with code 1 if no issues to process (default: exit 0)",
+            rich_help_panel="Debugging",
+        ),
+    ] = False,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -947,6 +962,7 @@ def run(
             wip=prioritize_wip,
             focus=focus,
             orphans_only=orphans_only,
+            fail_on_empty=fail_on_empty,
         )
 
     # Build and configure MalaConfig from environment
@@ -1014,7 +1030,9 @@ def run(
 
     success_count, total = asyncio.run(orchestrator.run())
     # Exit 0 if: no issues to process (no-op) OR at least one succeeded
-    # Exit 1 only if: issues were processed but all failed
+    # Exit 1 only if: issues were processed but all failed, or --fail-on-empty and no issues
+    if fail_on_empty and total == 0:
+        raise typer.Exit(1)
     raise typer.Exit(0 if success_count > 0 or total == 0 else 1)
 
 

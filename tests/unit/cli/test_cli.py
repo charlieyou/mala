@@ -1689,6 +1689,54 @@ class TestHandleDryRun:
 
         assert excinfo.value.exit_code == 0
 
+    def test_fail_on_empty_exits_one_when_no_issues(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """_handle_dry_run exits with code 1 when fail_on_empty=True and no issues."""
+        cli = _reload_cli(monkeypatch)
+
+        DummyBeadsClient.issues_to_return = []
+        monkeypatch.setattr(
+            src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
+        )
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cli._handle_dry_run(
+                repo_path=tmp_path,
+                epic=None,
+                only_ids=None,
+                wip=False,
+                focus=False,
+                orphans_only=False,
+                fail_on_empty=True,
+            )
+
+        assert excinfo.value.exit_code == 1
+
+    def test_fail_on_empty_exits_zero_when_issues_found(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """_handle_dry_run exits with code 0 when fail_on_empty=True and issues exist."""
+        cli = _reload_cli(monkeypatch)
+
+        DummyBeadsClient.issues_to_return = [{"id": "issue-1"}]
+        monkeypatch.setattr(
+            src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
+        )
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cli._handle_dry_run(
+                repo_path=tmp_path,
+                epic=None,
+                only_ids=None,
+                wip=False,
+                focus=False,
+                orphans_only=False,
+                fail_on_empty=True,
+            )
+
+        assert excinfo.value.exit_code == 0
+
 
 # ============================================================================
 # Tests for _validate_run_args helper function
