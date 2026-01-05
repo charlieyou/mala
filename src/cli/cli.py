@@ -1032,16 +1032,19 @@ def run(
         elif scope_config.scope_type == "orphans":
             orphans_only = True
 
-    # Parse and validate --order option
+    # Parse and validate --order option (new flag takes precedence over --focus/--no-focus)
     order_preference = _lazy("OrderPreference").FOCUS  # default
     if order is not None:
         order_lower = order.lower()
         if order_lower == "focus":
             order_preference = _lazy("OrderPreference").FOCUS
+            focus = True  # --order focus overrides --no-focus
         elif order_lower == "priority":
             order_preference = _lazy("OrderPreference").PRIORITY
+            focus = False  # --order priority overrides --focus (default)
         elif order_lower == "input":
             order_preference = _lazy("OrderPreference").INPUT
+            focus = False  # --order input uses priority-like ordering
             # --order input requires --scope ids:
             if scope_config is None or scope_config.scope_type != "ids":
                 log(
