@@ -125,6 +125,7 @@ class AgentRuntimeBuilder:
         self._deadlock_monitor: DeadlockMonitorProtocol | None = None
         self._include_stop_hook: bool = True
         self._include_mala_disallowed_tools_hook: bool = True
+        self._include_lock_enforcement_hook: bool = True
 
         # Environment and options
         self._env: dict[str, str] | None = None
@@ -137,6 +138,7 @@ class AgentRuntimeBuilder:
         deadlock_monitor: DeadlockMonitorProtocol | None = None,
         include_stop_hook: bool = True,
         include_mala_disallowed_tools_hook: bool = True,
+        include_lock_enforcement_hook: bool = True,
     ) -> AgentRuntimeBuilder:
         """Configure hook behavior.
 
@@ -146,6 +148,9 @@ class AgentRuntimeBuilder:
             include_mala_disallowed_tools_hook: Whether to include the
                 block_mala_disallowed_tools hook (default True). Set False
                 for fixer agents which don't need this restriction.
+            include_lock_enforcement_hook: Whether to include the lock
+                enforcement hook (default True). Set False when MCP servers
+                do not include locking tools (e.g., custom with_mcp(servers=...)).
 
         Returns:
             Self for chaining.
@@ -153,6 +158,7 @@ class AgentRuntimeBuilder:
         self._deadlock_monitor = deadlock_monitor
         self._include_stop_hook = include_stop_hook
         self._include_mala_disallowed_tools_hook = include_mala_disallowed_tools_hook
+        self._include_lock_enforcement_hook = include_lock_enforcement_hook
         return self
 
     def with_env(self, extra: dict[str, str] | None = None) -> AgentRuntimeBuilder:
@@ -300,10 +306,15 @@ class AgentRuntimeBuilder:
         # Build pre-tool hooks (order matters)
         pre_tool_hooks: list[object] = [
             block_dangerous_commands,
-            make_lock_enforcement_hook(self._agent_id, str(self._repo_path)),
             make_file_read_cache_hook(file_read_cache),
             make_lint_cache_hook(lint_cache),
         ]
+
+        # Conditionally add lock enforcement hook (requires locking MCP tools)
+        if self._include_lock_enforcement_hook:
+            pre_tool_hooks.insert(
+                1, make_lock_enforcement_hook(self._agent_id, str(self._repo_path))
+            )
 
         # Conditionally add mala disallowed tools hook (not needed for fixer agents)
         if self._include_mala_disallowed_tools_hook:

@@ -380,3 +380,190 @@ forbidden_modules = [
     "src.core.models",
     "src.core.protocols",
 ]
+
+# -----------------------------------------------------------------------------
+# Strict Additions: Expected to Pass
+# -----------------------------------------------------------------------------
+
+[[tool.importlinter.contracts]]
+name = "Domain does not import infra"
+type = "forbidden"
+source_modules = ["src.domain"]
+forbidden_modules = ["src.infra"]
+
+[[tool.importlinter.contracts]]
+name = "Pipeline does not import infra.clients"
+type = "forbidden"
+source_modules = ["src.pipeline"]
+forbidden_modules = ["src.infra.clients"]
+
+[[tool.importlinter.contracts]]
+name = "IO does not import clients"
+type = "forbidden"
+source_modules = ["src.infra.io"]
+forbidden_modules = ["src.infra.clients"]
+
+[[tool.importlinter.contracts]]
+name = "IO does not import hooks"
+type = "forbidden"
+source_modules = ["src.infra.io"]
+forbidden_modules = ["src.infra.hooks"]
+
+[[tool.importlinter.contracts]]
+name = "Only session_log_parser imports core.log_events"
+type = "forbidden"
+source_modules = ["src"]
+forbidden_modules = ["src.core.log_events"]
+allow_indirect_imports = true
+ignore_imports = [
+    "src.infra.io.session_log_parser -> src.core.log_events",
+]
+
+[[tool.importlinter.contracts]]
+name = "Infra clients do not import IO, hooks, or telemetry"
+type = "forbidden"
+source_modules = ["src.infra.clients"]
+forbidden_modules = [
+    "src.infra.io",
+    "src.infra.hooks",
+    "src.infra.telemetry",
+]
+
+[[tool.importlinter.contracts]]
+name = "Infra hooks do not import clients, IO, or telemetry"
+type = "forbidden"
+source_modules = ["src.infra.hooks"]
+forbidden_modules = [
+    "src.infra.clients",
+    "src.infra.io",
+    "src.infra.telemetry",
+]
+
+[[tool.importlinter.contracts]]
+name = "Infra tools do not import clients"
+type = "forbidden"
+source_modules = ["src.infra.tools"]
+forbidden_modules = ["src.infra.clients"]
+
+[[tool.importlinter.contracts]]
+name = "Infra telemetry does not import other infra subpackages"
+type = "forbidden"
+source_modules = ["src.infra.telemetry"]
+forbidden_modules = [
+    "src.infra.clients",
+    "src.infra.io",
+    "src.infra.hooks",
+    "src.infra.tools",
+]
+
+[[tool.importlinter.contracts]]
+name = "Tool name extractor is leaf"
+type = "forbidden"
+source_modules = ["src.core.tool_name_extractor"]
+forbidden_modules = [
+    "src.cli",
+    "src.orchestration",
+    "src.pipeline",
+    "src.domain",
+    "src.infra",
+    "src.core.models",
+    "src.core.protocols",
+    "src.core.log_events",
+]
+
+[[tool.importlinter.contracts]]
+name = "Issue manager is leaf"
+type = "forbidden"
+source_modules = ["src.infra.issue_manager"]
+forbidden_modules = [
+    "src.cli",
+    "src.orchestration",
+    "src.pipeline",
+    "src.domain",
+    "src.infra.clients",
+    "src.infra.io",
+    "src.infra.hooks",
+    "src.infra.telemetry",
+    "src.core",
+]
+
+[[tool.importlinter.contracts]]
+name = "Only infra.tools.env imports dotenv"
+type = "forbidden"
+source_modules = ["src"]
+forbidden_modules = ["dotenv"]
+allow_indirect_imports = true
+ignore_imports = [
+    "src.infra.tools.env -> dotenv",
+]
+
+[[tool.importlinter.contracts]]
+name = "Only domain.validation imports yaml"
+type = "forbidden"
+source_modules = ["src"]
+forbidden_modules = ["yaml"]
+allow_indirect_imports = true
+ignore_imports = [
+    "src.domain.validation.** -> yaml",
+]
+
+[[tool.importlinter.contracts]]
+name = "Only infra.clients and CLI import braintrust"
+type = "forbidden"
+source_modules = ["src"]
+forbidden_modules = ["braintrust"]
+allow_indirect_imports = true
+ignore_imports = [
+    "src.cli.** -> braintrust",
+    "src.infra.clients.** -> braintrust",
+]
+
+[[tool.importlinter.contracts]]
+name = "Only infra.clients import anthropic"
+type = "forbidden"
+source_modules = ["src"]
+forbidden_modules = ["anthropic"]
+allow_indirect_imports = true
+ignore_imports = [
+    "src.infra.clients.** -> anthropic",
+]
+
+# -----------------------------------------------------------------------------
+# Strict Additions: Expected to Fail Until Refactors
+# -----------------------------------------------------------------------------
+
+[[tool.importlinter.contracts]]
+name = "Only orchestration.factory imports infra.clients"
+type = "forbidden"
+source_modules = [
+    "src.orchestration.cli_support",
+    "src.orchestration.deadlock_handler",
+    "src.orchestration.orchestrator",
+    "src.orchestration.orchestrator_state",
+    "src.orchestration.orchestration_wiring",
+    "src.orchestration.review_tracking",
+    "src.orchestration.run_config",
+    "src.orchestration.types",
+]
+forbidden_modules = ["src.infra.clients"]
+
+[[tool.importlinter.contracts]]
+name = "Hooks do not import agent runtime"
+type = "forbidden"
+source_modules = ["src.infra.hooks"]
+forbidden_modules = ["src.infra.agent_runtime"]
+
+[[tool.importlinter.contracts]]
+name = "No claude_agent_sdk outside infra SDK boundary"
+type = "forbidden"
+source_modules = [
+    "src.cli",
+    "src.orchestration",
+    "src.pipeline",
+    "src.domain",
+    "src.infra.io",
+    "src.infra.hooks",
+    "src.infra.telemetry",
+    "src.core",
+]
+forbidden_modules = ["claude_agent_sdk"]

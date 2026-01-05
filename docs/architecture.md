@@ -298,7 +298,7 @@ Key modules:
 - `issue_manager.py` — Issue filtering, sorting, dependency resolution
 - `sdk_adapter.py` — Claude SDK client factory (infra-only imports)
 - `telemetry.py` — Telemetry provider protocols + null implementation
-- `mcp.py` — MCP server configuration and disallowed tools
+- `tool_config.py` — Disallowed tools list (used by hooks and SDK options)
 
 ### `src/pipeline` — Agent Execution
 
@@ -520,6 +520,31 @@ Import-linter contracts prevent layer violations:
 - `layers` contract enforces the 6-layer hierarchy
 - `forbidden` contracts isolate SDK access and leaf modules
 - `independence` contract ensures pipeline modules are acyclic
+
+#### Import-linter constraints (stricter)
+
+These constraints are enforced via import-linter (canonical source: `pyproject.toml`).
+They exist to keep the architecture layered, prevent cross-cutting dependencies,
+and make refactors predictable.
+
+Expected to pass (tighten invariants without refactors):
+- **Domain purity:** `src.domain` must not import `src.infra`. Domain logic stays pure and testable.
+- **Pipeline isolation from clients:** `src.pipeline` must not import `src.infra.clients`. Pipeline uses protocols; client implementations stay in infra.
+- **IO isolation:** `src.infra.io` must not import `src.infra.clients` or `src.infra.hooks`. IO stays focused on config/logs/sinks.
+- **Log event parsing boundary:** only `src.infra.io.session_log_parser` is allowed to import `src.core.log_events`, keeping log schema usage centralized.
+- **Infra subpackage isolation:** `src.infra.clients`, `src.infra.hooks`, `src.infra.tools`, and `src.infra.telemetry` should not depend on each other (except via allowed low‑level utilities). This keeps infra’s internal boundaries clean and makes replacements/refactors easier.
+- **Leaf modules:** `src.core.tool_name_extractor` and `src.infra.issue_manager` are leaf utilities with no internal dependencies (beyond stdlib).
+- **External dependency confinement:**
+  - `dotenv` is only allowed in `src.infra.tools.env`.
+  - `yaml` is only allowed under `src.domain.validation`.
+  - `braintrust` is only allowed in `src.infra.clients` and the CLI bootstrap layer.
+  - `anthropic` is only allowed in `src.infra.clients`.
+  - These constraints target direct imports; indirect use via the approved wrappers is allowed.
+
+Hardening constraints (strict by design; expected to fail until refactors):
+- **Single DI boundary for clients:** only `src.orchestration.factory` may import `src.infra.clients`. All other orchestration modules must rely on injected protocols.
+- **Hooks are runtime‑only:** `src.infra.hooks` must not import `src.infra.tool_config` (or other configuration wiring) except for the disallowed tools list.
+- **SDK boundary enforcement:** `claude_agent_sdk` must not appear outside infra’s SDK boundary modules. This is expected to fail until hook/MCP wiring is fully separated from SDK‑specific code.
 
 ### 3) Protocol-Based Interfaces
 
