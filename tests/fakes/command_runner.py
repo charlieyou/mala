@@ -46,7 +46,7 @@ class FakeCommandRunner:
     allow_unregistered: bool = False
     calls: list[tuple[tuple[str, ...], dict[str, Any]]] = field(default_factory=list)
 
-    def _normalize_cmd(self, cmd: list[str] | str) -> tuple[str, ...]:
+    def _normalize_cmd(self, cmd: list[str] | str | tuple[str, ...]) -> tuple[str, ...]:
         """Convert command to normalized tuple form."""
         if isinstance(cmd, str):
             return (cmd,)
@@ -77,8 +77,9 @@ class FakeCommandRunner:
 
         if self.allow_unregistered:
             # Return success result for unregistered commands
+            # Preserve original cmd type (str or list) like real CommandRunner
             return CommandResult(
-                command=list(cmd_tuple),
+                command=cmd if isinstance(cmd, str) else list(cmd),
                 returncode=0,
                 stdout="",
                 stderr="",
@@ -140,30 +141,35 @@ class FakeCommandRunner:
         """
         return self._execute(cmd, env, timeout, use_process_group, shell, cwd)
 
-    def has_call_with_prefix(self, prefix: tuple[str, ...]) -> bool:
+    def has_call_with_prefix(self, prefix: list[str] | str | tuple[str, ...]) -> bool:
         """Check if any call starts with the given prefix.
 
         Args:
-            prefix: Tuple of command parts to match at start.
+            prefix: Command parts to match at start. Can be list, str, or tuple.
 
         Returns:
             True if any recorded call starts with prefix.
         """
-        return any(cmd_tuple[: len(prefix)] == prefix for cmd_tuple, _ in self.calls)
+        prefix_tuple = self._normalize_cmd(prefix)
+        return any(
+            cmd_tuple[: len(prefix_tuple)] == prefix_tuple
+            for cmd_tuple, _ in self.calls
+        )
 
     def get_calls_with_prefix(
-        self, prefix: tuple[str, ...]
+        self, prefix: list[str] | str | tuple[str, ...]
     ) -> list[tuple[tuple[str, ...], dict[str, Any]]]:
         """Get all calls that start with the given prefix.
 
         Args:
-            prefix: Tuple of command parts to match at start.
+            prefix: Command parts to match at start. Can be list, str, or tuple.
 
         Returns:
             List of (cmd_tuple, kwargs) for matching calls.
         """
+        prefix_tuple = self._normalize_cmd(prefix)
         return [
             (cmd_tuple, kwargs)
             for cmd_tuple, kwargs in self.calls
-            if cmd_tuple[: len(prefix)] == prefix
+            if cmd_tuple[: len(prefix_tuple)] == prefix_tuple
         ]
