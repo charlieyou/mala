@@ -1,7 +1,6 @@
 """Unit tests for src/validation/e2e.py - E2E fixture runner."""
 
 import json
-import os
 import shutil
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -403,14 +402,9 @@ class TestE2ERunnerIntegration:
             assert result.status == E2EStatus.PASSED
             assert result.fixture_path is not None
             assert result.fixture_path is not None
-            runs_dir = Path(
-                os.environ.get(
-                    "MALA_RUNS_DIR",
-                    str(Path.home() / ".config" / "mala" / "runs"),
-                )
-            )
-            encoded = "-" + str(result.fixture_path).lstrip("/").replace("/", "-")
-            run_dir = runs_dir / encoded
+            from src.infra.tools.env import get_repo_runs_dir
+
+            run_dir = get_repo_runs_dir(result.fixture_path)
             assert run_dir.exists()
             run_metadata_path = max(
                 run_dir.glob("*.json"), key=lambda path: path.stat().st_mtime
