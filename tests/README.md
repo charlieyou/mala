@@ -13,6 +13,7 @@ This test suite follows the testing philosophy documented in [CLAUDE.md](../CLAU
 
 ```
 tests/
+├── __init__.py     # Package marker (enables `import tests.fakes`)
 ├── unit/           # Isolated unit tests (no network, no subprocess)
 ├── integration/    # Cross-layer tests validating component composition
 ├── e2e/            # End-to-end smoke tests (requires CLI auth)
@@ -50,13 +51,14 @@ from tests.fakes import FakeIssueProvider
 
 def test_issue_processing():
     provider = FakeIssueProvider()
-    provider.add_issue(Issue(id="test-1", title="Test"))
+    provider.add_issue(id="test-1", title="Test")  # Add issue to fake
 
     # Test code that uses provider
-    result = process_issues(provider)
+    issues = provider.list_issues()
 
     # Assert on outcomes, not calls
-    assert result.processed_count == 1
+    assert len(issues) == 1
+    assert issues[0].id == "test-1"
 ```
 
 ## Running Tests
@@ -72,10 +74,10 @@ uv run pytest -m e2e                       # E2E tests (requires auth)
 
 Current mock/patch usage to be reduced through fakes migration:
 
-| Metric | Count |
-|--------|-------|
-| `MagicMock`/`AsyncMock` | 854 |
-| `with patch`/`@patch` | 196 |
-| `.assert_called*` | 64 |
+| Metric | Count | Command |
+|--------|-------|---------|
+| `MagicMock`/`AsyncMock` | 854 | `rg -c 'MagicMock\|AsyncMock' tests/ --type py \| awk -F: '{s+=$2}END{print s}'` |
+| `with patch`/`@patch` | 196 | `rg -c 'with patch\|@patch' tests/ --type py \| awk -F: '{s+=$2}END{print s}'` |
+| `.assert_called*` | 64 | `rg -c '\.assert_called' tests/ --type py \| awk -F: '{s+=$2}END{print s}'` |
 
 Goal: Reduce these counts by migrating tests to use fakes from `tests/fakes/`.

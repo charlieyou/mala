@@ -11,9 +11,9 @@ they:
 See CLAUDE.md "Testing Philosophy" and "Fakes over mocks" for guidelines.
 
 Planned fakes (to be implemented):
-- FakeIssueProvider: In-memory issue storage implementing IssueProvider protocol
+- FakeIssueProvider: In-memory issue storage implementing IssueProvider
 - FakeCommandRunner: Deterministic command execution implementing CommandRunnerPort
 - FakeLockManager: In-memory lock coordination implementing LockManagerPort
 - FakeEventSink: Event capture implementing MalaEventSink
-- FakeEpicVerificationModel: Controlled epic verification responses
+- FakeEpicVerificationModel: Controlled epic verification implementing EpicVerificationModel
 """
