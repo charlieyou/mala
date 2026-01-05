@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
 from src.orchestration.orchestrator import IssueResult
+from src.orchestration.types import OrderPreference
 from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,
@@ -837,6 +838,7 @@ class TestRunLevelValidationIntegration:
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -899,6 +901,7 @@ class TestRunLevelValidationIntegration:
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -977,6 +980,7 @@ class TestRunLevelValidationIntegration:
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1047,6 +1051,7 @@ class TestRunLevelValidationIntegration:
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal first_call
             if first_call:

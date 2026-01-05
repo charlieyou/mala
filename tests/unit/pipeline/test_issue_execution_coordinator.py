@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.orchestration.types import OrderPreference
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
@@ -35,6 +36,7 @@ class MockIssueProvider:
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
     ) -> list[str]:
         """Return next sequence of ready issues."""
         exclude = exclude_ids or set()
@@ -409,6 +411,7 @@ class CapturingIssueProvider:
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
     ) -> list[str]:
         """Capture kwargs and return empty list."""
         self.captured_kwargs = {
@@ -419,6 +422,7 @@ class CapturingIssueProvider:
             "prioritize_wip": prioritize_wip,
             "focus": focus,
             "orphans_only": orphans_only,
+            "order_preference": order_preference,
         }
         return []
 

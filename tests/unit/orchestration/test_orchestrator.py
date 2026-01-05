@@ -27,6 +27,7 @@ from src.infra.tools.env import PROMPTS_DIR
 from src.infra.tools.command_runner import CommandRunner
 
 from src.core.protocols import LogProvider
+from src.orchestration.types import OrderPreference
 from tests.fakes.issue_provider import FakeIssueProvider, FakeIssue
 
 
@@ -804,6 +805,7 @@ class TestLockDirNestedCreation:
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             return []
 
@@ -1646,6 +1648,7 @@ class TestEpicClosureAfterChildCompletion:
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1795,6 +1798,7 @@ class TestEpicClosureAfterChildCompletion:
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal call_count
             call_count += 1
@@ -1895,6 +1899,7 @@ class TestEpicClosureAfterChildCompletion:
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal call_count
             call_count += 1
@@ -2069,6 +2074,7 @@ class TestFailedRunQualityGateEvidence:
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
