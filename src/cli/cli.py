@@ -798,8 +798,16 @@ def run(
         enabled=watch,
         validate_every=validate_every,
     )
-    asyncio.run(orchestrator.run(watch_config=watch_config))
-    raise typer.Exit(orchestrator.exit_code)
+    success_count, total = asyncio.run(orchestrator.run(watch_config=watch_config))
+
+    # Determine exit code:
+    # - Use orchestrator.exit_code for interrupt (130), validation failure (1), abort (3)
+    # - Otherwise: exit 0 if no issues to process or at least one succeeded
+    # - Exit 1 only if issues were processed but all failed
+    orch_exit = orchestrator.exit_code
+    if orch_exit != 0:
+        raise typer.Exit(orch_exit)
+    raise typer.Exit(0 if success_count > 0 or total == 0 else 1)
 
 
 @app.command("epic-verify")
