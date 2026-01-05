@@ -373,9 +373,9 @@ class TestValidationTriggers:
         assert len(validation_calls) >= 2, (
             f"Expected at least 2 validation calls, got {len(validation_calls)}: {validation_calls}"
         )
-        # First validation should be at threshold (2)
-        assert validation_calls[0] >= 2, (
-            f"First validation at {validation_calls[0]}, expected >= 2"
+        # First validation should be exactly at threshold (2)
+        assert validation_calls[0] == 2, (
+            f"First validation at {validation_calls[0]}, expected == 2"
         )
 
     @pytest.mark.asyncio
@@ -531,13 +531,21 @@ class TestSigintSubprocess:
         This test creates a minimal script that runs watch mode and
         sends it SIGINT, verifying the real signal handling path.
         """
+        import os
+        import select
+        from pathlib import Path
+
+        # Derive repo root from this test file's location
+        repo_root = Path(__file__).resolve().parent.parent.parent.parent
+
         # Create a test script that runs watch mode
         script = tmp_path / "watch_test.py"
         script.write_text(
             """
 import asyncio
 import sys
-sys.path.insert(0, "/home/cyou/mala")
+import signal
+from unittest.mock import AsyncMock
 
 from src.core.models import WatchConfig
 from src.pipeline.issue_execution_coordinator import (
@@ -554,7 +562,6 @@ async def main():
     interrupt_event = asyncio.Event()
 
     # Set up SIGINT handler
-    import signal
     def sigint_handler(signum, frame):
         interrupt_event.set()
     signal.signal(signal.SIGINT, sigint_handler)
@@ -568,7 +575,6 @@ async def main():
     # Print ready signal
     print("READY", flush=True)
 
-    from unittest.mock import AsyncMock
     result = await coord.run_loop(
         spawn_callback=AsyncMock(return_value=None),
         finalize_callback=AsyncMock(),
@@ -583,26 +589,37 @@ asyncio.run(main())
 """
         )
 
-        # Run the script in a subprocess
+        # Set up environment with PYTHONPATH pointing to repo root
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(repo_root)
+
+        # Run the script in a subprocess (stderr=DEVNULL to avoid pipe deadlock)
         proc = subprocess.Popen(
             [sys.executable, str(script)],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             text=True,
+            env=env,
         )
 
         try:
-            # Wait for "READY" signal
+            # Wait for "READY" signal with early exit detection
+            ready_received = False
             for _ in range(50):  # 5 second timeout
                 if proc.poll() is not None:
-                    break
+                    # Process exited early (likely import error)
+                    pytest.fail(f"Subprocess exited early with code {proc.returncode}")
                 # Non-blocking read
-                import select
-
                 if select.select([proc.stdout], [], [], 0.1)[0]:
                     line = proc.stdout.readline()  # type: ignore[union-attr]
                     if "READY" in line:
+                        ready_received = True
                         break
+
+            if not ready_received:
+                proc.kill()
+                proc.wait()
+                pytest.fail("Subprocess never sent READY signal")
 
             # Send SIGINT
             proc.send_signal(signal.SIGINT)
