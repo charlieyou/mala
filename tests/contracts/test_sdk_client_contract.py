@@ -37,9 +37,9 @@ def test_fake_sdk_client_implements_all_protocol_methods() -> None:
 
 @pytest.mark.unit
 def test_fake_sdk_client_protocol_compliance() -> None:
-    """FakeSDKClient can be assigned to SDKClientProtocol type."""
-    client: SDKClientProtocol = FakeSDKClient()
-    assert client is not None
+    """FakeSDKClient passes runtime isinstance check for SDKClientProtocol."""
+    client = FakeSDKClient()
+    assert isinstance(client, SDKClientProtocol)
 
 
 @pytest.mark.unit
@@ -58,9 +58,9 @@ def test_fake_sdk_client_factory_implements_all_protocol_methods() -> None:
 
 @pytest.mark.unit
 def test_fake_sdk_client_factory_protocol_compliance() -> None:
-    """FakeSDKClientFactory can be assigned to SDKClientFactoryProtocol type."""
-    factory: SDKClientFactoryProtocol = FakeSDKClientFactory()
-    assert factory is not None
+    """FakeSDKClientFactory passes runtime isinstance check for SDKClientFactoryProtocol."""
+    factory = FakeSDKClientFactory()
+    assert isinstance(factory, SDKClientFactoryProtocol)
 
 
 class TestFakeSDKClientBehavior:

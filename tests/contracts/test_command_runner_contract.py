@@ -23,9 +23,9 @@ def test_fake_command_runner_implements_all_protocol_methods() -> None:
 
 @pytest.mark.unit
 def test_fake_command_runner_protocol_compliance() -> None:
-    """FakeCommandRunner can be assigned to CommandRunnerPort type."""
-    runner: CommandRunnerPort = FakeCommandRunner()
-    assert runner is not None
+    """FakeCommandRunner passes runtime isinstance check for CommandRunnerPort."""
+    runner = FakeCommandRunner()
+    assert isinstance(runner, CommandRunnerPort)
 
 
 class TestFakeCommandRunnerBehavior:

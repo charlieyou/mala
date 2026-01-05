@@ -25,9 +25,9 @@ def test_fake_lock_manager_implements_all_protocol_methods() -> None:
 
 @pytest.mark.unit
 def test_fake_lock_manager_protocol_compliance() -> None:
-    """FakeLockManager can be assigned to LockManagerPort type."""
-    manager: LockManagerPort = FakeLockManager()
-    assert manager is not None
+    """FakeLockManager passes runtime isinstance check for LockManagerPort."""
+    manager = FakeLockManager()
+    assert isinstance(manager, LockManagerPort)
 
 
 class TestFakeLockManagerBehavior:

@@ -29,16 +29,14 @@ from tests.fakes import FakeCommandRunner
 
 
 @pytest.fixture
-def mock_command_runner() -> MagicMock:
-    """Create a mock CommandRunnerPort for QualityGate tests."""
-    mock_runner = MagicMock()
-    mock_runner.run.return_value = CommandResult(
-        command=["git", "status"],
-        returncode=0,
-        stdout="",
-        stderr="",
-    )
-    return mock_runner
+def mock_command_runner() -> FakeCommandRunner:
+    """Create a FakeCommandRunner for QualityGate tests.
+
+    Returns a FakeCommandRunner with allow_unregistered=True so tests that
+    focus on log parsing (not command execution) can satisfy the QualityGate
+    constructor without needing to register specific responses.
+    """
+    return FakeCommandRunner(allow_unregistered=True)
 
 
 def make_mock_command_runner(result: CommandResult) -> MagicMock:
@@ -83,7 +81,10 @@ class TestSpecDrivenParsing:
     """Test parse_validation_evidence_with_spec for spec-driven evidence detection."""
 
     def test_returns_evidence(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should return ValidationEvidence from log."""
         log_path = tmp_path / "session.jsonl"
@@ -113,7 +114,10 @@ class TestSpecDrivenParsing:
         assert evidence.pytest_ran is True
 
     def test_starts_from_given_offset(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should only parse log entries after the given byte offset."""
         log_path = tmp_path / "session.jsonl"
@@ -167,7 +171,10 @@ class TestSpecDrivenParsing:
         assert evidence.ruff_check_ran is True
 
     def test_offset_zero_parses_entire_file(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Offset=0 should parse the entire file (default behavior)."""
         log_path = tmp_path / "session.jsonl"
@@ -196,7 +203,10 @@ class TestSpecDrivenParsing:
         assert evidence.pytest_ran is True
 
     def test_offset_at_end_returns_empty_evidence(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Offset at EOF should return empty evidence."""
         log_path = tmp_path / "session.jsonl"
@@ -232,7 +242,10 @@ class TestSpecDrivenParsing:
         assert evidence.ty_check_ran is False
 
     def test_new_offset_points_to_end_of_file(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Log end offset should match file size."""
         log_path = tmp_path / "session.jsonl"
@@ -258,7 +271,10 @@ class TestSpecDrivenParsing:
         assert new_offset == log_path.stat().st_size
 
     def test_handles_missing_file(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should handle missing log file gracefully."""
         gate = QualityGate(tmp_path, log_provider, mock_command_runner)
@@ -272,7 +288,10 @@ class TestSpecDrivenParsing:
         assert evidence.pytest_ran is False
 
     def test_detects_all_validation_commands(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should detect all validation commands."""
         log_path = tmp_path / "session.jsonl"
@@ -320,7 +339,10 @@ class TestNoProgressDetection:
     """Test check_no_progress for detecting stalled attempts."""
 
     def test_no_progress_when_same_commit_and_no_new_evidence(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """No progress: unchanged commit hash + no new evidence since offset."""
         log_path = tmp_path / "session.jsonl"
@@ -341,7 +363,10 @@ class TestNoProgressDetection:
         assert is_no_progress is True
 
     def test_progress_when_commit_changed(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Progress detected: different commit hash (even without new evidence)."""
         log_path = tmp_path / "session.jsonl"
@@ -358,7 +383,10 @@ class TestNoProgressDetection:
         assert is_no_progress is False
 
     def test_progress_when_new_evidence_found(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Progress detected: new validation evidence (even with same commit)."""
         log_path = tmp_path / "session.jsonl"
@@ -390,7 +418,10 @@ class TestNoProgressDetection:
         assert is_no_progress is False
 
     def test_no_progress_when_evidence_before_offset_only(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """No progress: validation evidence exists but only before the offset."""
         log_path = tmp_path / "session.jsonl"
@@ -426,7 +457,10 @@ class TestNoProgressDetection:
         assert is_no_progress is True
 
     def test_progress_when_no_previous_commit(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Progress detected: first attempt (no previous commit to compare)."""
         log_path = tmp_path / "session.jsonl"
@@ -444,7 +478,10 @@ class TestNoProgressDetection:
         assert is_no_progress is False
 
     def test_no_progress_with_none_commits_and_no_evidence(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """No progress: both commits None (no commit made) and no new evidence."""
         log_path = tmp_path / "session.jsonl"
@@ -463,7 +500,10 @@ class TestNoProgressDetection:
         assert is_no_progress is True
 
     def test_handles_missing_log_file(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should handle missing log file (no evidence = no progress)."""
         gate = QualityGate(tmp_path, log_provider, mock_command_runner)
@@ -481,7 +521,10 @@ class TestNoProgressDetection:
         assert is_no_progress is True
 
     def test_progress_when_working_tree_has_changes(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Progress detected: uncommitted changes in working tree.
 
@@ -682,7 +725,10 @@ class TestCommitBaselineCheck:
     """Test check_commit_exists with baseline timestamp to reject stale commits."""
 
     def test_rejects_commit_before_baseline(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should reject commits created before the baseline timestamp."""
         from src.domain.quality_gate import QualityGate
@@ -703,7 +749,10 @@ class TestCommitBaselineCheck:
         assert result.exists is False
 
     def test_accepts_commit_after_baseline(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should accept commits created after the baseline timestamp."""
         from src.domain.quality_gate import QualityGate
@@ -725,7 +774,10 @@ class TestCommitBaselineCheck:
         assert result.commit_hash == "abc1234"
 
     def test_accepts_any_commit_without_baseline(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should accept any matching commit when no baseline is provided (backward compat)."""
         from src.domain.quality_gate import QualityGate
@@ -747,7 +799,10 @@ class TestCommitBaselineCheck:
         assert result.commit_hash == "abc1234"
 
     def test_gate_check_uses_baseline(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate check method should use baseline to reject stale commits."""
         from src.domain.quality_gate import QualityGate
@@ -807,7 +862,10 @@ class TestCommitBaselineCheck:
         )
 
     def test_gate_check_passes_with_new_commit(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate check should pass when commit is after baseline."""
         from src.domain.quality_gate import QualityGate
@@ -870,7 +928,10 @@ class TestIssueResolutionMarkerParsing:
     """Test parsing of ISSUE_NO_CHANGE and ISSUE_OBSOLETE markers from logs."""
 
     def test_parses_no_change_marker_with_rationale(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should parse ISSUE_NO_CHANGE marker and extract rationale."""
         from src.domain.validation.spec import ResolutionOutcome
@@ -899,7 +960,10 @@ class TestIssueResolutionMarkerParsing:
         assert "already fixed" in resolution.rationale.lower()
 
     def test_parses_obsolete_marker_with_rationale(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should parse ISSUE_OBSOLETE marker and extract rationale."""
         from src.domain.validation.spec import ResolutionOutcome
@@ -928,7 +992,10 @@ class TestIssueResolutionMarkerParsing:
         assert "no longer relevant" in resolution.rationale.lower()
 
     def test_returns_none_when_no_marker_present(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should return None when no resolution marker is present."""
         log_path = tmp_path / "session.jsonl"
@@ -953,7 +1020,10 @@ class TestIssueResolutionMarkerParsing:
         assert resolution is None
 
     def test_handles_missing_log_file(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should return None for missing log file."""
         gate = QualityGate(tmp_path, log_provider, mock_command_runner)
@@ -966,7 +1036,10 @@ class TestIssueResolutionMarkerParsing:
         assert resolution is None
 
     def test_parses_marker_from_offset(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should parse markers starting from the given offset."""
         from src.domain.validation.spec import ResolutionOutcome
@@ -1008,7 +1081,10 @@ class TestIssueResolutionMarkerParsing:
         assert resolution.outcome == ResolutionOutcome.OBSOLETE
 
     def test_marker_not_found_before_offset(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should not find markers before the given offset."""
         log_path = tmp_path / "session.jsonl"
@@ -1043,7 +1119,10 @@ class TestScopeAwareEvidence:
     """Test EvidenceGate derives expected evidence from ValidationSpec per scope."""
 
     def test_per_issue_scope_does_not_require_e2e(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Per-issue EvidenceGate should never require E2E evidence."""
 
@@ -1055,7 +1134,10 @@ class TestScopeAwareEvidence:
         assert spec.e2e.enabled is False
 
     def test_run_level_scope_can_require_e2e(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Run-level scope can require E2E evidence when enabled."""
 
@@ -1067,7 +1149,10 @@ class TestScopeAwareEvidence:
         assert spec.e2e.enabled is True
 
     def test_evidence_gate_accepts_no_change_with_clean_tree(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """EvidenceGate should accept no-change resolution with clean working tree."""
         from src.domain.validation.spec import ResolutionOutcome
@@ -1110,7 +1195,10 @@ class TestScopeAwareEvidence:
         assert result.resolution.outcome == ResolutionOutcome.NO_CHANGE
 
     def test_evidence_gate_accepts_obsolete_with_clean_tree(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """EvidenceGate should accept obsolete resolution with clean working tree."""
         from src.domain.validation.spec import ResolutionOutcome
@@ -1153,7 +1241,10 @@ class TestScopeAwareEvidence:
         assert result.resolution.outcome == ResolutionOutcome.OBSOLETE
 
     def test_evidence_gate_passes_no_change_with_dirty_tree(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """EvidenceGate should pass no-change resolution even if working tree is dirty.
 
@@ -1194,7 +1285,10 @@ class TestScopeAwareEvidence:
         assert result.resolution.outcome == ResolutionOutcome.NO_CHANGE
 
     def test_evidence_gate_requires_rationale_for_no_change(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """EvidenceGate should fail no-change resolution without rationale."""
         log_path = tmp_path / "session.jsonl"
@@ -1223,7 +1317,10 @@ class TestEvidenceGateSkipsValidation:
     """Test that Gate 2/3 (commit + full validation) is skipped for no-op/obsolete."""
 
     def test_no_change_skips_commit_check(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """No-change resolution should not require a commit or git status check."""
         log_path = tmp_path / "session.jsonl"
@@ -1257,7 +1354,7 @@ class TestEvidenceGateSkipsValidation:
         assert evidence.pytest_ran is False
 
     def test_obsolete_skips_commit_and_validation(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self, tmp_path: Path, log_provider: LogProvider
     ) -> None:
         """Obsolete resolution should skip commit, validation, and git status checks."""
         log_path = tmp_path / "session.jsonl"
@@ -1298,7 +1395,10 @@ class TestClearFailureMessages:
     """Test clear failure messages when evidence is missing."""
 
     def test_missing_commit_message_is_clear(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failure for missing commit should be descriptive."""
         gate = QualityGate(tmp_path, log_provider, mock_command_runner)
@@ -1350,7 +1450,10 @@ class TestClearFailureMessages:
         )
 
     def test_missing_validation_message_lists_commands(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failure for missing validation should list which commands didn't run."""
         log_path = tmp_path / "session.jsonl"
@@ -1396,7 +1499,10 @@ class TestClearFailureMessages:
         assert "typecheck" in missing_msg[0].lower()
 
     def test_no_change_without_rationale_message(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failure for no-change without rationale should be clear."""
         log_path = tmp_path / "session.jsonl"
@@ -1433,7 +1539,10 @@ class TestGetRequiredEvidenceKinds:
     """Test get_required_evidence_kinds extracts gate-required CommandKinds."""
 
     def test_returns_gate_required_kinds_from_spec(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should return set of gate-required command kinds."""
         from src.domain.quality_gate import get_required_evidence_kinds
@@ -1457,7 +1566,10 @@ class TestCheckEvidenceAgainstSpec:
     """Test check_evidence_against_spec for scope-aware validation."""
 
     def test_passes_when_all_required_evidence_present(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should pass when all required commands ran."""
         evidence = make_evidence(
@@ -1476,7 +1588,10 @@ class TestCheckEvidenceAgainstSpec:
         assert len(missing) == 0
 
     def test_fails_when_missing_required_evidence(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should fail and list missing commands."""
         evidence = make_evidence(
@@ -1495,7 +1610,10 @@ class TestCheckEvidenceAgainstSpec:
         assert "test" in missing
 
     def test_per_issue_does_not_require_e2e(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Per-issue scope should pass without E2E evidence."""
         evidence = make_evidence(
@@ -1516,7 +1634,10 @@ class TestCheckEvidenceAgainstSpec:
         assert "e2e" not in [m.lower() for m in missing]
 
     def test_respects_disabled_validations(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should not require disabled validations."""
         evidence = make_evidence(
@@ -1548,7 +1669,10 @@ class TestCheckWithResolutionSpec:
     """Test check_with_resolution uses spec for evidence checking."""
 
     def test_uses_spec_when_provided(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should use spec-based evidence checking when spec is provided."""
 
@@ -1614,7 +1738,10 @@ class TestCheckWithResolutionSpec:
         assert result.passed is True
 
     def test_raises_without_spec(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should raise ValueError when spec is not provided."""
         import pytest as pytest_module
@@ -1637,7 +1764,10 @@ class TestUserPromptInjectionPrevention:
     """Regression tests: resolution markers in user prompts should be ignored."""
 
     def test_user_message_with_no_change_marker_ignored(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """User prompt containing ISSUE_NO_CHANGE should not trigger resolution."""
         log_path = tmp_path / "session.jsonl"
@@ -1667,7 +1797,10 @@ class TestUserPromptInjectionPrevention:
         assert resolution is None
 
     def test_user_message_with_obsolete_marker_ignored(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """User prompt containing ISSUE_OBSOLETE should not trigger resolution."""
         log_path = tmp_path / "session.jsonl"
@@ -1695,7 +1828,10 @@ class TestUserPromptInjectionPrevention:
         assert resolution is None
 
     def test_assistant_message_still_parsed(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Assistant messages with resolution markers should still work."""
         from src.domain.validation.spec import ResolutionOutcome
@@ -1730,7 +1866,10 @@ class TestGitFailureHandling:
     """Regression tests: git failures should be treated as dirty state."""
 
     def test_git_failure_returns_dirty(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Git failure should return is_clean=False with error message."""
         # Create mock command runner that returns git failure
@@ -1753,7 +1892,10 @@ class TestGitFailureHandling:
         assert "not a git repository" in output
 
     def test_no_change_resolution_passes_without_git_check(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """No-change resolution should pass without checking git status.
 
@@ -1795,7 +1937,10 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
     """Regression tests: check_with_resolution uses log_offset for evidence."""
 
     def test_evidence_only_from_current_attempt(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Evidence before log_offset should not count for current attempt."""
         log_path = tmp_path / "session.jsonl"
@@ -1888,7 +2033,10 @@ class TestByteOffsetConsistency:
     """
 
     def test_unicode_content_uses_byte_offsets(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Multi-byte unicode should not break offset calculations.
 
@@ -1951,7 +2099,10 @@ class TestByteOffsetConsistency:
         )
 
     def test_empty_lines_preserved_in_offset_tracking(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Empty lines should be counted in byte offsets but skipped in parsing."""
         log_path = tmp_path / "session.jsonl"
@@ -1999,7 +2150,10 @@ class TestByteOffsetConsistency:
         assert new_offset == len(content)
 
     def test_binary_data_skipped_without_crash(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Binary data (invalid UTF-8) should be skipped without crashing."""
         log_path = tmp_path / "session.jsonl"
@@ -2037,7 +2191,10 @@ class TestByteOffsetConsistency:
         assert evidence.pytest_ran is True
 
     def test_truncated_json_skipped_without_crash(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Truncated JSON lines should be skipped without crashing."""
         log_path = tmp_path / "session.jsonl"
@@ -2073,7 +2230,10 @@ class TestByteOffsetConsistency:
         assert evidence is not None
 
     def test_offset_beyond_eof_returns_empty_evidence(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Offset beyond EOF should return empty evidence."""
         log_path = tmp_path / "session.jsonl"
@@ -2108,7 +2268,10 @@ class TestSpecDrivenEvidencePatterns:
     """
 
     def test_all_spec_commands_have_detection_patterns(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Every ValidationCommand in build_validation_spec should have a detection_pattern.
 
@@ -2130,7 +2293,10 @@ class TestSpecDrivenEvidencePatterns:
             )
 
     def test_spec_patterns_match_their_own_commands(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Each command's detection_pattern should match the command itself.
 
@@ -2151,7 +2317,10 @@ class TestSpecDrivenEvidencePatterns:
             )
 
     def test_quality_gate_uses_spec_patterns_for_evidence(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """QualityGate should use patterns from the spec, not hardcoded patterns.
 
@@ -2199,7 +2368,10 @@ class TestSpecDrivenEvidencePatterns:
         assert evidence.pytest_ran is True
 
     def test_command_without_pattern_skipped(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Commands without detection_pattern should be skipped (no fallback)."""
         from src.domain.validation.spec import (
@@ -2249,7 +2421,10 @@ class TestSpecDrivenEvidencePatterns:
         assert evidence.pytest_ran is False
 
     def test_check_with_resolution_uses_spec_patterns(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """check_with_resolution should use spec-defined patterns, not hardcoded.
 
@@ -2340,7 +2515,10 @@ class TestSpecDrivenEvidencePatterns:
         assert evidence.pytest_ran is True  # True because TEST command ran
 
     def test_check_with_resolution_uses_spec_patterns_with_offset(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """check_with_resolution should use spec-defined patterns, not hardcoded.
 
@@ -2439,7 +2617,10 @@ class TestValidationExitCodeParsing:
     """
 
     def test_gate_fails_when_pytest_exits_nonzero(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate should fail when pytest ran but exited with non-zero exit code."""
         log_path = tmp_path / "session.jsonl"
@@ -2491,7 +2672,10 @@ class TestValidationExitCodeParsing:
         assert "uv run pytest" not in evidence.failed_commands
 
     def test_gate_fails_when_ruff_check_exits_nonzero(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate should fail when ruff check ran but exited with non-zero exit code."""
         log_path = tmp_path / "session.jsonl"
@@ -2562,7 +2746,10 @@ class TestValidationExitCodeParsing:
         assert "pytest" not in evidence.failed_commands
 
     def test_gate_passes_when_all_commands_succeed(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate should pass when all validation commands exit with code 0."""
         log_path = tmp_path / "session.jsonl"
@@ -2626,7 +2813,10 @@ class TestValidationExitCodeParsing:
         assert evidence.pytest_ran is True
 
     def test_failure_reason_includes_exit_details(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failure reason should include which command failed and its exit code."""
         log_path = tmp_path / "session.jsonl"
@@ -2694,7 +2884,10 @@ class TestValidationExitCodeParsing:
         assert "uvx ty check" not in evidence.failed_commands
 
     def test_gate_passes_when_command_fails_then_succeeds(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate should pass when a command fails initially but succeeds on retry.
 
@@ -2836,7 +3029,10 @@ class TestAlreadyCompleteResolution:
     """Test ISSUE_ALREADY_COMPLETE resolution for pre-existing commits."""
 
     def test_already_complete_passes_with_valid_commit(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """ALREADY_COMPLETE should pass if commit exists (ignoring baseline)."""
         from src.domain.validation.spec import ResolutionOutcome
@@ -2884,7 +3080,10 @@ class TestAlreadyCompleteResolution:
         assert result.resolution.outcome == ResolutionOutcome.ALREADY_COMPLETE
 
     def test_already_complete_with_different_issue_id_in_rationale(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """ALREADY_COMPLETE should pass when rationale references a different issue ID.
 
@@ -2947,7 +3146,10 @@ class TestAlreadyCompleteResolution:
         )
 
     def test_already_complete_referenced_issue_not_found(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """ALREADY_COMPLETE should fail with clear error when referenced commit doesn't exist."""
         log_path = tmp_path / "session.jsonl"
@@ -2996,7 +3198,10 @@ class TestExtractIssueFromRationale:
     """Test extract_issue_from_rationale helper method."""
 
     def test_extracts_issue_from_commit_message_format(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should extract issue ID from 'bd-issue-123: message' format."""
         gate = QualityGate(tmp_path, log_provider, mock_command_runner)
@@ -3006,7 +3211,10 @@ class TestExtractIssueFromRationale:
         assert result == "issue-123"
 
     def test_extracts_issue_from_prose_format(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should extract issue ID from prose mentioning bd-<id>."""
         gate = QualityGate(tmp_path, log_provider, mock_command_runner)
@@ -3016,7 +3224,10 @@ class TestExtractIssueFromRationale:
         assert result == "mala-xyz"
 
     def test_returns_none_when_no_issue_id(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should return None when no bd-<id> pattern found."""
         gate = QualityGate(tmp_path, log_provider, mock_command_runner)
@@ -3026,7 +3237,10 @@ class TestExtractIssueFromRationale:
         assert result is None
 
     def test_extracts_first_issue_when_multiple(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Should extract first issue ID when multiple are mentioned."""
         gate = QualityGate(tmp_path, log_provider, mock_command_runner)
@@ -3045,7 +3259,10 @@ class TestSpecCommandChangesPropagation:
     """
 
     def test_strict_pattern_change_updates_evidence(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Changing a spec command's detection_pattern should update evidence detection.
 
@@ -3182,7 +3399,10 @@ class TestLogProviderInjection:
     """Test QualityGate with injected LogProvider for testability."""
 
     def test_accepts_custom_log_provider(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """QualityGate should accept a custom LogProvider."""
         from collections.abc import Iterator
@@ -3292,7 +3512,10 @@ class TestLogProviderInjection:
         assert evidence.pytest_ran is True
 
     def test_get_log_end_offset_uses_provider(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """get_log_end_offset should delegate to LogProvider."""
         from collections.abc import Iterator
@@ -3338,7 +3561,10 @@ class TestExtractedToolNames:
     """
 
     def test_failed_commands_shows_pytest_not_full_command(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failed commands should show 'pytest' not 'uv run pytest'."""
         log_path = tmp_path / "session.jsonl"
@@ -3388,7 +3614,10 @@ class TestExtractedToolNames:
         assert "uv run pytest" not in evidence.failed_commands
 
     def test_failed_commands_shows_ruff_not_full_command(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failed commands should show 'ruff' not 'uvx ruff check .'."""
         log_path = tmp_path / "session.jsonl"
@@ -3438,7 +3667,10 @@ class TestExtractedToolNames:
         assert "uvx ruff check ." not in evidence.failed_commands
 
     def test_gate_failure_message_shows_extracted_names(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Gate failure messages should show extracted tool names like 'pytest'."""
         log_path = tmp_path / "session.jsonl"
@@ -3503,7 +3735,10 @@ class TestExtractedToolNames:
         assert "uv run pytest" not in evidence.failed_commands
 
     def test_failed_commands_deduplicates_same_tool_multiple_kinds(
-        self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failed commands should deduplicate when same tool matches multiple kinds.
 
