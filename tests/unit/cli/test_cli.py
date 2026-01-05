@@ -2217,46 +2217,171 @@ class TestApplyConfigOverrides:
 # ============================================================================
 
 
-class TestScopeOption:
-    """Tests for the --scope CLI option and parse_scope function."""
+class TestParseScope:
+    """Tests for the parse_scope function."""
 
-    def test_scope_option_triggers_not_implemented_error(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """Test that --scope option raises NotImplementedError (TDD red state).
-
-        This test verifies that the scope parsing skeleton is in place
-        and correctly raises NotImplementedError until T002 implements it.
-        """
-        cli = _reload_cli(monkeypatch)
-
-        config_dir = tmp_path / "config"
-        monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-        monkeypatch.setattr(cli, "set_verbose", lambda _: None)
-
-        # The --scope option should trigger parse_scope which raises NotImplementedError
-        with pytest.raises(NotImplementedError) as excinfo:
-            cli.run(repo_path=tmp_path, scope="ids:T-1,T-2")
-
-        assert "Scope parsing is not yet implemented" in str(excinfo.value)
-        assert "T002" in str(excinfo.value)
-
-    def test_parse_scope_raises_not_implemented(self) -> None:
-        """Test that parse_scope raises NotImplementedError directly."""
+    def test_parse_scope_all(self) -> None:
+        """Test that 'all' scope returns ScopeConfig with scope_type='all'."""
         from src.cli.cli import parse_scope
 
-        with pytest.raises(NotImplementedError) as excinfo:
-            parse_scope("ids:T-1,T-2")
+        result = parse_scope("all")
+        assert result.scope_type == "all"
+        assert result.ids is None
+        assert result.epic_id is None
 
-        assert "Scope parsing is not yet implemented" in str(excinfo.value)
+    def test_parse_scope_all_with_whitespace(self) -> None:
+        """Test that 'all' scope handles leading/trailing whitespace."""
+        from src.cli.cli import parse_scope
 
-    def test_scope_config_dataclass_exists(self) -> None:
-        """Test that ScopeConfig dataclass is defined with expected fields."""
+        result = parse_scope("  all  ")
+        assert result.scope_type == "all"
+
+    def test_parse_scope_orphans(self) -> None:
+        """Test that 'orphans' scope returns ScopeConfig with scope_type='orphans'."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("orphans")
+        assert result.scope_type == "orphans"
+        assert result.ids is None
+        assert result.epic_id is None
+
+    def test_parse_scope_epic(self) -> None:
+        """Test that 'epic:<id>' scope parses correctly."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("epic:E-123")
+        assert result.scope_type == "epic"
+        assert result.epic_id == "E-123"
+        assert result.ids is None
+
+    def test_parse_scope_epic_with_whitespace(self) -> None:
+        """Test that 'epic:<id>' scope handles whitespace around ID."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("epic:  E-123  ")
+        assert result.scope_type == "epic"
+        assert result.epic_id == "E-123"
+
+    def test_parse_scope_epic_empty_id_raises_exit(self) -> None:
+        """Test that 'epic:' with no ID raises Exit(1)."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("epic:")
+        assert excinfo.value.exit_code == 1
+
+    def test_parse_scope_epic_whitespace_only_id_raises_exit(self) -> None:
+        """Test that 'epic:   ' with whitespace-only ID raises Exit(1)."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("epic:   ")
+        assert excinfo.value.exit_code == 1
+
+    def test_parse_scope_ids_single(self) -> None:
+        """Test that 'ids:<id>' with single ID parses correctly."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("ids:T-1")
+        assert result.scope_type == "ids"
+        assert result.ids == ["T-1"]
+        assert result.epic_id is None
+
+    def test_parse_scope_ids_multiple(self) -> None:
+        """Test that 'ids:<id1>,<id2>,<id3>' parses correctly with order preserved."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("ids:T-1,T-2,T-3")
+        assert result.scope_type == "ids"
+        assert result.ids == ["T-1", "T-2", "T-3"]
+
+    def test_parse_scope_ids_with_whitespace(self) -> None:
+        """Test that 'ids:' handles whitespace around IDs."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("ids:  T-1  ,  T-2  ,  T-3  ")
+        assert result.scope_type == "ids"
+        assert result.ids == ["T-1", "T-2", "T-3"]
+
+    def test_parse_scope_ids_deduplicates_with_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Test that 'ids:' deduplicates IDs and emits warning."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("ids:T-1,T-1,T-2")
+        assert result.scope_type == "ids"
+        assert result.ids == ["T-1", "T-2"]  # T-1 deduplicated
+
+        captured = capsys.readouterr()
+        assert "Duplicate IDs removed" in captured.out
+        assert "T-1" in captured.out
+
+    def test_parse_scope_ids_deduplicates_preserves_first_occurrence(self) -> None:
+        """Test that deduplication preserves first occurrence order."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("ids:T-3,T-1,T-2,T-1,T-3")
+        assert result.ids == ["T-3", "T-1", "T-2"]  # First occurrences only
+
+    def test_parse_scope_ids_empty_raises_exit(self) -> None:
+        """Test that 'ids:' with no IDs raises Exit(1)."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("ids:")
+        assert excinfo.value.exit_code == 1
+
+    def test_parse_scope_ids_whitespace_only_raises_exit(self) -> None:
+        """Test that 'ids:   ' with whitespace-only raises Exit(1)."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("ids:   ")
+        assert excinfo.value.exit_code == 1
+
+    def test_parse_scope_ids_empty_between_commas_raises_exit(self) -> None:
+        """Test that 'ids:,,' with empty entries raises Exit(1)."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("ids:, , ,")
+        assert excinfo.value.exit_code == 1
+
+    def test_parse_scope_invalid_format_raises_exit(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Test that invalid scope format raises Exit(1) with helpful message."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("invalid:xyz")
+        assert excinfo.value.exit_code == 1
+
+        captured = capsys.readouterr()
+        assert "Invalid --scope value" in captured.out
+        assert "invalid:xyz" in captured.out
+        assert "Valid formats:" in captured.out
+
+    def test_parse_scope_unknown_keyword_raises_exit(self) -> None:
+        """Test that unknown scope keyword raises Exit(1)."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("unknown")
+        assert excinfo.value.exit_code == 1
+
+    def test_scope_config_dataclass_fields(self) -> None:
+        """Test that ScopeConfig dataclass has expected fields and defaults."""
         from src.cli.cli import ScopeConfig
 
-        # ScopeConfig should be importable and have ids field
+        # Default values
         config = ScopeConfig()
+        assert config.scope_type == "all"
         assert config.ids is None
+        assert config.epic_id is None
 
-        config_with_ids = ScopeConfig(ids=["T-1", "T-2"])
-        assert config_with_ids.ids == ["T-1", "T-2"]
+        # With all fields
+        config_full = ScopeConfig(scope_type="ids", ids=["T-1", "T-2"], epic_id=None)
+        assert config_full.scope_type == "ids"
+        assert config_full.ids == ["T-1", "T-2"]

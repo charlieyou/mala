@@ -240,14 +240,24 @@ class ScopeConfig:
     """Parsed scope configuration from --scope option.
 
     Attributes:
-        ids: List of issue IDs to process (from 'ids:' prefix).
+        scope_type: The type of scope ('all', 'epic', 'orphans', 'ids').
+        ids: List of issue IDs to process (from 'ids:' prefix). Order-preserving.
+        epic_id: Epic ID to filter by (from 'epic:' prefix).
     """
 
+    scope_type: str = "all"
     ids: list[str] | None = None
+    epic_id: str | None = None
 
 
 def parse_scope(scope: str) -> ScopeConfig:
     """Parse the --scope option value into a ScopeConfig.
+
+    Supported formats:
+        - 'all' (default): Process all issues
+        - 'epic:<id>': Filter to issues under the specified epic
+        - 'orphans': Process only orphan issues (no parent epic)
+        - 'ids:<id1>,<id2>,...': Process specific IDs in order (deduplicates with warning)
 
     Args:
         scope: The scope string (e.g., 'ids:T-1,T-2').
@@ -256,9 +266,84 @@ def parse_scope(scope: str) -> ScopeConfig:
         ScopeConfig with parsed values.
 
     Raises:
-        NotImplementedError: Scope parsing is not yet implemented.
+        typer.Exit: If scope format is invalid.
     """
-    raise NotImplementedError("Scope parsing is not yet implemented (T002)")
+    import typer
+
+    scope = scope.strip()
+
+    # Handle 'all' scope
+    if scope == "all":
+        return ScopeConfig(scope_type="all")
+
+    # Handle 'orphans' scope
+    if scope == "orphans":
+        return ScopeConfig(scope_type="orphans")
+
+    # Handle 'epic:<id>' scope
+    if scope.startswith("epic:"):
+        epic_id = scope[5:].strip()
+        if not epic_id:
+            log(
+                "✗",
+                "Invalid --scope: 'epic:' requires an epic ID. "
+                "Valid formats: all, epic:<id>, orphans, ids:<id,...>",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+        return ScopeConfig(scope_type="epic", epic_id=epic_id)
+
+    # Handle 'ids:<id,...>' scope
+    if scope.startswith("ids:"):
+        ids_str = scope[4:].strip()
+        if not ids_str:
+            log(
+                "✗",
+                "Invalid --scope: 'ids:' requires at least one ID. "
+                "Valid formats: all, epic:<id>, orphans, ids:<id,...>",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+
+        # Parse comma-separated IDs, preserving order
+        raw_ids = [id_.strip() for id_ in ids_str.split(",") if id_.strip()]
+        if not raw_ids:
+            log(
+                "✗",
+                "Invalid --scope: 'ids:' requires at least one ID. "
+                "Valid formats: all, epic:<id>, orphans, ids:<id,...>",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+
+        # Deduplicate while preserving order, warn if duplicates found
+        seen: set[str] = set()
+        unique_ids: list[str] = []
+        duplicates: list[str] = []
+        for id_ in raw_ids:
+            if id_ in seen:
+                duplicates.append(id_)
+            else:
+                seen.add(id_)
+                unique_ids.append(id_)
+
+        if duplicates:
+            log(
+                "⚠",
+                f"Duplicate IDs removed from --scope: {', '.join(duplicates)}",
+                Colors.YELLOW,
+            )
+
+        return ScopeConfig(scope_type="ids", ids=unique_ids)
+
+    # Unknown scope format
+    log(
+        "✗",
+        f"Invalid --scope value: '{scope}'. "
+        "Valid formats: all, epic:<id>, orphans, ids:<id,...>",
+        Colors.RED,
+    )
+    raise typer.Exit(1)
 
 
 @dataclass(frozen=True)
