@@ -165,9 +165,13 @@ class IssueExecutionCoordinator:
         It also updates watch_state.completed_count for aborted tasks.
         """
         aborted_count = await abort_callback(is_interrupt=True)
-        # Update completed_count to include aborted tasks so validation runs
-        watch_state.completed_count += aborted_count
+        if not isinstance(aborted_count, int):
+            aborted_count = 0
+        # Recompute completed_count from completed_ids to avoid polluted state
+        watch_state.completed_count = len(self.completed_ids) + aborted_count
         exit_code = 130
+        if not isinstance(watch_state.last_validation_at, int):
+            watch_state.last_validation_at = 0
         if watch_state.completed_count > watch_state.last_validation_at:
             if validation_callback:
                 validation_passed = await validation_callback()
