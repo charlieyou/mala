@@ -1683,7 +1683,7 @@ class TestValidateRunArgs:
 
         assert result.only_ids is None
         assert result.disable_set is None
-        assert result.epic_override_ids is None
+        assert result.epic_override_ids == set()
 
     def test_invalid_only_empty_raises_exit(self, tmp_path: Path) -> None:
         """Empty --only value (whitespace only) raises Exit(1)."""

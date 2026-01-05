@@ -55,7 +55,6 @@ from src.pipeline.run_coordinator import (
     RunLevelValidationInput,
 )
 from src.orchestration.orchestration_wiring import (
-    WiringDependencies,
     FinalizerCallbackRefs,
     EpicCallbackRefs,
     build_gate_runner,
@@ -66,6 +65,11 @@ from src.orchestration.orchestration_wiring import (
     build_epic_callbacks,
     build_session_callback_factory,
     build_session_config,
+)
+from src.orchestration.types import (
+    IssueFilterConfig,
+    PipelineConfig,
+    RuntimeDeps,
 )
 from src.pipeline.issue_result import IssueResult
 from src.orchestration.review_tracking import create_review_tracking_issues
@@ -176,7 +180,7 @@ class MalaOrchestrator:
         self.focus = orch_config.focus
         self.orphans_only = orch_config.orphans_only
         self.cli_args = orch_config.cli_args
-        self.epic_override_ids = orch_config.epic_override_ids or set()
+        self.epic_override_ids = orch_config.epic_override_ids
         self.context_restart_threshold = orch_config.context_restart_threshold
         self.context_limit = orch_config.context_limit
         self.review_disabled_reason = derived.review_disabled_reason
@@ -221,13 +225,17 @@ class MalaOrchestrator:
 
     def _init_pipeline_runners(self) -> None:
         """Initialize pipeline runner components using wiring functions."""
-        deps = self._build_wiring_dependencies()
+        runtime = self._build_runtime_deps()
+        pipeline = self._build_pipeline_config()
+        filters = self._build_issue_filter_config()
 
         # Build core runners
-        self.gate_runner, self.async_gate_runner = build_gate_runner(deps)
-        self.review_runner = build_review_runner(deps)
-        self.run_coordinator = build_run_coordinator(deps, self._sdk_client_factory)
-        self.issue_coordinator = build_issue_coordinator(deps)
+        self.gate_runner, self.async_gate_runner = build_gate_runner(runtime, pipeline)
+        self.review_runner = build_review_runner(runtime, pipeline)
+        self.run_coordinator = build_run_coordinator(
+            runtime, pipeline, self._sdk_client_factory
+        )
+        self.issue_coordinator = build_issue_coordinator(filters, runtime)
 
         # Build coordinators with callbacks (callbacks need self references)
         self.issue_finalizer = self._build_issue_finalizer()
@@ -235,7 +243,8 @@ class MalaOrchestrator:
 
         # Build session infrastructure
         self.session_callback_factory = build_session_callback_factory(
-            deps,
+            runtime,
+            pipeline,
             self.async_gate_runner,
             self.review_runner,
             lambda: self.log_provider,
@@ -244,7 +253,7 @@ class MalaOrchestrator:
             on_review_log_path=self._on_review_log_path,
         )
         self._session_config = build_session_config(
-            deps, review_enabled=self._is_review_enabled()
+            pipeline, review_enabled=self._is_review_enabled()
         )
 
         # Wire deadlock handler now that all dependencies are available
@@ -256,20 +265,23 @@ class MalaOrchestrator:
                 )
             )
 
-    def _build_wiring_dependencies(self) -> WiringDependencies:
-        """Build WiringDependencies from orchestrator state."""
-        return WiringDependencies(
-            repo_path=self.repo_path,
+    def _build_runtime_deps(self) -> RuntimeDeps:
+        """Build RuntimeDeps from orchestrator state."""
+        return RuntimeDeps(
             quality_gate=self.quality_gate,
             code_reviewer=self.code_reviewer,
             beads=self.beads,
             event_sink=self.event_sink,
-            mala_config=self._mala_config,
             command_runner=CommandRunner(cwd=self.repo_path),
             env_config=EnvConfig(),
             lock_manager=LockManager(),
-            max_agents=self.max_agents,
-            max_issues=self._max_issues,
+            mala_config=self._mala_config,
+        )
+
+    def _build_pipeline_config(self) -> PipelineConfig:
+        """Build PipelineConfig from orchestrator state."""
+        return PipelineConfig(
+            repo_path=self.repo_path,
             timeout_seconds=self.timeout_seconds,
             max_gate_retries=self.max_gate_retries,
             max_review_retries=self.max_review_retries,
@@ -277,17 +289,24 @@ class MalaOrchestrator:
             disabled_validations=set(self._disabled_validations)
             if self._disabled_validations
             else None,
+            context_restart_threshold=self.context_restart_threshold,
+            context_limit=self.context_limit,
+            prompts=self._prompts,
+            prompt_validation_commands=self._prompt_validation_commands,
+            deadlock_monitor=self.deadlock_monitor,
+        )
+
+    def _build_issue_filter_config(self) -> IssueFilterConfig:
+        """Build IssueFilterConfig from orchestrator state."""
+        return IssueFilterConfig(
+            max_agents=self.max_agents,
+            max_issues=self._max_issues,
             epic_id=self.epic_id,
             only_ids=set(self.only_ids) if self.only_ids else None,
             prioritize_wip=self.prioritize_wip,
             focus=self.focus,
             orphans_only=self.orphans_only,
             epic_override_ids=self.epic_override_ids,
-            prompt_validation_commands=self._prompt_validation_commands,
-            prompts=self._prompts,
-            context_restart_threshold=self.context_restart_threshold,
-            context_limit=self.context_limit,
-            deadlock_monitor=self.deadlock_monitor,
         )
 
     def _build_issue_finalizer(self) -> IssueFinalizer:

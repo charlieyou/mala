@@ -7,23 +7,33 @@ Design principles:
 - OrchestratorConfig: All scalar configuration (timeouts, flags, limits)
 - OrchestratorDependencies: All protocol implementations (DI for testability)
 - _DerivedConfig: Internal computed configuration values
+- RuntimeDeps: Protocol implementations for pipeline components
+- PipelineConfig: Configuration for pipeline stages
+- IssueFilterConfig: Filtering criteria for issue selection
 - DEFAULT_AGENT_TIMEOUT_MINUTES: Default timeout constant
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path  # noqa: TC003 - needed at runtime for dataclass field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.core.protocols import (
         CodeReviewer,
+        CommandRunnerPort,
+        EnvConfigPort,
         GateChecker,
         IssueProvider,
+        LockManagerPort,
         LogProvider,
         MalaEventSink,
     )
+    from src.domain.deadlock import DeadlockMonitor
+    from src.domain.prompts import PromptProvider
+    from src.domain.validation.config import PromptValidationCommands
+    from src.infra.io.config import MalaConfig
     from src.infra.telemetry import TelemetryProvider
 
 # Default timeout for agent execution (protects against hung MCP server subprocesses)
@@ -72,7 +82,7 @@ class OrchestratorConfig:
     prioritize_wip: bool = False
     focus: bool = True
     cli_args: dict[str, object] | None = None
-    epic_override_ids: set[str] | None = None
+    epic_override_ids: set[str] = field(default_factory=set)
     orphans_only: bool = False
     # Context exhaustion handling thresholds
     context_restart_threshold: float = 0.90
@@ -118,3 +128,90 @@ class _DerivedConfig:
     disabled_validations: set[str]
     review_disabled_reason: str | None = None
     braintrust_disabled_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class RuntimeDeps:
+    """Runtime dependencies for pipeline wiring.
+
+    Protocol implementations and service objects injected at startup.
+
+    Attributes:
+        quality_gate: GateChecker for quality gate validation.
+        code_reviewer: CodeReviewer for post-commit code reviews.
+        beads: IssueProvider for issue tracking operations.
+        event_sink: MalaEventSink for run lifecycle logging.
+        command_runner: CommandRunnerPort for executing shell commands.
+        env_config: EnvConfigPort for environment configuration.
+        lock_manager: LockManagerPort for file locking coordination.
+        mala_config: MalaConfig for orchestrator configuration.
+    """
+
+    quality_gate: GateChecker
+    code_reviewer: CodeReviewer
+    beads: IssueProvider
+    event_sink: MalaEventSink
+    command_runner: CommandRunnerPort
+    env_config: EnvConfigPort
+    lock_manager: LockManagerPort
+    mala_config: MalaConfig
+
+
+@dataclass(frozen=True)
+class PipelineConfig:
+    """Configuration values for pipeline behavior.
+
+    Scalar configuration controlling pipeline execution.
+
+    Attributes:
+        repo_path: Path to the repository with beads issues.
+        timeout_seconds: Timeout per agent in seconds.
+        max_gate_retries: Maximum quality gate retry attempts per issue.
+        max_review_retries: Maximum code review retry attempts per issue.
+        coverage_threshold: Minimum coverage percentage (None = no-decrease mode).
+        disabled_validations: Set of validation types to disable.
+        context_restart_threshold: Ratio (0.0-1.0) at which to restart agent.
+        context_limit: Maximum context tokens (default 200K for Claude).
+        prompts: PromptProvider with loaded prompt templates.
+        prompt_validation_commands: Validation commands for prompt substitution.
+        deadlock_monitor: DeadlockMonitor for deadlock detection (None until wired).
+    """
+
+    repo_path: Path
+    timeout_seconds: int
+    max_gate_retries: int
+    max_review_retries: int
+    coverage_threshold: float | None
+    disabled_validations: set[str] | None
+    context_restart_threshold: float
+    context_limit: int
+    prompts: PromptProvider
+    prompt_validation_commands: PromptValidationCommands
+    deadlock_monitor: DeadlockMonitor | None = None
+
+
+@dataclass(frozen=True)
+class IssueFilterConfig:
+    """Configuration for issue filtering and selection.
+
+    Controls which issues are selected for processing.
+
+    Attributes:
+        max_agents: Maximum concurrent agents (None = unlimited).
+        max_issues: Maximum issues to process (None = unlimited).
+        epic_id: Only process tasks under this epic.
+        only_ids: Set of issue IDs to process exclusively.
+        prioritize_wip: Prioritize in_progress issues before open issues.
+        focus: Group tasks by epic for focused work.
+        orphans_only: Only process issues with no parent epic.
+        epic_override_ids: Epic IDs to close without verification.
+    """
+
+    max_agents: int | None = None
+    max_issues: int | None = None
+    epic_id: str | None = None
+    only_ids: set[str] | None = None
+    prioritize_wip: bool = False
+    focus: bool = True
+    orphans_only: bool = False
+    epic_override_ids: set[str] = field(default_factory=set)
