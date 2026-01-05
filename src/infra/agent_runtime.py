@@ -147,13 +147,16 @@ class AgentRuntimeBuilder:
 
         Args:
             deadlock_monitor: Optional DeadlockMonitor for lock event hooks.
-            include_stop_hook: Whether to include stop hook (default True).
+            include_stop_hook: Whether to include stop hook. Omit to preserve
+                current state (initially True).
             include_mala_disallowed_tools_hook: Whether to include the
-                block_mala_disallowed_tools hook (default True). Set False
-                for fixer agents which don't need this restriction.
+                block_mala_disallowed_tools hook. Omit to preserve current
+                state (initially True). Set False for fixer agents which
+                don't need this restriction.
             include_lock_enforcement_hook: Whether to include the lock
-                enforcement hook (default True). Set False when MCP servers
-                do not include locking tools (e.g., custom with_mcp(servers=...)).
+                enforcement hook. Omit to preserve current state (initially
+                True). Set False when MCP servers do not include locking
+                tools (e.g., custom with_mcp(servers=...)).
 
         Returns:
             Self for chaining.
@@ -269,9 +272,10 @@ class AgentRuntimeBuilder:
         """
         if self._mcp_server_factory is None:
             msg = (
-                "MCP server factory is required. Either provide mcp_server_factory, "
-                "explicitly provide servers via with_mcp(servers={...}), "
-                "or disable lock enforcement via with_hooks(include_lock_enforcement_hook=False)."
+                "MCP server factory is required. Either provide mcp_server_factory "
+                "or explicitly provide servers via with_mcp(servers={...}). "
+                "If your custom servers don't include locking tools, also call "
+                "with_hooks(include_lock_enforcement_hook=False)."
             )
             raise ValueError(msg)
 

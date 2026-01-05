@@ -532,7 +532,7 @@ Expected to pass (tighten invariants without refactors):
 - **Pipeline isolation from clients:** `src.pipeline` must not import `src.infra.clients`. Pipeline uses protocols; client implementations stay in infra.
 - **IO isolation:** `src.infra.io` must not import `src.infra.clients` or `src.infra.hooks`. IO stays focused on config/logs/sinks.
 - **Log event parsing boundary:** only `src.infra.io.session_log_parser` is allowed to import `src.core.log_events`, keeping log schema usage centralized.
-- **Infra subpackage isolation:** `src.infra.clients`, `src.infra.tools`, and `src.infra.telemetry` must not import each other. `src.infra.hooks` has a partial isolation contract (currently commented out due to transitive imports via `tools.env`→`io.config`). This keeps infra's internal boundaries clean and makes replacements/refactors easier.
+- **Infra subpackage isolation:** Directional constraints prevent tight coupling: `src.infra.tools` cannot import `src.infra.clients`; `src.infra.telemetry` cannot import other infra subpackages. `src.infra.hooks` has a partial isolation contract (currently commented out due to transitive imports via `tools.env`→`io.config`). This keeps infra's internal boundaries clean and makes replacements/refactors easier.
 - **Leaf modules:** `src.core.tool_name_extractor` and `src.infra.issue_manager` are leaf utilities with no internal dependencies (beyond stdlib).
 - **External dependency confinement:**
   - `dotenv` is only allowed in `src.infra.tools.env`.
