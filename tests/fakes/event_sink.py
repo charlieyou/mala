@@ -475,3 +475,10 @@ class FakeEventSink:
 
     def on_deadlock_detected(self, info: DeadlockInfoProtocol) -> None:
         self._record("deadlock_detected", info=info)
+
+    def on_watch_idle(self, wait_seconds: float, issues_blocked: int | None) -> None:
+        self._record(
+            "watch_idle",
+            wait_seconds=wait_seconds,
+            issues_blocked=issues_blocked,
+        )

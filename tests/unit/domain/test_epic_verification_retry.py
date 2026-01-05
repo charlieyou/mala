@@ -44,6 +44,11 @@ if TYPE_CHECKING:
 class FakeCallbacks:
     """Collection of fake callbacks for EpicVerificationCoordinator.
 
+    Uses FakeVerificationResults to provide coordinator-level verification
+    results (EpicVerificationResult). For test assertions, use
+    fake_verifier.attempts[i] (CoordinatorVerificationAttempt) to inspect
+    each verification call.
+
     Observable state:
         spawned_issues: issues passed to spawn_remediation
         finalized_results: (issue_id, result) pairs passed to finalize

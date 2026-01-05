@@ -487,15 +487,18 @@ class TestCreateReviewTrackingIssues:
         # Should create exactly one consolidated issue
         assert len(beads.created_issues) == 1
         issue = beads.created_issues[0]
-        assert "[Review] 2 non-blocking findings from bd-test-1" in issue["title"]
+        title = cast("str", issue["title"])
+        description = cast("str", issue["description"])
+        tags = cast("list[str]", issue["tags"])
+        assert "[Review] 2 non-blocking findings from bd-test-1" in title
         # Priority should be the highest (lowest number) - P2
         assert issue["priority"] == "P2"
-        assert "auto_generated" in issue["tags"]
+        assert "auto_generated" in tags
         # Description should contain both findings
-        assert "src/foo.py:10" in issue["description"]
-        assert "src/bar.py:20-30" in issue["description"]
-        assert "Consider refactoring" in issue["description"]
-        assert "Code smell" in issue["description"]
+        assert "src/foo.py:10" in description
+        assert "src/bar.py:20-30" in description
+        assert "Consider refactoring" in description
+        assert "Code smell" in description
         assert len(event_sink.warnings) == 1
 
     @pytest.mark.asyncio
@@ -525,10 +528,12 @@ class TestCreateReviewTrackingIssues:
 
         assert len(beads.created_issues) == 1
         issue = beads.created_issues[0]
-        assert "src/bar.py:10-20" in issue["description"]
+        title = cast("str", issue["title"])
+        description = cast("str", issue["description"])
+        assert "src/bar.py:10-20" in description
         assert issue["priority"] == "P3"
         # Single finding uses singular
-        assert "[Review] 1 non-blocking finding from bd-test-2" in issue["title"]
+        assert "[Review] 1 non-blocking finding from bd-test-2" in title
 
     @pytest.mark.asyncio
     async def test_skips_duplicate_findings_for_same_source(self) -> None:

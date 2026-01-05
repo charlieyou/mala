@@ -54,7 +54,8 @@ class FakeSDKClient(SDKClientProtocol):
     queries and disconnect calls for verification.
 
     By default, yields a minimal ResultMessage to complete iteration. Set
-    result_message=None explicitly to suppress this (for hang simulation).
+    result_message=None explicitly to suppress this (simulates end-of-stream
+    without the expected ResultMessage).
 
     Attributes:
         messages: Messages to yield from receive_response() before result.
@@ -115,7 +116,7 @@ class FakeSDKClient(SDKClientProtocol):
         elif self.result_message is not None:
             # Explicitly configured result message
             yield self.result_message
-        # If result_message is None, don't yield anything (for hang simulation)
+        # If result_message is None, end without ResultMessage (protocol edge case)
 
     async def disconnect(self) -> None:
         """Mark client as disconnected, optionally with delay."""
@@ -157,7 +158,7 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         self,
         messages: list[Any] | None = None,
         responses: list[Any] | None = None,
-        result_message: object | None = None,
+        result_message: object = _NO_RESULT_MESSAGE,
         query_error: Exception | None = None,
         raise_on_receive: Exception | None = None,
     ) -> FakeSDKClient:
@@ -166,7 +167,9 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         Args:
             messages: Messages to yield (preferred name).
             responses: Alias for messages (for compatibility).
-            result_message: Final message to yield.
+            result_message: Final message to yield. Defaults to the sentinel
+                that triggers a default ResultMessage. Pass None explicitly
+                to suppress the ResultMessage (protocol edge case testing).
             query_error: Exception to raise on query().
             raise_on_receive: Alias for query_error (for compatibility).
 
@@ -188,6 +191,9 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         self.create_calls.append(options)
         if self.client is not None:
             # Always return the same client if one was provided
+            # Track in clients list for test assertions
+            if self.client not in self.clients:
+                self.clients.append(self.client)
             return self.client
         if self._client_queue:
             client = self._client_queue.pop(0)

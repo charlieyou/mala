@@ -771,11 +771,12 @@ class MalaOrchestrator:
             """Abort all active tasks."""
             await self._abort_active_tasks(run_metadata)
 
-        return await self.issue_coordinator.run_loop(
+        result = await self.issue_coordinator.run_loop(
             spawn_callback=self.spawn_agent,
             finalize_callback=finalize_callback,
             abort_callback=abort_callback,
         )
+        return result.issues_spawned
 
     async def _finalize_run(
         self,

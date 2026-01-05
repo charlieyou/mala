@@ -52,7 +52,7 @@ class DelayedSDKClient(FakeSDKClient):
         query_error: Exception | None = None,
     ):
         super().__init__(
-            messages=messages,
+            messages=messages or [],
             result_message=result_message,
             query_error=query_error,
         )

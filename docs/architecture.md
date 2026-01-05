@@ -7,7 +7,7 @@
 ## Executive Summary
 
 - The codebase is a **layered, protocol-driven architecture** with explicit boundaries: `cli -> orchestration -> pipeline -> domain -> infra -> core`.
-- Orchestration is split into **run-level coordination**, **per-issue session execution**, **quality gate**, and **external review** stages.
+- Orchestration is split into **run-level coordination**, **per-issue session execution**, and **finalization/epic verification** via dedicated coordinators (IssueExecutionCoordinator, IssueFinalizer, EpicVerificationCoordinator).
 - Validation is **spec-driven** and uses explicit inputs/outputs, worktrees, and evidence parsing from JSONL logs.
 - Infrastructure code (clients, IO, hooks, tools) is isolated behind Protocols to keep core and domain logic testable.
 
@@ -22,7 +22,7 @@
 ┌──────────────────────────────▼──────────────────────────────────┐
 │                     Orchestration Layer                         │
 │                    (src/orchestration)                          │
-│         Factory, Orchestrator, Session Management               │
+│        Factory, Orchestrator, Wiring/Coordinators               │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
 ┌──────────────────────────────▼──────────────────────────────────┐
@@ -69,11 +69,13 @@ External dependencies are also constrained:
 
 ## Grimp Architecture Snapshot
 
-Dependency scan (grimp) for `src`:
+Lightweight file scan for `src` (2026-01-05):
 
-- Packages: `src`
-- Modules: 63
-- Total imports: 176
+- Packages: 8 (`cli`, `core`, `domain`, `infra`, `orchestration`, `pipeline`, `prompts`, `scripts`)
+- Python modules: 94 (`*.py` files under `src/`)
+- Import statements: 792 (lines starting with `import` or `from`)
+
+For an authoritative dependency graph and fan-in/out metrics, run the grimp workflow (see `CLAUDE.md`).
 
 Child packages under `src`:
 - `src.cli`
@@ -83,20 +85,19 @@ Child packages under `src`:
 - `src.orchestration`
 - `src.pipeline`
 
-Top fan-out (imports many modules):
+Common fan-out hotspots (by convention, not exhaustive):
 - `src.orchestration.orchestrator`
 - `src.orchestration.factory`
+- `src.orchestration.orchestration_wiring`
 - `src.pipeline.run_coordinator`
 - `src.pipeline.agent_session_runner`
 
-Top fan-in (imported by many modules):
-- `src.infra.tools.command_runner`
-- `src.domain.validation.spec`
-- `src.infra.tools.env`
+Common fan-in modules (frequently referenced):
 - `src.core.protocols`
-- `src.infra.io.event_sink`
+- `src.infra.tools.command_runner`
+- `src.infra.tools.env`
 - `src.infra.tools.locking`
-- `src.core.models`
+- `src.domain.validation.spec`
 - `src.domain.validation.result`
 
 Layer check via grimp: **no illegal dependencies found** for the ordered layers:
@@ -123,12 +124,16 @@ Per-issue call graph (main happy path):
 flowchart LR
   CLI[cli.py] --> Factory[create_orchestrator]
   Factory --> Orch[MalaOrchestrator.run]
-  Orch --> MainLoop[_run_main_loop]
-  MainLoop --> Spawn[spawn_agent]
+  Orch --> Loop[IssueExecutionCoordinator.run_loop]
+  Loop --> Spawn[spawn_agent]
   Spawn --> Session[AgentSessionRunner.run_session]
-  Session --> Gate[GateRunner.run_per_issue_gate]
-  Gate --> Review[ReviewRunner.run_review]
-  Review --> Finalize[_finalize_issue_result]
+  Session --> Idle[IdleTimeoutRetryPolicy.execute_iteration]
+  Idle --> Stream[MessageStreamProcessor.process_stream]
+  Session --> Effects[LifecycleEffectHandler]
+  Effects --> Gate[GateRunner.run_per_issue_gate]
+  Effects --> Review[ReviewRunner.run_review]
+  Loop --> Finalize[IssueFinalizer.finalize]
+  Finalize --> EpicCoord[EpicVerificationCoordinator.check_epic_closure]
   Orch --> RunValidate[RunCoordinator.run_validation]
 ```
 
@@ -142,18 +147,22 @@ sequenceDiagram
   participant Session as AgentSessionRunner
   participant Gate as GateRunner/QualityGate
   participant Review as ReviewRunner
+  participant Final as IssueFinalizer
+  participant Epic as EpicVerificationCoordinator
 
   CLI->>Orch: run()
   Orch->>Beads: claim issue
-  Orch->>Session: run_session(issue)
-  Session-->>Orch: AgentSessionOutput (log_path, session_id, summary)
-  Orch->>Gate: run_per_issue_gate(log_path)
-  Gate-->>Orch: gate_result + log_offset
+  Orch->>Session: run_session(issue, callbacks)
+  Session->>Gate: on_gate_check(log_path)
+  Gate-->>Session: gate_result + log_offset
   alt review enabled
-    Orch->>Review: run_review(commit_sha)
-    Review-->>Orch: review result
+    Session->>Review: on_review_check(commit_sha)
+    Review-->>Session: review result
   end
-  Orch->>Beads: close/mark issue
+  Session-->>Orch: IssueResult
+  Orch->>Final: finalize(result)
+  Final->>Beads: close/mark issue
+  Final->>Epic: check_epic_closure(issue)
 ```
 
 Run-level validation + fixer retry:
@@ -179,12 +188,14 @@ Epic verification loop:
 
 ```mermaid
 sequenceDiagram
-  participant Orch as MalaOrchestrator
+  participant Final as IssueFinalizer
+  participant EpicCoord as EpicVerificationCoordinator
   participant Epic as EpicVerifier
   participant Beads
   participant Model as ClaudeEpicVerificationModel
 
-  Orch->>Epic: verify_and_close_eligible()
+  Final->>EpicCoord: check_epic_closure(issue)
+  EpicCoord->>Epic: verify_epic(epic_id)
   Epic->>Beads: fetch epic + child issues
   Epic->>Epic: compute scoped commits
   Epic->>Model: verify(criteria + commits + specs)
@@ -193,6 +204,7 @@ sequenceDiagram
     Epic->>Beads: close epic
   else failed
     Epic->>Beads: create remediation issues + add blockers
+    EpicCoord->>EpicCoord: spawn remediation + retry
   end
 ```
 
@@ -203,17 +215,16 @@ High-level flow:
 1. CLI parses arguments and bootstraps environment (Braintrust, config).
 2. `create_orchestrator()` builds dependencies and configuration.
 3. `MalaOrchestrator.run()`:
-   - Fetches ready issues (Beads).
-   - Spawns per-issue agent sessions (parallel).
-   - Runs per-issue quality gate.
-   - Optionally runs external review.
-   - On success, closes issues; on failure, records followup.
-4. After all issues, run-level validation (Gate 4) occurs.
-5. Epics are verified and closed when all children complete.
+   - Delegates scheduling to `IssueExecutionCoordinator.run_loop`.
+   - Spawns per-issue agent sessions (parallel) via `spawn_agent()`.
+   - Uses session callbacks to run per-issue gate + review.
+   - Finalizes outcomes via `IssueFinalizer` (close/mark followup).
+4. After all issues, `RunCoordinator.run_validation()` executes run-level validation.
+5. `EpicVerificationCoordinator` verifies and closes epics when children complete.
 
 Per-issue pipeline sequence:
 ```
-Issue -> AgentSessionRunner -> GateRunner -> ReviewRunner -> finalize
+Issue -> AgentSessionRunner (callbacks) -> GateRunner/ReviewRunner -> IssueFinalizer
 ```
 
 Run-level validation uses `RunCoordinator` and `SpecValidationRunner` with `ValidationScope.RUN_LEVEL`, including E2E checks and coverage when configured.
@@ -223,7 +234,7 @@ Run-level validation uses `RunCoordinator` and `SpecValidationRunner` with `Vali
 ```
 src/
   cli/              CLI entry points and CLI-only wiring
-  orchestration/    Main orchestrator + factory/DI + CLI support
+  orchestration/    Orchestrator + factory/DI + wiring + run config + review tracking
   pipeline/         Pipeline stages for agent sessions, gate, review, run-level validation
   domain/           Business logic: lifecycle, quality gate, validation, prompts
   infra/            External systems, IO, hooks, tools, telemetry
@@ -241,6 +252,7 @@ Pure data structures and interfaces with **no internal dependencies**.
 | `models.py` | Shared dataclasses (IssueResolution, ValidationArtifacts, EpicVerdict, RetryConfig) |
 | `protocols.py` | Protocol interfaces (IssueProvider, GateChecker, CodeReviewer, LogProvider, EpicVerificationModel) |
 | `log_events.py` | JSONL log schema types and parsing helpers |
+| `tool_name_extractor.py` | Normalize tool names from shell commands for logs/caching |
 
 ### `src/domain` — Business Logic
 
@@ -251,15 +263,21 @@ Orchestration-agnostic business rules.
 | `lifecycle.py` | Issue lifecycle state machine and retry policy |
 | `quality_gate.py` | Gate checking: commit exists, tests passed, evidence present |
 | `prompts.py` | Prompt template loading |
+| `deadlock.py` | Wait-for graph + deadlock detection domain model |
 | `validation/` | Spec-based validation pipeline |
 
 Validation subpackage:
+- `config.py` / `config_loader.py` / `config_merger.py` — Validation config + overrides
 - `spec.py` — Build validation specs from change classification
 - `spec_runner.py` — Execute spec in worktree
 - `spec_executor.py` — Run individual commands with caching
-- `coverage.py` — Coverage threshold checking and baseline refresh
-- `worktree.py` — Git worktree creation/cleanup
+- `spec_result_builder.py` — Assemble ValidationResult summaries
+- `spec_workspace.py` / `worktree.py` — Workspace + git worktree management
+- `validation_gating.py` — Gate enable/disable policy
+- `result.py` — Validation result types
+- `coverage.py` / `coverage_args.py` — Coverage threshold checking and baselines
 - `e2e.py` — End-to-end fixture repo tests
+- `lint_cache.py` / `helpers.py` / `preset_registry.py` / `code_pattern_matcher.py` — Utilities
 
 ### `src/infra` — Infrastructure
 
@@ -273,9 +291,13 @@ External integrations and utilities.
 | `hooks/` | Agent hooks (lint cache, file cache, lock enforcement) |
 
 Key modules:
+- `agent_runtime.py` — Agent runtime builder (hooks/env/options)
 - `epic_verifier.py` — AI-powered epic acceptance verification
+- `epic_scope.py` — Compute scoped commits for epic verification
+- `git_utils.py` — Git helpers used across orchestration/pipeline
 - `issue_manager.py` — Issue filtering, sorting, dependency resolution
-- `telemetry.py` — Span abstraction (pure protocol)
+- `sdk_adapter.py` — Claude SDK client factory (infra-only imports)
+- `telemetry.py` — Telemetry provider protocols + null implementation
 - `mcp.py` — MCP server configuration and disallowed tools
 
 ### `src/pipeline` — Agent Execution
@@ -285,11 +307,17 @@ Pipeline components for running agent sessions.
 | Module | Purpose |
 |--------|---------|
 | `agent_session_runner.py` | Main session loop (SDK stream handling + lifecycle) |
+| `message_stream_processor.py` | SDK stream iteration + idle/context pressure handling |
+| `context_pressure_handler.py` | Checkpoint + restart handling for context pressure |
+| `idle_retry_policy.py` | Idle timeout retry/backoff policy for SDK streams |
+| `lifecycle_effect_handler.py` | Gate/review side-effect handling + retry prompts |
 | `gate_runner.py` | Quality gate execution |
+| `gate_metadata.py` | Gate metadata extraction for finalization |
 | `review_runner.py` | External code review via Cerberus |
 | `run_coordinator.py` | Run-level validation and fixer agent |
 | `issue_execution_coordinator.py` | Per-issue pipeline: session → gate → review |
 | `issue_finalizer.py` | Issue close/mark-needs-followup logic |
+| `issue_result.py` | Issue result dataclass (per-issue output) |
 | `session_callback_factory.py` | SDK session callback construction |
 | `epic_verification_coordinator.py` | Epic verification pipeline |
 
@@ -301,6 +329,11 @@ High-level orchestration of the agent loop.
 |--------|---------|
 | `orchestrator.py` | Main loop: claim → spawn → gate → review → close |
 | `factory.py` | Dependency injection and orchestrator construction |
+| `deadlock_handler.py` | Deadlock resolution + abort coordination service |
+| `orchestrator_state.py` | Per-run orchestration state container |
+| `orchestration_wiring.py` | Pipeline wiring/builders for orchestrator components |
+| `run_config.py` | Run metadata + event config builders |
+| `review_tracking.py` | Create tracking issues from review findings |
 | `types.py` | Orchestration-specific types |
 | `cli_support.py` | CLI integration helpers |
 
@@ -328,12 +361,11 @@ Developer-facing shell scripts bundled with the package. Not part of the core ru
   - Owns run lifecycle, metadata tracking, and shutdown/cleanup behavior.
   - Key methods:
     - `run()` / `run_sync()`: public entrypoints for async/sync execution.
-    - `_run_main_loop()`: main scheduler loop for spawning/waiting on agents.
+    - `_run_main_loop()`: main scheduler loop (delegates to IssueExecutionCoordinator).
     - `spawn_agent()`: claims issues and launches per-issue worker tasks.
     - `run_implementer()`: per-issue pipeline (session -> gate -> review).
-    - `_run_quality_gate_async()` / `_run_quality_gate_sync()`: gate checks.
-    - `_finalize_issue_result()`: close/mark issue based on outcome.
-    - `_check_epic_closure()`: triggers epic verification when eligible.
+    - `_finalize_issue_result()`: delegates finalization to IssueFinalizer.
+    - `_abort_active_tasks()`: delegates task abort handling to DeadlockHandler.
     - `_finalize_run()`: run-level validation + summary + cleanup.
 
 - `OrchestratorConfig`, `OrchestratorDependencies` (`src/orchestration/types.py`)
@@ -342,15 +374,36 @@ Developer-facing shell scripts bundled with the package. Not part of the core ru
 - `create_orchestrator()` (`src/orchestration/factory.py`)
   - Factory that assembles dependencies (beads client, gate checker, reviewer, telemetry, event sink).
 
+Supporting orchestration components:
+- `DeadlockHandler` (`src/orchestration/deadlock_handler.py`) encapsulates deadlock resolution and task-abort coordination behind callbacks. Monitors lock events from MCP tools to detect wait-for cycles.
+- `OrchestratorState` (`src/orchestration/orchestrator_state.py`) holds mutable state for a run (agent IDs, completed results, session log paths, deadlock cleanup tracking).
+- `OrchestrationWiring` (`src/orchestration/orchestration_wiring.py`) builds pipeline runners and callback bundles for the orchestrator.
+
 ### Pipeline
 
 - `AgentSessionRunner` (`src/pipeline/agent_session_runner.py`)
   - Wraps Claude SDK session lifecycle with streaming and idle-timeout recovery.
-  - Uses tool hooks for locking, dangerous command blocking, and lint cache.
+  - Uses tool hooks for locking enforcement, dangerous command blocking, and lint cache.
+  - Configures MCP locking server via `AgentRuntimeBuilder.with_mcp()`.
   - Key methods:
     - `run_session()`: main session runner; streams SDK responses, drives lifecycle.
-    - `_build_hooks()`: configures PreToolUse hooks (locking, lint cache, safety).
+    - `_build_hooks()`: configures PreToolUse hooks (locking enforcement, lint cache, safety).
     - `_build_agent_env()`: per-agent env including lock/agent IDs.
+
+- `MessageStreamProcessor` (`src/pipeline/message_stream_processor.py`)
+  - Iterates SDK streams, tracks tool calls, and detects idle/context pressure.
+
+- `ContextPressureHandler` (`src/pipeline/context_pressure_handler.py`)
+  - Requests checkpoints and builds continuation prompts when context pressure is high.
+
+- `IdleTimeoutRetryPolicy` (`src/pipeline/idle_retry_policy.py`)
+  - Handles idle timeout retries with backoff and session resume prompts.
+
+- `LifecycleEffectHandler` (`src/pipeline/lifecycle_effect_handler.py`)
+  - Encapsulates gate/review side effects (events, retry prompts, no-progress).
+
+- `SessionCallbackFactory` (`src/pipeline/session_callback_factory.py`)
+  - Builds per-issue callbacks that wire gate/review/logging into AgentSessionRunner.
 
 - `GateRunner` (`src/pipeline/gate_runner.py`)
   - Runs gate checks using a `GateChecker` protocol.
@@ -370,6 +423,21 @@ Developer-facing shell scripts bundled with the package. Not part of the core ru
   - Performs run-level validation and fixer retries.
   - Key methods:
     - `run_validation()`: run RUN_LEVEL spec; spawns fixer on failure.
+
+- `IssueExecutionCoordinator` (`src/pipeline/issue_execution_coordinator.py`)
+  - Schedules and tracks per-issue tasks; owns active task lifecycle.
+  - Key methods:
+    - `run_loop()`: spawn/wait/finalize loop for per-issue tasks.
+
+- `IssueFinalizer` (`src/pipeline/issue_finalizer.py`)
+  - Finalizes per-issue results: metadata, close/mark followup, and review tracking.
+  - Key methods:
+    - `finalize()`: orchestrate close/mark + metadata recording.
+
+- `EpicVerificationCoordinator` (`src/pipeline/epic_verification_coordinator.py`)
+  - Coordinates epic verification with remediation retries.
+  - Key methods:
+    - `check_epic_closure()`: verify epic after child closure.
 
 ### Domain / Policy
 
@@ -392,6 +460,9 @@ Developer-facing shell scripts bundled with the package. Not part of the core ru
     - `check_commit_exists()`: verify `bd-<id>` commit in range.
     - `check_no_progress()`: detect unchanged commit + no new evidence.
     - `get_log_end_offset()`: log offset tracking for retry scoping.
+
+- `DeadlockMonitor` / `WaitForGraph` (`src/domain/deadlock.py`)
+  - Tracks lock waits/holds and detects deadlock cycles.
 
 - Validation subsystem (`src/domain/validation/*`)
   - `ValidationSpec` defines commands and policies for per-issue vs run-level runs.
@@ -419,6 +490,9 @@ Developer-facing shell scripts bundled with the package. Not part of the core ru
     - `verify_epic()` / `verify_epic_with_options()`: verify a specific epic.
     - `create_remediation_issues()`: open follow-up tasks for unmet criteria.
     - `add_epic_blockers()` / `request_human_review()`: enforcement actions.
+- `EpicScopeAnalyzer`: computes scoped commit ranges for epic verification.
+- `AgentRuntimeBuilder` / `AgentRuntime`: build per-agent runtime env, hooks, and SDK options.
+- `SDKClientFactory`: isolates Claude SDK client creation in infra.
 - `SessionLogParser` / `FileSystemLogProvider`: parsing and offset tracking for JSONL logs.
   - Key methods:
     - `iter_jsonl_entries()` / `get_log_end_offset()`: parser-level iteration + offsets.
@@ -470,8 +544,10 @@ Validation commands are defined in `ValidationSpec`. The quality gate derives ev
 Prevents edit conflicts between concurrent agents:
 - Atomic hardlink-based locks in `/tmp/mala-locks/`
 - Path canonicalization with repo namespace support
+- MCP locking tools (`lock_acquire`, `lock_release`) for agent-side coordination
 - Lock enforcement hook blocks writes to unlocked files (`infra.hooks.locking`)
 - Per-run ownership tracking for clean shutdown
+- Deadlock detection via `DeadlockHandler` with event-driven monitoring
 
 ### 8) Worktree Validation
 
@@ -483,7 +559,7 @@ Clean-room validation in isolated git worktrees:
 ### 9) Telemetry
 
 Agent sessions emit spans through a `TelemetryProvider` abstraction:
-- Protocol defined in `infra.telemetry`
+- Protocol and `NullTelemetryProvider` in `infra.telemetry`
 - Braintrust-backed implementation in `infra.clients.braintrust_integration`
 
 ## Data Flow
