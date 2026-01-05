@@ -72,27 +72,40 @@ uv run pytest -m integration -n auto       # Integration in parallel
 uv run pytest -m e2e                       # E2E tests (requires auth)
 ```
 
-## Baseline Metrics (2026-01-05, post-migration snapshot)
+## Documented Mock/Patch Exceptions
 
-Current mock/patch usage to be reduced through fakes migration:
+The following mock and patch usages are intentional and documented exceptions to the "fakes over mocks" guideline:
 
-| Metric | Count |
-|--------|-------|
-| `MagicMock`/`AsyncMock` | 687 |
-| `with patch`/`@patch` | 81 |
-| `.assert_called*` | 13 |
+### Patches for External Dependencies
 
-Commands to measure these metrics:
+| File | Patch Target | Rationale |
+|------|--------------|-----------|
+| `test_locking_mcp.py` | `try_lock`, `get_lock_holder`, `wait_for_lock_async`, `release_lock`, `cleanup_agent_locks` | MCP tool handlers use module-level functions from `locking.py`. Patches isolate handler logic from filesystem lock operations. The module architecture doesn't support dependency injection without significant refactoring. |
+| `test_idle_retry_policy.py` | `asyncio.sleep` | Standard pattern for testing async timing/backoff without actual delays. |
+| `test_validation.py` | `SpecResultBuilder._run_e2e` | E2E tests require complex fixture setup. Patching allows testing E2E triggering logic without running actual E2E. |
+| `test_validation.py` | `create_worktree` | Tests worktree failure handling without git worktree operations. |
+| `test_validation.py` | `is_baseline_stale` | Controls coverage baseline staleness for deterministic tests. |
+| `test_run_metadata.py` | `get_runs_dir`, env vars | Tests run metadata persistence with controlled paths. |
+| `test_watch_mode.py` | `time.monotonic` | Controls time progression for deterministic timing tests. |
 
-```bash
-# MagicMock/AsyncMock count
-rg -c -e MagicMock -e AsyncMock tests/ --type py | awk -F: '{s+=$2}END{print s}'
+### MagicMock/AsyncMock Usage
 
-# with patch/@patch count
-rg -c -e 'with patch' -e '@patch' tests/ --type py | awk -F: '{s+=$2}END{print s}'
+| Pattern | Rationale |
+|---------|-----------|
+| `MagicMock(spec=LintCache)` | `LintCache` from `src/infra/hooks` satisfies `LintCacheProtocol`. Mock with spec ensures interface compliance. Creating a fake would duplicate the real implementation. |
+| `AsyncMock` for callbacks | Callback functions (e.g., `spawn_callback`, `finalize_callback`) are simple callables. AsyncMock tracks invocation without needing a full fake. |
+| `MagicMock` for SDK internals | Claude SDK types like `SdkMcpTool` have complex initialization. Mocking with spec validates interface usage. |
 
-# .assert_called* count
-rg -c '\.assert_called' tests/ --type py | awk -F: '{s+=$2}END{print s}'
-```
+### call_count Assertions
 
-Goal: Reduce these counts by migrating tests to use fakes from `tests/fakes/`.
+Some tests use `.call_count` assertions. These are **not** implementation-detail tests but rather behavioral assertions:
+
+- **Caching behavior** (`test_beads_client.py`): Verifies cache prevents redundant subprocess calls
+- **Validation scheduling** (`test_watch_mode.py`): Verifies validation triggers at correct thresholds
+- **Short-circuit logic** (`test_quality_gate.py`): Verifies no git commands for obsolete resolution
+
+These assertions test observable optimization behaviors that are part of the contract.
+
+## Running Tests
+
+See [CLAUDE.md](../CLAUDE.md#testing) for test commands and markers.
