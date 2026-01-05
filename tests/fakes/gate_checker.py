@@ -7,6 +7,8 @@ Observable state:
 - check_with_resolution_calls: list of call arguments
 - check_no_progress_calls: list of call arguments
 - get_log_end_offset_calls: list of call arguments
+- check_commit_exists_calls: list of call arguments
+- parse_validation_evidence_calls: list of call arguments
 """
 
 from __future__ import annotations
@@ -38,6 +40,8 @@ class FakeGateChecker:
         check_with_resolution_calls: List of call argument dicts.
         check_no_progress_calls: List of call argument dicts.
         get_log_end_offset_calls: List of call argument dicts.
+        check_commit_exists_calls: List of call argument dicts.
+        parse_validation_evidence_calls: List of call argument dicts.
     """
 
     # Pre-configured results

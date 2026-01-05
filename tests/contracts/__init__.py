@@ -8,9 +8,6 @@ Run contract tests:
 """
 
 
-import sys
-
-
 def get_protocol_members(protocol_cls: type) -> frozenset[str]:
     """Get the declared members of a Protocol class.
 
@@ -23,12 +20,9 @@ def get_protocol_members(protocol_cls: type) -> frozenset[str]:
     Returns:
         Frozenset of member names declared by the protocol.
     """
-    if sys.version_info >= (3, 13):
-        from typing import get_protocol_members as _get_members
+    try:
+        from typing import get_protocol_members as _get_members  # type: ignore[attr-defined]
+    except ImportError:
+        from typing_extensions import get_protocol_members as _get_members
 
-        return _get_members(protocol_cls)
-
-    # Fallback to typing_extensions for Python 3.12 and earlier
-    from typing_extensions import get_protocol_members as _get_members_ext
-
-    return _get_members_ext(protocol_cls)
+    return _get_members(protocol_cls)
