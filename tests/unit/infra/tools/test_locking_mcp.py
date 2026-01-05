@@ -637,6 +637,56 @@ class TestLockAcquireAsyncWaiting:
         assert cancel_count == 1
 
 
+class TestToolSchemaClaudeAPICompatibility:
+    """Test tool schemas are compatible with Claude API constraints.
+
+    Claude API does not support oneOf, allOf, or anyOf at the top level
+    of tool input_schema. These tests ensure our schemas are valid.
+    """
+
+    UNSUPPORTED_TOP_LEVEL_KEYS: frozenset[str] = frozenset({"oneOf", "allOf", "anyOf"})
+
+    def _get_tool_schemas(self) -> list[dict[str, Any]]:
+        """Extract input_schema from both tools."""
+        from src.infra.tools.locking_mcp import create_locking_mcp_server
+
+        result = create_locking_mcp_server(
+            agent_id="schema-test",
+            repo_namespace=None,
+            emit_lock_event=lambda e: None,
+            _return_handlers=True,
+        )
+        assert isinstance(result, tuple)
+        handlers = result[1]
+        # SdkMcpTool.input_schema is typed loosely in the SDK
+        schemas: list[Any] = [
+            handlers.lock_acquire.input_schema,
+            handlers.lock_release.input_schema,
+        ]
+        return schemas  # type: ignore[return-value]
+
+    def test_no_unsupported_keywords_at_top_level(self) -> None:
+        """Schemas must not use oneOf/allOf/anyOf at top level."""
+        for schema in self._get_tool_schemas():
+            top_level_keys = set(schema.keys())
+            forbidden = top_level_keys & self.UNSUPPORTED_TOP_LEVEL_KEYS
+            assert not forbidden, (
+                f"Schema uses unsupported top-level keywords: {forbidden}. "
+                "Claude API rejects oneOf/allOf/anyOf at the top level."
+            )
+
+    def test_schema_is_object_type(self) -> None:
+        """Schemas must have type: object at top level."""
+        for schema in self._get_tool_schemas():
+            assert schema.get("type") == "object", "Schema must be type: object"
+
+    def test_schema_has_properties(self) -> None:
+        """Schemas must have properties defined."""
+        for schema in self._get_tool_schemas():
+            assert "properties" in schema, "Schema must have properties"
+            assert isinstance(schema["properties"], dict)
+
+
 class TestMCPServerConfiguration:
     """Test MCP server configuration."""
 
