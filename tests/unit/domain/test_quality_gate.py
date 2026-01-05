@@ -2938,8 +2938,13 @@ class TestAlreadyCompleteResolution:
         assert result.resolution is not None
         assert result.resolution.outcome == ResolutionOutcome.ALREADY_COMPLETE
         assert result.commit_hash == "238e17f"
-        # Verify the command was called (behavioral: command execution happened)
-        assert mock_runner.run.called
+        # Verify git log was called searching for the referenced issue ID (bd-mala-xyz)
+        # not the current issue (test-123) - this ensures duplicate detection works
+        run_calls = [call[0][0] for call in mock_runner.run.call_args_list]
+        git_log_calls = [cmd for cmd in run_calls if "git" in cmd and "log" in cmd]
+        assert any("bd-mala-xyz" in cmd for cmd in git_log_calls), (
+            f"Expected git log to search for 'bd-mala-xyz' but got: {git_log_calls}"
+        )
 
     def test_already_complete_referenced_issue_not_found(
         self, tmp_path: Path, log_provider: LogProvider, mock_command_runner: MagicMock

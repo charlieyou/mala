@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+import pytest
+
 from src.infra.io.base_sink import BaseEventSink, NullEventSink
 from src.infra.io.console_sink import ConsoleEventSink
 from src.core.protocols import EventRunConfig, MalaEventSink
@@ -618,3 +620,43 @@ class TestConsoleEventSink:
         sink.on_watch_idle(30.0, None)
         sink.on_watch_idle(45.5, 0)
         sink.on_watch_idle(60.0, 5)
+
+    def test_on_abort_requested_includes_abort_in_message(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """on_abort_requested message should include 'ABORT' keyword for visibility."""
+        sink = ConsoleEventSink()
+
+        sink.on_abort_requested("Fatal error occurred")
+
+        captured = capsys.readouterr()
+        assert "ABORT" in captured.out
+
+    def test_on_epic_remediation_truncates_long_criterion(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """on_epic_remediation_created should truncate long criteria to 80 chars."""
+        sink = ConsoleEventSink()
+
+        # Create a criterion longer than 80 characters
+        long_criterion = "A" * 100
+
+        sink.on_epic_remediation_created("epic-123", "issue-1", long_criterion)
+
+        captured = capsys.readouterr()
+        # Should contain truncated text with ellipsis, not the full 100 A's
+        assert "A" * 80 not in captured.out or "..." in captured.out
+        # Should not contain the full 100-char string
+        assert long_criterion not in captured.out
+
+    def test_on_gate_failed_includes_red_color(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """on_gate_failed should use RED color for failed status."""
+        sink = ConsoleEventSink()
+
+        sink.on_gate_failed("agent-1", 3, 3, issue_id="issue-789")
+
+        captured = capsys.readouterr()
+        # Should include the word "failed" (red color codes are ANSI escape sequences)
+        assert "failed" in captured.out

@@ -896,37 +896,33 @@ class TestDetectLintCommand:
 
 
 class TestLintCache:
-    """Tests for the LintCache class."""
+    """Tests for the LintCache class.
 
-    def test_first_lint_is_allowed(self, tmp_path: Path) -> None:
+    Note: These tests use monkeypatch to mock _get_git_state since LintCache
+    has no injection point for the git state function, and unit tests should
+    not use real git subprocess calls.
+    """
+
+    @pytest.fixture
+    def mock_git_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Mock _get_git_state to return a fixed state hash."""
+        from src.infra.hooks import lint_cache
+
+        self._git_state = "abc123def456"
+        monkeypatch.setattr(lint_cache, "_get_git_state", lambda _: self._git_state)
+
+    def _change_git_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Simulate a file change by changing the git state hash."""
+        from src.infra.hooks import lint_cache
+
+        self._git_state = "changed789xyz"
+        monkeypatch.setattr(lint_cache, "_get_git_state", lambda _: self._git_state)
+
+    def test_first_lint_is_allowed(
+        self, tmp_path: Path, mock_git_state: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """First lint of a type should be allowed (recorded as pending)."""
         from src.infra.hooks import LintCache
-
-        # Create a git repo for testing
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        # Create initial commit
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         is_redundant, message = cache.check_and_update("ruff")
@@ -937,34 +933,11 @@ class TestLintCache:
         assert cache.cache_size == 0
         assert cache.skipped_count == 0
 
-    def test_second_lint_unchanged_is_blocked(self, tmp_path: Path) -> None:
+    def test_second_lint_unchanged_is_blocked(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Second lint with unchanged state promotes pending to confirmed and blocks."""
         from src.infra.hooks import LintCache
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
 
@@ -984,43 +957,23 @@ class TestLintCache:
         assert "skipped 1x" in message
         assert cache.skipped_count == 1
 
-    def test_lint_after_file_change_is_allowed(self, tmp_path: Path) -> None:
+    def test_lint_after_file_change_is_allowed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Lint after file modification should be allowed."""
-        from src.infra.hooks import LintCache
+        from src.infra.hooks import LintCache, lint_cache
 
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        test_file = tmp_path / "file.py"
-        test_file.write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
+        # Start with initial state
+        monkeypatch.setattr(lint_cache, "_get_git_state", lambda _: "initial_state_abc")
 
         cache = LintCache(repo_path=tmp_path)
 
-        # First lint
+        # First lint and mark success
         cache.check_and_update("ruff")
+        cache.mark_success("ruff")
 
-        # Modify file (creates uncommitted change)
-        test_file.write_text("print('world')")
+        # Simulate file modification by changing git state
+        monkeypatch.setattr(lint_cache, "_get_git_state", lambda _: "changed_state_xyz")
 
         # Second lint after modification - should be allowed
         is_redundant, message = cache.check_and_update("ruff")
@@ -1029,34 +982,11 @@ class TestLintCache:
         assert message == ""
         assert cache.skipped_count == 0
 
-    def test_different_lint_types_cached_separately(self, tmp_path: Path) -> None:
+    def test_different_lint_types_cached_separately(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Different lint types should be cached independently."""
         from src.infra.hooks import LintCache
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
 
@@ -1081,34 +1011,11 @@ class TestLintCache:
         assert is_redundant_3 is True
         assert cache.skipped_count == 3
 
-    def test_invalidate_clears_specific_type(self, tmp_path: Path) -> None:
+    def test_invalidate_clears_specific_type(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Invalidating a specific lint type should only clear that type."""
         from src.infra.hooks import LintCache
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         # Mark each lint type as successful
@@ -1127,34 +1034,11 @@ class TestLintCache:
         is_redundant, _ = cache.check_and_update("ruff")
         assert is_redundant is False
 
-    def test_invalidate_all_clears_cache(self, tmp_path: Path) -> None:
+    def test_invalidate_all_clears_cache(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Invalidating without type should clear all entries."""
         from src.infra.hooks import LintCache
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         # Mark each lint type as successful
@@ -1169,11 +1053,15 @@ class TestLintCache:
         cache.invalidate()
         assert cache.cache_size == 0
 
-    def test_non_git_repo_allows_all_lints(self, tmp_path: Path) -> None:
+    def test_non_git_repo_allows_all_lints(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """In a non-git directory, all lints should be allowed."""
-        from src.infra.hooks import LintCache
+        from src.infra.hooks import LintCache, lint_cache
 
-        # tmp_path is not a git repo
+        # Simulate non-git repo by returning None from _get_git_state
+        monkeypatch.setattr(lint_cache, "_get_git_state", lambda _: None)
+
         cache = LintCache(repo_path=tmp_path)
 
         # First lint

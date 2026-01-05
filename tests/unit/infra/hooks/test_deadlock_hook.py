@@ -577,3 +577,56 @@ class TestMakeLockEventHook:
 
         assert len(events) == 1
         assert events[0].event_type == LockEventType.RELEASED
+
+    @pytest.mark.asyncio
+    async def test_path_canonicalization_failure_logs_warning_no_event(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """When canonicalize_path raises an exception, log warning and skip event.
+
+        This tests the fail-soft behavior in _process_acquire_response where
+        path canonicalization failures are caught, logged, and the event is
+        skipped rather than crashing the hook.
+        """
+        import logging
+
+        from src.infra.hooks import deadlock
+
+        events, emit = collect_events()
+
+        # Make canonicalize_path raise an exception
+        def failing_canonicalize(
+            filepath: str, repo_namespace: str | None = None
+        ) -> str:
+            raise ValueError(f"Cannot canonicalize path: {filepath}")
+
+        monkeypatch.setattr(deadlock, "canonicalize_path", failing_canonicalize)
+
+        hook = make_lock_event_hook(
+            "agent-1",
+            emit,
+            str(tmp_path),
+            lock_event_class=LockEvent,
+            lock_event_type_enum=LockEventType,
+        )
+        response = make_mcp_response(
+            {"results": [{"filepath": "/some/path/file.py", "acquired": True}]}
+        )
+        hook_input = make_post_hook_input(
+            "mcp__mala-locking__lock_acquire",
+            {"filepaths": ["/some/path/file.py"]},
+            tool_response=response,
+        )
+
+        with caplog.at_level(logging.WARNING):
+            await hook(hook_input, None, make_context())
+
+        # No event should be emitted due to canonicalization failure
+        assert len(events) == 0
+        # Warning should be logged
+        assert any(
+            "Failed to canonicalize" in record.message for record in caplog.records
+        )
