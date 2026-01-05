@@ -429,17 +429,21 @@ forbidden_modules = [
     "src.infra.telemetry",
 ]
 
-# Moved to aspirational section - fails due to indirect import chain:
-# src.infra.hooks.locking -> src.infra.tools.locking -> src.infra.tools.env -> src.infra.io.config
-# [[tool.importlinter.contracts]]
-# name = "Infra hooks do not import clients, IO, or telemetry"
-# type = "forbidden"
-# source_modules = ["src.infra.hooks"]
-# forbidden_modules = [
-#     "src.infra.clients",
-#     "src.infra.io",
-#     "src.infra.telemetry",
-# ]
+[[tool.importlinter.contracts]]
+name = "Infra hooks do not import clients, IO, or telemetry"
+type = "forbidden"
+source_modules = ["src.infra.hooks"]
+forbidden_modules = [
+    "src.infra.clients",
+    "src.infra.io",
+    "src.infra.telemetry",
+]
+
+[[tool.importlinter.contracts]]
+name = "Hooks do not import agent runtime"
+type = "forbidden"
+source_modules = ["src.infra.hooks"]
+forbidden_modules = ["src.infra.agent_runtime"]
 
 [[tool.importlinter.contracts]]
 name = "Infra tools do not import clients"
@@ -531,43 +535,34 @@ ignore_imports = [
 ]
 
 # -----------------------------------------------------------------------------
-# Aspirational Contracts: Future Refactoring Targets (commented out)
+# Hardening Contracts: Expected to Fail Until Refactors
 # -----------------------------------------------------------------------------
 # These contracts define desired architectural boundaries but currently fail.
-# Uncomment after completing the necessary refactors.
 
-# [[tool.importlinter.contracts]]
-# name = "Only orchestration.factory imports infra.clients"
-# type = "forbidden"
-# source_modules = [
-#     "src.orchestration.cli_support",
-#     "src.orchestration.deadlock_handler",
-#     "src.orchestration.orchestrator",
-#     "src.orchestration.orchestrator_state",
-#     "src.orchestration.orchestration_wiring",
-#     "src.orchestration.review_tracking",
-#     "src.orchestration.run_config",
-#     "src.orchestration.types",
-# ]
-# forbidden_modules = ["src.infra.clients"]
+[[tool.importlinter.contracts]]
+name = "Only orchestration.factory imports infra.clients"
+type = "forbidden"
+source_modules = [
+    "src.orchestration.cli_support",
+    "src.orchestration.deadlock_handler",
+    "src.orchestration.orchestrator",
+    "src.orchestration.orchestrator_state",
+    "src.orchestration.orchestration_wiring",
+    "src.orchestration.review_tracking",
+    "src.orchestration.run_config",
+    "src.orchestration.types",
+]
+forbidden_modules = ["src.infra.clients"]
 
-# [[tool.importlinter.contracts]]
-# name = "Hooks do not import agent runtime"
-# type = "forbidden"
-# source_modules = ["src.infra.hooks"]
-# forbidden_modules = ["src.infra.agent_runtime"]
-
-# [[tool.importlinter.contracts]]
-# name = "No claude_agent_sdk outside infra SDK boundary"
-# type = "forbidden"
-# source_modules = [
-#     "src.cli",
-#     "src.orchestration",
-#     "src.pipeline",
-#     "src.domain",
-#     "src.infra.io",
-#     "src.infra.hooks",
-#     "src.infra.telemetry",
-#     "src.core",
-# ]
-# forbidden_modules = ["claude_agent_sdk"]
+[[tool.importlinter.contracts]]
+name = "No claude_agent_sdk outside infra SDK boundary"
+type = "forbidden"
+source_modules = ["src"]
+forbidden_modules = ["claude_agent_sdk"]
+allow_indirect_imports = true
+ignore_imports = [
+    "src.infra.clients.braintrust_integration -> claude_agent_sdk",
+    "src.infra.sdk_adapter -> claude_agent_sdk",
+    "src.infra.epic_verifier -> claude_agent_sdk",
+    "src.infra.tools.locking_mcp -> claude_agent_sdk",
+]
