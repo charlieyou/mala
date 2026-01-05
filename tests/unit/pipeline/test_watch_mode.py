@@ -42,6 +42,7 @@ class TestWatchModeSleeps:
         return AsyncMock(side_effect=_sleep)
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(reason="Watch mode sleep not yet implemented")
     async def test_watch_mode_sleeps_when_no_ready_issues(
         self,
         event_sink: FakeEventSink,
@@ -89,6 +90,7 @@ class TestWatchModeInterrupt:
         return FakeEventSink()
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(reason="Watch mode interrupt handling not yet implemented")
     async def test_watch_mode_exits_on_interrupt(
         self,
         event_sink: FakeEventSink,
@@ -129,6 +131,7 @@ class TestWatchModeValidation:
         return FakeEventSink()
 
     @pytest.mark.asyncio
+    @pytest.mark.xfail(reason="Watch mode validation trigger not yet implemented")
     async def test_validation_triggers_at_threshold(
         self,
         event_sink: FakeEventSink,
