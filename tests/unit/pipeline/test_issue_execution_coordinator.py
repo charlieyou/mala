@@ -378,13 +378,15 @@ class TestRunLoop:
             # Trigger abort after first issue completes
             coord.request_abort("test abort")
 
-        async def abort_callback() -> None:
+        async def abort_callback(*, is_interrupt: bool = False) -> int:
             nonlocal abort_called
             abort_called = True
             # Cancel any remaining tasks
+            count = len(coord.active_tasks)
             for task in coord.active_tasks.values():
                 task.cancel()
             coord.active_tasks.clear()
+            return count
 
         await coord.run_loop(spawn_callback, finalize_callback, abort_callback)
 

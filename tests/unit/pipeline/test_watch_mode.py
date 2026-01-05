@@ -73,7 +73,7 @@ class TestWatchModeSleeps:
             coord.run_loop(
                 spawn_callback=AsyncMock(return_value=None),
                 finalize_callback=AsyncMock(),
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 sleep_fn=sleep_fn,
                 # No interrupt_event - uses sleep_fn directly
@@ -115,7 +115,7 @@ class TestWatchModeInterrupt:
         result = await coord.run_loop(
             spawn_callback=AsyncMock(return_value=None),
             finalize_callback=AsyncMock(),
-            abort_callback=AsyncMock(),
+            abort_callback=AsyncMock(return_value=0),
             watch_config=watch_config,
             interrupt_event=interrupt_event,
         )
@@ -186,7 +186,7 @@ class TestWatchModeValidation:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 validation_callback=validation_callback,
                 interrupt_event=interrupt_event,
@@ -250,7 +250,7 @@ class TestWatchModeValidation:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 validation_callback=validation_callback,
                 interrupt_event=interrupt_event,
@@ -314,7 +314,7 @@ class TestWatchModeValidation:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 validation_callback=validation_callback,
                 interrupt_event=interrupt_event,
@@ -372,7 +372,7 @@ class TestWatchModeValidation:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 validation_callback=validation_callback,
             ),
@@ -427,7 +427,7 @@ class TestWatchModeValidation:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 validation_callback=validation_callback,
             ),
             timeout=5.0,
@@ -477,7 +477,7 @@ class TestWatchModeValidation:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 interrupt_event=interrupt_event,
                 validation_callback=validation_callback,
@@ -538,7 +538,7 @@ class TestWatchModeValidation:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 validation_callback=validation_callback,
                 interrupt_event=interrupt_event,
@@ -596,7 +596,7 @@ class TestWatchModeValidation:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 validation_callback=validation_callback,
             ),
             timeout=5.0,
@@ -652,7 +652,7 @@ class TestWatchModeValidation:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
             ),
             timeout=5.0,
         )
@@ -705,7 +705,7 @@ class TestWatchModeValidation:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
             ),
             timeout=5.0,
@@ -760,7 +760,7 @@ class TestPollFailureHandling:
         result = await coord.run_loop(
             spawn_callback=AsyncMock(return_value=None),
             finalize_callback=AsyncMock(),
-            abort_callback=AsyncMock(),
+            abort_callback=AsyncMock(return_value=0),
             sleep_fn=sleep_fn,
         )
 
@@ -795,7 +795,7 @@ class TestPollFailureHandling:
         result = await coord.run_loop(
             spawn_callback=AsyncMock(return_value=None),
             finalize_callback=AsyncMock(),
-            abort_callback=AsyncMock(),
+            abort_callback=AsyncMock(return_value=0),
             sleep_fn=sleep_fn,
         )
 
@@ -830,7 +830,7 @@ class TestPollFailureHandling:
         result = await coord.run_loop(
             spawn_callback=AsyncMock(return_value=None),
             finalize_callback=AsyncMock(),
-            abort_callback=AsyncMock(),
+            abort_callback=AsyncMock(return_value=0),
             sleep_fn=sleep_fn,
         )
 
@@ -860,7 +860,7 @@ class TestPollFailureHandling:
         result = await coord.run_loop(
             spawn_callback=AsyncMock(return_value=None),
             finalize_callback=AsyncMock(),
-            abort_callback=AsyncMock(),
+            abort_callback=AsyncMock(return_value=0),
             sleep_fn=sleep_fn,
         )
 
@@ -913,7 +913,7 @@ class TestPollFailureHandling:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 validation_callback=validation_callback,
                 sleep_fn=sleep_fn,
             ),
@@ -992,7 +992,7 @@ class TestWatchModeIdleBehavior:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 sleep_fn=sleep_fn,
                 # No interrupt_event - uses sleep_fn directly
@@ -1050,7 +1050,7 @@ class TestWatchModeIdleBehavior:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 sleep_fn=sleep_fn,
                 interrupt_event=interrupt_event,
@@ -1109,7 +1109,7 @@ class TestWatchModeIdleBehavior:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 interrupt_event=interrupt_event,
                 validation_callback=validation_callback,
@@ -1179,7 +1179,7 @@ class TestWatchModeIdleBehavior:
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(),
+                abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 interrupt_event=interrupt_event,
                 validation_callback=validation_callback,
@@ -1242,7 +1242,7 @@ class TestWatchModeIdleBehavior:
                 coord.run_loop(
                     spawn_callback=AsyncMock(return_value=None),
                     finalize_callback=AsyncMock(),
-                    abort_callback=AsyncMock(),
+                    abort_callback=AsyncMock(return_value=0),
                     watch_config=watch_config,
                     sleep_fn=sleep_fn,
                     # No interrupt_event - uses sleep_fn directly

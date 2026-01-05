@@ -54,8 +54,15 @@ class FinalizeCallback(Protocol):
 class AbortCallback(Protocol):
     """Callback for aborting active tasks."""
 
-    async def __call__(self) -> None:
-        """Abort all active tasks."""
+    async def __call__(self, *, is_interrupt: bool = False) -> int:
+        """Abort all active tasks.
+
+        Args:
+            is_interrupt: If True, use "Interrupted" summary instead of "Aborted".
+
+        Returns:
+            Number of tasks that were aborted.
+        """
         ...
 
 
@@ -154,10 +161,12 @@ class IssueExecutionCoordinator:
     ) -> RunResult:
         """Handle SIGINT by aborting active tasks, running final validation, and returning.
 
-        Note: abort_callback is responsible for cancelling and finalizing all active tasks.
-        We don't block waiting for tasks here - abort_callback handles the full cleanup.
+        Note: abort_callback awaits all tasks before returning to ensure orderly shutdown.
+        It also updates watch_state.completed_count for aborted tasks.
         """
-        await abort_callback()
+        aborted_count = await abort_callback(is_interrupt=True)
+        # Update completed_count to include aborted tasks so validation runs
+        watch_state.completed_count += aborted_count
         exit_code = 130
         if watch_state.completed_count > watch_state.last_validation_at:
             if validation_callback:

@@ -32,6 +32,7 @@ from src.infra.io.log_output.run_metadata import (
 from src.infra.tools.env import (
     EnvConfig,
     PROMPTS_DIR,
+    encode_repo_path,
     get_lock_dir,
     get_runs_dir,
 )
@@ -617,16 +618,26 @@ class MalaOrchestrator:
             # (deferred from run_implementer.finally to keep it available for get_agent_id callback)
             self._state.agent_ids.pop(issue_id, None)
 
-    async def _abort_active_tasks(self, run_metadata: RunMetadata) -> None:
+    async def _abort_active_tasks(
+        self, run_metadata: RunMetadata, *, is_interrupt: bool = False
+    ) -> int:
         """Cancel active tasks and mark them as failed.
 
         Delegates to DeadlockHandler.abort_active_tasks.
+
+        Args:
+            run_metadata: Metadata for the current run.
+            is_interrupt: If True, use "Interrupted" summary instead of "Aborted".
+
+        Returns:
+            Number of tasks that were aborted.
         """
-        await self._deadlock_handler.abort_active_tasks(
+        return await self._deadlock_handler.abort_active_tasks(
             self.active_tasks,
             self.abort_reason,
             self._state,
             run_metadata,
+            is_interrupt=is_interrupt,
         )
 
     def _build_session_callbacks(self, issue_id: str) -> SessionCallbacks:
@@ -802,9 +813,11 @@ class MalaOrchestrator:
             await self._finalize_issue_result(issue_id, result, run_metadata)
             self.issue_coordinator.mark_completed(issue_id)
 
-        async def abort_callback() -> None:
+        async def abort_callback(*, is_interrupt: bool = False) -> int:
             """Abort all active tasks."""
-            await self._abort_active_tasks(run_metadata)
+            return await self._abort_active_tasks(
+                run_metadata, is_interrupt=is_interrupt
+            )
 
         return await self.issue_coordinator.run_loop(
             spawn_callback=self.spawn_agent,
@@ -882,7 +895,14 @@ class MalaOrchestrator:
         self.event_sink.on_run_started(run_config)
 
         get_lock_dir().mkdir(parents=True, exist_ok=True)
-        runs_dir = self._runs_dir if self._runs_dir is not None else get_runs_dir()
+        base_runs_dir = self._runs_dir if self._runs_dir is not None else get_runs_dir()
+        base_runs_dir.mkdir(parents=True, exist_ok=True)
+        encoded_repo = encode_repo_path(self.repo_path)
+        runs_dir = (
+            base_runs_dir
+            if base_runs_dir.name == encoded_repo
+            else base_runs_dir / encoded_repo
+        )
         runs_dir.mkdir(parents=True, exist_ok=True)
 
         run_metadata = build_run_metadata(
@@ -969,11 +989,11 @@ class MalaOrchestrator:
                     self.event_sink.on_locks_released(released)
                 remove_run_marker(run_metadata.run_id)
 
-            # Check if interrupted before running final validation
+            # Check if interrupted - use exit_code from loop_result (which may be 1 if
+            # validation failed during interrupt handling, or 130 otherwise)
             if interrupted or interrupt_event.is_set():
-                # Store exit code 130 (interrupted) for CLI access
-                self._exit_code = 130
-                return await self._finalize_run(run_metadata, True)
+                self._exit_code = exit_code
+                return await self._finalize_run(run_metadata, exit_code != 1)
 
             # Run-level validation and finalization happen after lock cleanup
             # but before debug log cleanup (so they're captured in the debug log)
@@ -996,9 +1016,11 @@ class MalaOrchestrator:
                     raise
 
             # Check if SIGINT occurred during final validation phase
+            # Note: this should rarely be reached since interrupt is handled earlier,
+            # but keep as safety net. Use validation result if available.
             if interrupt_event.is_set():
-                self._exit_code = 130
-                return await self._finalize_run(run_metadata, True)
+                self._exit_code = 1 if not run_validation_passed else 130
+                return await self._finalize_run(run_metadata, run_validation_passed)
 
             # Store exit code for CLI access (validation failure overrides to 1)
             self._exit_code = 1 if not run_validation_passed else exit_code

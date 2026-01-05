@@ -198,61 +198,74 @@ class DeadlockHandler:
         abort_reason: str | None,
         state: OrchestratorState,
         run_metadata: RunMetadata,
-    ) -> None:
-        """Cancel active tasks and mark them as failed.
+        *,
+        is_interrupt: bool = False,
+    ) -> int:
+        """Cancel active tasks, await them, and mark them as failed.
 
         Tasks that have already completed are finalized with their real results
-        rather than being marked as aborted.
+        rather than being marked as aborted. All tasks are awaited to ensure
+        orderly shutdown.
 
         Args:
             active_tasks: Mapping of issue_id to asyncio.Task.
             abort_reason: Reason for aborting tasks.
             state: Orchestrator state for agent_ids and session log paths.
             run_metadata: Run metadata for issue finalization.
+            is_interrupt: If True, use "Interrupted" summary instead of "Aborted".
+
+        Returns:
+            Number of tasks that were aborted.
         """
         if not active_tasks:
-            return
-        reason = abort_reason or "Unrecoverable error"
+            return 0
+        reason = abort_reason or (
+            "Interrupted by user" if is_interrupt else "Unrecoverable error"
+        )
         self._callbacks.on_tasks_aborting(len(active_tasks), reason)
+
+        # Snapshot tasks before cancellation (abort_callback may clear active_tasks)
+        tasks_snapshot = list(active_tasks.items())
+
         # Cancel tasks that are still running
-        for task in active_tasks.values():
+        for _issue_id, task in tasks_snapshot:
             if not task.done():
                 task.cancel()
 
-        # Finalize each remaining issue - use real result if already done
-        for issue_id, task in list(active_tasks.items()):
-            if task.done():
-                # Task completed before we could cancel - use real result
-                try:
-                    result = task.result()
-                except asyncio.CancelledError:
-                    result = IssueResult(
-                        issue_id=issue_id,
-                        agent_id=state.agent_ids.get(issue_id, "unknown"),
-                        success=False,
-                        summary=f"Aborted due to unrecoverable error: {reason}",
-                        session_log_path=state.active_session_log_paths.get(issue_id),
-                    )
-                except Exception as e:
-                    result = IssueResult(
-                        issue_id=issue_id,
-                        agent_id=state.agent_ids.get(issue_id, "unknown"),
-                        success=False,
-                        summary=str(e),
-                        session_log_path=state.active_session_log_paths.get(issue_id),
-                    )
-            else:
-                # Task was still running - mark as aborted
+        # Await all tasks to ensure orderly shutdown before finalization
+        await asyncio.gather(
+            *[task for _, task in tasks_snapshot], return_exceptions=True
+        )
+
+        # Finalize each issue - use real result if completed, abort summary if cancelled
+        aborted_count = 0
+        abort_summary = (
+            f"Interrupted: {reason}" if is_interrupt else f"Aborted: {reason}"
+        )
+        for issue_id, task in tasks_snapshot:
+            try:
+                result = task.result()
+            except asyncio.CancelledError:
+                aborted_count += 1
                 result = IssueResult(
                     issue_id=issue_id,
                     agent_id=state.agent_ids.get(issue_id, "unknown"),
                     success=False,
-                    summary=f"Aborted due to unrecoverable error: {reason}",
+                    summary=abort_summary,
+                    session_log_path=state.active_session_log_paths.get(issue_id),
+                )
+            except Exception as e:
+                result = IssueResult(
+                    issue_id=issue_id,
+                    agent_id=state.agent_ids.get(issue_id, "unknown"),
+                    success=False,
+                    summary=str(e),
                     session_log_path=state.active_session_log_paths.get(issue_id),
                 )
             await self._callbacks.finalize_issue_result(issue_id, result, run_metadata)
             # Mark completed in coordinator to keep state consistent
             self._callbacks.mark_completed(issue_id)
+        return aborted_count
 
     def cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup).
