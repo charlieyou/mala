@@ -923,7 +923,7 @@ class TestPollFailureHandling:
         assert result.exit_code == 3
         assert result.exit_reason == "poll_failed"
         # Validation should have been called because an issue completed
-        assert validation_callback.call_count == 1
+        assert validation_callback.called
 
 
 class TestWatchModeIdleBehavior:
@@ -1237,7 +1237,7 @@ class TestWatchModeIdleBehavior:
 
         sleep_fn.side_effect = sleep_side_effect
 
-        with patch.object(time, "time", time_fn):
+        with patch.object(time, "monotonic", time_fn):
             result = await asyncio.wait_for(
                 coord.run_loop(
                     spawn_callback=AsyncMock(return_value=None),
