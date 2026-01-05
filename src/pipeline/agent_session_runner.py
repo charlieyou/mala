@@ -535,7 +535,7 @@ class AgentSessionRunner:
             ),
             sdk_client_factory=self.sdk_client_factory,
         )
-        # Initialize retry policy with stream processor
+        # Initialize retry policy with stream processor factory
         retry_config = RetryConfig(
             max_idle_retries=self.config.max_idle_retries,
             idle_retry_backoff=self.config.idle_retry_backoff,
@@ -543,7 +543,7 @@ class AgentSessionRunner:
         )
         self._retry_policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=self.sdk_client_factory,
-            message_stream_processor=self._get_stream_processor(),
+            stream_processor_factory=self._get_stream_processor,
             config=retry_config,
         )
 

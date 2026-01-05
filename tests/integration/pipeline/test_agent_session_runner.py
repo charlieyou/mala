@@ -1807,7 +1807,10 @@ class TestContextPressureDetection:
         with pytest.raises(ContextPressureError) as exc_info:
             # Wrap stream with IdleTimeoutStream (no timeout, empty pending_tool_ids)
             stream = IdleTimeoutStream(mock_stream(), None, set())
+            # Get a fresh stream processor from the factory
+            stream_processor = runner._get_stream_processor()
             await runner._retry_policy._process_message_stream(
+                stream_processor,
                 stream,
                 "test-pressure",
                 state,

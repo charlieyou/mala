@@ -23,6 +23,8 @@ from src.pipeline.message_stream_processor import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.core.protocols import SDKClientFactoryProtocol, SDKClientProtocol
     from src.domain.lifecycle import LifecycleContext
     from src.infra.hooks import LintCache
@@ -44,8 +46,9 @@ DISCONNECT_TIMEOUT = 10.0
 class RetryConfig:
     """Configuration for idle timeout retry behavior.
 
-    The backoff sequence must have at least max_idle_retries + 1 entries
-    to provide a backoff value for each retry attempt (including retry 0).
+    The backoff sequence should have entries for each retry attempt.
+    If fewer entries are provided than max_idle_retries, the last
+    entry will be reused for subsequent retries.
 
     Attributes:
         max_idle_retries: Maximum number of idle timeout retries.
@@ -61,11 +64,12 @@ class RetryConfig:
         """Validate configuration invariants."""
         if self.max_idle_retries < 0:
             raise ValueError("max_idle_retries must be non-negative")
-        required_backoff_len = self.max_idle_retries + 1
-        if len(self.idle_retry_backoff) < required_backoff_len:
+        # Backoff is indexed by retry_count - 1, so we need max_idle_retries entries
+        # (retry 1 uses index 0, retry 2 uses index 1, etc.)
+        # If fewer entries provided, _apply_retry_backoff will reuse the last entry
+        if self.max_idle_retries > 0 and len(self.idle_retry_backoff) == 0:
             raise ValueError(
-                f"idle_retry_backoff must have at least {required_backoff_len} entries "
-                f"for max_idle_retries={self.max_idle_retries}, got {len(self.idle_retry_backoff)}"
+                "idle_retry_backoff must have at least 1 entry when max_idle_retries > 0"
             )
 
 
@@ -92,7 +96,7 @@ class IdleTimeoutRetryPolicy:
     Usage:
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=factory,
-            message_stream_processor=processor,
+            stream_processor_factory=lambda: create_processor(),
             config=RetryConfig(max_idle_retries=2),
         )
         result = await policy.execute_iteration(
@@ -108,18 +112,20 @@ class IdleTimeoutRetryPolicy:
     def __init__(
         self,
         sdk_client_factory: SDKClientFactoryProtocol,
-        message_stream_processor: MessageStreamProcessor,
+        stream_processor_factory: Callable[[], MessageStreamProcessor],
         config: RetryConfig,
     ) -> None:
         """Initialize the retry policy.
 
         Args:
             sdk_client_factory: Factory for creating SDK clients.
-            message_stream_processor: Processor for SDK message streams.
+            stream_processor_factory: Factory that creates fresh MessageStreamProcessor
+                instances. Called at the start of each execute_iteration to ensure
+                current config/callbacks are used.
             config: Retry configuration (max retries, backoff).
         """
         self._sdk_client_factory = sdk_client_factory
-        self._message_stream_processor = message_stream_processor
+        self._stream_processor_factory = stream_processor_factory
         self._config = config
 
     async def execute_iteration(
@@ -154,6 +160,9 @@ class IdleTimeoutRetryPolicy:
         Raises:
             IdleTimeoutError: If max idle retries exceeded.
         """
+        # Create fresh stream processor to capture current config/callbacks
+        stream_processor = self._stream_processor_factory()
+
         pending_query: str | None = query
         state.tool_calls_this_turn = 0
         state.first_message_received = False
@@ -196,6 +205,7 @@ class IdleTimeoutRetryPolicy:
 
                     try:
                         result = await self._process_message_stream(
+                            stream_processor,
                             stream,
                             issue_id,
                             state,
@@ -335,6 +345,7 @@ class IdleTimeoutRetryPolicy:
 
     async def _process_message_stream(
         self,
+        stream_processor: MessageStreamProcessor,
         stream: IdleTimeoutStream,
         issue_id: str,
         state: MessageIterationState,
@@ -348,6 +359,7 @@ class IdleTimeoutRetryPolicy:
         Delegates to MessageStreamProcessor for stream iteration logic.
 
         Args:
+            stream_processor: Processor for the message stream.
             stream: The message stream to process.
             issue_id: Issue ID for logging.
             state: Mutable state for the iteration.
@@ -359,6 +371,6 @@ class IdleTimeoutRetryPolicy:
         Returns:
             MessageIterationResult with success status.
         """
-        return await self._message_stream_processor.process_stream(
+        return await stream_processor.process_stream(
             stream, issue_id, state, lifecycle_ctx, lint_cache, query_start, tracer
         )

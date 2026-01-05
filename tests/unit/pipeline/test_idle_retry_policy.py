@@ -20,13 +20,13 @@ class TestRetryConfigValidation:
         with pytest.raises(ValueError, match="max_idle_retries must be non-negative"):
             RetryConfig(max_idle_retries=-1)
 
-    def test_backoff_too_short_raises(self) -> None:
-        """Backoff shorter than max_idle_retries + 1 should raise ValueError."""
+    def test_backoff_empty_with_retries_raises(self) -> None:
+        """Empty backoff with positive max_idle_retries should raise ValueError."""
         with pytest.raises(
             ValueError,
-            match=r"idle_retry_backoff must have at least 4 entries.*got 2",
+            match=r"idle_retry_backoff must have at least 1 entry when max_idle_retries > 0",
         ):
-            RetryConfig(max_idle_retries=3, idle_retry_backoff=(0.0, 5.0))
+            RetryConfig(max_idle_retries=3, idle_retry_backoff=())
 
     def test_backoff_exact_length_valid(self) -> None:
         """Backoff with exactly max_idle_retries + 1 entries should be valid."""
@@ -42,16 +42,21 @@ class TestRetryConfigValidation:
         assert config.max_idle_retries == 1
         assert len(config.idle_retry_backoff) == 4
 
+    def test_backoff_shorter_than_retries_valid(self) -> None:
+        """Backoff shorter than max_idle_retries is valid (reuses last entry)."""
+        # 3 retries but only 2 backoff entries - last entry will be reused
+        config = RetryConfig(max_idle_retries=3, idle_retry_backoff=(0.0, 5.0))
+        assert config.max_idle_retries == 3
+        assert len(config.idle_retry_backoff) == 2
+
     def test_zero_retries_with_single_backoff_valid(self) -> None:
         """Zero retries with a single backoff value should be valid."""
         config = RetryConfig(max_idle_retries=0, idle_retry_backoff=(0.0,))
         assert config.max_idle_retries == 0
         assert config.idle_retry_backoff == (0.0,)
 
-    def test_zero_retries_with_empty_backoff_raises(self) -> None:
-        """Zero retries with empty backoff should raise ValueError."""
-        with pytest.raises(
-            ValueError,
-            match=r"idle_retry_backoff must have at least 1 entries.*got 0",
-        ):
-            RetryConfig(max_idle_retries=0, idle_retry_backoff=())
+    def test_zero_retries_with_empty_backoff_valid(self) -> None:
+        """Zero retries with empty backoff should be valid (no retries needed)."""
+        config = RetryConfig(max_idle_retries=0, idle_retry_backoff=())
+        assert config.max_idle_retries == 0
+        assert config.idle_retry_backoff == ()
