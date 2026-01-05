@@ -995,6 +995,11 @@ class MalaOrchestrator:
                         return await self._finalize_run(run_metadata, True)
                     raise
 
+            # Check if SIGINT occurred during final validation phase
+            if interrupt_event.is_set():
+                self._exit_code = 130
+                return await self._finalize_run(run_metadata, True)
+
             # Store exit code for CLI access (validation failure overrides to 1)
             self._exit_code = 1 if not run_validation_passed else exit_code
             return await self._finalize_run(run_metadata, run_validation_passed)

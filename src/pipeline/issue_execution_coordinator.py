@@ -145,6 +145,28 @@ class IssueExecutionCoordinator:
         logger.warning("Abort requested: reason=%s", reason)
         self.event_sink.on_abort_requested(reason)
 
+    async def _handle_interrupt(
+        self,
+        abort_callback: AbortCallback,
+        validation_callback: Callable[[], Awaitable[bool]] | None,
+        watch_state: WatchState,
+        issues_spawned: int,
+    ) -> RunResult:
+        """Handle SIGINT by aborting active tasks, running final validation, and returning.
+
+        Note: abort_callback is responsible for cancelling and finalizing all active tasks.
+        We don't block waiting for tasks here - abort_callback handles the full cleanup.
+        """
+        await abort_callback()
+        exit_code = 130
+        if watch_state.completed_count > watch_state.last_validation_at:
+            if validation_callback:
+                validation_passed = await validation_callback()
+                watch_state.last_validation_at = watch_state.completed_count
+                if not validation_passed:
+                    exit_code = 1
+        return RunResult(issues_spawned, exit_code=exit_code, exit_reason="interrupted")
+
     async def run_loop(
         self,
         spawn_callback: SpawnCallback,
@@ -192,29 +214,8 @@ class IssueExecutionCoordinator:
             )
             # Check for interrupt (SIGINT)
             if interrupt_event and interrupt_event.is_set():
-                # Wait for remaining active agents before aborting
-                if self.active_tasks:
-                    await asyncio.gather(
-                        *self.active_tasks.values(), return_exceptions=True
-                    )
-                    # Finalize any tasks that completed during gather
-                    for issue_id, t in list(self.active_tasks.items()):
-                        if t.done():
-                            await finalize_callback(issue_id, t)
-                            watch_state.completed_count += 1
-                await abort_callback()
-                # Run final validation if any issues completed
-                exit_code = 130
-                if watch_state.completed_count > watch_state.last_validation_at:
-                    if validation_callback:
-                        validation_passed = await validation_callback()
-                        watch_state.last_validation_at = watch_state.completed_count
-                        if not validation_passed:
-                            exit_code = 1
-                return RunResult(
-                    issues_spawned,
-                    exit_code=exit_code,
-                    exit_reason="interrupted",
+                return await self._handle_interrupt(
+                    abort_callback, validation_callback, watch_state, issues_spawned
                 )
 
             # Check for abort
@@ -303,34 +304,11 @@ class IssueExecutionCoordinator:
                                 timeout=poll_interval,
                             )
                             # Interrupted during poll retry wait
-                            # Wait for remaining active agents before aborting
-                            if self.active_tasks:
-                                await asyncio.gather(
-                                    *self.active_tasks.values(), return_exceptions=True
-                                )
-                                # Finalize any tasks that completed during gather
-                                for issue_id, t in list(self.active_tasks.items()):
-                                    if t.done():
-                                        await finalize_callback(issue_id, t)
-                                        watch_state.completed_count += 1
-                            await abort_callback()
-                            # Run final validation if needed
-                            exit_code = 130
-                            if (
-                                watch_state.completed_count
-                                > watch_state.last_validation_at
-                            ):
-                                if validation_callback:
-                                    validation_passed = await validation_callback()
-                                    watch_state.last_validation_at = (
-                                        watch_state.completed_count
-                                    )
-                                    if not validation_passed:
-                                        exit_code = 1
-                            return RunResult(
+                            return await self._handle_interrupt(
+                                abort_callback,
+                                validation_callback,
+                                watch_state,
                                 issues_spawned,
-                                exit_code=exit_code,
-                                exit_reason="interrupted",
                             )
                         except TimeoutError:
                             pass  # Normal timeout, retry poll
@@ -422,26 +400,11 @@ class IssueExecutionCoordinator:
                                     timeout=watch_config.poll_interval_seconds,
                                 )
                                 # Event was set - SIGINT received during idle
-                                # Call abort_callback for consistent lifecycle hooks
-                                # (even though active_tasks is empty in idle branch)
-                                await abort_callback()
-                                # Run final validation if any issues completed
-                                exit_code = 130
-                                if (
-                                    watch_state.completed_count
-                                    > watch_state.last_validation_at
-                                ):
-                                    if validation_callback:
-                                        validation_passed = await validation_callback()
-                                        watch_state.last_validation_at = (
-                                            watch_state.completed_count
-                                        )
-                                        if not validation_passed:
-                                            exit_code = 1
-                                return RunResult(
+                                return await self._handle_interrupt(
+                                    abort_callback,
+                                    validation_callback,
+                                    watch_state,
                                     issues_spawned,
-                                    exit_code=exit_code,
-                                    exit_reason="interrupted",
                                 )
                             except TimeoutError:
                                 pass  # Normal timeout, continue loop
@@ -498,34 +461,12 @@ class IssueExecutionCoordinator:
                 try:
                     await interrupt_task
                 except asyncio.CancelledError:
-                    pass
-
-            # If only the interrupt task completed, handle SIGINT
-            if interrupt_task in done and len(done) == 1:
-                # Wait for remaining active agents
-                if self.active_tasks:
-                    await asyncio.gather(
-                        *self.active_tasks.values(), return_exceptions=True
-                    )
-                    # Finalize any tasks that completed during gather
-                    for issue_id, t in list(self.active_tasks.items()):
-                        if t.done():
-                            await finalize_callback(issue_id, t)
-                            watch_state.completed_count += 1
-                await abort_callback()
-                # Run final validation if needed
-                exit_code = 130
-                if watch_state.completed_count > watch_state.last_validation_at:
-                    if validation_callback:
-                        validation_passed = await validation_callback()
-                        watch_state.last_validation_at = watch_state.completed_count
-                        if not validation_passed:
-                            exit_code = 1
-                return RunResult(
-                    issues_spawned,
-                    exit_code=exit_code,
-                    exit_reason="interrupted",
-                )
+                    # Only suppress if this is from our cancelled interrupt_task,
+                    # not from the current task being cancelled externally
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        # Re-raise: the current task is being cancelled
+                        raise
 
             # Remove interrupt task from done set for processing
             done_agent_tasks = done - {interrupt_task} if interrupt_task else done
@@ -549,29 +490,8 @@ class IssueExecutionCoordinator:
 
             # Check for interrupt after processing completions
             if interrupt_event and interrupt_event.is_set():
-                # Wait for remaining active agents
-                if self.active_tasks:
-                    await asyncio.gather(
-                        *self.active_tasks.values(), return_exceptions=True
-                    )
-                    # Finalize any tasks that completed during gather
-                    for issue_id, t in list(self.active_tasks.items()):
-                        if t.done():
-                            await finalize_callback(issue_id, t)
-                            watch_state.completed_count += 1
-                await abort_callback()
-                # Run final validation if needed
-                exit_code = 130
-                if watch_state.completed_count > watch_state.last_validation_at:
-                    if validation_callback:
-                        validation_passed = await validation_callback()
-                        watch_state.last_validation_at = watch_state.completed_count
-                        if not validation_passed:
-                            exit_code = 1
-                return RunResult(
-                    issues_spawned,
-                    exit_code=exit_code,
-                    exit_reason="interrupted",
+                return await self._handle_interrupt(
+                    abort_callback, validation_callback, watch_state, issues_spawned
                 )
 
             # Check if validation threshold crossed
