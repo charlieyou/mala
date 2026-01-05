@@ -63,7 +63,7 @@ def make_git_log_response_runner(
         "1",
         "--since=30 days ago",
     )
-    return FakeCommandRunner(responses={git_cmd: result}, allow_unregistered=True)
+    return FakeCommandRunner(responses={git_cmd: result})
 
 
 def make_evidence(
