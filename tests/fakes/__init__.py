@@ -12,6 +12,13 @@ See CLAUDE.md "Testing Philosophy" and "Fakes over mocks" for guidelines.
 """
 
 from tests.fakes.command_runner import FakeCommandRunner, UnregisteredCommandError
+from tests.fakes.coordinator_callbacks import (
+    FakeAbortCallback,
+    FakeFinalizeCallback,
+    FakeSpawnCallback,
+)
+from tests.fakes.deadlock_monitor import FakeDeadlockMonitor
+from tests.fakes.env_config import FakeEnvConfig
 from tests.fakes.epic_model import (
     FakeEpicVerificationModel,
     VerificationAttempt,
@@ -28,20 +35,29 @@ from tests.fakes.epic_verification import (
 from tests.fakes.event_sink import FakeEventSink, RecordedEvent
 from tests.fakes.gate_checker import FakeGateChecker
 from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+from tests.fakes.lint_cache import FakeLintCache
 from tests.fakes.lock_manager import FakeLockManager, LockAcquireCall
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
+from tests.fakes.stream_processor import FakeStreamProcessor
 
 __all__ = [
     "CoordinatorVerificationAttempt",
+    "FakeAbortCallback",
     "FakeCommandRunner",
+    "FakeDeadlockMonitor",
+    "FakeEnvConfig",
     "FakeEpicVerificationModel",
     "FakeEventSink",
+    "FakeFinalizeCallback",
     "FakeGateChecker",
     "FakeIssue",
     "FakeIssueProvider",
+    "FakeLintCache",
     "FakeLockManager",
     "FakeSDKClient",
     "FakeSDKClientFactory",
+    "FakeSpawnCallback",
+    "FakeStreamProcessor",
     "FakeVerificationResults",
     "LockAcquireCall",
     "RecordedEvent",

@@ -23,8 +23,6 @@ from src.infra.io.log_output.run_metadata import (
     RunMetadata,
     RunningInstance,
     ValidationResult,
-    _get_marker_path,
-    _is_process_running,
     cleanup_debug_logging,
     configure_debug_logging,
     get_running_instances,
@@ -32,7 +30,7 @@ from src.infra.io.log_output.run_metadata import (
     remove_run_marker,
     write_run_marker,
 )
-from src.domain.validation.spec import (
+from src.core.models import (
     IssueResolution,
     ResolutionOutcome,
     ValidationArtifacts,
@@ -286,68 +284,113 @@ class TestRunMetadataSerialization:
         assert data["run_validation"]["passed"] is True
         assert data["run_validation"]["e2e_passed"] is True
 
-    def test_save_and_load_roundtrip(self, metadata_with_issues: RunMetadata) -> None:
+    def test_save_and_load_roundtrip(self, config: RunConfig) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Override get_repo_runs_dir for test using patch
-            from unittest.mock import patch
+            # Create metadata with DI for runs_dir
+            runs_dir = Path(tmpdir) / "-tmp-test-repo"
+            metadata = RunMetadata(
+                repo_path=Path("/tmp/test-repo"),
+                config=config,
+                version="1.0.0",
+                runs_dir=runs_dir,
+            )
 
-            # Mock get_repo_runs_dir to return a temp subdirectory
-            def mock_get_repo_runs_dir(repo_path: Path) -> Path:
-                # Simulate repo-specific subdirectory
-                return Path(tmpdir) / "-tmp-test-repo"
+            # Add issue with validation
+            validation = ValidationResult(
+                passed=True,
+                commands_run=["pytest", "ruff check", "ruff format"],
+                commands_failed=[],
+                artifacts=ValidationArtifacts(
+                    log_dir=Path("/tmp/logs"),
+                    worktree_path=Path("/tmp/worktree"),
+                    worktree_state="removed",
+                ),
+                coverage_percent=87.5,
+                e2e_passed=True,
+            )
+            issue1 = IssueRun(
+                issue_id="test-1",
+                agent_id="agent-1",
+                status="success",
+                duration_seconds=120.0,
+                session_id="session-abc",
+                log_path="/tmp/logs/agent-1.jsonl",
+                quality_gate=QualityGateResult(
+                    passed=True,
+                    evidence={"test": True, "commit_found": True},
+                ),
+                validation=validation,
+            )
+            metadata.record_issue(issue1)
 
-            with patch(
-                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
-                mock_get_repo_runs_dir,
-            ):
-                # Save
-                path = metadata_with_issues.save()
-                assert path.exists()
-                # Verify new filename format: timestamp_shortid.json
-                assert "_" in path.name
-                assert path.name.endswith(".json")
-                # Verify it's in a repo-specific subdirectory
-                assert path.parent.name == "-tmp-test-repo"
+            # Add issue with resolution
+            resolution = IssueResolution(
+                outcome=ResolutionOutcome.OBSOLETE,
+                rationale="Feature was removed in earlier commit",
+            )
+            issue2 = IssueRun(
+                issue_id="test-2",
+                agent_id="agent-2",
+                status="success",
+                duration_seconds=15.0,
+                resolution=resolution,
+            )
+            metadata.record_issue(issue2)
 
-                # Load
-                loaded = RunMetadata.load(path)
+            # Add run-level validation
+            run_validation = ValidationResult(
+                passed=True,
+                commands_run=["e2e tests"],
+                e2e_passed=True,
+            )
+            metadata.record_run_validation(run_validation)
 
-                # Verify basic fields
-                assert loaded.run_id == metadata_with_issues.run_id
-                assert loaded.version == metadata_with_issues.version
-                assert loaded.repo_path == metadata_with_issues.repo_path
-                assert loaded.completed_at is not None
+            # Save using DI
+            path = metadata.save()
+            assert path.exists()
+            # Verify new filename format: timestamp_shortid.json
+            assert "_" in path.name
+            assert path.name.endswith(".json")
+            # Verify it's in the expected subdirectory
+            assert path.parent.name == "-tmp-test-repo"
 
-                # Verify config
-                assert loaded.config.max_agents == 4
-                assert loaded.config.braintrust_enabled is True
-                assert loaded.config.review_enabled is True
+            # Load
+            loaded = RunMetadata.load(path)
 
-                # Verify issue with validation
-                assert "test-1" in loaded.issues
-                issue1 = loaded.issues["test-1"]
-                assert issue1.validation is not None
-                assert issue1.validation.passed is True
-                assert issue1.validation.coverage_percent == 87.5
-                assert issue1.validation.artifacts is not None
-                assert issue1.validation.artifacts.log_dir == Path("/tmp/logs")
+            # Verify basic fields
+            assert loaded.run_id == metadata.run_id
+            assert loaded.version == metadata.version
+            assert loaded.repo_path == metadata.repo_path
+            assert loaded.completed_at is not None
 
-                # Verify issue with resolution
-                assert "test-2" in loaded.issues
-                issue2 = loaded.issues["test-2"]
-                assert issue2.resolution is not None
-                assert issue2.resolution.outcome == ResolutionOutcome.OBSOLETE
+            # Verify config
+            assert loaded.config.max_agents == 4
+            assert loaded.config.braintrust_enabled is True
+            assert loaded.config.review_enabled is True
 
-                # Verify run-level validation
-                assert loaded.run_validation is not None
-                assert loaded.run_validation.passed is True
-                assert loaded.run_validation.e2e_passed is True
+            # Verify issue with validation
+            assert "test-1" in loaded.issues
+            issue1_loaded = loaded.issues["test-1"]
+            assert issue1_loaded.validation is not None
+            assert issue1_loaded.validation.passed is True
+            assert issue1_loaded.validation.coverage_percent == 87.5
+            assert issue1_loaded.validation.artifacts is not None
+            assert issue1_loaded.validation.artifacts.log_dir == Path("/tmp/logs")
+
+            # Verify issue with resolution
+            assert "test-2" in loaded.issues
+            issue2_loaded = loaded.issues["test-2"]
+            assert issue2_loaded.resolution is not None
+            assert issue2_loaded.resolution.outcome == ResolutionOutcome.OBSOLETE
+
+            # Verify run-level validation
+            assert loaded.run_validation is not None
+            assert loaded.run_validation.passed is True
+            assert loaded.run_validation.e2e_passed is True
 
     def test_save_creates_repo_segmented_directory(self) -> None:
         """Test that save creates files in repo-segmented subdirectories."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            from unittest.mock import patch
-
             config = RunConfig(
                 max_agents=1,
                 timeout_minutes=10,
@@ -356,42 +399,29 @@ class TestRunMetadataSerialization:
                 only_ids=None,
                 braintrust_enabled=False,
             )
+
+            # Test the full save with DI via runs_dir
+            runs_dir = Path(tmpdir) / "-home-user-my-project"
             metadata = RunMetadata(
                 repo_path=Path("/home/user/my-project"),
                 config=config,
                 version="1.0.0",
+                runs_dir=runs_dir,
             )
 
-            # Mock get_runs_dir to return temp directory
-            with patch("src.infra.tools.env.get_runs_dir", return_value=Path(tmpdir)):
-                # Import after patching so encode_repo_path uses real implementation
-                from src.infra.tools.env import get_repo_runs_dir
+            path = metadata.save()
 
-                # Verify the path is correctly segmented
-                repo_runs_dir = get_repo_runs_dir(Path("/home/user/my-project"))
-                assert repo_runs_dir == Path(tmpdir) / "-home-user-my-project"
+            # Verify file is in correct subdirectory
+            assert path.parent.name == "-home-user-my-project"
+            assert path.parent.parent == Path(tmpdir)
 
-            # Now test the full save with mocked get_repo_runs_dir
-            def mock_get_repo_runs_dir(repo_path: Path) -> Path:
-                return Path(tmpdir) / "-home-user-my-project"
+            # Verify filename format: YYYY-MM-DDTHH-MM-SS_shortid.json
+            import re
 
-            with patch(
-                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
-                mock_get_repo_runs_dir,
-            ):
-                path = metadata.save()
-
-                # Verify file is in correct subdirectory
-                assert path.parent.name == "-home-user-my-project"
-                assert path.parent.parent == Path(tmpdir)
-
-                # Verify filename format: YYYY-MM-DDTHH-MM-SS_shortid.json
-                import re
-
-                pattern = r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[a-f0-9]{8}\.json"
-                assert re.match(pattern, path.name), (
-                    f"Filename {path.name} doesn't match expected pattern"
-                )
+            pattern = r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_[a-f0-9]{8}\.json"
+            assert re.match(pattern, path.name), (
+                f"Filename {path.name} doesn't match expected pattern"
+            )
 
     def test_load_handles_missing_optional_fields(self) -> None:
         """Test that load handles files without new optional fields."""
@@ -552,48 +582,47 @@ class TestRunMarkers:
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_dir = Path(tmpdir)
 
-            with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir",
-                return_value=lock_dir,
-            ):
-                # Write marker
-                path = write_run_marker(
-                    run_id="test-run-1",
-                    repo_path=Path("/home/user/project"),
-                    max_agents=3,
-                )
+            # Write marker using DI
+            path = write_run_marker(
+                run_id="test-run-1",
+                repo_path=Path("/home/user/project"),
+                max_agents=3,
+                lock_dir=lock_dir,
+            )
 
-                assert path.exists()
-                assert path.name == "run-test-run-1.marker"
+            assert path.exists()
+            assert path.name == "run-test-run-1.marker"
 
-                # Verify contents
-                with open(path) as f:
-                    data = json.load(f)
-                assert data["run_id"] == "test-run-1"
-                assert data["repo_path"] == "/home/user/project"
-                assert data["max_agents"] == 3
-                assert "started_at" in data
-                assert "pid" in data
+            # Verify contents
+            with open(path) as f:
+                data = json.load(f)
+            assert data["run_id"] == "test-run-1"
+            assert data["repo_path"] == "/home/user/project"
+            assert data["max_agents"] == 3
+            assert "started_at" in data
+            assert "pid" in data
 
-                # Remove marker
-                removed = remove_run_marker("test-run-1")
-                assert removed is True
-                assert not path.exists()
+            # Remove marker using DI
+            removed = remove_run_marker("test-run-1", lock_dir=lock_dir)
+            assert removed is True
+            assert not path.exists()
 
-                # Remove non-existent marker
-                removed_again = remove_run_marker("test-run-1")
-                assert removed_again is False
+            # Remove non-existent marker
+            removed_again = remove_run_marker("test-run-1", lock_dir=lock_dir)
+            assert removed_again is False
 
-    def test_get_marker_path(self) -> None:
-        """Test _get_marker_path helper."""
+    def test_marker_path_format(self) -> None:
+        """Test that markers are created with expected path format."""
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_dir = Path(tmpdir)
-            with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir",
-                return_value=lock_dir,
-            ):
-                path = _get_marker_path("my-run-id")
-                assert path == lock_dir / "run-my-run-id.marker"
+            # Write marker and verify path format through public API
+            path = write_run_marker(
+                run_id="my-run-id",
+                repo_path=Path("/tmp/repo"),
+                lock_dir=lock_dir,
+            )
+            assert path == lock_dir / "run-my-run-id.marker"
+            assert path.exists()
 
 
 class TestGetRunningInstances:
@@ -603,21 +632,15 @@ class TestGetRunningInstances:
         """Test with no markers."""
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_dir = Path(tmpdir)
-            with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir",
-                return_value=lock_dir,
-            ):
-                instances = get_running_instances()
-                assert instances == []
+            # Use DI instead of patch
+            instances = get_running_instances(lock_dir=lock_dir)
+            assert instances == []
 
     def test_get_running_instances_nonexistent_dir(self) -> None:
         """Test with non-existent lock directory."""
-        with patch(
-            "src.infra.io.log_output.run_metadata.get_lock_dir",
-            return_value=Path("/nonexistent/path"),
-        ):
-            instances = get_running_instances()
-            assert instances == []
+        # Use DI instead of patch
+        instances = get_running_instances(lock_dir=Path("/nonexistent/path"))
+        assert instances == []
 
     def test_get_running_instances_with_markers(self) -> None:
         """Test reading valid markers."""
@@ -651,11 +674,8 @@ class TestGetRunningInstances:
                 )
             )
 
-            with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir",
-                return_value=lock_dir,
-            ):
-                instances = get_running_instances()
+            # Use DI instead of patch
+            instances = get_running_instances(lock_dir=lock_dir)
 
             assert len(instances) == 2
             run_ids = {i.run_id for i in instances}
@@ -680,16 +700,11 @@ class TestGetRunningInstances:
                 )
             )
 
-            with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir",
-                return_value=lock_dir,
-            ):
-                # Mock _is_process_running to return False for stale PID
-                with patch(
-                    "src.infra.io.log_output.run_metadata._is_process_running",
-                    return_value=False,
-                ):
-                    instances = get_running_instances()
+            # Use DI for both lock_dir and is_process_running
+            instances = get_running_instances(
+                lock_dir=lock_dir,
+                is_process_running=lambda pid: False,  # All processes are "dead"
+            )
 
             # Should return no instances and clean up the marker
             assert instances == []
@@ -718,11 +733,8 @@ class TestGetRunningInstances:
                 )
             )
 
-            with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir",
-                return_value=lock_dir,
-            ):
-                instances = get_running_instances()
+            # Use DI instead of patch
+            instances = get_running_instances(lock_dir=lock_dir)
 
             # Should return only the good instance
             assert len(instances) == 1
@@ -766,44 +778,111 @@ class TestGetRunningInstances:
                 )
             )
 
-            with patch(
-                "src.infra.io.log_output.run_metadata.get_lock_dir",
-                return_value=lock_dir,
-            ):
-                # Filter for target directory
-                target_instances = get_running_instances_for_dir(target_dir)
-                assert len(target_instances) == 1
-                assert target_instances[0].run_id == "target"
+            # Use DI instead of patch - filter for target directory
+            target_instances = get_running_instances_for_dir(
+                target_dir, lock_dir=lock_dir
+            )
+            assert len(target_instances) == 1
+            assert target_instances[0].run_id == "target"
 
-                # Filter for other directory
-                other_instances = get_running_instances_for_dir(other_dir)
-                assert len(other_instances) == 1
-                assert other_instances[0].run_id == "other"
+            # Filter for other directory
+            other_instances = get_running_instances_for_dir(
+                other_dir, lock_dir=lock_dir
+            )
+            assert len(other_instances) == 1
+            assert other_instances[0].run_id == "other"
 
-                # Filter for non-matching directory
-                no_instances = get_running_instances_for_dir(Path("/nonexistent"))
-                assert no_instances == []
+            # Filter for non-matching directory
+            no_instances = get_running_instances_for_dir(
+                Path("/nonexistent"), lock_dir=lock_dir
+            )
+            assert no_instances == []
 
 
-class TestIsProcessRunning:
-    """Test _is_process_running helper."""
+class TestProcessDetection:
+    """Test process liveness detection through public API."""
 
-    def test_current_process_is_running(self) -> None:
-        """Test that current process is detected as running."""
-        assert _is_process_running(os.getpid()) is True
+    def test_current_process_detected_as_running(self) -> None:
+        """Test that markers with current PID are returned as running instances."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_dir = Path(tmpdir)
 
-    def test_nonexistent_pid_not_running(self) -> None:
-        """Test that non-existent PID is detected as not running."""
-        # Use a very high PID that's unlikely to exist
-        assert _is_process_running(99999999) is False
+            # Create marker with current PID
+            marker = lock_dir / "run-current.marker"
+            marker.write_text(
+                json.dumps(
+                    {
+                        "run_id": "current",
+                        "repo_path": "/tmp/repo",
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "pid": os.getpid(),  # Current process
+                        "max_agents": 1,
+                    }
+                )
+            )
 
-    def test_pid_zero_not_running(self) -> None:
-        """Test that PID 0 is handled correctly."""
-        # PID 0 is special (kernel) and should return False for normal users
-        result = _is_process_running(0)
-        # On Linux, kill(0, 0) returns permission denied for non-root
-        # The function catches OSError and returns False
-        assert isinstance(result, bool)
+            # Should detect current process as running
+            instances = get_running_instances(lock_dir=lock_dir)
+            assert len(instances) == 1
+            assert instances[0].run_id == "current"
+
+    def test_nonexistent_pid_detected_as_stale(self) -> None:
+        """Test that markers with non-existent PID are cleaned up."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_dir = Path(tmpdir)
+
+            # Create marker with non-existent PID
+            marker = lock_dir / "run-stale.marker"
+            marker.write_text(
+                json.dumps(
+                    {
+                        "run_id": "stale",
+                        "repo_path": "/tmp/repo",
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "pid": 99999999,  # Very unlikely to exist
+                        "max_agents": 1,
+                    }
+                )
+            )
+
+            # Should detect as stale and clean up
+            instances = get_running_instances(lock_dir=lock_dir)
+            assert instances == []
+            assert not marker.exists()
+
+    def test_custom_process_checker_via_di(self) -> None:
+        """Test that custom is_process_running can be injected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_dir = Path(tmpdir)
+
+            # Create marker with arbitrary PID
+            marker = lock_dir / "run-test.marker"
+            marker.write_text(
+                json.dumps(
+                    {
+                        "run_id": "test",
+                        "repo_path": "/tmp/repo",
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "pid": 12345,
+                        "max_agents": 1,
+                    }
+                )
+            )
+
+            # With custom checker that says all processes are alive
+            instances = get_running_instances(
+                lock_dir=lock_dir,
+                is_process_running=lambda pid: True,
+            )
+            assert len(instances) == 1
+            assert instances[0].pid == 12345
+
+            # With custom checker that says all processes are dead
+            instances = get_running_instances(
+                lock_dir=lock_dir,
+                is_process_running=lambda pid: False,
+            )
+            assert instances == []
 
 
 class TestDebugLogging:
@@ -814,41 +893,35 @@ class TestDebugLogging:
         import logging
 
         with tempfile.TemporaryDirectory() as tmpdir:
-
-            def mock_get_repo_runs_dir(repo_path: Path) -> Path:
-                return Path(tmpdir)
-
             # Temporarily enable debug logging for this test
             with patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("MALA_DISABLE_DEBUG_LOG", None)
 
-                with patch(
-                    "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
-                    mock_get_repo_runs_dir,
-                ):
-                    run_id = "test-run-12345678"
+                run_id = "test-run-12345678"
 
-                    # Configure debug logging
-                    log_path = configure_debug_logging(Path("/tmp/repo"), run_id)
+                # Configure debug logging using DI (runs_dir parameter)
+                log_path = configure_debug_logging(
+                    Path("/tmp/repo"), run_id, runs_dir=Path(tmpdir)
+                )
 
-                    # Verify handler was added
-                    src_logger = logging.getLogger("src")
-                    handler_names = [
-                        getattr(h, "name", "") for h in src_logger.handlers
-                    ]
-                    assert f"mala_debug_{run_id}" in handler_names
-                    assert log_path is not None
-                    assert log_path.exists()
+                # Verify handler was added
+                src_logger = logging.getLogger("src")
+                handler_names = [
+                    getattr(h, "name", "") for h in src_logger.handlers
+                ]
+                assert f"mala_debug_{run_id}" in handler_names
+                assert log_path is not None
+                assert log_path.exists()
 
-                    # Cleanup debug logging
-                    cleaned = cleanup_debug_logging(run_id)
-                    assert cleaned is True
+                # Cleanup debug logging
+                cleaned = cleanup_debug_logging(run_id)
+                assert cleaned is True
 
-                    # Verify handler was removed
-                    handler_names_after = [
-                        getattr(h, "name", "") for h in src_logger.handlers
-                    ]
-                    assert f"mala_debug_{run_id}" not in handler_names_after
+                # Verify handler was removed
+                handler_names_after = [
+                    getattr(h, "name", "") for h in src_logger.handlers
+                ]
+                assert f"mala_debug_{run_id}" not in handler_names_after
 
     def test_cleanup_nonexistent_handler_returns_false(self) -> None:
         """Test that cleanup returns False when handler doesn't exist."""
@@ -860,90 +933,80 @@ class TestDebugLogging:
         import logging
 
         with tempfile.TemporaryDirectory() as tmpdir:
-
-            def mock_get_repo_runs_dir(repo_path: Path) -> Path:
-                return Path(tmpdir)
-
             # Temporarily enable debug logging for this test
             with patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("MALA_DISABLE_DEBUG_LOG", None)
 
-                with patch(
-                    "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
-                    mock_get_repo_runs_dir,
-                ):
-                    config = RunConfig(
-                        max_agents=1,
-                        timeout_minutes=10,
-                        max_issues=None,
-                        epic_id=None,
-                        only_ids=None,
-                        braintrust_enabled=False,
-                    )
-                    metadata = RunMetadata(
-                        repo_path=Path("/tmp/test-repo"),
-                        config=config,
-                        version="1.0.0",
-                    )
+                config = RunConfig(
+                    max_agents=1,
+                    timeout_minutes=10,
+                    max_issues=None,
+                    epic_id=None,
+                    only_ids=None,
+                    braintrust_enabled=False,
+                )
+                # Use DI via runs_dir parameter
+                metadata = RunMetadata(
+                    repo_path=Path("/tmp/test-repo"),
+                    config=config,
+                    version="1.0.0",
+                    runs_dir=Path(tmpdir),
+                )
 
-                    # Verify handler was added
-                    src_logger = logging.getLogger("src")
-                    handler_names = [
-                        getattr(h, "name", "") for h in src_logger.handlers
-                    ]
-                    assert any(name.startswith("mala_debug_") for name in handler_names)
+                # Verify handler was added
+                src_logger = logging.getLogger("src")
+                handler_names = [
+                    getattr(h, "name", "") for h in src_logger.handlers
+                ]
+                assert any(name.startswith("mala_debug_") for name in handler_names)
 
-                    # Save should clean up the handler
-                    metadata.save()
+                # Save should clean up the handler
+                metadata.save()
 
-                    # Verify handler was removed
-                    handler_names_after = [
-                        getattr(h, "name", "") for h in src_logger.handlers
-                    ]
-                    assert not any(
-                        name == f"mala_debug_{metadata.run_id}"
-                        for name in handler_names_after
-                    )
+                # Verify handler was removed
+                handler_names_after = [
+                    getattr(h, "name", "") for h in src_logger.handlers
+                ]
+                assert not any(
+                    name == f"mala_debug_{metadata.run_id}"
+                    for name in handler_names_after
+                )
 
     def test_configure_removes_previous_handlers(self) -> None:
         """Test that configuring a new handler removes old ones."""
         import logging
 
         with tempfile.TemporaryDirectory() as tmpdir:
-
-            def mock_get_repo_runs_dir(repo_path: Path) -> Path:
-                return Path(tmpdir)
-
             # Temporarily enable debug logging for this test
             with patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("MALA_DISABLE_DEBUG_LOG", None)
 
-                with patch(
-                    "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
-                    mock_get_repo_runs_dir,
-                ):
-                    # Configure first handler
-                    run_id_1 = "first-run-12345678"
-                    configure_debug_logging(Path("/tmp/repo"), run_id_1)
+                # Configure first handler using DI
+                run_id_1 = "first-run-12345678"
+                configure_debug_logging(
+                    Path("/tmp/repo"), run_id_1, runs_dir=Path(tmpdir)
+                )
 
-                    src_logger = logging.getLogger("src")
-                    handler_names = [
-                        getattr(h, "name", "") for h in src_logger.handlers
-                    ]
-                    assert f"mala_debug_{run_id_1}" in handler_names
+                src_logger = logging.getLogger("src")
+                handler_names = [
+                    getattr(h, "name", "") for h in src_logger.handlers
+                ]
+                assert f"mala_debug_{run_id_1}" in handler_names
 
-                    # Configure second handler - should remove first
-                    run_id_2 = "second-run-87654321"
-                    configure_debug_logging(Path("/tmp/repo"), run_id_2)
+                # Configure second handler - should remove first
+                run_id_2 = "second-run-87654321"
+                configure_debug_logging(
+                    Path("/tmp/repo"), run_id_2, runs_dir=Path(tmpdir)
+                )
 
-                    handler_names_after = [
-                        getattr(h, "name", "") for h in src_logger.handlers
-                    ]
-                    assert f"mala_debug_{run_id_1}" not in handler_names_after
-                    assert f"mala_debug_{run_id_2}" in handler_names_after
+                handler_names_after = [
+                    getattr(h, "name", "") for h in src_logger.handlers
+                ]
+                assert f"mala_debug_{run_id_1}" not in handler_names_after
+                assert f"mala_debug_{run_id_2}" in handler_names_after
 
-                    # Clean up
-                    cleanup_debug_logging(run_id_2)
+                # Clean up
+                cleanup_debug_logging(run_id_2)
 
     def test_configure_disabled_by_env_var(self) -> None:
         """Test that MALA_DISABLE_DEBUG_LOG=1 disables debug logging."""
@@ -963,83 +1026,72 @@ class TestDebugLogging:
     def test_configure_handles_readonly_filesystem(self) -> None:
         """Test that configure_debug_logging handles read-only filesystem errors."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            # Create the readonly directory
+            readonly_path = Path(tmpdir) / "readonly"
+            readonly_path.mkdir(exist_ok=True)
 
-            def mock_get_repo_runs_dir(repo_path: Path) -> Path:
-                # Return a path that exists but will fail on file creation
-                readonly_path = Path(tmpdir) / "readonly"
-                readonly_path.mkdir(exist_ok=True)
-                return readonly_path
+            # Use DI to specify runs_dir, but mock FileHandler to simulate read-only fs
+            import logging
 
-            with patch(
-                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
-                mock_get_repo_runs_dir,
+            with patch.object(
+                logging,
+                "FileHandler",
+                side_effect=OSError("Read-only file system"),
             ):
-                # Mock FileHandler to raise OSError (simulating read-only fs)
-                import logging
-
-                with patch.object(
-                    logging,
-                    "FileHandler",
-                    side_effect=OSError("Read-only file system"),
-                ):
-                    log_path = configure_debug_logging(Path("/tmp/repo"), "test-run")
-                    assert log_path is None
+                log_path = configure_debug_logging(
+                    Path("/tmp/repo"), "test-run", runs_dir=readonly_path
+                )
+                assert log_path is None
 
     def test_cleanup_is_idempotent(self) -> None:
         """Test that RunMetadata.cleanup() is idempotent (safe to call multiple times)."""
         import logging
 
         with tempfile.TemporaryDirectory() as tmpdir:
-
-            def mock_get_repo_runs_dir(repo_path: Path) -> Path:
-                return Path(tmpdir)
-
             # Temporarily enable debug logging for this test
             with patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("MALA_DISABLE_DEBUG_LOG", None)
 
-                with patch(
-                    "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
-                    mock_get_repo_runs_dir,
-                ):
-                    config = RunConfig(
-                        max_agents=1,
-                        timeout_minutes=10,
-                        max_issues=None,
-                        epic_id=None,
-                        only_ids=None,
-                        braintrust_enabled=False,
-                    )
-                    metadata = RunMetadata(
-                        repo_path=Path("/tmp/test-repo"),
-                        config=config,
-                        version="1.0.0",
-                    )
+                config = RunConfig(
+                    max_agents=1,
+                    timeout_minutes=10,
+                    max_issues=None,
+                    epic_id=None,
+                    only_ids=None,
+                    braintrust_enabled=False,
+                )
+                # Use DI via runs_dir parameter
+                metadata = RunMetadata(
+                    repo_path=Path("/tmp/test-repo"),
+                    config=config,
+                    version="1.0.0",
+                    runs_dir=Path(tmpdir),
+                )
 
-                    try:
-                        # Verify debug logging was configured
-                        assert metadata.debug_log_path is not None
-                        src_logger = logging.getLogger("src")
-                        handler_name = f"mala_debug_{metadata.run_id}"
-                        handler_names = [
-                            getattr(h, "name", "") for h in src_logger.handlers
-                        ]
-                        assert handler_name in handler_names
+                try:
+                    # Verify debug logging was configured
+                    assert metadata.debug_log_path is not None
+                    src_logger = logging.getLogger("src")
+                    handler_name = f"mala_debug_{metadata.run_id}"
+                    handler_names = [
+                        getattr(h, "name", "") for h in src_logger.handlers
+                    ]
+                    assert handler_name in handler_names
 
-                        # First cleanup removes the handler
-                        metadata.cleanup()
-                        handler_names_after = [
-                            getattr(h, "name", "") for h in src_logger.handlers
-                        ]
-                        assert handler_name not in handler_names_after
+                    # First cleanup removes the handler
+                    metadata.cleanup()
+                    handler_names_after = [
+                        getattr(h, "name", "") for h in src_logger.handlers
+                    ]
+                    assert handler_name not in handler_names_after
 
-                        # Subsequent cleanups are safe (no-op, no errors)
-                        metadata.cleanup()
-                        metadata.cleanup()
+                    # Subsequent cleanups are safe (no-op, no errors)
+                    metadata.cleanup()
+                    metadata.cleanup()
 
-                        # And save still works after cleanup
-                        path = metadata.save()
-                        assert path.exists()
-                    finally:
-                        # Ensure handler is always cleaned up, even if assertions fail
-                        metadata.cleanup()
+                    # And save still works after cleanup
+                    path = metadata.save()
+                    assert path.exists()
+                finally:
+                    # Ensure handler is always cleaned up, even if assertions fail
+                    metadata.cleanup()

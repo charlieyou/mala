@@ -1,11 +1,10 @@
 """Unit tests for src/validation/worktree.py - git worktree utilities.
 
-These tests use a mock CommandRunner to test worktree logic without actually
+These tests use FakeCommandRunner to test worktree logic without actually
 creating git worktrees.
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,13 +18,7 @@ from src.domain.validation.worktree import (
     create_worktree,
     remove_worktree,
 )
-
-
-def make_mock_runner(result: CommandResult) -> MagicMock:
-    """Create a mock command runner that returns the given result."""
-    runner = MagicMock()
-    runner.run.return_value = result
-    return runner
+from tests.fakes.command_runner import FakeCommandRunner
 
 
 class TestWorktreeContext:
@@ -101,20 +94,7 @@ class TestCreateWorktree:
         return WorktreeConfig(base_dir=tmp_path / "worktrees")
 
     def test_create_success(self, config: WorktreeConfig, tmp_path: Path) -> None:
-        mock_result = CommandResult(
-            command=[],
-            returncode=0,
-            stdout="",
-            stderr="",
-        )
-        run_calls: list[list[str]] = []
-
-        def capturing_runner(cmd: list[str], **kwargs: object) -> CommandResult:
-            run_calls.append(cmd)
-            return mock_result
-
-        mock_runner = MagicMock()
-        mock_runner.run.side_effect = capturing_runner
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         ctx = create_worktree(
             repo_path=tmp_path / "repo",
@@ -123,7 +103,7 @@ class TestCreateWorktree:
             run_id="run-1",
             issue_id="mala-10",
             attempt=1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
 
         assert ctx.state == WorktreeState.CREATED
@@ -131,24 +111,27 @@ class TestCreateWorktree:
         assert ctx.path == config.base_dir / "run-1" / "mala-10" / "1"
 
         # Verify git worktree add was called with expected arguments
-        assert len(run_calls) == 1
-        cmd = run_calls[0]
-        assert cmd[:3] == ["git", "worktree", "add"]
-        assert "--detach" in cmd
-        assert "abc123" in cmd
+        worktree_add_calls = runner.get_calls_with_prefix(["git", "worktree", "add"])
+        assert len(worktree_add_calls) == 1
+        cmd_tuple, _ = worktree_add_calls[0]
+        assert "--detach" in cmd_tuple
+        assert "abc123" in cmd_tuple
 
     def test_create_failure(self, config: WorktreeConfig, tmp_path: Path) -> None:
-        mock_result = CommandResult(
+        # Create worktree path so cleanup can be tested with real filesystem
+        worktree_path = config.base_dir / "run-1" / "mala-10" / "1"
+        worktree_path.mkdir(parents=True, exist_ok=True)
+
+        runner = FakeCommandRunner(allow_unregistered=True)
+        # Register the exact command that will be called
+        runner.responses[
+            ("git", "worktree", "add", "--detach", str(worktree_path), "abc123")
+        ] = CommandResult(
             command=[],
             returncode=128,
             stdout="",
             stderr="fatal: not a git repository",
         )
-        mock_runner = make_mock_runner(mock_result)
-
-        # Create worktree path so cleanup can be tested with real filesystem
-        worktree_path = config.base_dir / "run-1" / "mala-10" / "1"
-        worktree_path.mkdir(parents=True, exist_ok=True)
 
         ctx = create_worktree(
             repo_path=tmp_path / "repo",
@@ -157,7 +140,7 @@ class TestCreateWorktree:
             run_id="run-1",
             issue_id="mala-10",
             attempt=1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
 
         assert ctx.state == WorktreeState.FAILED
@@ -173,8 +156,7 @@ class TestCreateWorktree:
         expected_path.mkdir(parents=True)
         (expected_path / "stale_file").touch()
 
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_result)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         ctx = create_worktree(
             repo_path=tmp_path / "repo",
@@ -183,7 +165,7 @@ class TestCreateWorktree:
             run_id="run-1",
             issue_id="mala-10",
             attempt=1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
 
         assert ctx.state == WorktreeState.CREATED
@@ -193,8 +175,7 @@ class TestCreateWorktree:
     def test_create_increments_attempt(
         self, config: WorktreeConfig, tmp_path: Path
     ) -> None:
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_result)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         ctx1 = create_worktree(
             repo_path=tmp_path / "repo",
@@ -203,7 +184,7 @@ class TestCreateWorktree:
             run_id="run-1",
             issue_id="mala-10",
             attempt=1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
         ctx2 = create_worktree(
             repo_path=tmp_path / "repo",
@@ -212,7 +193,7 @@ class TestCreateWorktree:
             run_id="run-1",
             issue_id="mala-10",
             attempt=2,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
 
         assert ctx1.path == config.base_dir / "run-1" / "mala-10" / "1"
@@ -236,11 +217,10 @@ class TestRemoveWorktree:
         return ctx
 
     def test_remove_success(self, created_ctx: WorktreeContext) -> None:
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_result)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         ctx = remove_worktree(
-            created_ctx, validation_passed=True, command_runner=mock_runner
+            created_ctx, validation_passed=True, command_runner=runner
         )
 
         assert ctx.state == WorktreeState.REMOVED
@@ -255,33 +235,25 @@ class TestRemoveWorktree:
             attempt=1,
             state=WorktreeState.CREATED,
         )
-        run_calls: list[list[str]] = []
-
-        def capturing_runner(cmd: list[str], **kwargs: object) -> CommandResult:
-            run_calls.append(cmd)
-            return CommandResult(command=[], returncode=0, stdout="", stderr="")
-
-        mock_runner = MagicMock()
-        mock_runner.run.side_effect = capturing_runner
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         # Validation failed and keep_on_failure=True
         result_ctx = remove_worktree(
-            ctx, validation_passed=False, command_runner=mock_runner
+            ctx, validation_passed=False, command_runner=runner
         )
 
         assert result_ctx.state == WorktreeState.KEPT
-        # Should NOT call git worktree remove (no run calls)
-        assert len(run_calls) == 0
+        # Should NOT call git worktree remove
+        assert not runner.has_call_with_prefix(["git", "worktree", "remove"])
 
     def test_remove_deletes_on_failure_when_not_kept(
         self, created_ctx: WorktreeContext
     ) -> None:
         # keep_on_failure is False by default
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_result)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         ctx = remove_worktree(
-            created_ctx, validation_passed=False, command_runner=mock_runner
+            created_ctx, validation_passed=False, command_runner=runner
         )
 
         assert ctx.state == WorktreeState.REMOVED
@@ -296,33 +268,26 @@ class TestRemoveWorktree:
             attempt=1,
             state=WorktreeState.PENDING,
         )
-        run_calls: list[list[str]] = []
-
-        def capturing_runner(cmd: list[str], **kwargs: object) -> CommandResult:
-            run_calls.append(cmd)
-            return CommandResult(command=[], returncode=0, stdout="", stderr="")
-
-        mock_runner = MagicMock()
-        mock_runner.run.side_effect = capturing_runner
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         result_ctx = remove_worktree(
-            ctx, validation_passed=True, command_runner=mock_runner
+            ctx, validation_passed=True, command_runner=runner
         )
 
         assert result_ctx.state == WorktreeState.PENDING
         # Should not call any git commands for pending worktree
-        assert len(run_calls) == 0
+        assert len(runner.calls) == 0
 
     def test_remove_uses_force_flag(self, created_ctx: WorktreeContext) -> None:
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_result)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
-        remove_worktree(created_ctx, validation_passed=True, command_runner=mock_runner)
+        remove_worktree(created_ctx, validation_passed=True, command_runner=runner)
 
         # First call should be git worktree remove --force
-        first_call = mock_runner.run.call_args_list[0]
-        cmd = first_call[0][0]
-        assert "--force" in cmd
+        remove_calls = runner.get_calls_with_prefix(["git", "worktree", "remove"])
+        assert len(remove_calls) >= 1
+        cmd_tuple, _ = remove_calls[0]
+        assert "--force" in cmd_tuple
 
     def test_remove_without_force_flag(self, tmp_path: Path) -> None:
         config = WorktreeConfig(base_dir=tmp_path / "worktrees", force_remove=False)
@@ -335,26 +300,23 @@ class TestRemoveWorktree:
             state=WorktreeState.CREATED,
         )
 
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_result)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
-        remove_worktree(ctx, validation_passed=True, command_runner=mock_runner)
+        remove_worktree(ctx, validation_passed=True, command_runner=runner)
 
         # First call should NOT have --force
-        first_call = mock_runner.run.call_args_list[0]
-        cmd = first_call[0][0]
-        assert "--force" not in cmd
+        remove_calls = runner.get_calls_with_prefix(["git", "worktree", "remove"])
+        assert len(remove_calls) >= 1
+        cmd_tuple, _ = remove_calls[0]
+        assert "--force" not in cmd_tuple
 
     def test_remove_prunes_worktree_list(self, created_ctx: WorktreeContext) -> None:
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_result)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
-        remove_worktree(created_ctx, validation_passed=True, command_runner=mock_runner)
+        remove_worktree(created_ctx, validation_passed=True, command_runner=runner)
 
         # Should call git worktree prune after remove
-        calls = mock_runner.run.call_args_list
-        prune_call = [c for c in calls if "prune" in c[0][0]]
-        assert len(prune_call) == 1
+        assert runner.has_call_with_prefix(["git", "worktree", "prune"])
 
 
 class TestCleanupStaleWorktrees:
@@ -368,10 +330,9 @@ class TestCleanupStaleWorktrees:
         self, config: WorktreeConfig, tmp_path: Path
     ) -> None:
         # Base dir doesn't exist
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_result)
+        runner = FakeCommandRunner(allow_unregistered=True)
         cleaned = cleanup_stale_worktrees(
-            tmp_path / "repo", config, command_runner=mock_runner
+            tmp_path / "repo", config, command_runner=runner
         )
         assert cleaned == 0
 
@@ -381,11 +342,10 @@ class TestCleanupStaleWorktrees:
         (config.base_dir / "run-1" / "mala-10" / "2").mkdir(parents=True)
         (config.base_dir / "run-2" / "mala-20" / "1").mkdir(parents=True)
 
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_result)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         cleaned = cleanup_stale_worktrees(
-            tmp_path / "repo", config, command_runner=mock_runner, run_id="run-1"
+            tmp_path / "repo", config, command_runner=runner, run_id="run-1"
         )
 
         # Should clean 2 worktrees from run-1 only
@@ -399,11 +359,10 @@ class TestCleanupStaleWorktrees:
         (config.base_dir / "run-2" / "mala-20" / "1").mkdir(parents=True)
         (config.base_dir / "run-3" / "mala-30" / "1").mkdir(parents=True)
 
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_result)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         cleaned = cleanup_stale_worktrees(
-            tmp_path / "repo", config, command_runner=mock_runner
+            tmp_path / "repo", config, command_runner=runner
         )
 
         assert cleaned == 3
@@ -414,11 +373,10 @@ class TestCleanupStaleWorktrees:
         # Create a single worktree
         (config.base_dir / "run-1" / "mala-10" / "1").mkdir(parents=True)
 
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_result)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         cleanup_stale_worktrees(
-            tmp_path / "repo", config, command_runner=mock_runner, run_id="run-1"
+            tmp_path / "repo", config, command_runner=runner, run_id="run-1"
         )
 
         # Parent directories should be removed if empty
@@ -429,15 +387,12 @@ class TestCleanupStaleWorktrees:
     ) -> None:
         config.base_dir.mkdir(parents=True)
 
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_result)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
-        cleanup_stale_worktrees(tmp_path / "repo", config, command_runner=mock_runner)
+        cleanup_stale_worktrees(tmp_path / "repo", config, command_runner=runner)
 
         # Should call git worktree prune
-        calls = [c[0][0] for c in mock_runner.run.call_args_list]
-        prune_calls = [c for c in calls if "prune" in c]
-        assert len(prune_calls) == 1
+        assert runner.has_call_with_prefix(["git", "worktree", "prune"])
 
 
 class TestErrorFormatting:
@@ -447,17 +402,20 @@ class TestErrorFormatting:
         config = WorktreeConfig(base_dir=tmp_path / "worktrees")
         long_stderr = "x" * 500
 
-        mock_result = CommandResult(
+        # Create worktree path so cleanup uses real filesystem
+        worktree_path = config.base_dir / "run-1" / "mala-10" / "1"
+        worktree_path.mkdir(parents=True, exist_ok=True)
+
+        runner = FakeCommandRunner(allow_unregistered=True)
+        # Register the exact command that will be called
+        runner.responses[
+            ("git", "worktree", "add", "--detach", str(worktree_path), "abc123")
+        ] = CommandResult(
             command=[],
             returncode=1,
             stdout="",
             stderr=long_stderr,
         )
-        mock_runner = make_mock_runner(mock_result)
-
-        # Create worktree path so cleanup uses real filesystem
-        worktree_path = config.base_dir / "run-1" / "mala-10" / "1"
-        worktree_path.mkdir(parents=True, exist_ok=True)
 
         ctx = create_worktree(
             repo_path=tmp_path / "repo",
@@ -466,7 +424,7 @@ class TestErrorFormatting:
             run_id="run-1",
             issue_id="mala-10",
             attempt=1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
 
         assert ctx.error is not None
@@ -483,18 +441,15 @@ class TestPathValidation:
         return WorktreeConfig(base_dir=tmp_path / "worktrees")
 
     @pytest.fixture
-    def mock_runner(self) -> MagicMock:
-        """Provide a mock command runner for tests."""
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        return make_mock_runner(mock_result)
+    def runner(self) -> FakeCommandRunner:
+        """Provide a fake command runner for tests."""
+        return FakeCommandRunner(allow_unregistered=True)
 
     def test_rejects_run_id_with_slash(
         self, config: WorktreeConfig, tmp_path: Path
     ) -> None:
         """run_id containing '/' should be rejected."""
-        mock_runner = make_mock_runner(
-            CommandResult(command=[], returncode=0, stdout="", stderr="")
-        )
+        runner = FakeCommandRunner(allow_unregistered=True)
         ctx = create_worktree(
             repo_path=tmp_path / "repo",
             commit_sha="abc123",
@@ -502,7 +457,7 @@ class TestPathValidation:
             run_id="run/escape",
             issue_id="mala-10",
             attempt=1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
         assert ctx.state == WorktreeState.FAILED
         assert "Invalid run_id" in (ctx.error or "")
@@ -511,9 +466,7 @@ class TestPathValidation:
         self, config: WorktreeConfig, tmp_path: Path
     ) -> None:
         """issue_id containing '..' should be rejected."""
-        mock_runner = make_mock_runner(
-            CommandResult(command=[], returncode=0, stdout="", stderr="")
-        )
+        runner = FakeCommandRunner(allow_unregistered=True)
         ctx = create_worktree(
             repo_path=tmp_path / "repo",
             commit_sha="abc123",
@@ -521,7 +474,7 @@ class TestPathValidation:
             run_id="run-1",
             issue_id="../escape",
             attempt=1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
         assert ctx.state == WorktreeState.FAILED
         assert "Invalid issue_id" in (ctx.error or "")
@@ -530,9 +483,7 @@ class TestPathValidation:
         self, config: WorktreeConfig, tmp_path: Path
     ) -> None:
         """Absolute path in run_id should be rejected."""
-        mock_runner = make_mock_runner(
-            CommandResult(command=[], returncode=0, stdout="", stderr="")
-        )
+        runner = FakeCommandRunner(allow_unregistered=True)
         ctx = create_worktree(
             repo_path=tmp_path / "repo",
             commit_sha="abc123",
@@ -540,7 +491,7 @@ class TestPathValidation:
             run_id="/etc/passwd",
             issue_id="mala-10",
             attempt=1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
         assert ctx.state == WorktreeState.FAILED
         assert "Invalid run_id" in (ctx.error or "")
@@ -549,9 +500,7 @@ class TestPathValidation:
         self, config: WorktreeConfig, tmp_path: Path
     ) -> None:
         """run_id starting with dot should be rejected."""
-        mock_runner = make_mock_runner(
-            CommandResult(command=[], returncode=0, stdout="", stderr="")
-        )
+        runner = FakeCommandRunner(allow_unregistered=True)
         ctx = create_worktree(
             repo_path=tmp_path / "repo",
             commit_sha="abc123",
@@ -559,7 +508,7 @@ class TestPathValidation:
             run_id=".hidden",
             issue_id="mala-10",
             attempt=1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
         assert ctx.state == WorktreeState.FAILED
         assert "Invalid run_id" in (ctx.error or "")
@@ -568,9 +517,7 @@ class TestPathValidation:
         self, config: WorktreeConfig, tmp_path: Path
     ) -> None:
         """Negative attempt number should be rejected."""
-        mock_runner = make_mock_runner(
-            CommandResult(command=[], returncode=0, stdout="", stderr="")
-        )
+        runner = FakeCommandRunner(allow_unregistered=True)
         ctx = create_worktree(
             repo_path=tmp_path / "repo",
             commit_sha="abc123",
@@ -578,13 +525,13 @@ class TestPathValidation:
             run_id="run-1",
             issue_id="mala-10",
             attempt=-1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
         assert ctx.state == WorktreeState.FAILED
         assert "Invalid attempt" in (ctx.error or "")
 
     def test_accepts_valid_path_components(
-        self, config: WorktreeConfig, tmp_path: Path, mock_runner: MagicMock
+        self, config: WorktreeConfig, tmp_path: Path, runner: FakeCommandRunner
     ) -> None:
         """Valid path components should be accepted."""
         ctx = create_worktree(
@@ -594,7 +541,7 @@ class TestPathValidation:
             run_id="run-123_test.v1",
             issue_id="mala-42",
             attempt=1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
         assert ctx.state == WorktreeState.CREATED
 
@@ -641,14 +588,16 @@ class TestRemoveWorktreeFailurePropagation:
         assert created_ctx._path is not None
         assert not created_ctx._path.exists()
 
-        # Git command fails
-        mock_git_fail = CommandResult(
+        # Git command fails - register the exact command (with --force since default)
+        runner = FakeCommandRunner(allow_unregistered=True)
+        runner.responses[
+            ("git", "worktree", "remove", "--force", str(created_ctx._path))
+        ] = CommandResult(
             command=[], returncode=1, stdout="", stderr="worktree not found"
         )
-        mock_runner = make_mock_runner(mock_git_fail)
 
         ctx = remove_worktree(
-            created_ctx, validation_passed=True, command_runner=mock_runner
+            created_ctx, validation_passed=True, command_runner=runner
         )
 
         assert ctx.state == WorktreeState.FAILED
@@ -666,8 +615,7 @@ class TestRemoveWorktreeFailurePropagation:
         # Create the directory so exists() returns True
         created_ctx._path.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
 
-        mock_git_success = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        mock_runner = make_mock_runner(mock_git_success)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         def mock_rmtree(path: Path, **kwargs: object) -> None:
             raise OSError("Permission denied")
@@ -675,7 +623,7 @@ class TestRemoveWorktreeFailurePropagation:
         monkeypatch.setattr(shutil, "rmtree", mock_rmtree)
 
         ctx = remove_worktree(
-            created_ctx, validation_passed=True, command_runner=mock_runner
+            created_ctx, validation_passed=True, command_runner=runner
         )
 
         assert ctx.state == WorktreeState.FAILED
@@ -708,16 +656,17 @@ class TestRemoveWorktreeFailurePropagation:
         (ctx._path / "uncommitted.txt").write_text("precious data")
 
         # Git command fails (e.g., dirty worktree without --force)
-        mock_git_fail = CommandResult(
+        # Note: no --force flag since force_remove=False
+        runner = FakeCommandRunner(allow_unregistered=True)
+        runner.responses[("git", "worktree", "remove", str(ctx._path))] = CommandResult(
             command=[],
             returncode=1,
             stdout="",
             stderr="fatal: worktree has uncommitted changes",
         )
-        mock_runner = make_mock_runner(mock_git_fail)
 
         result_ctx = remove_worktree(
-            ctx, validation_passed=True, command_runner=mock_runner
+            ctx, validation_passed=True, command_runner=runner
         )
 
         # Should fail
@@ -754,13 +703,15 @@ class TestRemoveWorktreeFailurePropagation:
         (ctx._path / "some_file.txt").write_text("data")
 
         # Git command fails but force_remove=True means we still cleanup
-        mock_git_fail = CommandResult(
+        runner = FakeCommandRunner(allow_unregistered=True)
+        runner.responses[
+            ("git", "worktree", "remove", "--force", str(ctx._path))
+        ] = CommandResult(
             command=[], returncode=1, stdout="", stderr="git worktree remove failed"
         )
-        mock_runner = make_mock_runner(mock_git_fail)
 
         result_ctx = remove_worktree(
-            ctx, validation_passed=True, command_runner=mock_runner
+            ctx, validation_passed=True, command_runner=runner
         )
 
         # Should fail (git command failed)
@@ -777,13 +728,12 @@ class TestStalePathCleanup:
         return WorktreeConfig(base_dir=tmp_path / "worktrees")
 
     @pytest.fixture
-    def mock_runner(self) -> MagicMock:
-        """Provide a mock command runner for tests."""
-        mock_result = CommandResult(command=[], returncode=0, stdout="", stderr="")
-        return make_mock_runner(mock_result)
+    def runner(self) -> FakeCommandRunner:
+        """Provide a fake command runner for tests."""
+        return FakeCommandRunner(allow_unregistered=True)
 
     def test_fails_if_path_is_file(
-        self, config: WorktreeConfig, tmp_path: Path, mock_runner: MagicMock
+        self, config: WorktreeConfig, tmp_path: Path, runner: FakeCommandRunner
     ) -> None:
         """Should fail if worktree path exists as a file."""
         # Create parent and a file at the worktree path
@@ -798,7 +748,7 @@ class TestStalePathCleanup:
             run_id="run-1",
             issue_id="mala-10",
             attempt=1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
 
         assert ctx.state == WorktreeState.FAILED
@@ -808,7 +758,7 @@ class TestStalePathCleanup:
         self,
         config: WorktreeConfig,
         tmp_path: Path,
-        mock_runner: MagicMock,
+        runner: FakeCommandRunner,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Should fail fast if stale worktree cleanup fails."""
@@ -830,7 +780,7 @@ class TestStalePathCleanup:
             run_id="run-1",
             issue_id="mala-10",
             attempt=1,
-            command_runner=mock_runner,
+            command_runner=runner,
         )
 
         assert ctx.state == WorktreeState.FAILED

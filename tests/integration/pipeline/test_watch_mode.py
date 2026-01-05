@@ -15,7 +15,6 @@ import signal
 import subprocess
 import sys
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -23,6 +22,11 @@ from src.core.models import WatchConfig
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
+)
+from tests.fakes.coordinator_callbacks import (
+    FakeAbortCallback,
+    FakeFinalizeCallback,
+    FakeSpawnCallback,
 )
 from tests.fakes.event_sink import FakeEventSink
 from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
@@ -73,9 +77,9 @@ class TestSigintHandling:
             async with asyncio.TaskGroup() as tg:
                 run_task = tg.create_task(
                     coord.run_loop(
-                        spawn_callback=AsyncMock(return_value=None),
-                        finalize_callback=AsyncMock(),
-                        abort_callback=AsyncMock(return_value=0),
+                        spawn_callback=FakeSpawnCallback(),
+                        finalize_callback=FakeFinalizeCallback(),
+                        abort_callback=FakeAbortCallback(),
                         watch_config=watch_config,
                         interrupt_event=interrupt_event,
                     )
@@ -212,7 +216,7 @@ class TestIssuePolling:
                     coord.run_loop(
                         spawn_callback=spawn_callback,
                         finalize_callback=finalize_callback,
-                        abort_callback=AsyncMock(return_value=0),
+                        abort_callback=FakeAbortCallback(),
                         watch_config=watch_config,
                         interrupt_event=interrupt_event,
                     )
@@ -268,7 +272,7 @@ class TestMaxIssuesWithWatch:
             result = await coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(return_value=0),
+                abort_callback=FakeAbortCallback(),
                 watch_config=watch_config,
             )
 
@@ -315,7 +319,7 @@ class TestMaxIssuesWithWatch:
             result = await coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(return_value=0),
+                abort_callback=FakeAbortCallback(),
                 watch_config=watch_config,
             )
 
@@ -377,7 +381,7 @@ class TestValidationTriggers:
             await coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(return_value=0),
+                abort_callback=FakeAbortCallback(),
                 watch_config=watch_config,
                 validation_callback=validation_callback,
             )
@@ -435,7 +439,7 @@ class TestValidationTriggers:
             result = await coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(return_value=0),
+                abort_callback=FakeAbortCallback(),
                 watch_config=watch_config,
                 validation_callback=validation_callback,
             )
@@ -513,7 +517,7 @@ class TestWatchModeFullFlow:
             result = await coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
-                abort_callback=AsyncMock(return_value=0),
+                abort_callback=FakeAbortCallback(),
                 watch_config=watch_config,
                 validation_callback=validation_callback,
                 interrupt_event=interrupt_event,
@@ -558,12 +562,16 @@ class TestSigintSubprocess:
 import asyncio
 import sys
 import signal
-from unittest.mock import AsyncMock
 
 from src.core.models import WatchConfig
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
+)
+from tests.fakes.coordinator_callbacks import (
+    FakeAbortCallback,
+    FakeFinalizeCallback,
+    FakeSpawnCallback,
 )
 from tests.fakes.event_sink import FakeEventSink
 from tests.fakes.issue_provider import FakeIssueProvider
@@ -589,9 +597,9 @@ async def main():
     print("READY", flush=True)
 
     result = await coord.run_loop(
-        spawn_callback=AsyncMock(return_value=None),
-        finalize_callback=AsyncMock(),
-        abort_callback=AsyncMock(return_value=0),
+        spawn_callback=FakeSpawnCallback(),
+        finalize_callback=FakeFinalizeCallback(),
+        abort_callback=FakeAbortCallback(),
         watch_config=watch_config,
         interrupt_event=interrupt_event,
     )

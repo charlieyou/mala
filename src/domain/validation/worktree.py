@@ -10,11 +10,10 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from src.core.protocols import CommandResultProtocol, CommandRunnerPort
 
 
@@ -264,6 +263,10 @@ def remove_worktree(
             else:
                 git_error = f"Directory cleanup failed: {e}"
 
+    # Clean up empty parent directories up to base_dir
+    if not dir_cleanup_failed:
+        _cleanup_empty_parents(ctx.path, ctx.config.base_dir)
+
     # Prune the worktree list to clean up stale git metadata
     command_runner.run(
         ["git", "worktree", "prune"],
@@ -322,6 +325,48 @@ def cleanup_stale_worktrees(
     )
 
     return cleaned
+
+
+def _cleanup_empty_parents(path: Path, base_dir: Path) -> None:
+    """Remove empty parent directories up to (but not including) base_dir.
+
+    Walks up from path.parent to base_dir, removing each directory if empty.
+    Stops at base_dir or on first non-empty directory.
+
+    Safety: Uses Path.is_relative_to() for proper path containment check,
+    avoiding string prefix matching vulnerabilities.
+
+    Args:
+        path: The path whose parents to clean (typically the removed worktree).
+        base_dir: The base directory to stop at (not removed).
+    """
+    resolved_base = base_dir.resolve()
+    current = path.resolve().parent
+
+    # Safety check: path must be inside base_dir
+    try:
+        if not current.is_relative_to(resolved_base):
+            return
+    except ValueError:
+        # is_relative_to raises ValueError on Windows for different drives
+        return
+
+    while current != resolved_base:
+        # Re-check containment each iteration (paranoid but safe)
+        try:
+            if not current.is_relative_to(resolved_base):
+                break
+        except ValueError:
+            break
+
+        try:
+            if current.exists() and current.is_dir() and not any(current.iterdir()):
+                current.rmdir()
+                current = current.parent
+            else:
+                break
+        except OSError:
+            break
 
 
 def _cleanup_run_dir(

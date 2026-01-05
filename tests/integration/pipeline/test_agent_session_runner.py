@@ -31,6 +31,7 @@ from src.pipeline.message_stream_processor import (
     MessageIterationState,
 )
 from src.domain.quality_gate import GateResult
+from tests.fakes import FakeLintCache
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
 if TYPE_CHECKING:
@@ -1653,7 +1654,7 @@ class TestContextPressureDetection:
 
         lifecycle_ctx = LifecycleContext()
         state = MessageIterationState()
-        lint_cache = MagicMock()
+        lint_cache = FakeLintCache()
 
         with pytest.raises(ContextPressureError) as exc_info:
             # Wrap stream with IdleTimeoutStream (no timeout, shared pending_tool_ids)

@@ -8,6 +8,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tests.fakes import FakeEnvConfig
+
 import pytest
 
 if TYPE_CHECKING:
@@ -25,28 +27,26 @@ from src.pipeline.run_coordinator import (
     RunLevelValidationInput,
     RunLevelValidationOutput,
 )
+from tests.fakes.command_runner import FakeCommandRunner
+from tests.fakes.lock_manager import FakeLockManager
 
 
 @pytest.fixture
-def mock_command_runner() -> MagicMock:
-    """Create a mock CommandRunnerPort."""
-    return MagicMock()
+def fake_command_runner() -> FakeCommandRunner:
+    """Create a FakeCommandRunner that allows unregistered commands."""
+    return FakeCommandRunner(allow_unregistered=True)
 
 
 @pytest.fixture
-def mock_env_config() -> MagicMock:
-    """Create a mock EnvConfigPort."""
-    return MagicMock()
+def mock_env_config() -> FakeEnvConfig:
+    """Create a fake EnvConfigPort."""
+    return FakeEnvConfig()
 
 
 @pytest.fixture
-def mock_lock_manager() -> MagicMock:
-    """Create a mock LockManagerPort."""
-    mock = MagicMock()
-    mock.try_lock.return_value = True
-    mock.wait_for_lock.return_value = True
-    mock.release_lock.return_value = True
-    return mock
+def fake_lock_manager() -> FakeLockManager:
+    """Create a FakeLockManager for testing."""
+    return FakeLockManager()
 
 
 @pytest.fixture
@@ -62,9 +62,9 @@ class TestRunLevelValidation:
     async def test_run_level_validation_skipped_when_disabled(
         self,
         tmp_path: Path,
-        mock_command_runner: MagicMock,
-        mock_env_config: MagicMock,
-        mock_lock_manager: MagicMock,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Run-level validation should be skipped when disabled."""
@@ -79,9 +79,9 @@ class TestRunLevelValidation:
         coordinator = RunCoordinator(
             config=config,
             gate_checker=mock_gate_checker,
-            command_runner=mock_command_runner,
+            command_runner=fake_command_runner,
             env_config=mock_env_config,
-            lock_manager=mock_lock_manager,
+            lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
         )
 
@@ -107,9 +107,9 @@ class TestRunLevelValidation:
     async def test_run_level_validation_passes_when_validation_succeeds(
         self,
         tmp_path: Path,
-        mock_command_runner: MagicMock,
-        mock_env_config: MagicMock,
-        mock_lock_manager: MagicMock,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Run-level validation should pass when validation runner succeeds."""
@@ -124,9 +124,9 @@ class TestRunLevelValidation:
         coordinator = RunCoordinator(
             config=config,
             gate_checker=mock_gate_checker,
-            command_runner=mock_command_runner,
+            command_runner=fake_command_runner,
             env_config=mock_env_config,
-            lock_manager=mock_lock_manager,
+            lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
         )
 
@@ -179,9 +179,9 @@ class TestRunLevelValidation:
     async def test_run_level_validation_spawns_fixer_on_failure(
         self,
         tmp_path: Path,
-        mock_command_runner: MagicMock,
-        mock_env_config: MagicMock,
-        mock_lock_manager: MagicMock,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Run-level validation should spawn fixer agent on failure."""
@@ -197,9 +197,9 @@ class TestRunLevelValidation:
         coordinator = RunCoordinator(
             config=config,
             gate_checker=mock_gate_checker,
-            command_runner=mock_command_runner,
+            command_runner=fake_command_runner,
             env_config=mock_env_config,
-            lock_manager=mock_lock_manager,
+            lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
         )
 
@@ -266,9 +266,9 @@ class TestRunLevelValidation:
     async def test_run_level_validation_records_to_metadata(
         self,
         tmp_path: Path,
-        mock_command_runner: MagicMock,
-        mock_env_config: MagicMock,
-        mock_lock_manager: MagicMock,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """Run-level validation should record results to run metadata."""
@@ -284,9 +284,9 @@ class TestRunLevelValidation:
         coordinator = RunCoordinator(
             config=config,
             gate_checker=mock_gate_checker,
-            command_runner=mock_command_runner,
+            command_runner=fake_command_runner,
             env_config=mock_env_config,
-            lock_manager=mock_lock_manager,
+            lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
         )
 
@@ -349,9 +349,9 @@ class TestRunLevelValidation:
     def test_build_validation_failure_output_with_result(
         self,
         tmp_path: Path,
-        mock_command_runner: MagicMock,
-        mock_env_config: MagicMock,
-        mock_lock_manager: MagicMock,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_build_validation_failure_output should format failure details."""
@@ -362,9 +362,9 @@ class TestRunLevelValidation:
         coordinator = RunCoordinator(
             config=config,
             gate_checker=mock_gate_checker,
-            command_runner=mock_command_runner,
+            command_runner=fake_command_runner,
             env_config=mock_env_config,
-            lock_manager=mock_lock_manager,
+            lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
         )
 
@@ -393,9 +393,9 @@ class TestRunLevelValidation:
     def test_build_validation_failure_output_with_none(
         self,
         tmp_path: Path,
-        mock_command_runner: MagicMock,
-        mock_env_config: MagicMock,
-        mock_lock_manager: MagicMock,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """_build_validation_failure_output should handle None result."""
@@ -404,9 +404,9 @@ class TestRunLevelValidation:
         coordinator = RunCoordinator(
             config=config,
             gate_checker=mock_gate_checker,
-            command_runner=mock_command_runner,
+            command_runner=fake_command_runner,
             env_config=mock_env_config,
-            lock_manager=mock_lock_manager,
+            lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
         )
 
@@ -418,9 +418,9 @@ class TestRunLevelValidation:
     async def test_e2e_passed_none_when_e2e_disabled(
         self,
         tmp_path: Path,
-        mock_command_runner: MagicMock,
-        mock_env_config: MagicMock,
-        mock_lock_manager: MagicMock,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """e2e_passed should be None when E2E is disabled via disable_validations."""
@@ -437,9 +437,9 @@ class TestRunLevelValidation:
         coordinator = RunCoordinator(
             config=config,
             gate_checker=mock_gate_checker,
-            command_runner=mock_command_runner,
+            command_runner=fake_command_runner,
             env_config=mock_env_config,
-            lock_manager=mock_lock_manager,
+            lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
         )
 
@@ -496,9 +496,9 @@ class TestRunLevelValidation:
     async def test_e2e_passed_none_when_e2e_skipped(
         self,
         tmp_path: Path,
-        mock_command_runner: MagicMock,
-        mock_env_config: MagicMock,
-        mock_lock_manager: MagicMock,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """e2e_passed should be None when E2E was skipped (status=SKIPPED)."""
@@ -510,9 +510,9 @@ class TestRunLevelValidation:
         coordinator = RunCoordinator(
             config=config,
             gate_checker=mock_gate_checker,
-            command_runner=mock_command_runner,
+            command_runner=fake_command_runner,
             env_config=mock_env_config,
-            lock_manager=mock_lock_manager,
+            lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
         )
 
@@ -573,9 +573,9 @@ class TestRunLevelValidation:
     async def test_e2e_passed_true_when_e2e_enabled_and_passes(
         self,
         tmp_path: Path,
-        mock_command_runner: MagicMock,
-        mock_env_config: MagicMock,
-        mock_lock_manager: MagicMock,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """e2e_passed should be True when E2E is enabled and actually passes."""
@@ -587,9 +587,9 @@ class TestRunLevelValidation:
         coordinator = RunCoordinator(
             config=config,
             gate_checker=mock_gate_checker,
-            command_runner=mock_command_runner,
+            command_runner=fake_command_runner,
             env_config=mock_env_config,
-            lock_manager=mock_lock_manager,
+            lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
         )
 
@@ -649,9 +649,9 @@ class TestRunLevelValidation:
     async def test_e2e_passed_false_when_e2e_enabled_and_fails(
         self,
         tmp_path: Path,
-        mock_command_runner: MagicMock,
-        mock_env_config: MagicMock,
-        mock_lock_manager: MagicMock,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """e2e_passed should be False when E2E is enabled and actually fails."""
@@ -669,9 +669,9 @@ class TestRunLevelValidation:
         coordinator = RunCoordinator(
             config=config,
             gate_checker=mock_gate_checker,
-            command_runner=mock_command_runner,
+            command_runner=fake_command_runner,
             env_config=mock_env_config,
-            lock_manager=mock_lock_manager,
+            lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
         )
 
@@ -733,9 +733,9 @@ class TestRunLevelValidation:
     async def test_e2e_passed_none_when_earlier_step_fails(
         self,
         tmp_path: Path,
-        mock_command_runner: MagicMock,
-        mock_env_config: MagicMock,
-        mock_lock_manager: MagicMock,
+        fake_command_runner: FakeCommandRunner,
+        mock_env_config: FakeEnvConfig,
+        fake_lock_manager: FakeLockManager,
         mock_sdk_client_factory: MagicMock,
     ) -> None:
         """e2e_passed should be None when validation fails before E2E runs."""
@@ -752,9 +752,9 @@ class TestRunLevelValidation:
         coordinator = RunCoordinator(
             config=config,
             gate_checker=mock_gate_checker,
-            command_runner=mock_command_runner,
+            command_runner=fake_command_runner,
             env_config=mock_env_config,
-            lock_manager=mock_lock_manager,
+            lock_manager=fake_lock_manager,
             sdk_client_factory=mock_sdk_client_factory,
         )
 

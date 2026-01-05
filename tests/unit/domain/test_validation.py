@@ -32,6 +32,7 @@ from src.domain.validation.worktree import WorktreeContext, WorktreeState
 from src.infra.tools.command_runner import CommandResult
 from src.infra.tools.env import EnvConfig
 from tests.fakes import FakeCommandRunner
+from tests.fakes.lock_manager import FakeLockManager
 
 if TYPE_CHECKING:
     from src.domain.validation.spec_executor import ExecutorConfig
@@ -86,14 +87,9 @@ def make_timeout_result(cmd: list[str] | str = "sleep 1000") -> CommandResult:
     )
 
 
-def make_mock_lock_manager() -> MagicMock:
-    """Create a mock LockManagerPort."""
-    mock = MagicMock()
-    mock.lock_path.return_value = Path("/tmp/mock-lock")
-    mock.try_lock.return_value = True
-    mock.wait_for_lock.return_value = True
-    mock.release_lock.return_value = True
-    return mock
+def make_fake_lock_manager() -> FakeLockManager:
+    """Create a FakeLockManager for testing."""
+    return FakeLockManager()
 
 
 class TestValidationStepResult:
@@ -253,7 +249,7 @@ class TestSpecValidationRunner:
     ) -> SpecValidationRunner:
         """Create a spec runner with FakeCommandRunner and lint caching disabled."""
         env_config = EnvConfig()
-        lock_manager = make_mock_lock_manager()
+        lock_manager = make_fake_lock_manager()
         return SpecValidationRunner(
             tmp_path,
             env_config=env_config,
@@ -784,7 +780,7 @@ class TestSpecValidationRunner:
 
         env_config = EnvConfig()
         fake_cmd_runner = FakeCommandRunner(allow_unregistered=True)
-        lock_manager = make_mock_lock_manager()
+        lock_manager = make_fake_lock_manager()
         runner = SpecValidationRunner(
             repo_path,
             env_config=env_config,
@@ -838,7 +834,7 @@ class TestSpecValidationRunner:
 
         env_config = EnvConfig()
         fake_cmd_runner = FakeCommandRunner(allow_unregistered=True)
-        lock_manager = make_mock_lock_manager()
+        lock_manager = make_fake_lock_manager()
         runner = SpecValidationRunner(
             tmp_path,
             env_config=env_config,
@@ -910,7 +906,7 @@ class TestSpecValidationRunner:
         repo_path.mkdir()
         env_config = EnvConfig()
         fake_cmd_runner = FakeCommandRunner(allow_unregistered=True)
-        lock_manager = make_mock_lock_manager()
+        lock_manager = make_fake_lock_manager()
         runner = SpecValidationRunner(
             repo_path,
             env_config=env_config,
@@ -985,7 +981,7 @@ class TestSpecValidationRunner:
         # Use fail-closed FakeCommandRunner (default) with no registered commands
         # This will raise UnregisteredCommandError when command is executed
         fake_cmd_runner = FakeCommandRunner(allow_unregistered=False)
-        lock_manager = make_mock_lock_manager()
+        lock_manager = make_fake_lock_manager()
         runner = SpecValidationRunner(
             repo_path,
             env_config=env_config,
@@ -1060,7 +1056,7 @@ class TestSpecRunnerNoDecreaseMode:
     ) -> SpecValidationRunner:
         """Create a spec runner for coverage tests."""
         env_config = EnvConfig()
-        lock_manager = make_mock_lock_manager()
+        lock_manager = make_fake_lock_manager()
         return SpecValidationRunner(
             tmp_path,
             env_config=env_config,
@@ -1425,7 +1421,7 @@ class TestSpecRunnerBaselineRefresh:
             command="uv run pytest --cov=src --cov-report=xml",
         )
         env_config = EnvConfig()
-        lock_manager = make_mock_lock_manager()
+        lock_manager = make_fake_lock_manager()
         return BaselineCoverageService(
             tmp_path,
             coverage_config=coverage_config,
@@ -1581,7 +1577,7 @@ class TestSpecRunnerBaselineRefresh:
             )
             env_config = EnvConfig()
             command_runner = FakeRunner(cwd=tmp_path)
-            lock_manager = make_mock_lock_manager()
+            lock_manager = make_fake_lock_manager()
             service = BaselineCoverageService(
                 tmp_path,
                 coverage_config=coverage_config,
@@ -1718,10 +1714,12 @@ class TestSpecRunnerBaselineRefresh:
         mock_cmd_runner.run.side_effect = mock_git_run_fresh
 
         # Create lock manager with try_lock returning False (lock held by other)
-        # and wait_for_lock triggering baseline creation
-        lock_manager = make_mock_lock_manager()
-        lock_manager.try_lock.return_value = False
-        lock_manager.wait_for_lock.side_effect = mock_wait_for_lock
+        # and wait_for_lock triggering baseline creation.
+        # Note: Using MagicMock here because we need side_effect to simulate
+        # another agent creating the baseline during wait_for_lock.
+        mock_lock_manager = MagicMock()
+        mock_lock_manager.try_lock.return_value = False
+        mock_lock_manager.wait_for_lock.side_effect = mock_wait_for_lock
 
         with (
             patch(
@@ -1742,7 +1740,7 @@ class TestSpecRunnerBaselineRefresh:
                 coverage_config=coverage_config,
                 env_config=env_config,
                 command_runner=mock_cmd_runner,
-                lock_manager=lock_manager,
+                lock_manager=mock_lock_manager,
             )
             result = service.refresh_if_stale(spec)
 
@@ -1960,7 +1958,7 @@ class TestSpecRunnerBaselineRefresh:
             command="uv run pytest --cov=src --cov-report=xml",  # Default path
         )
         env_config = EnvConfig()
-        lock_manager = make_mock_lock_manager()
+        lock_manager = make_fake_lock_manager()
         service = BaselineCoverageService(
             tmp_path,
             coverage_config=coverage_config,
@@ -2055,7 +2053,7 @@ class TestSpecRunnerBaselineRefresh:
             command="uv run pytest --cov=src --cov-report=xml:old.xml",  # Different path
         )
         env_config = EnvConfig()
-        lock_manager = make_mock_lock_manager()
+        lock_manager = make_fake_lock_manager()
         service = BaselineCoverageService(
             tmp_path,
             coverage_config=coverage_config,
@@ -2145,7 +2143,7 @@ class TestBaselineCaptureOrder:
     ) -> SpecValidationRunner:
         """Create a spec runner for baseline tests."""
         env_config = EnvConfig()
-        lock_manager = make_mock_lock_manager()
+        lock_manager = make_fake_lock_manager()
         return SpecValidationRunner(
             tmp_path,
             env_config=env_config,

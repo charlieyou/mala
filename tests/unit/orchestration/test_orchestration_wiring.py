@@ -28,6 +28,12 @@ from src.pipeline.gate_runner import AsyncGateRunner, GateRunner
 from src.pipeline.issue_execution_coordinator import IssueExecutionCoordinator
 from src.pipeline.review_runner import ReviewRunner
 from src.pipeline.run_coordinator import RunCoordinator
+from tests.fakes import (
+    FakeCommandRunner,
+    FakeEventSink,
+    FakeLockManager,
+    FakeSDKClientFactory,
+)
 
 
 @pytest.fixture
@@ -57,7 +63,7 @@ def mock_prompt_validation_commands() -> PromptValidationCommands:
 
 @pytest.fixture
 def mock_runtime_deps() -> RuntimeDeps:
-    """Create RuntimeDeps with mock protocol implementations."""
+    """Create RuntimeDeps with fake protocol implementations."""
     mock_config = MalaConfig(
         runs_dir=Path("/tmp/runs"),
         lock_dir=Path("/tmp/locks"),
@@ -68,10 +74,10 @@ def mock_runtime_deps() -> RuntimeDeps:
         quality_gate=MagicMock(),
         code_reviewer=MagicMock(),
         beads=MagicMock(),
-        event_sink=MagicMock(),
-        command_runner=MagicMock(),
+        event_sink=FakeEventSink(),
+        command_runner=FakeCommandRunner(allow_unregistered=True),
         env_config=MagicMock(),
-        lock_manager=MagicMock(),
+        lock_manager=FakeLockManager(),
         mala_config=mock_config,
     )
 
@@ -175,9 +181,9 @@ class TestBuildRunCoordinator:
         mock_pipeline_config: PipelineConfig,
     ) -> None:
         """build_run_coordinator returns a RunCoordinator instance."""
-        mock_sdk_factory = MagicMock()
+        sdk_factory = FakeSDKClientFactory()
         run_coordinator = build_run_coordinator(
-            mock_runtime_deps, mock_pipeline_config, mock_sdk_factory
+            mock_runtime_deps, mock_pipeline_config, sdk_factory
         )
         assert isinstance(run_coordinator, RunCoordinator)
 
@@ -188,9 +194,9 @@ class TestBuildRunCoordinator:
         tmp_path: Path,
     ) -> None:
         """RunCoordinator is configured with values from deps and config."""
-        mock_sdk_factory = MagicMock()
+        sdk_factory = FakeSDKClientFactory()
         run_coordinator = build_run_coordinator(
-            mock_runtime_deps, mock_pipeline_config, mock_sdk_factory
+            mock_runtime_deps, mock_pipeline_config, sdk_factory
         )
         assert run_coordinator.config.repo_path == tmp_path
         assert run_coordinator.config.timeout_seconds == 3600

@@ -9,7 +9,6 @@ Tests for:
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -26,10 +25,11 @@ from src.orchestration.review_tracking import (
     create_review_tracking_issues,
 )
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
+from tests.fakes.gate_checker import FakeGateChecker
 from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
 if TYPE_CHECKING:
-    from src.core.protocols import IssueProvider, MalaEventSink
+    from src.core.protocols import GateChecker, IssueProvider, MalaEventSink
 
 
 # ============================================================================
@@ -155,12 +155,12 @@ class TestBuildGateMetadataFromLogs:
         log_path = tmp_path / "session.log"
         log_path.touch()
 
-        mock_gate = MagicMock()
+        gate = FakeGateChecker()
         metadata = build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Success",
             result_success=True,
-            quality_gate=mock_gate,
+            quality_gate=cast("GateChecker", gate),
             per_issue_spec=None,
         )
 
@@ -169,6 +169,8 @@ class TestBuildGateMetadataFromLogs:
 
     def test_with_spec(self, tmp_path: Path) -> None:
         """Should parse logs and extract metadata when spec is provided."""
+        from src.domain.validation.spec import ValidationScope, ValidationSpec
+
         log_path = tmp_path / "session.log"
         log_path.write_text("mock log content")
 
@@ -177,17 +179,15 @@ class TestBuildGateMetadataFromLogs:
             failed_commands=[],
         )
 
-        mock_gate = MagicMock()
-        mock_gate.parse_validation_evidence_with_spec.return_value = evidence
-
-        mock_spec = MagicMock()
+        gate = FakeGateChecker(validation_evidence=evidence)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
 
         metadata = build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Success",
             result_success=True,
-            quality_gate=mock_gate,
-            per_issue_spec=mock_spec,
+            quality_gate=cast("GateChecker", gate),
+            per_issue_spec=spec,
         )
 
         assert metadata.quality_gate_result is not None
@@ -198,6 +198,8 @@ class TestBuildGateMetadataFromLogs:
 
     def test_failure_reason_extraction(self, tmp_path: Path) -> None:
         """Should extract failure reasons from result summary."""
+        from src.domain.validation.spec import ValidationScope, ValidationSpec
+
         log_path = tmp_path / "session.log"
         log_path.write_text("mock log content")
 
@@ -206,17 +208,15 @@ class TestBuildGateMetadataFromLogs:
             failed_commands=["pytest"],
         )
 
-        mock_gate = MagicMock()
-        mock_gate.parse_validation_evidence_with_spec.return_value = evidence
-
-        mock_spec = MagicMock()
+        gate = FakeGateChecker(validation_evidence=evidence)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
 
         metadata = build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Quality gate failed: tests failed; lint failed",
             result_success=False,
-            quality_gate=mock_gate,
-            per_issue_spec=mock_spec,
+            quality_gate=cast("GateChecker", gate),
+            per_issue_spec=spec,
         )
 
         assert metadata.quality_gate_result is not None

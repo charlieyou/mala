@@ -6,7 +6,6 @@ Tests the centralized agent runtime configuration builder.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -16,7 +15,7 @@ from src.infra.hooks import (
     block_dangerous_commands,
     block_mala_disallowed_tools,
 )
-from tests.fakes.sdk_client import FakeSDKClientFactory
+from tests.fakes import FakeDeadlockMonitor, FakeSDKClientFactory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -193,11 +192,11 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """with_hooks(deadlock_monitor=...) adds lock event hooks."""
-        mock_monitor = MagicMock()
+        monitor = FakeDeadlockMonitor()
 
         runtime = (
             AgentRuntimeBuilder(repo_path, "agent-deadlock", factory)
-            .with_hooks(deadlock_monitor=mock_monitor)
+            .with_hooks(deadlock_monitor=monitor)
             .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
@@ -313,14 +312,14 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """Locking MCP server is registered with deadlock monitor."""
-        mock_monitor = MagicMock()
+        monitor = FakeDeadlockMonitor()
 
         AgentRuntimeBuilder(
             repo_path,
             "agent-with-monitor",
             factory,
             mcp_server_factory=_create_mcp_server_factory(),
-        ).with_hooks(deadlock_monitor=mock_monitor).build()
+        ).with_hooks(deadlock_monitor=monitor).build()
 
         assert len(factory.created_options) == 1
         mcp_servers = factory.created_options[0]["mcp_servers"]

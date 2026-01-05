@@ -11,6 +11,7 @@ from unittest.mock import Mock
 
 from src.infra.tools.command_runner import CommandResult
 from src.domain.validation.config import YamlCoverageConfig
+from tests.fakes.lock_manager import FakeLockManager
 from src.domain.validation.coverage import (
     BaselineCoverageService,
     CoverageResult,
@@ -41,17 +42,6 @@ def make_mock_env_config() -> Mock:
     mock.lock_dir = Path("/tmp/mock-locks")
     mock.find_cerberus_bin_path.return_value = None
     return mock
-
-
-def make_mock_lock_manager() -> Mock:
-    """Create a mock LockManagerPort."""
-    mock = Mock()
-    mock.lock_path.return_value = Path("/tmp/mock-lock")
-    mock.try_lock.return_value = True
-    mock.wait_for_lock.return_value = True
-    mock.release_lock.return_value = True
-    return mock
-
 
 # Fixture XML content for different test cases
 VALID_COVERAGE_XML_90_PERCENT = """\
@@ -1003,7 +993,7 @@ class TestBaselineCoverageService:
             repo_path=tmp_path,
             env_config=make_mock_env_config(),
             command_runner=make_mock_runner(lambda *a, **kw: None),
-            lock_manager=make_mock_lock_manager(),
+            lock_manager=FakeLockManager(),
             coverage_config=None,
         )
 
@@ -1031,7 +1021,7 @@ class TestBaselineCoverageService:
             repo_path=tmp_path,
             env_config=make_mock_env_config(),
             command_runner=make_mock_runner(lambda *a, **kw: None),
-            lock_manager=make_mock_lock_manager(),
+            lock_manager=FakeLockManager(),
             coverage_config=config,
         )
 
@@ -1058,7 +1048,7 @@ class TestBaselineCoverageService:
             repo_path=tmp_path,
             env_config=make_mock_env_config(),
             command_runner=make_mock_runner(lambda *a, **kw: None),
-            lock_manager=make_mock_lock_manager(),
+            lock_manager=FakeLockManager(),
             coverage_config=config,
             step_timeout_seconds=120.0,  # This should be ignored
         )
@@ -1082,7 +1072,7 @@ class TestBaselineCoverageService:
             repo_path=tmp_path,
             env_config=make_mock_env_config(),
             command_runner=make_mock_runner(lambda *a, **kw: None),
-            lock_manager=make_mock_lock_manager(),
+            lock_manager=FakeLockManager(),
             coverage_config=config,
             step_timeout_seconds=180.0,
         )
@@ -1125,11 +1115,12 @@ class TestBaselineCoverageService:
             return CommandResult(command=args, returncode=0, stdout="", stderr="")
 
         mock_runner = make_mock_runner(mock_run)
+        lock_manager = FakeLockManager()
         service = BaselineCoverageService(
             repo_path=tmp_path,
             env_config=make_mock_env_config(),
             command_runner=mock_runner,
-            lock_manager=make_mock_lock_manager(),
+            lock_manager=lock_manager,
             coverage_config=config,
         )
 
@@ -1173,29 +1164,28 @@ class TestBaselineCoverageService:
 
         mock_runner = make_mock_runner(mock_run)
 
-        # Create mock lock manager
-        mock_lock_manager = MagicMock()
-        mock_lock_manager.try_lock.return_value = False  # Force wait path
-        mock_lock_manager.wait_for_lock.return_value = False  # Timeout
+        # Pre-populate lock with another agent to simulate contention (causes timeout)
+        lock_manager = FakeLockManager()
+        lock_manager.locks["coverage-baseline.lock"] = "other-agent"
 
         service = BaselineCoverageService(
             repo_path=tmp_path,
             env_config=make_mock_env_config(),
             command_runner=mock_runner,
-            lock_manager=mock_lock_manager,
+            lock_manager=lock_manager,
             coverage_config=config,
         )
 
         mock_spec = MagicMock()
         result = service.refresh_if_stale(mock_spec)
 
-        # Should fail with timeout since wait_for_lock returned False
+        # Should fail with timeout since lock is held by another agent
         assert result.success is False
         assert "Timeout" in (result.error or "")
 
-        # Verify lock manager was called
-        assert mock_lock_manager.try_lock.called
-        assert mock_lock_manager.wait_for_lock.called
+        # Verify lock manager recorded the acquisition attempts
+        assert len(lock_manager.acquire_calls) > 0
+        assert len(lock_manager.wait_for_lock_calls) > 0
 
     def test_injected_lock_manager_release_called_on_success(
         self, tmp_path: Path
@@ -1217,13 +1207,12 @@ class TestBaselineCoverageService:
         )
 
         # Mock git: stale first check, then fresh after lock (double-check pattern)
-        call_count = {"log": 0, "is_stale_check": 0}
+        call_count = {"is_stale_check": 0}
 
         def mock_run(args: list[str], **kwargs: object) -> CommandResult:
             if "status" in args:
                 return CommandResult(command=args, returncode=0, stdout="", stderr="")
             elif "log" in args:
-                call_count["log"] += 1
                 call_count["is_stale_check"] += 1
                 if call_count["is_stale_check"] == 1:
                     # First check: stale (commit after baseline mtime)
@@ -1232,7 +1221,6 @@ class TestBaselineCoverageService:
                     )
                 else:
                     # After lock: fresh (commit before new baseline mtime)
-                    # The baseline file gets updated mtime dynamically
                     return CommandResult(
                         command=args, returncode=0, stdout="500000000\n", stderr=""
                     )
@@ -1240,23 +1228,25 @@ class TestBaselineCoverageService:
 
         mock_runner = make_mock_runner(mock_run)
 
-        # Create mock lock manager that succeeds - updates baseline before second check
-        mock_lock_manager = MagicMock()
+        # Subclass FakeLockManager to update mtime when lock is acquired
+        class LockManagerWithCallback(FakeLockManager):
+            def try_lock(
+                self, filepath: str, agent_id: str, repo_namespace: str | None = None
+            ) -> bool:
+                result = super().try_lock(filepath, agent_id, repo_namespace)
+                if result:
+                    # Simulate another agent refreshing baseline while we waited
+                    future_time = 4102444800
+                    os.utime(report, (future_time, future_time))
+                return result
 
-        def try_lock_side_effect(*args: object, **kwargs: object) -> bool:
-            # After acquiring lock, update baseline to be fresh
-            future_time = 4102444800
-            os.utime(report, (future_time, future_time))
-            return True
-
-        mock_lock_manager.try_lock.side_effect = try_lock_side_effect
-        mock_lock_manager.release_lock.return_value = True
+        lock_manager = LockManagerWithCallback()
 
         service = BaselineCoverageService(
             repo_path=tmp_path,
             env_config=make_mock_env_config(),
             command_runner=mock_runner,
-            lock_manager=mock_lock_manager,
+            lock_manager=lock_manager,
             coverage_config=config,
         )
 
@@ -1267,13 +1257,13 @@ class TestBaselineCoverageService:
         assert result.success is True
         assert result.percent == 90.0
 
-        # Verify release_lock was called with agent_id
-        assert mock_lock_manager.release_lock.called
-        release_call = mock_lock_manager.release_lock.call_args
-        # release_lock(filepath, agent_id, repo_namespace)
-        assert release_call[0][0] == "coverage-baseline.lock"  # filepath
-        assert "baseline-refresh-" in release_call[0][1]  # agent_id contains prefix
-        assert release_call[0][2] == str(tmp_path)  # repo_namespace
+        # Verify lock was acquired and released (lock should be empty after release)
+        assert len(lock_manager.acquire_calls) > 0
+        # Verify agent_id pattern from acquire_calls (same ID used for release)
+        agent_id = lock_manager.acquire_calls[0].agent_id
+        assert "baseline-refresh-" in agent_id
+        # Lock should be released (not in locks dict)
+        assert "coverage-baseline.lock" not in lock_manager.locks
 
     def test_injected_lock_manager_release_called_on_error(
         self, tmp_path: Path
@@ -1310,15 +1300,13 @@ class TestBaselineCoverageService:
 
         mock_runner = make_mock_runner(mock_run)
 
-        mock_lock_manager = MagicMock()
-        mock_lock_manager.try_lock.return_value = True
-        mock_lock_manager.release_lock.return_value = True
+        lock_manager = FakeLockManager()
 
         service = BaselineCoverageService(
             repo_path=tmp_path,
             env_config=make_mock_env_config(),
             command_runner=mock_runner,
-            lock_manager=mock_lock_manager,
+            lock_manager=lock_manager,
             coverage_config=config,
         )
 
@@ -1328,10 +1316,10 @@ class TestBaselineCoverageService:
         # Should fail (worktree creation failed)
         assert result.success is False
 
-        # But release_lock should still be called (finally block)
-        assert mock_lock_manager.release_lock.called
-        release_call = mock_lock_manager.release_lock.call_args
-        # release_lock(filepath, agent_id, repo_namespace)
-        assert release_call[0][0] == "coverage-baseline.lock"  # filepath
-        assert "baseline-refresh-" in release_call[0][1]  # agent_id contains prefix
-        assert release_call[0][2] == str(tmp_path)  # repo_namespace
+        # Verify lock was acquired and released even on error (finally block)
+        assert len(lock_manager.acquire_calls) > 0
+        # Verify agent_id pattern
+        agent_id = lock_manager.acquire_calls[0].agent_id
+        assert "baseline-refresh-" in agent_id
+        # Lock should be released (not in locks dict)
+        assert "coverage-baseline.lock" not in lock_manager.locks

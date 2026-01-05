@@ -33,6 +33,7 @@ from src.pipeline.message_stream_processor import (
     StreamProcessorConfig,
 )
 from src.domain.lifecycle import LifecycleContext
+from tests.fakes.lint_cache import FakeLintCache
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -75,27 +76,6 @@ async def messages_to_stream(
         yield msg
     yield result
 
-
-class FakeLintCache:
-    """Fake LintCache for testing."""
-
-    def __init__(self) -> None:
-        self.detected_commands: list[tuple[str, str]] = []
-        self.marked_successes: list[tuple[str, str]] = []
-        self._detect_results: dict[str, str] = {}
-
-    def configure_detect(self, command: str, lint_type: str) -> None:
-        """Configure detect_lint_command to return lint_type for command."""
-        self._detect_results[command] = lint_type
-
-    def detect_lint_command(self, command: str) -> str | None:
-        """Detect if command is a lint command."""
-        self.detected_commands.append(("detect", command))
-        return self._detect_results.get(command)
-
-    def mark_success(self, lint_type: str, command: str) -> None:
-        """Mark a lint command as successful."""
-        self.marked_successes.append((lint_type, command))
 
 
 class FakeTracer:

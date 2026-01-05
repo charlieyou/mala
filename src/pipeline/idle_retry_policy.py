@@ -27,9 +27,9 @@ if TYPE_CHECKING:
 
     from src.core.protocols import SDKClientFactoryProtocol, SDKClientProtocol
     from src.domain.lifecycle import LifecycleContext
-    from src.infra.hooks import LintCache
     from src.infra.telemetry import TelemetrySpan
     from src.pipeline.message_stream_processor import (
+        LintCacheProtocol,
         MessageIterationResult,
         MessageIterationState,
         MessageStreamProcessor,
@@ -133,7 +133,7 @@ class IdleTimeoutRetryPolicy:
         options: object,
         state: MessageIterationState,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: LintCache,
+        lint_cache: LintCacheProtocol,
         idle_timeout_seconds: float | None,
         tracer: TelemetrySpan | None = None,
     ) -> IterationResult:
@@ -354,7 +354,7 @@ class IdleTimeoutRetryPolicy:
         issue_id: str,
         state: MessageIterationState,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: LintCache,
+        lint_cache: LintCacheProtocol,
         query_start: float,
         tracer: TelemetrySpan | None,
     ) -> MessageIterationResult:

@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from src.infra.tools.command_runner import CommandRunner
+    from src.core.protocols import CommandRunnerPort
 
 
 @dataclass
@@ -150,7 +150,7 @@ class CerberusGateCLI:
     async def spawn_code_review(
         self,
         diff_range: str,
-        runner: CommandRunner,
+        runner: CommandRunnerPort,
         env: dict[str, str],
         timeout: int,
         spawn_args: tuple[str, ...] = (),
@@ -161,7 +161,7 @@ class CerberusGateCLI:
 
         Args:
             diff_range: Git diff range to review (e.g., "baseline..HEAD").
-            runner: CommandRunner instance for subprocess execution.
+            runner: CommandRunnerPort instance for subprocess execution.
             env: Environment variables for the command.
             timeout: Timeout in seconds.
             spawn_args: Additional arguments for spawn-code-review.
@@ -211,7 +211,7 @@ class CerberusGateCLI:
     async def wait_for_review(
         self,
         session_id: str,
-        runner: CommandRunner,
+        runner: CommandRunnerPort,
         env: dict[str, str],
         cli_timeout: int,
         wait_args: tuple[str, ...] = (),
@@ -221,7 +221,7 @@ class CerberusGateCLI:
 
         Args:
             session_id: Session ID to wait for.
-            runner: CommandRunner instance for subprocess execution.
+            runner: CommandRunnerPort instance for subprocess execution.
             env: Environment variables for the command.
             cli_timeout: Timeout value to pass to CLI (if user_timeout is None).
             wait_args: Additional arguments for wait command.
@@ -270,14 +270,14 @@ class CerberusGateCLI:
 
     async def resolve_gate(
         self,
-        runner: CommandRunner,
+        runner: CommandRunnerPort,
         env: dict[str, str],
         reason: str = "mala: auto-clearing stale gate for retry",
     ) -> ResolveResult:
         """Resolve (clear) an active gate.
 
         Args:
-            runner: CommandRunner instance for subprocess execution.
+            runner: CommandRunnerPort instance for subprocess execution.
             env: Environment variables for the command (must include CLAUDE_SESSION_ID).
             reason: Reason message for the resolve command.
 
@@ -302,7 +302,7 @@ class CerberusGateCLI:
         except Exception as e:
             return ResolveResult(success=False, error_detail=str(e))
 
-    async def check_diff_empty(self, diff_range: str, runner: CommandRunner) -> bool:
+    async def check_diff_empty(self, diff_range: str, runner: CommandRunnerPort) -> bool:
         """Check if the diff range has no changes.
 
         Uses git diff --stat to check if there are any changes in the range.
@@ -310,7 +310,7 @@ class CerberusGateCLI:
 
         Args:
             diff_range: Git diff range to check (e.g., "baseline..HEAD").
-            runner: CommandRunner instance to execute git command.
+            runner: CommandRunnerPort instance to execute git command.
 
         Returns:
             True if the diff is empty (no changes), False otherwise.

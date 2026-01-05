@@ -8,12 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from src.domain.lifecycle import LifecycleContext
-from src.infra.hooks import LintCache
 from src.pipeline.idle_retry_policy import (
     IdleTimeoutRetryPolicy,
     RetryConfig,
@@ -23,63 +22,35 @@ from src.pipeline.message_stream_processor import (
     MessageIterationResult,
     MessageIterationState,
 )
-from tests.fakes.sdk_client import FakeSDKClientFactory
+from tests.fakes import FakeLintCache, FakeSDKClientFactory, FakeStreamProcessor
 
 if TYPE_CHECKING:
     from src.infra.telemetry import TelemetrySpan
-    from src.pipeline.message_stream_processor import IdleTimeoutStream
+    from src.pipeline.message_stream_processor import (
+        IdleTimeoutStream,
+        LintCacheProtocol,
+    )
 
 
 # --- Fake/Mock helpers ---
 
 
-def _create_mock_lint_cache() -> MagicMock:
-    """Create a MagicMock that satisfies the LintCache interface."""
-    mock = MagicMock(spec=LintCache)
-    mock.detect_lint_command.return_value = None
-    return mock
-
-
-@dataclass
-class ProcessStreamCallTracker:
-    """Tracks calls to process_stream and controls return behavior."""
-
-    call_count: int = 0
-    timeout_until: int = 0
-    success_session_id: str = "test-session"
-    modify_state_tool_calls: int | None = None
-
-    async def __call__(
-        self,
-        stream: IdleTimeoutStream,
-        issue_id: str,
-        state: MessageIterationState,
-        lifecycle_ctx: LifecycleContext,
-        lint_cache: LintCache,
-        query_start: float,
-        tracer: TelemetrySpan | None,
-    ) -> MessageIterationResult:
-        self.call_count += 1
-        if self.modify_state_tool_calls is not None:
-            state.tool_calls_this_turn = self.modify_state_tool_calls
-        if self.call_count <= self.timeout_until:
-            raise IdleTimeoutError("idle timeout")
-        return MessageIterationResult(success=True, session_id=self.success_session_id)
-
-
 @dataclass
 class StateCaptureTracker:
-    """Captures state values when process_stream is called."""
+    """Captures state values when process_stream is called.
+
+    Wraps as a processor with a process_stream method.
+    """
 
     captured_values: dict[str, object] = field(default_factory=dict)
 
-    async def __call__(
+    async def process_stream(
         self,
         stream: IdleTimeoutStream,
         issue_id: str,
         state: MessageIterationState,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: LintCache,
+        lint_cache: LintCacheProtocol,
         query_start: float,
         tracer: TelemetrySpan | None,
     ) -> MessageIterationResult:
@@ -98,8 +69,8 @@ def sdk_factory() -> FakeSDKClientFactory:
 
 
 @pytest.fixture
-def lint_cache() -> MagicMock:
-    return _create_mock_lint_cache()
+def lint_cache() -> FakeLintCache:
+    return FakeLintCache()
 
 
 @pytest.fixture
@@ -196,14 +167,13 @@ class TestExecuteIterationSuccess:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: MagicMock,
+        lint_cache: FakeLintCache,
     ) -> None:
         """Normal execution returns success with session ID."""
         sdk_factory.configure_next_client(responses=[])
 
-        mock_processor = MagicMock()
-        mock_processor.process_stream = AsyncMock(
-            return_value=MessageIterationResult(
+        processor = FakeStreamProcessor(
+            result=MessageIterationResult(
                 success=True,
                 session_id="test-session-123",
             )
@@ -212,7 +182,7 @@ class TestExecuteIterationSuccess:
         config = RetryConfig(max_idle_retries=0)
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: mock_processor,
+            stream_processor_factory=lambda: processor,
             config=config,
         )
 
@@ -242,17 +212,16 @@ class TestExecuteIterationTimeout:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: MagicMock,
+        lint_cache: FakeLintCache,
     ) -> None:
         """Timeout triggers backoff and retry with resume prompt."""
         sdk_factory.configure_next_client(responses=[])
         sdk_factory.configure_next_client(responses=[])
 
-        tracker = ProcessStreamCallTracker(
-            timeout_until=1, success_session_id="resumed-session"
+        processor = FakeStreamProcessor(
+            timeout_until=1,
+            result=MessageIterationResult(success=True, session_id="resumed-session")
         )
-        mock_processor = MagicMock()
-        mock_processor.process_stream = tracker
 
         config = RetryConfig(
             max_idle_retries=2,
@@ -261,7 +230,7 @@ class TestExecuteIterationTimeout:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: mock_processor,
+            stream_processor_factory=lambda: processor,
             config=config,
         )
 
@@ -298,14 +267,13 @@ class TestExecuteIterationTimeout:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: MagicMock,
+        lint_cache: FakeLintCache,
     ) -> None:
         """Max retries exceeded raises IdleTimeoutError."""
         for _ in range(3):
             sdk_factory.configure_next_client(responses=[])
 
-        mock_processor = MagicMock()
-        mock_processor.process_stream = AsyncMock(
+        processor = FakeStreamProcessor(
             side_effect=IdleTimeoutError("idle for 300 seconds")
         )
 
@@ -316,7 +284,7 @@ class TestExecuteIterationTimeout:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: mock_processor,
+            stream_processor_factory=lambda: processor,
             config=config,
         )
 
@@ -347,20 +315,19 @@ class TestRetryConfigZeroMaxRetries:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: MagicMock,
+        lint_cache: FakeLintCache,
     ) -> None:
         """max_idle_retries=0 causes immediate failure on first timeout."""
         sdk_factory.configure_next_client(responses=[])
 
-        mock_processor = MagicMock()
-        mock_processor.process_stream = AsyncMock(
+        processor = FakeStreamProcessor(
             side_effect=IdleTimeoutError("idle for 300 seconds")
         )
 
         config = RetryConfig(max_idle_retries=0)
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: mock_processor,
+            stream_processor_factory=lambda: processor,
             config=config,
         )
 
@@ -390,7 +357,7 @@ class TestBackoffTiming:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: MagicMock,
+        lint_cache: FakeLintCache,
     ) -> None:
         """Backoff uses configured delays from idle_retry_backoff."""
         for _ in range(3):
@@ -401,11 +368,10 @@ class TestBackoffTiming:
         async def mock_sleep(delay: float) -> None:
             sleep_calls.append(delay)
 
-        tracker = ProcessStreamCallTracker(
-            timeout_until=2, success_session_id="final-session"
+        processor = FakeStreamProcessor(
+            timeout_until=2,
+            result=MessageIterationResult(success=True, session_id="final-session")
         )
-        mock_processor = MagicMock()
-        mock_processor.process_stream = tracker
 
         config = RetryConfig(
             max_idle_retries=2,
@@ -414,7 +380,7 @@ class TestBackoffTiming:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: mock_processor,
+            stream_processor_factory=lambda: processor,
             config=config,
         )
 
@@ -444,7 +410,7 @@ class TestBackoffTiming:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: MagicMock,
+        lint_cache: FakeLintCache,
     ) -> None:
         """Backoff reuses last entry when retry count exceeds backoff length."""
         for _ in range(4):
@@ -455,11 +421,10 @@ class TestBackoffTiming:
         async def mock_sleep(delay: float) -> None:
             sleep_calls.append(delay)
 
-        tracker = ProcessStreamCallTracker(
-            timeout_until=3, success_session_id="final-session"
+        processor = FakeStreamProcessor(
+            timeout_until=3,
+            result=MessageIterationResult(success=True, session_id="final-session")
         )
-        mock_processor = MagicMock()
-        mock_processor.process_stream = tracker
 
         config = RetryConfig(
             max_idle_retries=3,
@@ -468,7 +433,7 @@ class TestBackoffTiming:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: mock_processor,
+            stream_processor_factory=lambda: processor,
             config=config,
         )
 
@@ -504,17 +469,16 @@ class TestRetryWithoutSessionId:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: MagicMock,
+        lint_cache: FakeLintCache,
     ) -> None:
         """Retry without session_id and no tool calls keeps original query."""
         sdk_factory.configure_next_client(responses=[])
         sdk_factory.configure_next_client(responses=[])
 
-        tracker = ProcessStreamCallTracker(
-            timeout_until=1, success_session_id="new-session"
+        processor = FakeStreamProcessor(
+            timeout_until=1,
+            result=MessageIterationResult(success=True, session_id="new-session")
         )
-        mock_processor = MagicMock()
-        mock_processor.process_stream = tracker
 
         config = RetryConfig(
             max_idle_retries=1,
@@ -523,7 +487,7 @@ class TestRetryWithoutSessionId:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: mock_processor,
+            stream_processor_factory=lambda: processor,
             config=config,
         )
 
@@ -548,14 +512,28 @@ class TestRetryWithoutSessionId:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: MagicMock,
+        lint_cache: FakeLintCache,
     ) -> None:
         """Retry with tool calls but no session_id raises IdleTimeoutError."""
         sdk_factory.configure_next_client(responses=[])
 
-        tracker = ProcessStreamCallTracker(timeout_until=999, modify_state_tool_calls=3)
-        mock_processor = MagicMock()
-        mock_processor.process_stream = tracker
+        class ToolCallModifyingProcessor:
+            """Processor that modifies tool_calls_this_turn before raising timeout."""
+
+            async def process_stream(
+                self,
+                stream: IdleTimeoutStream,
+                issue_id: str,
+                state: MessageIterationState,
+                lifecycle_ctx: LifecycleContext,
+                lint_cache: LintCacheProtocol,
+                query_start: float,
+                tracer: TelemetrySpan | None,
+            ) -> MessageIterationResult:
+                state.tool_calls_this_turn = 3
+                raise IdleTimeoutError("idle timeout")
+
+        processor = ToolCallModifyingProcessor()
 
         config = RetryConfig(
             max_idle_retries=2,
@@ -564,7 +542,7 @@ class TestRetryWithoutSessionId:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: mock_processor,
+            stream_processor_factory=lambda: processor,
             config=config,
         )
 
@@ -593,20 +571,19 @@ class TestDisconnectBehavior:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: MagicMock,
+        lint_cache: FakeLintCache,
     ) -> None:
         """Client disconnect is called when timeout occurs."""
         sdk_factory.configure_next_client(responses=[])
 
-        mock_processor = MagicMock()
-        mock_processor.process_stream = AsyncMock(
+        processor = FakeStreamProcessor(
             side_effect=IdleTimeoutError("idle timeout")
         )
 
         config = RetryConfig(max_idle_retries=0)
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: mock_processor,
+            stream_processor_factory=lambda: processor,
             config=config,
         )
 
@@ -635,19 +612,17 @@ class TestStateManagement:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: MagicMock,
+        lint_cache: FakeLintCache,
     ) -> None:
         """State fields are reset at the start of execute_iteration."""
         sdk_factory.configure_next_client(responses=[])
 
         tracker = StateCaptureTracker()
-        mock_processor = MagicMock()
-        mock_processor.process_stream = tracker
 
         config = RetryConfig(max_idle_retries=0)
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: mock_processor,
+            stream_processor_factory=lambda: tracker,
             config=config,
         )
 
@@ -677,40 +652,43 @@ class TestStateManagement:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: MagicMock,
+        lint_cache: FakeLintCache,
     ) -> None:
         """pending_lint_commands are cleared when retrying after idle timeout."""
         # First attempt: times out; second: succeeds
         for _ in range(2):
             sdk_factory.configure_next_client(responses=[])
 
-        call_count = 0
-        captured_on_retry: dict[str, object] = {}
+        class RetryStateCaptureProcessor:
+            """Processor that captures state on retry."""
 
-        async def capture_on_retry(
-            stream: IdleTimeoutStream,
-            issue_id: str,
-            state: MessageIterationState,
-            lifecycle_ctx: LifecycleContext,
-            lint_cache: LintCache,
-            query_start: float,
-            tracer: TelemetrySpan | None,
-        ) -> MessageIterationResult:
-            nonlocal call_count, captured_on_retry
-            call_count += 1
-            if call_count == 1:
-                # First attempt: populate stale lint commands, then timeout
-                state.pending_lint_commands["tool-abc"] = ("ruff", "ruff check .")
-                raise IdleTimeoutError("idle timeout")
-            # Second attempt: capture state after retry preparation
-            captured_on_retry["pending_lint_commands"] = (
-                state.pending_lint_commands.copy()
-            )
-            captured_on_retry["pending_tool_ids"] = state.pending_tool_ids.copy()
-            return MessageIterationResult(success=True, session_id="sess")
+            def __init__(self) -> None:
+                self.call_count = 0
+                self.captured_on_retry: dict[str, object] = {}
 
-        mock_processor = MagicMock()
-        mock_processor.process_stream = capture_on_retry
+            async def process_stream(
+                self,
+                stream: IdleTimeoutStream,
+                issue_id: str,
+                state: MessageIterationState,
+                lifecycle_ctx: LifecycleContext,
+                lint_cache: LintCacheProtocol,
+                query_start: float,
+                tracer: TelemetrySpan | None,
+            ) -> MessageIterationResult:
+                self.call_count += 1
+                if self.call_count == 1:
+                    # First attempt: populate stale lint commands, then timeout
+                    state.pending_lint_commands["tool-abc"] = ("ruff", "ruff check .")
+                    raise IdleTimeoutError("idle timeout")
+                # Second attempt: capture state after retry preparation
+                self.captured_on_retry["pending_lint_commands"] = (
+                    state.pending_lint_commands.copy()
+                )
+                self.captured_on_retry["pending_tool_ids"] = state.pending_tool_ids.copy()
+                return MessageIterationResult(success=True, session_id="sess")
+
+        processor = RetryStateCaptureProcessor()
 
         config = RetryConfig(
             max_idle_retries=1,
@@ -719,7 +697,7 @@ class TestStateManagement:
         )
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=sdk_factory,
-            stream_processor_factory=lambda: mock_processor,
+            stream_processor_factory=lambda: processor,
             config=config,
         )
 
@@ -736,6 +714,6 @@ class TestStateManagement:
             idle_timeout_seconds=300.0,
         )
 
-        assert call_count == 2
-        assert captured_on_retry["pending_lint_commands"] == {}
-        assert captured_on_retry["pending_tool_ids"] == set()
+        assert processor.call_count == 2
+        assert processor.captured_on_retry["pending_lint_commands"] == {}
+        assert processor.captured_on_retry["pending_tool_ids"] == set()
