@@ -983,10 +983,17 @@ def run(
 
     repo_path = repo_path.resolve()
 
-    # Handle --scope option
+    # Handle --scope option (new flag takes precedence over old flags)
     scope_config: ScopeConfig | None = None
     if scope is not None:
         scope_config = parse_scope(scope)
+        # Apply scope_config to override old flags when --scope is used
+        if scope_config.scope_type == "epic" and scope_config.epic_id is not None:
+            epic = scope_config.epic_id
+        elif scope_config.scope_type == "ids" and scope_config.ids is not None:
+            only = ",".join(scope_config.ids)
+        elif scope_config.scope_type == "orphans":
+            orphans_only = True
 
     # Parse and validate --order option
     order_preference = _lazy("OrderPreference").FOCUS  # default
