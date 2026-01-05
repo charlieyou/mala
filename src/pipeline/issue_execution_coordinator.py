@@ -515,6 +515,7 @@ class IssueExecutionCoordinator:
                         if t.done():
                             await finalize_callback(issue_id, t)
                             watch_state.completed_count += 1
+                await abort_callback()
                 # Run final validation if needed
                 exit_code = 130
                 if watch_state.completed_count > watch_state.last_validation_at:
