@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 import time
 import uuid
 from typing import TYPE_CHECKING
@@ -76,7 +77,7 @@ from src.orchestration.review_tracking import create_review_tracking_issues
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from src.core.protocols import (
@@ -95,7 +96,7 @@ if TYPE_CHECKING:
     from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
     from src.pipeline.issue_finalizer import IssueFinalizer
 
-    from .types import OrchestratorConfig, _DerivedConfig
+    from .types import OrchestratorConfig, RunResult, WatchConfig, _DerivedConfig
 
 
 # Version (from package metadata)
@@ -730,11 +731,26 @@ class MalaOrchestrator:
         self.event_sink.on_agent_started(issue_id, issue_id)
         return task
 
-    async def _run_main_loop(self, run_metadata: RunMetadata) -> int:
+    async def _run_main_loop(
+        self,
+        run_metadata: RunMetadata,
+        *,
+        watch_config: WatchConfig | None = None,
+        interrupt_event: asyncio.Event | None = None,
+        validation_callback: Callable[[], Awaitable[bool]] | None = None,
+    ) -> RunResult:
         """Run the main agent spawning and completion loop.
 
         Delegates to IssueExecutionCoordinator for the main loop logic.
-        Returns the number of issues spawned.
+
+        Args:
+            run_metadata: Metadata for the current run.
+            watch_config: Watch mode configuration.
+            interrupt_event: Event set to signal graceful shutdown (e.g., SIGINT).
+            validation_callback: Called periodically in watch mode to run validation.
+
+        Returns:
+            RunResult with issues_spawned, exit_code, and exit_reason.
         """
 
         async def finalize_callback(
@@ -771,12 +787,14 @@ class MalaOrchestrator:
             """Abort all active tasks."""
             await self._abort_active_tasks(run_metadata)
 
-        result = await self.issue_coordinator.run_loop(
+        return await self.issue_coordinator.run_loop(
             spawn_callback=self.spawn_agent,
             finalize_callback=finalize_callback,
             abort_callback=abort_callback,
+            watch_config=watch_config,
+            interrupt_event=interrupt_event,
+            validation_callback=validation_callback,
         )
-        return result.issues_spawned
 
     async def _finalize_run(
         self,
@@ -868,9 +886,35 @@ class MalaOrchestrator:
             max_agents=self.max_agents,
         )
 
+        # Create interrupt event for SIGINT handling
+        interrupt_event = asyncio.Event()
+
+        # Install SIGINT handler
+        def handle_sigint(sig: int, frame: object) -> None:
+            interrupt_event.set()
+
+        original_handler = signal.signal(signal.SIGINT, handle_sigint)
+
         try:
+            # Create validation callback wrapping RunCoordinator
+            async def validation_callback() -> bool:
+                success_count = sum(1 for r in self._state.completed if r.success)
+                if success_count == 0 or self.abort_run:
+                    return True
+                validation_input = RunLevelValidationInput(run_metadata=run_metadata)
+                validation_output = await self.run_coordinator.run_validation(
+                    validation_input
+                )
+                return validation_output.passed
+
             try:
-                await self._run_main_loop(run_metadata)
+                loop_result = await self._run_main_loop(
+                    run_metadata,
+                    interrupt_event=interrupt_event,
+                    validation_callback=validation_callback,
+                )
+                # Store exit code for T008 CLI integration (currently unused)
+                _ = loop_result.exit_code
             finally:
                 lock_releaser = (
                     self._lock_releaser
@@ -897,6 +941,8 @@ class MalaOrchestrator:
 
             return await self._finalize_run(run_metadata, run_validation_passed)
         finally:
+            # Restore original SIGINT handler
+            signal.signal(signal.SIGINT, original_handler)
             # Clean up debug logging handler after all finalization is complete
             # (idempotent - safe to call even if save() is called later)
             run_metadata.cleanup()
