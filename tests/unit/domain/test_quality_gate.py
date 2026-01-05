@@ -8,7 +8,6 @@ Tests for:
 import json
 from pathlib import Path
 from typing import cast
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -39,11 +38,32 @@ def mock_command_runner() -> FakeCommandRunner:
     return FakeCommandRunner(allow_unregistered=True)
 
 
-def make_mock_command_runner(result: CommandResult) -> MagicMock:
-    """Create a mock CommandRunnerPort that returns a fixed result."""
-    mock_runner = MagicMock()
-    mock_runner.run.return_value = result
-    return mock_runner
+def make_git_log_response_runner(
+    issue_id: str, result: CommandResult, *, with_timestamp: bool = False
+) -> FakeCommandRunner:
+    """Create a FakeCommandRunner that returns a fixed result for git log commands.
+
+    Args:
+        issue_id: The issue ID (without bd- prefix) to match in git log.
+        result: The CommandResult to return for the git log command.
+        with_timestamp: If True, uses the format with timestamp (%h %ct %s).
+                       If False, uses format without timestamp (%h %s).
+
+    Returns:
+        FakeCommandRunner with the git log command registered.
+    """
+    format_str = "%h %ct %s" if with_timestamp else "%h %s"
+    git_cmd = (
+        "git",
+        "log",
+        f"--format={format_str}",
+        "--grep",
+        f"bd-{issue_id}",
+        "-n",
+        "1",
+        "--since=30 days ago",
+    )
+    return FakeCommandRunner(responses={git_cmd: result}, allow_unregistered=True)
 
 
 def make_evidence(
@@ -733,15 +753,17 @@ class TestCommitBaselineCheck:
         """Should reject commits created before the baseline timestamp."""
         from src.domain.quality_gate import QualityGate
 
-        mock_runner = make_mock_command_runner(
+        fake_runner = make_git_log_response_runner(
+            "issue-123",
             CommandResult(
                 command=[],
                 returncode=0,
                 stdout="abc1234 1703500000 bd-issue-123: Old fix\n",
                 stderr="",
-            )
+            ),
+            with_timestamp=True,
         )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
 
         # Baseline makes the commit stale
         result = gate.check_commit_exists("issue-123", baseline_timestamp=1703501000)
@@ -757,15 +779,17 @@ class TestCommitBaselineCheck:
         """Should accept commits created after the baseline timestamp."""
         from src.domain.quality_gate import QualityGate
 
-        mock_runner = make_mock_command_runner(
+        fake_runner = make_git_log_response_runner(
+            "issue-123",
             CommandResult(
                 command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-issue-123: New fix\n",
                 stderr="",
-            )
+            ),
+            with_timestamp=True,
         )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
 
         # Baseline allows the newer commit
         result = gate.check_commit_exists("issue-123", baseline_timestamp=1703501000)
@@ -782,15 +806,17 @@ class TestCommitBaselineCheck:
         """Should accept any matching commit when no baseline is provided (backward compat)."""
         from src.domain.quality_gate import QualityGate
 
-        mock_runner = make_mock_command_runner(
+        fake_runner = make_git_log_response_runner(
+            "issue-123",
             CommandResult(
                 command=[],
                 returncode=0,
                 stdout="abc1234 bd-issue-123: Old fix\n",
                 stderr="",
-            )
+            ),
+            with_timestamp=False,
         )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
 
         # No baseline - accepts any commit
         result = gate.check_commit_exists("issue-123")
@@ -839,16 +865,18 @@ class TestCommitBaselineCheck:
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
-        # Create gate with mock command runner returning stale commit
-        mock_runner = make_mock_command_runner(
+        # Create gate with fake command runner returning stale commit
+        fake_runner = make_git_log_response_runner(
+            "issue-123",
             CommandResult(
                 command=[],
                 returncode=0,
                 stdout="abc1234 1703500000 bd-issue-123: Old fix\n",
                 stderr="",
-            )
+            ),
+            with_timestamp=True,
         )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
 
         # Baseline makes the commit stale
         result = gate.check_with_resolution(
@@ -905,16 +933,18 @@ class TestCommitBaselineCheck:
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
-        # Create gate with mock command runner returning new commit
-        mock_runner = make_mock_command_runner(
+        # Create gate with fake command runner returning new commit
+        fake_runner = make_git_log_response_runner(
+            "issue-123",
             CommandResult(
                 command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-issue-123: New fix\n",
                 stderr="",
-            )
+            ),
+            with_timestamp=True,
         )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
 
         # Baseline allows the newer commit
         result = gate.check_with_resolution(
@@ -1173,11 +1203,9 @@ class TestScopeAwareEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        # Create mock command runner for clean working tree
-        mock_runner = make_mock_command_runner(
-            CommandResult(command=[], returncode=0, stdout="", stderr="")
-        )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        # Create fake command runner for clean working tree
+        fake_runner = FakeCommandRunner(allow_unregistered=True)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -1219,11 +1247,9 @@ class TestScopeAwareEvidence:
         )
         log_path.write_text(log_content + "\n")
 
-        # Create mock command runner for clean working tree
-        mock_runner = make_mock_command_runner(
-            CommandResult(command=[], returncode=0, stdout="", stderr="")
-        )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        # Create fake command runner for clean working tree
+        fake_runner = FakeCommandRunner(allow_unregistered=True)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -1339,11 +1365,9 @@ class TestEvidenceGateSkipsValidation:
         )
         log_path.write_text(log_content + "\n")
 
-        # Create mock command runner
-        mock_runner = make_mock_command_runner(
-            CommandResult(command=[], returncode=0, stdout="", stderr="")
-        )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        # Create fake command runner
+        fake_runner = FakeCommandRunner(allow_unregistered=True)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -1401,9 +1425,6 @@ class TestClearFailureMessages:
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Failure for missing commit should be descriptive."""
-        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         log_path = tmp_path / "session.jsonl"
         # Log with all validation commands but no actual commit made
         commands = [
@@ -1435,11 +1456,11 @@ class TestClearFailureMessages:
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-        # Create gate with mock command runner - no commit found
-        mock_runner = make_mock_command_runner(
-            CommandResult(command=[], returncode=0, stdout="", stderr="")
-        )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        # Create gate with fake command runner - no commit found
+        fake_runner = FakeCommandRunner(allow_unregistered=True)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
+        # Mock git status to return clean (no changes)
+        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
         result = gate.check_with_resolution("missing-commit-123", log_path, spec=spec)
 
@@ -1478,13 +1499,15 @@ class TestClearFailureMessages:
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
-        # Create gate with mock command runner - commit found
-        mock_runner = make_mock_command_runner(
+        # Create gate with fake command runner - commit found
+        fake_runner = make_git_log_response_runner(
+            "test-123",
             CommandResult(
                 command=[], returncode=0, stdout="abc1234 bd-test-123: Fix\n", stderr=""
-            )
+            ),
+            with_timestamp=False,
         )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
 
@@ -1517,11 +1540,9 @@ class TestClearFailureMessages:
         )
         log_path.write_text(log_content + "\n")
 
-        # Create mock command runner for clean working tree
-        mock_runner = make_mock_command_runner(
-            CommandResult(command=[], returncode=0, stdout="", stderr="")
-        )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        # Create fake command runner for clean working tree
+        fake_runner = FakeCommandRunner(allow_unregistered=True)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -1716,16 +1737,18 @@ class TestCheckWithResolutionSpec:
             disable_validations={"post-validate"},
         )
 
-        # Create gate with mock command runner - commit found
-        mock_runner = make_mock_command_runner(
+        # Create gate with fake command runner - commit found
+        fake_runner = make_git_log_response_runner(
+            "test-123",
             CommandResult(
                 command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
-            )
+            ),
+            with_timestamp=True,
         )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
 
         result = gate.check_with_resolution(
             issue_id="test-123",
@@ -1872,18 +1895,19 @@ class TestGitFailureHandling:
         mock_command_runner: FakeCommandRunner,
     ) -> None:
         """Git failure should return is_clean=False with error message."""
-        # Create mock command runner that returns git failure
-        mock_runner = make_mock_command_runner(
-            CommandResult(
-                command=[],
-                returncode=128,  # Git failure
-                stdout="",
-                stderr="fatal: not a git repository",
-            )
+        # Create fake command runner that returns git failure
+        git_status_cmd = ("git", "status", "--porcelain")
+        fake_runner = FakeCommandRunner(
+            responses={
+                git_status_cmd: CommandResult(
+                    command=[],
+                    returncode=128,  # Git failure
+                    stdout="",
+                    stderr="fatal: not a git repository",
+                )
+            }
         )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
-        # Mock git status to return clean (no changes)
-        gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
 
         is_clean, output = gate.check_working_tree_clean()
 
@@ -1995,16 +2019,18 @@ class TestOffsetBasedEvidenceInCheckWithResolution:
 
         log_path.write_text(first_content + "\n".join(second_lines) + "\n")
 
-        # Create gate with mock command runner - commit found
-        mock_runner = make_mock_command_runner(
+        # Create gate with fake command runner - commit found
+        fake_runner = make_git_log_response_runner(
+            "test-123",
             CommandResult(
                 command=[],
                 returncode=0,
                 stdout="abc1234 1703502000 bd-test-123: Fix\n",
                 stderr="",
-            )
+            ),
+            with_timestamp=True,
         )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
@@ -3053,16 +3079,19 @@ class TestAlreadyCompleteResolution:
         )
         log_path.write_text(log_content + "\n")
 
-        # Create gate with mock command runner - commit found under referenced issue
-        mock_runner = make_mock_command_runner(
+        # Create gate with fake command runner - commit found under referenced issue
+        # ALREADY_COMPLETE uses baseline_timestamp=None, so format is "%h %s" (no timestamp)
+        fake_runner = make_git_log_response_runner(
+            "test-123",
             CommandResult(
                 command=[],
                 returncode=0,
-                stdout="238e17f 1703400000 bd-test-123: Old fix\n",
+                stdout="238e17f bd-test-123: Old fix\n",
                 stderr="",
-            )
+            ),
+            with_timestamp=False,
         )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
@@ -3109,18 +3138,20 @@ class TestAlreadyCompleteResolution:
         )
         log_path.write_text(log_content + "\n")
 
-        # Create gate with mock command runner - commit found under referenced issue
-        # Using MagicMock here since the git log command has dynamic args that
-        # are hard to match exactly with FakeCommandRunner
-        mock_runner = make_mock_command_runner(
+        # Create gate with fake command runner - commit found under referenced issue
+        # The test verifies git log searches for the referenced issue (mala-xyz) from rationale
+        # ALREADY_COMPLETE uses baseline_timestamp=None, so format is "%h %s" (no timestamp)
+        fake_runner = make_git_log_response_runner(
+            "mala-xyz",
             CommandResult(
                 command=[],
                 returncode=0,
-                stdout="238e17f 1703400000 bd-test-123: Old fix\n",
+                stdout="238e17f bd-mala-xyz: Old fix\n",
                 stderr="",
-            )
+            ),
+            with_timestamp=False,
         )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
@@ -3138,11 +3169,8 @@ class TestAlreadyCompleteResolution:
         assert result.commit_hash == "238e17f"
         # Verify git log was called searching for the referenced issue ID (bd-mala-xyz)
         # not the current issue (test-123) - this ensures duplicate detection works
-        run_calls = [call[0][0] for call in mock_runner.run.call_args_list]
-        git_log_calls = [cmd for cmd in run_calls if "git" in cmd and "log" in cmd]
-        # Check if issue ID appears in any arg (handles both "bd-mala-xyz" and "--grep=bd-mala-xyz")
-        assert any(any("bd-mala-xyz" in arg for arg in cmd) for cmd in git_log_calls), (
-            f"Expected git log to search for 'bd-mala-xyz' but got: {git_log_calls}"
+        assert fake_runner.has_call_containing("bd-mala-xyz"), (
+            f"Expected git log to search for 'bd-mala-xyz' but got: {fake_runner.calls}"
         )
 
     def test_already_complete_referenced_issue_not_found(
@@ -3168,16 +3196,9 @@ class TestAlreadyCompleteResolution:
         )
         log_path.write_text(log_content + "\n")
 
-        # Create gate with mock command runner - no commit found
-        mock_runner = make_mock_command_runner(
-            CommandResult(
-                command=[],
-                returncode=0,
-                stdout="",
-                stderr="",
-            )
-        )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        # Create gate with fake command runner - no commit found
+        fake_runner = FakeCommandRunner(allow_unregistered=True)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
@@ -3488,14 +3509,11 @@ class TestLogProviderInjection:
         ]
 
         mock_provider = MockLogProvider(mock_entries)
-        mock_cmd_runner = MagicMock()
-        mock_cmd_runner.run.return_value = CommandResult(
-            command=["git", "status"], returncode=0, stdout="", stderr=""
-        )
+        fake_cmd_runner = FakeCommandRunner(allow_unregistered=True)
         gate = QualityGate(
             tmp_path,
             log_provider=cast("LogProvider", mock_provider),
-            command_runner=mock_cmd_runner,
+            command_runner=fake_cmd_runner,
         )
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
@@ -3535,14 +3553,11 @@ class TestLogProviderInjection:
                 return 42  # Return known value to verify delegation
 
         mock_provider = MockLogProvider()
-        mock_cmd_runner = MagicMock()
-        mock_cmd_runner.run.return_value = CommandResult(
-            command=["git", "status"], returncode=0, stdout="", stderr=""
-        )
+        fake_cmd_runner = FakeCommandRunner(allow_unregistered=True)
         gate = QualityGate(
             tmp_path,
             log_provider=cast("LogProvider", mock_provider),
-            command_runner=mock_cmd_runner,
+            command_runner=fake_cmd_runner,
         )
         # Mock git status to return clean (no changes)
         gate._has_working_tree_changes = lambda: False  # type: ignore[method-assign]
