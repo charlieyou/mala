@@ -3,8 +3,6 @@
 Ensures FakeEventSink implements all methods of MalaEventSink protocol.
 """
 
-import inspect
-
 import pytest
 
 from src.core.protocols import MalaEventSink
@@ -16,13 +14,13 @@ def test_fake_event_sink_implements_all_protocol_methods() -> None:
     """FakeEventSink must implement all public methods of MalaEventSink."""
     protocol_methods = {
         name
-        for name, _ in inspect.getmembers(MalaEventSink, predicate=inspect.isfunction)
-        if not name.startswith("_")
+        for name in dir(MalaEventSink)
+        if not name.startswith("_") and callable(getattr(MalaEventSink, name, None))
     }
     fake_methods = {
         name
-        for name, _ in inspect.getmembers(FakeEventSink, predicate=inspect.isfunction)
-        if not name.startswith("_")
+        for name in dir(FakeEventSink)
+        if not name.startswith("_") and callable(getattr(FakeEventSink, name, None))
     }
 
     missing = protocol_methods - fake_methods
