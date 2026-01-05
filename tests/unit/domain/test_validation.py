@@ -533,7 +533,8 @@ class TestSpecValidationRunner:
 
         # Verify command was called with test-mutex.sh wrapper and pytest in same call
         assert any(
-            "test-mutex.sh" in " ".join(c) and "pytest" in " ".join(c)
+            "test-mutex.sh" in " ".join(map(str, c))
+            and "pytest" in " ".join(map(str, c))
             for c, _ in fake_runner.calls
         )
 
@@ -2743,7 +2744,8 @@ class TestSpecCommandExecutor:
 
         # Verify test-mutex.sh wrapper was used with pytest command in same call
         assert any(
-            "test-mutex.sh" in " ".join(c) and "pytest" in " ".join(c)
+            "test-mutex.sh" in " ".join(map(str, c))
+            and "pytest" in " ".join(map(str, c))
             for c, _ in fake_runner.calls
         )
 
