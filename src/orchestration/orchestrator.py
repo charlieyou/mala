@@ -855,6 +855,7 @@ class MalaOrchestrator:
         """
         # Reset per-run state to ensure clean state if orchestrator is reused
         self._state = OrchestratorState()
+        self._exit_code = 0
 
         run_config = build_event_run_config(
             repo_path=self.repo_path,
@@ -948,9 +949,12 @@ class MalaOrchestrator:
                 )
                 exit_code = loop_result.exit_code
             except asyncio.CancelledError:
-                # SIGINT cancelled the main task - gracefully exit with 130
-                exit_code = 130
-                interrupted = True
+                # Only treat as SIGINT if interrupt_event is set; otherwise re-raise
+                if interrupt_event.is_set():
+                    exit_code = 130
+                    interrupted = True
+                else:
+                    raise
             finally:
                 lock_releaser = (
                     self._lock_releaser
@@ -975,14 +979,23 @@ class MalaOrchestrator:
             success_count = sum(1 for r in self._state.completed if r.success)
             run_validation_passed = True
             if success_count > 0 and not self.abort_run:
-                validation_input = RunLevelValidationInput(run_metadata=run_metadata)
-                validation_output = await self.run_coordinator.run_validation(
-                    validation_input
-                )
-                run_validation_passed = validation_output.passed
+                try:
+                    validation_input = RunLevelValidationInput(
+                        run_metadata=run_metadata
+                    )
+                    validation_output = await self.run_coordinator.run_validation(
+                        validation_input
+                    )
+                    run_validation_passed = validation_output.passed
+                except asyncio.CancelledError:
+                    # SIGINT during validation - gracefully exit with 130
+                    if interrupt_event.is_set():
+                        self._exit_code = 130
+                        return await self._finalize_run(run_metadata, True)
+                    raise
 
-            # Store exit code for CLI access
-            self._exit_code = exit_code
+            # Store exit code for CLI access (validation failure overrides to 1)
+            self._exit_code = 1 if not run_validation_passed else exit_code
             return await self._finalize_run(run_metadata, run_validation_passed)
         finally:
             # Restore original SIGINT handler
