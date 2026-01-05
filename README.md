@@ -125,7 +125,7 @@ Agents can signal non-implementation resolutions:
 
 File locks are enforced at two levels:
 
-1. **Advisory locks**: Agents acquire locks before editing files via `lock-try.sh`
+1. **MCP locking tools**: Agents acquire locks before editing files via `lock_acquire`/`lock_release` MCP tools
 2. **PreToolUse hook**: Blocks file-write tool calls unless the agent holds the lock
 
 ### Git Safety
