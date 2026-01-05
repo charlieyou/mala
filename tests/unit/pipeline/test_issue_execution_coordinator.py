@@ -30,7 +30,7 @@ class MockIssueProvider:
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
@@ -90,14 +90,14 @@ class TestCoordinatorConfig:
             max_agents=4,
             max_issues=10,
             epic_id="epic-123",
-            only_ids={"issue-1", "issue-2"},
+            only_ids=["issue-1", "issue-2"],
             prioritize_wip=True,
             focus=False,
         )
         assert config.max_agents == 4
         assert config.max_issues == 10
         assert config.epic_id == "epic-123"
-        assert config.only_ids == {"issue-1", "issue-2"}
+        assert config.only_ids == ["issue-1", "issue-2"]
         assert config.prioritize_wip is True
         assert config.focus is False
 
@@ -404,7 +404,7 @@ class CapturingIssueProvider:
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
@@ -438,12 +438,12 @@ class TestOnlyIdsFiltering:
         coord = IssueExecutionCoordinator(
             beads=beads,  # type: ignore[arg-type]
             event_sink=event_sink,  # type: ignore[arg-type]
-            config=CoordinatorConfig(only_ids={"issue-1", "issue-2"}),
+            config=CoordinatorConfig(only_ids=["issue-1", "issue-2"]),
         )
 
         await coord.run_loop(AsyncMock(), AsyncMock(), AsyncMock())
 
-        assert beads.captured_kwargs["only_ids"] == {"issue-1", "issue-2"}
+        assert beads.captured_kwargs["only_ids"] == ["issue-1", "issue-2"]
 
 
 class TestEpicIdFiltering:

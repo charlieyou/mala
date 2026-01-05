@@ -464,7 +464,7 @@ class IssueProvider(Protocol):
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
@@ -475,7 +475,7 @@ class IssueProvider(Protocol):
         Args:
             exclude_ids: Set of issue IDs to exclude from results.
             epic_id: Optional epic ID to filter by - only return children.
-            only_ids: Optional set of issue IDs to include exclusively.
+            only_ids: Optional list of issue IDs to include exclusively.
             suppress_warn_ids: Set of issue IDs to suppress from warnings.
             prioritize_wip: If True, sort in_progress issues first.
             focus: If True, group tasks by parent epic.

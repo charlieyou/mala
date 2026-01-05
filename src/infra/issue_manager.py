@@ -82,7 +82,7 @@ class IssueManager:
         issues: list[dict[str, object]],
         exclude_ids: set[str],
         epic_children: set[str] | None,
-        only_ids: set[str] | None,
+        only_ids: list[str] | None,
     ) -> list[dict[str, object]]:
         """Apply filtering rules to issues.
 
@@ -225,14 +225,14 @@ class IssueManager:
 
     @staticmethod
     def find_missing_ids(
-        only_ids: set[str] | None,
+        only_ids: list[str] | None,
         issues: list[dict[str, object]],
         suppress_ids: set[str],
     ) -> set[str]:
         """Find IDs from only_ids that are not in issues.
 
         Args:
-            only_ids: Set of expected issue IDs (None means no filtering).
+            only_ids: List of expected issue IDs (None means no filtering).
             issues: List of issue dicts to check against.
             suppress_ids: IDs to exclude from the missing set.
 
@@ -241,7 +241,7 @@ class IssueManager:
         """
         if not only_ids:
             return set()
-        return only_ids - {str(i["id"]) for i in issues} - suppress_ids
+        return set(only_ids) - {str(i["id"]) for i in issues} - suppress_ids
 
     @staticmethod
     def filter_orphans_only(

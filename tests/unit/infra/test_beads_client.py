@@ -1103,7 +1103,7 @@ class TestPipelineSteps:
     def test_apply_filters_by_only_ids(self) -> None:
         """_apply_filters includes only specified IDs."""
         issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-        result = BeadsClient._apply_filters(issues, set(), None, {"b"})
+        result = BeadsClient._apply_filters(issues, set(), None, ["b"])
         assert [r["id"] for r in result] == ["b"]
 
     def test_sort_issues_by_priority(self, tmp_path: Path) -> None:
@@ -1326,7 +1326,7 @@ class TestWarnMissingIds:
         beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
 
         issues: list[dict[str, object]] = [{"id": "a"}, {"id": "b"}]
-        beads._warn_missing_ids({"a", "c", "d"}, issues, set())
+        beads._warn_missing_ids(["a", "c", "d"], issues, set())
 
         assert len(warnings) == 1
         assert "c" in warnings[0] and "d" in warnings[0]
@@ -1338,7 +1338,7 @@ class TestWarnMissingIds:
         beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
 
         issues: list[dict[str, object]] = [{"id": "a"}]
-        beads._warn_missing_ids({"a", "b", "c"}, issues, {"b"})
+        beads._warn_missing_ids(["a", "b", "c"], issues, {"b"})
 
         assert len(warnings) == 1
         assert "b" not in warnings[0]
@@ -1351,7 +1351,7 @@ class TestWarnMissingIds:
         beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
 
         issues: list[dict[str, object]] = [{"id": "a"}, {"id": "b"}]
-        beads._warn_missing_ids({"a", "b"}, issues, set())
+        beads._warn_missing_ids(["a", "b"], issues, set())
 
         assert warnings == []
 

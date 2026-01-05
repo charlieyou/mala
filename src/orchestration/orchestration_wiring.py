@@ -131,8 +131,7 @@ def build_issue_coordinator(
         max_agents=filters.max_agents,
         max_issues=filters.max_issues,
         epic_id=filters.epic_id,
-        # Convert list to set for internal pipeline usage
-        only_ids=set(filters.only_ids) if filters.only_ids else None,
+        only_ids=filters.only_ids,
         prioritize_wip=filters.prioritize_wip,
         focus=filters.focus,
         orphans_only=filters.orphans_only,

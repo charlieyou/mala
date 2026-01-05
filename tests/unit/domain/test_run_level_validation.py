@@ -832,7 +832,7 @@ class TestRunLevelValidationIntegration:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
@@ -894,7 +894,7 @@ class TestRunLevelValidationIntegration:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
@@ -972,7 +972,7 @@ class TestRunLevelValidationIntegration:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
@@ -1042,7 +1042,7 @@ class TestRunLevelValidationIntegration:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,

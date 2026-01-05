@@ -74,7 +74,7 @@ class FakeIssueProvider:
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,

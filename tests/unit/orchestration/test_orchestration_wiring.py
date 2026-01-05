@@ -352,7 +352,7 @@ class TestBuildIssueCoordinator:
         assert coordinator.config.max_agents == 4
         assert coordinator.config.max_issues == 10
         assert coordinator.config.epic_id == "test-epic"
-        assert coordinator.config.only_ids == {"issue-1", "issue-2"}
+        assert coordinator.config.only_ids == ["issue-1", "issue-2"]
         assert coordinator.config.prioritize_wip is True
         assert coordinator.config.focus is True
         assert coordinator.config.orphans_only is False

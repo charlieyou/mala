@@ -247,7 +247,7 @@ class BeadsClient:
         issues: list[dict[str, object]],
         exclude_ids: set[str],
         epic_children: set[str] | None,
-        only_ids: set[str] | None,
+        only_ids: list[str] | None,
     ) -> list[dict[str, object]]:
         """Apply only_ids and epic filters (pipeline step 3, pure function).
 
@@ -293,7 +293,7 @@ class BeadsClient:
 
     def _warn_missing_ids(
         self,
-        only_ids: set[str] | None,
+        only_ids: list[str] | None,
         issues: list[dict[str, object]],
         suppress_ids: set[str],
     ) -> None:
@@ -318,7 +318,7 @@ class BeadsClient:
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
@@ -350,7 +350,7 @@ class BeadsClient:
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
@@ -361,7 +361,7 @@ class BeadsClient:
         Args:
             exclude_ids: Set of issue IDs to exclude from results.
             epic_id: Optional epic ID to filter by - only return children of this epic.
-            only_ids: Optional set of issue IDs to include exclusively.
+            only_ids: Optional list of issue IDs to include exclusively.
             suppress_warn_ids: Optional set of issue IDs to suppress from warnings.
             prioritize_wip: If True, sort in_progress issues before open issues.
             focus: If True, group tasks by parent epic and complete one epic at a time.
@@ -390,7 +390,7 @@ class BeadsClient:
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
@@ -404,7 +404,7 @@ class BeadsClient:
         Args:
             exclude_ids: Set of issue IDs to exclude from results.
             epic_id: Optional epic ID to filter by - only return children of this epic.
-            only_ids: Optional set of issue IDs to include exclusively.
+            only_ids: Optional list of issue IDs to include exclusively.
             suppress_warn_ids: Optional set of issue IDs to suppress from warnings.
             prioritize_wip: If True, sort in_progress issues before open issues.
             focus: If True, group tasks by parent epic and complete one epic at a time.
