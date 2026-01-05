@@ -29,7 +29,7 @@ from src.domain.validation import (
 from src.domain.validation.coverage import BaselineCoverageService
 from src.domain.validation.spec_runner import CommandFailure, SpecValidationRunner
 from src.domain.validation.worktree import WorktreeContext, WorktreeState
-from src.infra.tools.command_runner import CommandResult, CommandRunner
+from src.infra.tools.command_runner import CommandResult
 from src.infra.tools.env import EnvConfig
 from tests.fakes import FakeCommandRunner
 
@@ -531,9 +531,11 @@ class TestSpecValidationRunner:
 
         runner._run_spec_sync(spec, context, log_dir=tmp_path)
 
-        # Verify command was called with test-mutex.sh wrapper
-        assert fake_runner.has_call_containing("test-mutex.sh")
-        assert fake_runner.has_call_containing("pytest")
+        # Verify command was called with test-mutex.sh wrapper and pytest in same call
+        assert any(
+            "test-mutex.sh" in " ".join(c) and "pytest" in " ".join(c)
+            for c, _ in fake_runner.calls
+        )
 
     def test_run_spec_writes_log_files(
         self,
@@ -1946,6 +1948,9 @@ class TestSpecRunnerBaselineRefresh:
         """
         from src.domain.validation.config import YamlCoverageConfig
 
+        # Use FakeCommandRunner to capture commands
+        fake_runner = FakeCommandRunner(allow_unregistered=True)
+
         # Create service with custom coverage file path
         coverage_config = YamlCoverageConfig(
             format="xml",
@@ -1954,13 +1959,12 @@ class TestSpecRunnerBaselineRefresh:
             command="uv run pytest --cov=src --cov-report=xml",  # Default path
         )
         env_config = EnvConfig()
-        command_runner = CommandRunner(cwd=tmp_path)
         lock_manager = make_mock_lock_manager()
         service = BaselineCoverageService(
             tmp_path,
             coverage_config=coverage_config,
             env_config=env_config,
-            command_runner=command_runner,
+            command_runner=fake_runner,
             lock_manager=lock_manager,
         )
 
@@ -1990,32 +1994,6 @@ class TestSpecRunnerBaselineRefresh:
             '<?xml version="1.0"?>\n<coverage line-rate="0.88" branch-rate="0.82" />'
         )
 
-        # Capture the command that was run
-        captured_commands: list[list[str]] = []
-
-        def mock_popen_capture(
-            cmd: list[str], *args: object, **kwargs: object
-        ) -> MagicMock:
-            captured_commands.append(cmd)
-            mock = MagicMock()
-            mock.communicate.return_value = ("ok", "")
-            mock.returncode = 0
-            mock.stdout = MagicMock()
-            mock.stderr = MagicMock()
-            mock.stdout.close = MagicMock()
-            mock.stderr.close = MagicMock()
-            mock.wait = MagicMock(return_value=0)
-            return mock
-
-        def mock_git_run(args: list[str], **kwargs: object) -> CommandResult:
-            if "status" in args and "--porcelain" in args:
-                return CommandResult(command=args, returncode=0, stdout="", stderr="")
-            elif "log" in args:
-                return CommandResult(
-                    command=args, returncode=0, stdout="1700000000\n", stderr=""
-                )
-            return CommandResult(command=args, returncode=0, stdout="", stderr="")
-
         with (
             patch(
                 "src.domain.validation.worktree.create_worktree",
@@ -2026,20 +2004,18 @@ class TestSpecRunnerBaselineRefresh:
                 return_value=mock_worktree,
             ),
             patch(
-                "src.infra.tools.command_runner.subprocess.Popen",
-                side_effect=mock_popen_capture,
-            ),
-            patch(
                 "src.domain.validation.coverage.is_baseline_stale", return_value=False
             ),
             patch("src.infra.tools.locking.try_lock", return_value=True),
         ):
             service.refresh_if_stale(spec)
 
-        # Find the pytest command
-        pytest_cmds = [c for c in captured_commands if "pytest" in c]
+        # Find the pytest command from captured calls
+        pytest_cmds = [
+            cmd_tuple for cmd_tuple, _ in fake_runner.calls if "pytest" in cmd_tuple
+        ]
         assert len(pytest_cmds) >= 1, (
-            f"Expected pytest command, got: {captured_commands}"
+            f"Expected pytest command, got: {fake_runner.calls}"
         )
 
         pytest_cmd = pytest_cmds[-1]  # The actual pytest run (not uv sync)
@@ -2067,6 +2043,9 @@ class TestSpecRunnerBaselineRefresh:
         """
         from src.domain.validation.config import YamlCoverageConfig
 
+        # Use FakeCommandRunner to capture commands
+        fake_runner = FakeCommandRunner(allow_unregistered=True)
+
         # Create service with custom coverage file path
         coverage_config = YamlCoverageConfig(
             format="xml",
@@ -2075,13 +2054,12 @@ class TestSpecRunnerBaselineRefresh:
             command="uv run pytest --cov=src --cov-report=xml:old.xml",  # Different path
         )
         env_config = EnvConfig()
-        command_runner = CommandRunner(cwd=tmp_path)
         lock_manager = make_mock_lock_manager()
         service = BaselineCoverageService(
             tmp_path,
             coverage_config=coverage_config,
             env_config=env_config,
-            command_runner=command_runner,
+            command_runner=fake_runner,
             lock_manager=lock_manager,
         )
 
@@ -2111,32 +2089,6 @@ class TestSpecRunnerBaselineRefresh:
             '<?xml version="1.0"?>\n<coverage line-rate="0.75" branch-rate="0.70" />'
         )
 
-        # Capture the command that was run
-        captured_commands: list[list[str]] = []
-
-        def mock_popen_capture(
-            cmd: list[str], *args: object, **kwargs: object
-        ) -> MagicMock:
-            captured_commands.append(cmd)
-            mock = MagicMock()
-            mock.communicate.return_value = ("ok", "")
-            mock.returncode = 0
-            mock.stdout = MagicMock()
-            mock.stderr = MagicMock()
-            mock.stdout.close = MagicMock()
-            mock.stderr.close = MagicMock()
-            mock.wait = MagicMock(return_value=0)
-            return mock
-
-        def mock_git_run(args: list[str], **kwargs: object) -> CommandResult:
-            if "status" in args and "--porcelain" in args:
-                return CommandResult(command=args, returncode=0, stdout="", stderr="")
-            elif "log" in args:
-                return CommandResult(
-                    command=args, returncode=0, stdout="1700000000\n", stderr=""
-                )
-            return CommandResult(command=args, returncode=0, stdout="", stderr="")
-
         with (
             patch(
                 "src.domain.validation.worktree.create_worktree",
@@ -2147,20 +2099,18 @@ class TestSpecRunnerBaselineRefresh:
                 return_value=mock_worktree,
             ),
             patch(
-                "src.infra.tools.command_runner.subprocess.Popen",
-                side_effect=mock_popen_capture,
-            ),
-            patch(
                 "src.domain.validation.coverage.is_baseline_stale", return_value=False
             ),
             patch("src.infra.tools.locking.try_lock", return_value=True),
         ):
             service.refresh_if_stale(spec)
 
-        # Find the pytest command
-        pytest_cmds = [c for c in captured_commands if "pytest" in c]
+        # Find the pytest command from captured calls
+        pytest_cmds = [
+            cmd_tuple for cmd_tuple, _ in fake_runner.calls if "pytest" in cmd_tuple
+        ]
         assert len(pytest_cmds) >= 1, (
-            f"Expected pytest command, got: {captured_commands}"
+            f"Expected pytest command, got: {fake_runner.calls}"
         )
 
         pytest_cmd = pytest_cmds[-1]  # The actual pytest run (not uv sync)
@@ -2791,9 +2741,11 @@ class TestSpecCommandExecutor:
 
         executor.execute(input)
 
-        # Verify test-mutex.sh wrapper was used with pytest command
-        assert fake_runner.has_call_containing("test-mutex.sh")
-        assert fake_runner.has_call_containing("pytest")
+        # Verify test-mutex.sh wrapper was used with pytest command in same call
+        assert any(
+            "test-mutex.sh" in " ".join(c) and "pytest" in " ".join(c)
+            for c, _ in fake_runner.calls
+        )
 
 
 class TestSpecResultBuilder:
