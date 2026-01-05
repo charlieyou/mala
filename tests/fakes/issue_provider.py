@@ -31,6 +31,9 @@ class FakeIssue:
     tags: list[str] = field(default_factory=list)
     title: str = ""
     updated_at: str = ""
+    issue_type: str = (
+        "task"  # "task" or "epic" - epics are filtered from get_ready_async
+    )
 
 
 class FakeIssueProvider:
@@ -99,6 +102,9 @@ class FakeIssueProvider:
                 continue
             if orphans_only and issue.parent_epic is not None:
                 continue
+            # Filter out epics - matches IssueManager.apply_filters behavior
+            if issue.issue_type == "epic":
+                continue
             # Convert to dict format expected by IssueManager
             candidates.append(
                 {
@@ -107,6 +113,7 @@ class FakeIssueProvider:
                     "priority": issue.priority,
                     "parent_epic": issue.parent_epic,
                     "updated_at": issue.updated_at,
+                    "tags": issue.tags,
                 }
             )
 

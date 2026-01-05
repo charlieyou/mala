@@ -1,14 +1,18 @@
 """Contract tests for IssueProvider implementations.
 
-These tests validate that FakeIssueProvider behaves identically to BeadsClient.
-Tests are parametrized to run against both implementations, ensuring the fake
-doesn't diverge from real behavior.
+These tests validate that FakeIssueProvider implements the IssueProvider protocol
+correctly. The tests define the expected behavior that any IssueProvider must
+exhibit.
 
-Real provider tests require:
+The tests use FakeIssueProvider directly since it provides deterministic behavior
+for assertions. BeadsClient behavioral parity is ensured by:
+1. FakeIssueProvider delegates sorting to IssueManager.sort_issues (same as BeadsClient)
+2. FakeIssueProvider applies the same filtering rules (epics excluded, status filtering)
+3. Both implement the IssueProvider protocol from src/core/protocols.py
+
+For integration testing with real BeadsClient, use tests/e2e/ with:
 - bd CLI in PATH
 - BEADS_TEST_WORKSPACE environment variable set to a valid beads workspace
-
-When prerequisites are missing, real provider tests skip gracefully.
 """
 
 import os
@@ -64,6 +68,7 @@ async def fake_provider() -> AsyncIterator[FakeIssueProvider]:
             status="ready",
             priority=1,
             description="Test epic",
+            issue_type="epic",  # Mark as epic so it's filtered from get_ready_async
         ),
     }
     yield FakeIssueProvider(issues)
@@ -338,9 +343,8 @@ class TestFakeIssueProviderContract:
         await fake_provider.close_async("issue-2")
         result = await fake_provider.close_eligible_epics_async()
         assert result is True
-        # epic-1 should now be closed
-        ready = await fake_provider.get_ready_async()
-        assert "epic-1" not in ready
+        # epic-1 should now be closed (check via closed set since epics filtered from ready)
+        assert "epic-1" in fake_provider.closed
 
 
 class TestFakeIssueProviderObservableState:
