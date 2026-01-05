@@ -55,7 +55,7 @@ claude login
 
 ### Cerberus Review-Gate (Optional)
 
-[Cerberus](https://github.com/charlieyou/cerberus) provides automated code review. Disable with `--disable-validations=review`.
+[Cerberus](https://github.com/charlieyou/cerberus) provides automated code review. Disable with `--disable review` (or legacy `--disable-validations=review`).
 
 ```bash
 claude /plugin marketplace add charlieyou/cerberus
@@ -73,8 +73,10 @@ uv tool install . --reinstall
 ```bash
 mala run /path/to/repo                    # Run the parallel worker
 mala run --max-agents 5 /path/to/repo     # Limit concurrent agents
-mala run --epic proj-abc /path/to/repo    # Process children of epic
-mala run --only issue-1,issue-2 /path/to/repo  # Specific issues only
+mala run --scope epic:proj-abc /path/to/repo    # Process children of epic
+mala run --scope ids:issue-1,issue-2 --order input /path/to/repo  # Specific issues in order
+mala run --resume /path/to/repo            # Prioritize in_progress issues
+mala run --watch --validate-every 10 /path/to/repo  # Keep polling and validate every N issues
 mala status                               # Check locks, config, logs
 mala clean                                # Clean up locks and logs
 mala epic-verify proj-abc /path/to/repo   # Verify and close an epic

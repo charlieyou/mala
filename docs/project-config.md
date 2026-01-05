@@ -35,16 +35,16 @@ preset: rust
 
 preset: string           # Optional. Preset to extend (python-uv, node-npm, go, rust)
 
-commands:                # Optional. Command definitions
-  setup: string | null   # Environment setup (e.g., "uv sync", "npm install")
-  test: string | null    # Test runner (e.g., "uv run pytest", "go test ./...")
-  lint: string | null    # Linter (e.g., "uvx ruff check .", "golangci-lint run")
-  format: string | null  # Formatter check (e.g., "uvx ruff format --check .")
-  typecheck: string | null  # Type checker (e.g., "uvx ty check", "tsc --noEmit")
-  e2e: string | null     # End-to-end tests (e.g., "uv run pytest -m e2e")
+commands:                   # Optional. Command definitions
+  setup: string | object | null     # Environment setup (e.g., "uv sync", "npm install")
+  test: string | object | null      # Test runner (e.g., "uv run pytest", "go test ./...")
+  lint: string | object | null      # Linter (e.g., "uvx ruff check .", "golangci-lint run")
+  format: string | object | null    # Formatter command (e.g., "uvx ruff format .")
+  typecheck: string | object | null # Type checker (e.g., "uvx ty check", "tsc --noEmit")
+  e2e: string | object | null       # End-to-end tests (e.g., "uv run pytest -m e2e")
 
-run_level_commands:      # Optional. Overrides for run-level validation
-  test: string | null    # Run-level test command (e.g., with coverage)
+run_level_commands:          # Optional. Overrides for run-level validation
+  test: string | object | null  # Run-level test command (e.g., with coverage)
 
 code_patterns:           # Optional. Glob patterns for code files
   - "*.py"
@@ -70,10 +70,10 @@ coverage:                # Optional. Omit to disable coverage
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `preset` | string | No | Preset name to extend |
-| `commands` | object | No | Map of command kind to shell command |
-| `commands.<kind>` | string or null | No | Shell command. `null` explicitly disables |
+| `commands` | object | No | Map of command kind to shell command or object |
+| `commands.<kind>` | string, object, or null | No | Shell command or `{command, timeout}`. `null` explicitly disables |
 | `run_level_commands` | object | No | Overrides for run-level validation commands |
-| `run_level_commands.<kind>` | string or null | No | Run-level command override. `null` disables |
+| `run_level_commands.<kind>` | string, object, or null | No | Run-level command override. `null` disables |
 | `code_patterns` | list | No | Glob patterns for code files |
 | `config_files` | list | No | Tool config files that trigger re-lint |
 | `setup_files` | list | No | Lock files that trigger setup re-run |
@@ -85,6 +85,17 @@ coverage:                # Optional. Omit to disable coverage
 
 *Required when `coverage` section is present.
 
+## Command Object Form
+
+Each command can be defined as a string or an object with an optional timeout:
+
+```yaml
+commands:
+  test:
+    command: "uv run pytest"
+    timeout: 600
+```
+
 ## Built-in Presets
 
 ### python-uv
@@ -92,11 +103,11 @@ coverage:                # Optional. Omit to disable coverage
 ```yaml
 commands:
   setup: "uv sync"
-  test: "uv run pytest"
-  lint: "uvx ruff check ."
-  format: "uvx ruff format --check ."
+  test: "uv run pytest -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
+  lint: "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff check ."
+  format: "RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format ."
   typecheck: "uvx ty check"
-  e2e: "uv run pytest -m e2e"
+  e2e: "uv run pytest -m e2e -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
 
 code_patterns:
   - "**/*.py"

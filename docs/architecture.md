@@ -625,7 +625,7 @@ Agent sessions emit spans through a `TelemetryProvider` abstraction:
 
 Key directories:
 - `~/.config/mala/logs/` — JSONL session logs
-- `~/.config/mala/runs/` — Run metadata
+- `~/.config/mala/runs/` — Run metadata (repo-segmented, e.g., `~/.config/mala/runs/-home-user-repo/`)
 - `/tmp/mala-locks/` — Filesystem locks
 - `/tmp/mala-worktrees/` — Validation worktrees
 

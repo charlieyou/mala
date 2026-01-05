@@ -1,5 +1,11 @@
 # Development
 
+## Dependencies
+
+```bash
+uv sync
+```
+
 ## Type Checking
 
 mala uses strict type checking with both `ty` and `ruff`:

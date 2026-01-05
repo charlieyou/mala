@@ -9,25 +9,37 @@
 | `--max-agents`, `-n` | unlimited | Maximum concurrent agents |
 | `--timeout`, `-t` | 60 | Timeout per agent in minutes |
 | `--max-issues`, `-i` | unlimited | Maximum total issues to process |
-| `--epic`, `-e` | - | Only process tasks that are children of this epic |
-| `--only`, `-o` | - | Comma-separated list of issue IDs to process exclusively |
-| `--orphans-only` | false | Only process issues with no parent epic (standalone/orphan issues) |
+| `--scope`, `-s` | `all` | Scope filter: `all`, `epic:<id>`, `ids:<id,...>`, `orphans` |
+| `--order` | `focus` | Issue ordering: `focus`, `priority`, `input` (requires `--scope ids:<id,...>`) |
+| `--resume`, `-r` | false | Prioritize in_progress issues before open issues |
+| `--epic`, `-e` | - | Deprecated; use `--scope epic:<id>` |
+| `--only`, `-o` | - | Deprecated; use `--scope ids:<id,...>` |
+| `--orphans-only` | false | Deprecated; use `--scope orphans` |
+| `--focus/--no-focus` | focus | Deprecated; use `--order` |
 | `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
 | `--max-review-retries` | 3 | Maximum external review retry attempts per issue |
 | `--max-epic-verification-retries` | 3 | Maximum retries for epic verification loop |
 | `--review-timeout` | 1200 | Timeout in seconds for review operations |
-| `--cerberus-spawn-args` | - | Extra args appended to `review-gate spawn-code-review` |
-| `--cerberus-wait-args` | - | Extra args appended to `review-gate wait` |
-| `--cerberus-env` | - | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
-| `--disable-validations` | - | Comma-separated list (see below) |
+| `--review-spawn-args` | - | Extra args appended to `review-gate spawn-code-review` |
+| `--review-wait-args` | - | Extra args appended to `review-gate wait` |
+| `--review-env` | - | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
+| `--disable`, `--disable-validations` | - | Repeatable list of validations to skip (see below) |
 | `--coverage-threshold` | - | Minimum coverage percentage (0-100); if not set, uses 'no decrease' mode |
-| `--wip` | false | Prioritize in_progress issues before open issues |
-| `--focus/--no-focus` | focus | Group tasks by epic for focused work; `--no-focus` uses priority-only ordering |
-| `--dry-run` | false | Preview task order without processing |
+| `--dry-run`, `-d` | false | Preview task order without processing |
+| `--fail-on-empty` | false | Exit with code 1 if no issues to process |
+| `--watch` | false | Keep running and poll for new issues instead of exiting when idle |
+| `--validate-every` | 10 | Run validation after every N issues (watch mode only) |
 | `--verbose`, `-v` | false | Enable verbose output; shows full tool arguments |
-| `--epic-override` | - | Comma-separated epic IDs to close without verification (human bypass) |
+| `--epic-override` | - | Repeatable epic IDs to close without verification (human bypass) |
+
+Notes:
+- `--wip` is a hidden alias of `--resume` (deprecated).
+- `--cerberus-*` flags are legacy aliases of `--review-*` (prefer `--review-*`).
 
 ### Disable Validation Flags
+
+Use `--disable` (or legacy `--disable-validations`) with one or more values.
+Repeat the flag or pass comma-separated lists (e.g., `--disable coverage --disable review` or `--disable coverage,review`):
 
 | Flag | Description |
 |------|-------------|
@@ -46,7 +58,9 @@ mala uses a global config directory at `~/.config/mala/`:
 ```
 ~/.config/mala/
 ├── .env          # API keys (ANTHROPIC_API_KEY, BRAINTRUST_API_KEY)
-└── logs/         # JSONL session logs
+├── logs/         # JSONL session logs
+└── runs/         # Run metadata (repo-segmented directories)
+    └── -home-user-repo/
 ```
 
 Environment variables are loaded from `~/.config/mala/.env` (global config).
@@ -56,10 +70,11 @@ Precedence: CLI flags override global config, which overrides program defaults.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MALA_RUNS_DIR` | `~/.config/mala/runs` | Directory for run metadata |
+| `MALA_RUNS_DIR` | `~/.config/mala/runs` | Base directory for run metadata (per-repo subdirs) |
 | `MALA_LOCK_DIR` | `/tmp/mala-locks` | Directory for filesystem locks |
 | `MALA_REVIEW_TIMEOUT` | `1200` | Review-gate wait timeout in seconds |
 | `MALA_DISABLE_DEBUG_LOG` | - | Set to `1` to disable debug file logging (for performance or disk space) |
+| `CLAUDE_CONFIG_DIR` | `~/.claude` | Claude SDK config directory (plugins, sessions) |
 
 ### Epic Verification
 
@@ -69,7 +84,7 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | `LLM_BASE_URL` | - | Base URL for LLM API (for proxy/routing) |
 | `MALA_MAX_EPIC_VERIFICATION_RETRIES` | `3` | Number of retries after first verification attempt fails |
 
-### Cerberus Overrides
+### Review-Gate (Cerberus) Overrides
 
 | Variable | Description |
 |----------|-------------|
