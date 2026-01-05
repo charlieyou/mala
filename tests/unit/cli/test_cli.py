@@ -1759,7 +1759,7 @@ class TestHandleDryRun:
     def test_raises_typer_exit_zero(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """_handle_dry_run always raises typer.Exit(0)."""
+        """_handle_dry_run defaults to Exit(0) when fail_on_empty is False."""
         cli = _reload_cli(monkeypatch)
 
         DummyBeadsClient.issues_to_return = []

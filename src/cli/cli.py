@@ -573,10 +573,8 @@ def _handle_dry_run(
     Raises:
         typer.Exit: Exits with code 0 (or 1 if fail_on_empty and no issues).
     """
-    issue_count = 0
 
     async def _dry_run() -> int:
-        nonlocal issue_count
         beads = _lazy("BeadsClient")(repo_path)
         # Convert list to set for BeadsClient compatibility
         ids_set = set(only_ids) if only_ids else None
