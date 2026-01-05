@@ -226,6 +226,7 @@ class MalaOrchestrator:
         """
         self._state = OrchestratorState()
         self._lint_tools: frozenset[str] | None = None
+        self._exit_code: int = 0  # Exit code from last run (0=success, 130=interrupted)
         self._prompt_validation_commands = build_prompt_validation_commands(
             self.repo_path
         )
@@ -496,6 +497,19 @@ class MalaOrchestrator:
         if not hasattr(self, "issue_coordinator"):
             return None
         return self.issue_coordinator.abort_reason
+
+    @property
+    def exit_code(self) -> int:
+        """Exit code from the last run.
+
+        Values:
+            0: Success
+            1: Validation failed
+            2: Invalid arguments
+            3: Abort
+            130: Interrupted (SIGINT)
+        """
+        return self._exit_code
 
     def _cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup).
@@ -828,8 +842,17 @@ class MalaOrchestrator:
             return (0, total)
         return (success_count, total)
 
-    async def run(self) -> tuple[int, int]:
-        """Main orchestration loop. Returns (success_count, total_count)."""
+    async def run(
+        self,
+        *,
+        watch_config: WatchConfig | None = None,
+    ) -> tuple[int, int]:
+        """Main orchestration loop. Returns (success_count, total_count).
+
+        Args:
+            watch_config: Optional watch mode configuration. If provided, enables
+                watch mode with polling and interruptible idle sleep.
+        """
         # Reset per-run state to ensure clean state if orchestrator is reused
         self._state = OrchestratorState()
 
@@ -888,12 +911,20 @@ class MalaOrchestrator:
 
         # Create interrupt event for SIGINT handling
         interrupt_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        main_task = asyncio.current_task()
 
-        # Install SIGINT handler
+        # Install SIGINT handler using call_soon_threadsafe for thread-safety
         def handle_sigint(sig: int, frame: object) -> None:
-            interrupt_event.set()
+            loop.call_soon_threadsafe(interrupt_event.set)
+            # In non-watch mode, also cancel the main task to force exit
+            if watch_config is None and main_task is not None:
+                loop.call_soon_threadsafe(main_task.cancel)
 
         original_handler = signal.signal(signal.SIGINT, handle_sigint)
+
+        # Track exit code for propagation to CLI
+        exit_code = 0
 
         try:
             # Create validation callback wrapping RunCoordinator
@@ -907,14 +938,19 @@ class MalaOrchestrator:
                 )
                 return validation_output.passed
 
+            interrupted = False
             try:
                 loop_result = await self._run_main_loop(
                     run_metadata,
+                    watch_config=watch_config,
                     interrupt_event=interrupt_event,
                     validation_callback=validation_callback,
                 )
-                # Store exit code for T008 CLI integration (currently unused)
-                _ = loop_result.exit_code
+                exit_code = loop_result.exit_code
+            except asyncio.CancelledError:
+                # SIGINT cancelled the main task - gracefully exit with 130
+                exit_code = 130
+                interrupted = True
             finally:
                 lock_releaser = (
                     self._lock_releaser
@@ -928,6 +964,12 @@ class MalaOrchestrator:
                     self.event_sink.on_locks_released(released)
                 remove_run_marker(run_metadata.run_id)
 
+            # Check if interrupted before running final validation
+            if interrupted or interrupt_event.is_set():
+                # Store exit code 130 (interrupted) for CLI access
+                self._exit_code = 130
+                return await self._finalize_run(run_metadata, True)
+
             # Run-level validation and finalization happen after lock cleanup
             # but before debug log cleanup (so they're captured in the debug log)
             success_count = sum(1 for r in self._state.completed if r.success)
@@ -939,6 +981,8 @@ class MalaOrchestrator:
                 )
                 run_validation_passed = validation_output.passed
 
+            # Store exit code for CLI access
+            self._exit_code = exit_code
             return await self._finalize_run(run_metadata, run_validation_passed)
         finally:
             # Restore original SIGINT handler
@@ -947,11 +991,19 @@ class MalaOrchestrator:
             # (idempotent - safe to call even if save() is called later)
             run_metadata.cleanup()
 
-    def run_sync(self) -> tuple[int, int]:
+    def run_sync(
+        self,
+        *,
+        watch_config: WatchConfig | None = None,
+    ) -> tuple[int, int]:
         """Synchronous wrapper for run(). Returns (success_count, total_count).
 
         Use this method when calling from synchronous code. It handles event loop
         creation and cleanup automatically.
+
+        Args:
+            watch_config: Optional watch mode configuration. If provided, enables
+                watch mode with polling and interruptible idle sleep.
 
         Raises:
             RuntimeError: If called from within an async context (e.g., inside an
@@ -991,4 +1043,4 @@ class MalaOrchestrator:
             # No running event loop - this is the expected case for sync usage
 
         # Create a new event loop and run
-        return asyncio.run(self.run())
+        return asyncio.run(self.run(watch_config=watch_config))
