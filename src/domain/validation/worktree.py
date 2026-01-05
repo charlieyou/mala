@@ -327,46 +327,41 @@ def cleanup_stale_worktrees(
     return cleaned
 
 
-def _cleanup_empty_parents(path: Path, base_dir: Path) -> None:
-    """Remove empty parent directories up to (but not including) base_dir.
+def _cleanup_empty_parents(worktree_path: Path, base_dir: Path) -> None:
+    """Remove empty parent directories between worktree_path and base_dir.
 
-    Walks up from path.parent to base_dir, removing each directory if empty.
-    Stops at base_dir or on first non-empty directory.
-
-    Safety: Uses Path.is_relative_to() for proper path containment check,
-    avoiding string prefix matching vulnerabilities.
+    Walks up from worktree_path.parent, removing each empty directory,
+    stopping at base_dir (which is not removed).
 
     Args:
-        path: The path whose parents to clean (typically the removed worktree).
-        base_dir: The base directory to stop at (not removed).
+        worktree_path: The removed worktree path.
+        base_dir: Stop directory (not removed).
     """
-    resolved_base = base_dir.resolve()
-    current = path.resolve().parent
-
-    # Safety check: path must be inside base_dir
     try:
-        if not current.is_relative_to(resolved_base):
+        base = base_dir.resolve()
+        current = worktree_path.resolve().parent
+
+        # Safety: only proceed if current is inside base
+        if not current.is_relative_to(base):
             return
-    except ValueError:
-        # is_relative_to raises ValueError on Windows for different drives
-        return
 
-    while current != resolved_base:
-        # Re-check containment each iteration (paranoid but safe)
-        try:
-            if not current.is_relative_to(resolved_base):
-                break
-        except ValueError:
-            break
-
-        try:
-            if current.exists() and current.is_dir() and not any(current.iterdir()):
-                current.rmdir()
+        while current != base and current.is_relative_to(base):
+            if not current.exists():
                 current = current.parent
-            else:
+                continue
+            if not current.is_dir():
                 break
-        except OSError:
-            break
+            # Check if empty
+            try:
+                next(current.iterdir())
+                break  # Not empty
+            except StopIteration:
+                pass  # Empty, continue
+            # Remove empty directory
+            current.rmdir()
+            current = current.parent
+    except (OSError, ValueError):
+        pass  # Ignore errors - cleanup is best-effort
 
 
 def _cleanup_run_dir(

@@ -785,3 +785,71 @@ class TestStalePathCleanup:
 
         assert ctx.state == WorktreeState.FAILED
         assert "Failed to remove stale worktree" in (ctx.error or "")
+
+
+class TestCleanupEmptyParents:
+    """Test _cleanup_empty_parents helper function."""
+
+    def test_removes_empty_parent_chain(self, tmp_path: Path) -> None:
+        """Should remove empty parent directories up to base_dir."""
+        from src.domain.validation.worktree import _cleanup_empty_parents
+
+        base_dir = tmp_path / "worktrees"
+        worktree_path = base_dir / "run-1" / "issue-1" / "attempt-1"
+        worktree_path.mkdir(parents=True)
+
+        # Simulate: worktree content already removed, only empty dirs remain
+        worktree_path.rmdir()
+
+        _cleanup_empty_parents(worktree_path, base_dir)
+
+        # All empty parents should be removed
+        assert not (base_dir / "run-1" / "issue-1").exists()
+        assert not (base_dir / "run-1").exists()
+        # base_dir itself should remain
+        assert base_dir.exists()
+
+    def test_stops_at_non_empty_dir(self, tmp_path: Path) -> None:
+        """Should stop when encountering a non-empty directory."""
+        from src.domain.validation.worktree import _cleanup_empty_parents
+
+        base_dir = tmp_path / "worktrees"
+        worktree_path = base_dir / "run-1" / "issue-1" / "attempt-1"
+        other_file = base_dir / "run-1" / "other.txt"
+
+        worktree_path.mkdir(parents=True)
+        other_file.write_text("keep me")
+
+        worktree_path.rmdir()
+        (base_dir / "run-1" / "issue-1").rmdir()
+
+        _cleanup_empty_parents(worktree_path, base_dir)
+
+        # run-1 should remain (has other.txt)
+        assert (base_dir / "run-1").exists()
+        assert other_file.exists()
+
+    def test_ignores_path_outside_base_dir(self, tmp_path: Path) -> None:
+        """Should not remove anything if path is outside base_dir."""
+        from src.domain.validation.worktree import _cleanup_empty_parents
+
+        base_dir = tmp_path / "worktrees"
+        base_dir.mkdir()
+        outside_path = tmp_path / "other" / "path"
+        outside_path.mkdir(parents=True)
+
+        _cleanup_empty_parents(outside_path, base_dir)
+
+        # outside_path should still exist
+        assert outside_path.exists()
+
+    def test_handles_nonexistent_path(self, tmp_path: Path) -> None:
+        """Should handle case where worktree path doesn't exist."""
+        from src.domain.validation.worktree import _cleanup_empty_parents
+
+        base_dir = tmp_path / "worktrees"
+        base_dir.mkdir()
+        nonexistent = base_dir / "run-1" / "issue-1" / "attempt-1"
+
+        # Should not raise
+        _cleanup_empty_parents(nonexistent, base_dir)
