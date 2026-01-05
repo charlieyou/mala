@@ -101,13 +101,16 @@ class IssueManager:
         Returns:
             Filtered list of issues.
         """
+        # Convert only_ids list to set for O(1) membership lookup
+        only_id_set = set(only_ids) if only_ids is not None else None
+
         return [
             i
             for i in issues
             if str(i["id"]) not in exclude_ids
             and i.get("issue_type") != "epic"
             and (epic_children is None or str(i["id"]) in epic_children)
-            and (only_ids is None or str(i["id"]) in only_ids)
+            and (only_id_set is None or str(i["id"]) in only_id_set)
         ]
 
     @staticmethod

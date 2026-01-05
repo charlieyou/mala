@@ -641,15 +641,33 @@ def _validate_run_args(
     Raises:
         typer.Exit: If any validation fails
     """
-    # Parse --only flag into a list of issue IDs
+    # Parse --only flag into a list of issue IDs (deduplicated, order-preserving)
     only_ids: list[str] | None = None
     if only:
-        only_ids = [
-            issue_id.strip() for issue_id in only.split(",") if issue_id.strip()
-        ]
-        if not only_ids:
+        raw_ids = [issue_id.strip() for issue_id in only.split(",") if issue_id.strip()]
+        if not raw_ids:
             log("✗", "Invalid --only value: no valid issue IDs found", Colors.RED)
             raise typer.Exit(1)
+
+        # Deduplicate while preserving order, warn if duplicates found
+        seen: set[str] = set()
+        unique_ids: list[str] = []
+        duplicates: list[str] = []
+        for id_ in raw_ids:
+            if id_ in seen:
+                duplicates.append(id_)
+            else:
+                seen.add(id_)
+                unique_ids.append(id_)
+
+        if duplicates:
+            log(
+                "⚠",
+                f"Duplicate IDs removed from --only: {', '.join(duplicates)}",
+                Colors.YELLOW,
+            )
+
+        only_ids = unique_ids
 
     # Parse --disable flag into a set (supports both repeatable and comma-separated)
     disable_set: set[str] | None = None
