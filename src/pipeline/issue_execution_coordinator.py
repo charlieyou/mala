@@ -212,10 +212,10 @@ class IssueExecutionCoordinator:
                     exit_reason="abort",
                 )
 
-            # Check if we've hit the issue limit
+            # Check if we've hit the issue limit (using completed_count, not spawned)
             limit_reached = (
                 self.config.max_issues is not None
-                and issues_spawned >= self.config.max_issues
+                and watch_state.completed_count >= self.config.max_issues
             )
 
             # Build suppress_warn_ids for only_ids mode
@@ -325,6 +325,16 @@ class IssueExecutionCoordinator:
                     self.event_sink.on_no_more_issues(
                         f"limit_reached ({self.config.max_issues})"
                     )
+                    # Run final validation if needed
+                    if watch_state.completed_count > watch_state.last_validation_at:
+                        if validation_callback:
+                            validation_passed = await validation_callback()
+                            if not validation_passed:
+                                return RunResult(
+                                    issues_spawned=issues_spawned,
+                                    exit_code=1,
+                                    exit_reason="validation_failed",
+                                )
                     return RunResult(
                         issues_spawned=issues_spawned,
                         exit_code=0,
@@ -377,6 +387,16 @@ class IssueExecutionCoordinator:
                     else:
                         # Watch mode not enabled: exit immediately
                         self.event_sink.on_no_more_issues("none_ready")
+                        # Run final validation if any issues completed
+                        if watch_state.completed_count > watch_state.last_validation_at:
+                            if validation_callback:
+                                validation_passed = await validation_callback()
+                                if not validation_passed:
+                                    return RunResult(
+                                        issues_spawned=issues_spawned,
+                                        exit_code=1,
+                                        exit_reason="validation_failed",
+                                    )
                         return RunResult(
                             issues_spawned=issues_spawned,
                             exit_code=0,
@@ -415,6 +435,54 @@ class IssueExecutionCoordinator:
                     exit_code=3,
                     exit_reason="abort",
                 )
+
+            # Check for interrupt after processing completions
+            if interrupt_event and interrupt_event.is_set():
+                # Wait for remaining active agents
+                if self.active_tasks:
+                    await asyncio.gather(
+                        *self.active_tasks.values(), return_exceptions=True
+                    )
+                # Run final validation if needed
+                if watch_state.completed_count > watch_state.last_validation_at:
+                    if validation_callback:
+                        await validation_callback()
+                return RunResult(
+                    issues_spawned,
+                    exit_code=130,
+                    exit_reason="interrupted",
+                )
+
+            # Check if validation threshold crossed
+            if (
+                watch_config
+                and watch_config.enabled
+                and watch_state.completed_count >= watch_state.next_validation_threshold
+            ):
+                # Wait for all active agents to finish (blocking validation)
+                if self.active_tasks:
+                    await asyncio.gather(
+                        *self.active_tasks.values(), return_exceptions=True
+                    )
+                    # Finalize any additional completed tasks
+                    for issue_id, t in list(self.active_tasks.items()):
+                        if t.done():
+                            await finalize_callback(issue_id, t)
+                            watch_state.completed_count += 1
+
+                # Run validation
+                if validation_callback:
+                    validation_passed = await validation_callback()
+                    if not validation_passed:
+                        return RunResult(
+                            issues_spawned,
+                            exit_code=1,
+                            exit_reason="validation_failed",
+                        )
+
+                # Advance threshold
+                watch_state.last_validation_at = watch_state.completed_count
+                watch_state.next_validation_threshold += watch_config.validate_every
 
         # This should not be reached; included for type safety
         return RunResult(

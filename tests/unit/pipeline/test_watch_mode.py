@@ -133,17 +133,11 @@ class TestWatchModeValidation:
         return FakeEventSink()
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True, reason="Watch mode validation trigger not yet implemented"
-    )
     async def test_validation_triggers_at_threshold(
         self,
         event_sink: FakeEventSink,
     ) -> None:
-        """Validation callback should be called when completed count reaches threshold.
-
-        This test expects to FAIL until validation triggering is implemented.
-        """
+        """Validation callback should be called when completed count reaches threshold."""
         # Set up issues that will complete
         provider = FakeIssueProvider(
             issues={
@@ -157,25 +151,224 @@ class TestWatchModeValidation:
         coord = IssueExecutionCoordinator(
             beads=provider,
             event_sink=event_sink,
-            config=CoordinatorConfig(max_issues=5, max_agents=1),
+            config=CoordinatorConfig(max_agents=1),
         )
-
-        # Track spawned tasks so we can ensure they complete
-        spawned_tasks: list[asyncio.Task[None]] = []
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
                 pass
 
-            task = asyncio.create_task(complete_immediately())
-            spawned_tasks.append(task)
-            return task
+            return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
-            # Mark as completed so it's excluded from next poll
             coord.mark_completed(issue_id)
 
-        await asyncio.wait_for(
+        # Use interrupt to stop after all issues complete
+        interrupt_event = asyncio.Event()
+
+        poll_count = 0
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            nonlocal poll_count
+            poll_count += 1
+            remaining = [
+                f"issue-{i}"
+                for i in range(5)
+                if f"issue-{i}" not in coord.completed_ids
+            ]
+            if not remaining:
+                interrupt_event.set()
+            return remaining
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+                watch_config=watch_config,
+                validation_callback=validation_callback,
+                interrupt_event=interrupt_event,
+            ),
+            timeout=5.0,
+        )
+
+        # Expect: validation should have been called once at threshold (3 issues)
+        # Plus final validation on interrupt (5 - 3 = 2 more completed since last validation)
+        assert validation_callback.call_count == 2, (
+            f"Expected 2 validation calls (at threshold 3, final at 5), got {validation_callback.call_count}"
+        )
+        assert result.exit_code == 130  # Interrupted
+
+    @pytest.mark.asyncio
+    async def test_validation_threshold_advances_after_trigger(
+        self,
+        event_sink: FakeEventSink,
+    ) -> None:
+        """Validation threshold should advance by validate_every after each trigger."""
+        # Set up enough issues to trigger multiple validations
+        provider = FakeIssueProvider(
+            issues={
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                for i in range(25)
+            }
+        )
+        watch_config = WatchConfig(enabled=True, validate_every=10)
+        validation_callback = AsyncMock(return_value=True)
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_agents=1),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        interrupt_event = asyncio.Event()
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            remaining = [
+                f"issue-{i}"
+                for i in range(25)
+                if f"issue-{i}" not in coord.completed_ids
+            ]
+            if not remaining:
+                interrupt_event.set()
+            return remaining
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+                watch_config=watch_config,
+                validation_callback=validation_callback,
+                interrupt_event=interrupt_event,
+            ),
+            timeout=10.0,
+        )
+
+        # Expect: validation at 10, 20, and final validation at 25
+        # That's 3 validation calls total
+        assert validation_callback.call_count == 3, (
+            f"Expected 3 validation calls (at 10, 20, final at 25), got {validation_callback.call_count}"
+        )
+        assert result.exit_code == 130
+
+    @pytest.mark.asyncio
+    async def test_parallel_completions_trigger_validation_once(
+        self,
+        event_sink: FakeEventSink,
+    ) -> None:
+        """Parallel completions (9→12) should trigger validation only once."""
+        # Set up 12 issues that will complete in parallel (max_agents=4)
+        provider = FakeIssueProvider(
+            issues={
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                for i in range(12)
+            }
+        )
+        watch_config = WatchConfig(enabled=True, validate_every=10)
+        validation_callback = AsyncMock(return_value=True)
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_agents=4),  # Multiple parallel agents
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        interrupt_event = asyncio.Event()
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            remaining = [
+                f"issue-{i}"
+                for i in range(12)
+                if f"issue-{i}" not in coord.completed_ids
+            ]
+            if not remaining:
+                interrupt_event.set()
+            return remaining
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+                watch_config=watch_config,
+                validation_callback=validation_callback,
+                interrupt_event=interrupt_event,
+            ),
+            timeout=5.0,
+        )
+
+        # Expect: validation at 10 (or 12 after parallel completion), then final at 12
+        # Key: should NOT trigger validation multiple times just because count jumped 9→12
+        assert validation_callback.call_count <= 2, (
+            f"Expected at most 2 validation calls, got {validation_callback.call_count}"
+        )
+        assert result.exit_code == 130
+
+    @pytest.mark.asyncio
+    async def test_validation_failure_returns_exit_code_1(
+        self,
+        event_sink: FakeEventSink,
+    ) -> None:
+        """Validation failure should return exit_code=1."""
+        provider = FakeIssueProvider(
+            issues={
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                for i in range(5)
+            }
+        )
+        watch_config = WatchConfig(enabled=True, validate_every=3)
+        validation_callback = AsyncMock(return_value=False)  # Validation fails
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_agents=1),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            return [
+                f"issue-{i}"
+                for i in range(5)
+                if f"issue-{i}" not in coord.completed_ids
+            ]
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        result = await asyncio.wait_for(
             coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
@@ -186,10 +379,342 @@ class TestWatchModeValidation:
             timeout=5.0,
         )
 
-        # Expect: validation should have been called at least once (after 3 issues)
-        assert validation_callback.call_count >= 1, (
-            "Expected validation to be called after threshold reached"
+        assert result.exit_code == 1
+        assert result.exit_reason == "validation_failed"
+        # Validation should have been called once (at threshold 3) and failed
+        assert validation_callback.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_successful_completion_returns_exit_code_0(
+        self,
+        event_sink: FakeEventSink,
+    ) -> None:
+        """Successful completion with passing validation should return exit_code=0."""
+        provider = FakeIssueProvider(
+            issues={
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                for i in range(3)
+            }
         )
+        # No watch mode - exits when no more issues
+        validation_callback = AsyncMock(return_value=True)
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_agents=1),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            return [
+                f"issue-{i}"
+                for i in range(3)
+                if f"issue-{i}" not in coord.completed_ids
+            ]
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+                validation_callback=validation_callback,
+            ),
+            timeout=5.0,
+        )
+
+        assert result.exit_code == 0
+        assert result.exit_reason == "success"
+        # Final validation should have been called (3 > 0 completed)
+        assert validation_callback.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_sigint_during_active_runs_final_validation(
+        self,
+        event_sink: FakeEventSink,
+    ) -> None:
+        """SIGINT during active processing should run final validation."""
+        provider = FakeIssueProvider(
+            issues={"issue-1": FakeIssue(id="issue-1", status="ready")}
+        )
+        watch_config = WatchConfig(enabled=True)
+        interrupt_event = asyncio.Event()
+        validation_callback = AsyncMock(return_value=True)
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_agents=1),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+            # Set interrupt after task completes
+            interrupt_event.set()
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            return ["issue-1"] if "issue-1" not in coord.completed_ids else []
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+                watch_config=watch_config,
+                interrupt_event=interrupt_event,
+                validation_callback=validation_callback,
+            ),
+            timeout=5.0,
+        )
+
+        assert result.exit_code == 130
+        assert result.exit_reason == "interrupted"
+        # Final validation should have been called
+        assert validation_callback.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_final_validation_skipped_if_just_ran_at_threshold(
+        self,
+        event_sink: FakeEventSink,
+    ) -> None:
+        """Final validation should be skipped if validation just ran at threshold."""
+        # Set up exactly 10 issues with validate_every=10
+        provider = FakeIssueProvider(
+            issues={
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                for i in range(10)
+            }
+        )
+        watch_config = WatchConfig(enabled=True, validate_every=10)
+        validation_callback = AsyncMock(return_value=True)
+        interrupt_event = asyncio.Event()
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_agents=1),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            remaining = [
+                f"issue-{i}"
+                for i in range(10)
+                if f"issue-{i}" not in coord.completed_ids
+            ]
+            if not remaining:
+                interrupt_event.set()
+            return remaining
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+                watch_config=watch_config,
+                validation_callback=validation_callback,
+                interrupt_event=interrupt_event,
+            ),
+            timeout=5.0,
+        )
+
+        assert result.exit_code == 130
+        # Validation should only run once at threshold 10, NOT again at final
+        # because completed_count (10) == last_validation_at (10)
+        assert validation_callback.call_count == 1, (
+            f"Expected 1 validation call (at threshold), got {validation_callback.call_count}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_final_validation_runs_on_normal_exit_if_issues_completed(
+        self,
+        event_sink: FakeEventSink,
+    ) -> None:
+        """Final validation should run on normal exit if issues completed since last validation."""
+        provider = FakeIssueProvider(
+            issues={
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                for i in range(3)
+            }
+        )
+        # No watch mode - exits when done
+        validation_callback = AsyncMock(return_value=True)
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_agents=1),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            return [
+                f"issue-{i}"
+                for i in range(3)
+                if f"issue-{i}" not in coord.completed_ids
+            ]
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+                validation_callback=validation_callback,
+            ),
+            timeout=5.0,
+        )
+
+        assert result.exit_code == 0
+        # Final validation should run because 3 issues completed
+        assert validation_callback.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_max_issues_uses_completed_count_not_spawned(
+        self,
+        event_sink: FakeEventSink,
+    ) -> None:
+        """--max-issues should use completed_count, not spawned count."""
+        provider = FakeIssueProvider(
+            issues={
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                for i in range(10)
+            }
+        )
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_issues=3, max_agents=2),  # 2 agents parallel
+        )
+
+        spawned_count = 0
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            nonlocal spawned_count
+            spawned_count += 1
+
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            return [
+                f"issue-{i}"
+                for i in range(10)
+                if f"issue-{i}" not in coord.completed_ids
+            ]
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+            ),
+            timeout=5.0,
+        )
+
+        assert result.exit_code == 0
+        assert result.exit_reason == "limit_reached"
+        # Key assertion: spawned_count >= 3 (may spawn more before completions counted)
+        # But loop exits based on completed_count, not spawned count
+        assert len(coord.completed_ids) >= 3
+
+    @pytest.mark.asyncio
+    async def test_max_issues_exits_watch_mode(
+        self,
+        event_sink: FakeEventSink,
+    ) -> None:
+        """--max-issues should exit watch mode when completed_count reaches limit."""
+        provider = FakeIssueProvider(
+            issues={
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                for i in range(10)
+            }
+        )
+        watch_config = WatchConfig(enabled=True)
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_issues=3, max_agents=1),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            return [
+                f"issue-{i}"
+                for i in range(10)
+                if f"issue-{i}" not in coord.completed_ids
+            ]
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+                watch_config=watch_config,
+            ),
+            timeout=5.0,
+        )
+
+        # Should exit with limit_reached, not continue watching
+        assert result.exit_code == 0
+        assert result.exit_reason == "limit_reached"
+        assert len(coord.completed_ids) == 3
 
 
 class TestPollFailureHandling:
