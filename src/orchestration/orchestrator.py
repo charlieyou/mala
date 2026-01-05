@@ -918,14 +918,10 @@ class MalaOrchestrator:
         # Create interrupt event for SIGINT handling
         interrupt_event = asyncio.Event()
         loop = asyncio.get_running_loop()
-        main_task = asyncio.current_task()
 
         # Install SIGINT handler using call_soon_threadsafe for thread-safety
         def handle_sigint(sig: int, frame: object) -> None:
             loop.call_soon_threadsafe(interrupt_event.set)
-            # In non-watch mode, also cancel the main task to force exit
-            if watch_config is None and main_task is not None:
-                loop.call_soon_threadsafe(main_task.cancel)
 
         original_handler = signal.signal(signal.SIGINT, handle_sigint)
 

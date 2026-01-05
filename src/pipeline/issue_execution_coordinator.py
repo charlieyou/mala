@@ -479,15 +479,59 @@ class IssueExecutionCoordinator:
             if ready or self.active_tasks:
                 watch_state.was_idle = False
 
-            # Wait for at least one task to complete
+            # Wait for at least one task to complete, interruptible by SIGINT
             self.event_sink.on_waiting_for_agents(len(self.active_tasks))
+            wait_tasks: set[asyncio.Task[object]] = set(self.active_tasks.values())
+            interrupt_task: asyncio.Task[object] | None = None
+            if interrupt_event:
+                interrupt_task = asyncio.create_task(interrupt_event.wait())
+                wait_tasks.add(interrupt_task)
+
             done, _ = await asyncio.wait(
-                self.active_tasks.values(),
+                wait_tasks,
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
+            # Cancel the interrupt task if it wasn't triggered
+            if interrupt_task and not interrupt_task.done():
+                interrupt_task.cancel()
+                try:
+                    await interrupt_task
+                except asyncio.CancelledError:
+                    pass
+
+            # If only the interrupt task completed, handle SIGINT
+            if interrupt_task in done and len(done) == 1:
+                # Wait for remaining active agents
+                if self.active_tasks:
+                    await asyncio.gather(
+                        *self.active_tasks.values(), return_exceptions=True
+                    )
+                    # Finalize any tasks that completed during gather
+                    for issue_id, t in list(self.active_tasks.items()):
+                        if t.done():
+                            await finalize_callback(issue_id, t)
+                            watch_state.completed_count += 1
+                await abort_callback()
+                # Run final validation if needed
+                exit_code = 130
+                if watch_state.completed_count > watch_state.last_validation_at:
+                    if validation_callback:
+                        validation_passed = await validation_callback()
+                        watch_state.last_validation_at = watch_state.completed_count
+                        if not validation_passed:
+                            exit_code = 1
+                return RunResult(
+                    issues_spawned,
+                    exit_code=exit_code,
+                    exit_reason="interrupted",
+                )
+
+            # Remove interrupt task from done set for processing
+            done_agent_tasks = done - {interrupt_task} if interrupt_task else done
+
             # Finalize completed tasks
-            for task in done:
+            for task in done_agent_tasks:
                 for issue_id, t in list(self.active_tasks.items()):
                     if t is task:
                         await finalize_callback(issue_id, task)
