@@ -119,10 +119,12 @@ class TestSigintHandling:
             coord.mark_completed(issue_id)
 
         async def abort_callback(*, is_interrupt: bool = False) -> int:
-            # Cancel all active tasks
-            for task in coord.active_tasks.values():
+            # Cancel and await all active tasks to avoid "Task destroyed" warnings
+            tasks = list(coord.active_tasks.values())
+            for task in tasks:
                 task.cancel()
-            return len(coord.active_tasks)
+            await asyncio.gather(*tasks, return_exceptions=True)
+            return len(tasks)
 
         async def set_interrupt_when_active() -> None:
             """Wait for task to start then trigger interrupt."""
