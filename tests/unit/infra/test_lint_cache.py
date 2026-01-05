@@ -101,9 +101,12 @@ class TestLintCacheWithMocks:
             command_runner=failing_command_runner,
         )
 
-        # Should not crash, just return False (can't verify state)
+        # mark_passed should not crash, but also shouldn't cache anything
+        # since git state can't be determined
         cache.mark_passed("ruff check")
-        # With empty head_sha, cache will still work based on what we get
-        # The key point is it doesn't crash
-        result = cache.should_skip("ruff check")
-        assert isinstance(result, bool)
+
+        # should_skip must return False when git state is unavailable
+        assert cache.should_skip("ruff check") is False
+
+        # Verify no cache file was written (mark_passed returns early)
+        assert not (cache_dir / "lint_cache.json").exists()
