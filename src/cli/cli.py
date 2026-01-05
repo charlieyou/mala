@@ -38,6 +38,7 @@ _LAZY_NAMES = frozenset(
         "MalaConfig",
         "MalaOrchestrator",
         "OrchestratorConfig",
+        "WatchConfig",
         "create_orchestrator",
         "get_all_locks",
         "get_lock_dir",
@@ -674,10 +675,32 @@ def run(
             help="Enable deadlock detection (default: on); --no-deadlock-detection disables it",
         ),
     ] = True,
+    watch: Annotated[
+        bool,
+        typer.Option(
+            "--watch",
+            help="Keep running and poll for new issues instead of exiting when idle",
+        ),
+    ] = False,
+    validate_every: Annotated[
+        int,
+        typer.Option(
+            "--validate-every",
+            help="Run validation after every N issues complete (default: 10, only in watch mode)",
+        ),
+    ] = 10,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
     set_verbose(verbose)
+
+    # Validate numeric arguments (exit code 2 for invalid arguments)
+    if validate_every < 1:
+        log("✗", "Error: --validate-every must be at least 1", Colors.RED)
+        raise typer.Exit(2)
+    if max_issues is not None and max_issues < 1:
+        log("✗", "Error: --max-issues must be at least 1", Colors.RED)
+        raise typer.Exit(2)
 
     repo_path = repo_path.resolve()
 
@@ -770,10 +793,13 @@ def run(
         orch_config, mala_config=override_result.updated_config
     )
 
-    success_count, total = asyncio.run(orchestrator.run())
-    # Exit 0 if: no issues to process (no-op) OR at least one succeeded
-    # Exit 1 only if: issues were processed but all failed
-    raise typer.Exit(0 if success_count > 0 or total == 0 else 1)
+    # Build WatchConfig and run orchestrator
+    watch_config = _lazy("WatchConfig")(
+        enabled=watch,
+        validate_every=validate_every,
+    )
+    asyncio.run(orchestrator.run(watch_config=watch_config))
+    raise typer.Exit(orchestrator.exit_code)
 
 
 @app.command("epic-verify")
@@ -1111,6 +1137,10 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from ..orchestration.types import OrchestratorConfig
 
         _lazy_modules[name] = OrchestratorConfig
+    elif name == "WatchConfig":
+        from ..core.models import WatchConfig
+
+        _lazy_modules[name] = WatchConfig
     elif name == "create_orchestrator":
         from ..orchestration.factory import create_orchestrator
 

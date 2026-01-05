@@ -198,12 +198,18 @@ class TestImportSafety:
 class DummyOrchestrator:
     last_orch_config: Any = None
     last_mala_config: Any = None
+    last_watch_config: Any = None
 
     def __init__(self, **kwargs: object) -> None:
-        pass
+        self._exit_code = 0
 
-    async def run(self) -> tuple[int, int]:
+    async def run(self, *, watch_config: object = None) -> tuple[int, int]:
+        DummyOrchestrator.last_watch_config = watch_config
         return (1, 1)
+
+    @property
+    def exit_code(self) -> int:
+        return self._exit_code
 
 
 class DummyEpicVerifier:
