@@ -177,12 +177,11 @@ class IssueExecutionCoordinator:
         issues_spawned = 0
 
         # Initialize watch state from config (used in T004-T006)
-        _watch_state = WatchState(
+        watch_state = WatchState(
             next_validation_threshold=(
                 watch_config.validate_every if watch_config else 10
             )
         )
-        _ = _watch_state  # Silence unused variable warning until T004
 
         while True:
             logger.debug(
@@ -215,19 +214,41 @@ class IssueExecutionCoordinator:
                 )
 
             # Fetch ready issues (unless we've hit the limit)
-            ready = (
-                await self.beads.get_ready_async(
-                    self.failed_issues,
-                    epic_id=self.config.epic_id,
-                    only_ids=self.config.only_ids,
-                    suppress_warn_ids=suppress_warn_ids,
-                    prioritize_wip=self.config.prioritize_wip,
-                    focus=self.config.focus,
-                    orphans_only=self.config.orphans_only,
-                )
-                if not limit_reached
-                else []
-            )
+            if limit_reached:
+                ready: list[str] = []
+            else:
+                try:
+                    ready = await self.beads.get_ready_async(
+                        self.failed_issues,
+                        epic_id=self.config.epic_id,
+                        only_ids=self.config.only_ids,
+                        suppress_warn_ids=suppress_warn_ids,
+                        prioritize_wip=self.config.prioritize_wip,
+                        focus=self.config.focus,
+                        orphans_only=self.config.orphans_only,
+                    )
+                    watch_state.consecutive_poll_failures = 0  # Reset on success
+                except Exception as e:
+                    logger.error("Poll failed: %s", e)
+                    watch_state.consecutive_poll_failures += 1
+
+                    if watch_state.consecutive_poll_failures >= 3:
+                        # Run final validation if any issues completed
+                        if watch_state.completed_count > watch_state.last_validation_at:
+                            if validation_callback:
+                                await validation_callback()
+                        return RunResult(
+                            issues_spawned,
+                            exit_code=3,
+                            exit_reason="poll_failed",
+                        )
+
+                    # Wait and retry
+                    poll_interval = (
+                        watch_config.poll_interval_seconds if watch_config else 60.0
+                    )
+                    await sleep_fn(poll_interval)
+                    continue
 
             if ready:
                 self.event_sink.on_ready_issues(list(ready))
@@ -280,6 +301,7 @@ class IssueExecutionCoordinator:
                 for issue_id, t in list(self.active_tasks.items()):
                     if t is task:
                         await finalize_callback(issue_id, task)
+                        watch_state.completed_count += 1
                         break
 
             # Check for abort after processing completions
