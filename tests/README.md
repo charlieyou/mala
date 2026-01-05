@@ -2,7 +2,7 @@
 
 ## Testing Philosophy
 
-This test suite follows the testing philosophy documented in [CLAUDE.md](../CLAUDE.md#testing-philosophy):
+This test suite follows the testing philosophy documented in [CLAUDE.md](../CLAUDE.md#testing-philosophy) and [AGENTS.md](../AGENTS.md#testing-philosophy):
 
 - **Behavior over implementation**: Test externally visible behavior (outputs, state changes, emitted events), not implementation details
 - **Fakes over mocks**: Use in-memory fakes implementing protocols. Use `MagicMock` only as last resort
@@ -23,14 +23,16 @@ tests/
 
 ## Fakes Module (`tests/fakes/`)
 
-The `fakes/` module provides in-memory implementations of mala protocols for testing:
+The `fakes/` module will provide in-memory implementations of mala protocols for testing.
+
+**Planned fakes** (to be implemented):
 
 | Fake | Protocol | Purpose |
 |------|----------|---------|
 | `FakeIssueProvider` | `IssueProvider` | In-memory issue storage |
-| `FakeCommandRunner` | `CommandRunner` | Deterministic command execution |
-| `FakeLockManager` | `LockManager` | In-memory lock coordination |
-| `FakeEventSink` | `EventSink` | Event capture with verification |
+| `FakeCommandRunner` | `CommandRunnerPort` | Deterministic command execution |
+| `FakeLockManager` | `LockManagerPort` | In-memory lock coordination |
+| `FakeEventSink` | `MalaEventSink` | Event capture with verification |
 | `FakeEpicVerificationModel` | `EpicVerificationModel` | Controlled verification responses |
 
 ### Why Fakes Over Mocks
@@ -40,9 +42,10 @@ Fakes implement real protocol contracts, which means:
 2. Tests assert on behavior (outputs, state) not interactions (call counts)
 3. Contract tests can verify both fake and real implementations
 
-### Usage
+### Usage (once fakes are implemented)
 
 ```python
+# Example usage pattern (FakeIssueProvider not yet available)
 from tests.fakes import FakeIssueProvider
 
 def test_issue_processing():
