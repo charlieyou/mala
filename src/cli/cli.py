@@ -800,11 +800,27 @@ def run(
             rich_help_panel="Review Backend",
         ),
     ] = None,
+    review_spawn_args: Annotated[
+        str | None,
+        typer.Option(
+            "--review-spawn-args",
+            help="Extra args for `review-gate spawn-code-review` (shlex-style string)",
+            rich_help_panel="Review Backend",
+        ),
+    ] = None,
     cerberus_spawn_args: Annotated[
         str | None,
         typer.Option(
             "--cerberus-spawn-args",
             help="Extra args for `review-gate spawn-code-review` (shlex-style string)",
+            hidden=True,
+        ),
+    ] = None,
+    review_wait_args: Annotated[
+        str | None,
+        typer.Option(
+            "--review-wait-args",
+            help="Extra args for `review-gate wait` (shlex-style string)",
             rich_help_panel="Review Backend",
         ),
     ] = None,
@@ -813,6 +829,14 @@ def run(
         typer.Option(
             "--cerberus-wait-args",
             help="Extra args for `review-gate wait` (shlex-style string)",
+            hidden=True,
+        ),
+    ] = None,
+    review_env: Annotated[
+        str | None,
+        typer.Option(
+            "--review-env",
+            help="Extra env for review-gate (JSON object or comma KEY=VALUE list)",
             rich_help_panel="Review Backend",
         ),
     ] = None,
@@ -821,7 +845,7 @@ def run(
         typer.Option(
             "--cerberus-env",
             help="Extra env for review-gate (JSON object or comma KEY=VALUE list)",
-            rich_help_panel="Review Backend",
+            hidden=True,
         ),
     ] = None,
     epic_override: Annotated[
@@ -929,12 +953,13 @@ def run(
     config = _lazy("MalaConfig").from_env(validate=False)
 
     # Apply CLI overrides to config
+    # Coalesce new --review-* options with old --cerberus-* aliases (new takes precedence)
     override_result = _apply_config_overrides(
         config=config,
         review_timeout=review_timeout,
-        cerberus_spawn_args=cerberus_spawn_args,
-        cerberus_wait_args=cerberus_wait_args,
-        cerberus_env=cerberus_env,
+        cerberus_spawn_args=review_spawn_args or cerberus_spawn_args,
+        cerberus_wait_args=review_wait_args or cerberus_wait_args,
+        cerberus_env=review_env or cerberus_env,
         max_epic_verification_retries=max_epic_verification_retries,
         braintrust_enabled=_braintrust_enabled,
         disable_review="review" in (disable_set or set()),
