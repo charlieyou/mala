@@ -23,6 +23,18 @@ class LockAcquireCall:
 
 
 @dataclass
+class WaitForLockCall:
+    """Record of a wait_for_lock call with its specific parameters."""
+
+    filepath: str
+    agent_id: str
+    repo_namespace: str | None
+    timeout_seconds: float
+    poll_interval_ms: int
+    acquired: bool
+
+
+@dataclass
 class FakeLockManager:
     """In-memory lock manager implementing LockManagerPort.
 
@@ -44,6 +56,7 @@ class FakeLockManager:
 
     locks: dict[str, str] = field(default_factory=dict)
     acquire_calls: list[LockAcquireCall] = field(default_factory=list)
+    wait_for_lock_calls: list[WaitForLockCall] = field(default_factory=list)
 
     def lock_path(self, filepath: str, repo_namespace: str | None = None) -> Path:
         """Get the lock file path for a given filepath.
@@ -87,9 +100,20 @@ class FakeLockManager:
 
         In the fake, this behaves identically to try_lock since there's no
         actual waiting. Tests that need to simulate timeout behavior should
-        pre-populate the locks dict.
+        pre-populate the locks dict. Records call parameters for test assertions.
         """
-        return self.try_lock(filepath, agent_id, repo_namespace)
+        acquired = self.try_lock(filepath, agent_id, repo_namespace)
+        self.wait_for_lock_calls.append(
+            WaitForLockCall(
+                filepath=filepath,
+                agent_id=agent_id,
+                repo_namespace=repo_namespace,
+                timeout_seconds=timeout_seconds,
+                poll_interval_ms=poll_interval_ms,
+                acquired=acquired,
+            )
+        )
+        return acquired
 
     def release_lock(
         self, filepath: str, agent_id: str, repo_namespace: str | None = None

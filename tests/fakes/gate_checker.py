@@ -55,6 +55,8 @@ class FakeGateChecker:
     check_with_resolution_calls: list[dict] = field(default_factory=list)
     check_no_progress_calls: list[dict] = field(default_factory=list)
     get_log_end_offset_calls: list[dict] = field(default_factory=list)
+    check_commit_exists_calls: list[dict] = field(default_factory=list)
+    parse_validation_evidence_calls: list[dict] = field(default_factory=list)
 
     # Alias for backward compatibility
     @property
@@ -114,11 +116,17 @@ class FakeGateChecker:
     def parse_validation_evidence_with_spec(
         self, log_path: Path, spec: ValidationSpec, offset: int = 0
     ) -> ValidationEvidence:
-        """Return pre-configured validation evidence."""
+        """Record call and return pre-configured validation evidence."""
+        self.parse_validation_evidence_calls.append(
+            {"log_path": log_path, "spec": spec, "offset": offset}
+        )
         return self.validation_evidence
 
     def check_commit_exists(
         self, issue_id: str, baseline_timestamp: int | None = None
     ) -> CommitResult:
-        """Return pre-configured commit result."""
+        """Record call and return pre-configured commit result."""
+        self.check_commit_exists_calls.append(
+            {"issue_id": issue_id, "baseline_timestamp": baseline_timestamp}
+        )
         return self.commit_result

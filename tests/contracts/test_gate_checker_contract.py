@@ -5,19 +5,19 @@ and exhibits correct behavioral parity.
 """
 
 from pathlib import Path
-from typing import _get_protocol_attrs  # type: ignore[attr-defined]
 
 import pytest
 
 from src.core.protocols import GateChecker
 from src.domain.quality_gate import CommitResult, GateResult, ValidationEvidence
+from tests.contracts import get_protocol_members
 from tests.fakes.gate_checker import FakeGateChecker
 
 
 @pytest.mark.unit
 def test_fake_gate_checker_implements_all_protocol_methods() -> None:
     """FakeGateChecker must implement all public methods of GateChecker."""
-    protocol_methods = _get_protocol_attrs(GateChecker)
+    protocol_methods = get_protocol_members(GateChecker)
     fake_methods = {name for name in dir(FakeGateChecker) if not name.startswith("_")}
 
     missing = protocol_methods - fake_methods
@@ -128,15 +128,20 @@ class TestFakeGateCheckerBehavior:
     @pytest.mark.unit
     def test_parse_validation_evidence_returns_configured_value(self) -> None:
         """parse_validation_evidence_with_spec() returns pre-configured evidence."""
-        from src.domain.validation.spec import CommandKind
+        from src.domain.validation.spec import (
+            CommandKind,
+            ValidationScope,
+            ValidationSpec,
+        )
 
         evidence = ValidationEvidence(
             commands_ran={CommandKind.TEST: True, CommandKind.LINT: True}
         )
         checker = FakeGateChecker(validation_evidence=evidence)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
         result = checker.parse_validation_evidence_with_spec(
             log_path=Path("/tmp/log.jsonl"),
-            spec=None,  # type: ignore[arg-type]
+            spec=spec,
             offset=0,
         )
         # Test via protocol-compliant methods

@@ -16,10 +16,18 @@ class VerificationAttempt:
 
     Attributes:
         epic_id: Identifier of the epic being verified (extracted from criteria).
+        epic_criteria: Full criteria string passed to verify().
+        commit_range: Commit range passed to verify().
+        commit_list: Commit list passed to verify().
+        spec_content: Spec content passed to verify().
         verdict: The verdict returned for this attempt.
     """
 
     epic_id: str
+    epic_criteria: str
+    commit_range: str
+    commit_list: str
+    spec_content: str | None
     verdict: EpicVerdict
 
 
@@ -83,7 +91,16 @@ class FakeEpicVerificationModel:
                 reasoning="Default passing verdict (sequence exhausted)",
             )
 
-        self.attempts.append(VerificationAttempt(epic_id=epic_id, verdict=verdict))
+        self.attempts.append(
+            VerificationAttempt(
+                epic_id=epic_id,
+                epic_criteria=epic_criteria,
+                commit_range=commit_range,
+                commit_list=commit_list,
+                spec_content=spec_content,
+                verdict=verdict,
+            )
+        )
         return verdict
 
 
