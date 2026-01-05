@@ -728,14 +728,21 @@ def run(
             rich_help_panel="Quality Gates",
         ),
     ] = None,
-    wip: Annotated[
+    resume: Annotated[
         bool,
         typer.Option(
             "--resume/--no-resume",
             "-r",
-            "--wip",
             help="Prioritize in_progress issues before open issues",
             rich_help_panel="Scope & Ordering",
+        ),
+    ] = False,
+    wip: Annotated[
+        bool,
+        typer.Option(
+            "--wip",
+            help="Alias for --resume (deprecated)",
+            hidden=True,
         ),
     ] = False,
     focus: Annotated[
@@ -832,6 +839,9 @@ def run(
     # Apply verbose setting
     set_verbose(verbose)
 
+    # Combine --resume and --wip (hidden alias) into single prioritize_wip flag
+    prioritize_wip = resume or wip
+
     repo_path = repo_path.resolve()
 
     # Handle --scope option (calls parse_scope which raises NotImplementedError for now)
@@ -864,7 +874,7 @@ def run(
             repo_path=repo_path,
             epic=epic,
             only_ids=only_ids,
-            wip=wip,
+            wip=prioritize_wip,
             focus=focus,
             orphans_only=orphans_only,
         )
@@ -897,7 +907,7 @@ def run(
     cli_args = _build_cli_args_metadata(
         disable_validations=disable_validations,
         coverage_threshold=coverage_threshold,
-        wip=wip,
+        wip=prioritize_wip,
         max_issues=max_issues,
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
@@ -919,7 +929,7 @@ def run(
         max_review_retries=max_review_retries,
         disable_validations=disable_set,
         coverage_threshold=coverage_threshold,
-        prioritize_wip=wip,
+        prioritize_wip=prioritize_wip,
         focus=focus,
         cli_args=cli_args,
         epic_override_ids=epic_override_ids,

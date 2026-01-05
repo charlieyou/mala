@@ -904,7 +904,7 @@ def test_run_wip_flag_passed_to_orchestrator(
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, wip=True)
+        cli.run(repo_path=tmp_path, resume=True)
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
@@ -961,10 +961,10 @@ def test_run_no_focus_flag_passed_to_orchestrator(
     assert DummyOrchestrator.last_orch_config.focus is False
 
 
-def test_run_focus_composes_with_wip(
+def test_run_focus_composes_with_resume(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that --focus and --wip flags compose correctly."""
+    """Test that --focus and --resume flags compose correctly."""
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"
@@ -979,7 +979,7 @@ def test_run_focus_composes_with_wip(
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, focus=True, wip=True)
+        cli.run(repo_path=tmp_path, focus=True, resume=True)
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
@@ -987,10 +987,17 @@ def test_run_focus_composes_with_wip(
     assert DummyOrchestrator.last_orch_config.prioritize_wip is True
 
 
-def test_run_resume_flag_passed_to_orchestrator(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    "flag",
+    ["--resume", "-r", "--wip"],
+    ids=["resume_long", "resume_short", "wip_alias"],
+)
+def test_run_resume_flags_set_prioritize_wip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, flag: str
 ) -> None:
-    """Test that --resume flag is correctly passed to orchestrator (alias for --wip)."""
+    """Test that --resume, -r, and --wip all set prioritize_wip=True via CLI parsing."""
+    from typer.testing import CliRunner
+
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"
@@ -1004,39 +1011,26 @@ def test_run_resume_flag_passed_to_orchestrator(
     )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
-    # --resume maps to the wip parameter
-    with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, wip=True)
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", str(tmp_path), flag])
 
-    assert excinfo.value.exit_code == 0
+    assert result.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
     assert DummyOrchestrator.last_orch_config.prioritize_wip is True
 
 
-def test_run_resume_and_wip_together_work(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Test that --resume and --wip together work without error (both map to same param)."""
+def test_run_wip_hidden_from_help(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that --wip is hidden from --help output (--resume is the public name)."""
+    from typer.testing import CliRunner
+
     cli = _reload_cli(monkeypatch)
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", "--help"])
 
-    config_dir = tmp_path / "config"
-    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestration.factory
-
-    monkeypatch.setattr(
-        src.orchestration.factory,
-        "create_orchestrator",
-        _make_dummy_create_orchestrator(),
-    )
-    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
-
-    # Both flags map to the same parameter, so using either should work
-    with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, wip=True)
-
-    assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_orch_config is not None
-    assert DummyOrchestrator.last_orch_config.prioritize_wip is True
+    # --resume should be visible
+    assert "--resume" in result.output
+    # --wip should be hidden
+    assert "--wip" not in result.output
 
 
 def test_run_review_disabled_via_disable_validations(
@@ -1435,7 +1429,7 @@ def test_dry_run_passes_flags_to_beads_client(
             dry_run=True,
             epic="test-epic",
             only="id-1,id-2",
-            wip=True,
+            resume=True,
             focus=False,
         )
 
