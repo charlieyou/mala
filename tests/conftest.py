@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+# Type alias for lock releaser function - defined at runtime to support get_type_hints()
+LockReleaserFunc = Callable[[list[str]], int]
+
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
     from src.core.protocols import (
@@ -16,14 +19,11 @@ if TYPE_CHECKING:
         GateChecker,
         IssueProvider,
         LogProvider,
+        MalaEventSink,
     )
     from src.infra.io.config import MalaConfig
-    from src.core.protocols import MalaEventSink
     from src.infra.telemetry import TelemetryProvider
     from src.orchestration.orchestrator import MalaOrchestrator
-
-    # Type alias for lock releaser function
-    LockReleaserFunc = Callable[[list[str]], int]
 
 # Ignore fixture templates under tests/fixtures
 collect_ignore_glob = ["fixtures/e2e-fixture/**"]
@@ -46,6 +46,9 @@ def pytest_configure(config: pytest.Config) -> None:
 
     # Redirect run metadata to /tmp to avoid polluting user config
     os.environ["MALA_RUNS_DIR"] = "/tmp/mala-test-runs"
+
+    # Redirect lock directory to /tmp to avoid cross-test interference
+    os.environ["MALA_LOCK_DIR"] = "/tmp/mala-test-locks"
 
     # Redirect Claude SDK logs to /tmp to avoid polluting user Claude config
     os.environ["CLAUDE_CONFIG_DIR"] = "/tmp/mala-test-claude"

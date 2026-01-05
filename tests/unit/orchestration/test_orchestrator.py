@@ -1,6 +1,6 @@
 """Unit tests for MalaOrchestrator control flow.
 
-These tests use FakeIssueProvider and FakeEventSink to test orchestrator
+These tests use FakeIssueProvider to test orchestrator
 state transitions without network or actual bd CLI.
 """
 
@@ -48,21 +48,29 @@ def orchestrator(
 
 
 @pytest.fixture(autouse=True)
-def skip_run_level_validation() -> Generator[None, None, None]:
+def skip_run_level_validation(
+    make_orchestrator: Callable[..., MalaOrchestrator],
+) -> Generator[None, None, None]:
     """Skip Gate 4 (run-level validation) in all tests.
 
     Run-level validation spawns a real Claude agent which is too slow for
     unit tests. Tests for run-level validation are in test_run_level_validation.py.
-    """
-    # Patch RunCoordinator.run_validation to return passed=True
-    from src.pipeline.run_coordinator import RunLevelValidationOutput
 
-    mock_output = RunLevelValidationOutput(passed=True)
-    with patch(
-        "src.pipeline.run_coordinator.RunCoordinator.run_validation",
-        return_value=mock_output,
-    ):
-        yield
+    This fixture monkey-patches RunCoordinator.run_validation at the class level
+    to avoid using patch() context managers. The method is restored after each test.
+    """
+    from src.pipeline.run_coordinator import RunCoordinator, RunLevelValidationOutput
+
+    original_run_validation = RunCoordinator.run_validation
+
+    async def mock_run_validation(
+        self: object, *args: object, **kwargs: object
+    ) -> RunLevelValidationOutput:
+        return RunLevelValidationOutput(passed=True)
+
+    RunCoordinator.run_validation = mock_run_validation  # type: ignore[method-assign]
+    yield
+    RunCoordinator.run_validation = original_run_validation  # type: ignore[method-assign]
 
 
 def make_subprocess_result(
@@ -435,13 +443,17 @@ class TestOrchestratorWithEpicId:
 
 
 class TestOrchestratorQualityGateIntegration:
-    """Test quality gate integration in orchestrator run flow."""
+    """Test quality gate integration in orchestrator run flow.
+
+    These tests verify that success=False triggers followup marking
+    and success=True triggers issue closure.
+    """
 
     @pytest.mark.asyncio
     async def test_marks_needs_followup_on_gate_failure(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """When quality gate fails (inside run_implementer), issue should be marked needs-followup."""
+        """When run_implementer returns success=False, issue should be marked needs-followup."""
         fake_issues = FakeIssueProvider(
             {"issue-123": FakeIssue(id="issue-123", priority=1)}
         )
@@ -457,23 +469,25 @@ class TestOrchestratorQualityGateIntegration:
             lock_releaser=lambda _: 0,
         )
 
+        log_path = tmp_path / "issue-123.jsonl"
+        log_path.touch()
+
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            # Populate log path so quality gate runs
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator._state.active_session_log_paths[issue_id] = log_path
-            # Gate failure now returns success=False from run_implementer
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
-                success=False,  # Gate failed
+                success=False,  # Failure triggers followup
                 summary="Quality gate failed: No commit with bd-issue-123 found",
+                session_log_path=log_path,
             )
 
-        with patch.object(
-            orchestrator, "run_implementer", side_effect=mock_run_implementer
-        ):
+        # Direct method replacement instead of patch.object
+        original_run_implementer = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        try:
             await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]
 
         # Should have been marked as needs-followup via FakeIssueProvider
         assert len(fake_issues.followup_calls) == 1
@@ -483,7 +497,7 @@ class TestOrchestratorQualityGateIntegration:
     async def test_success_only_when_gate_passes(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """Issue should only count as success when quality gate passes."""
+        """When run_implementer returns success=True, issue should count as success."""
         fake_issues = FakeIssueProvider(
             {"issue-pass": FakeIssue(id="issue-pass", priority=1)}
         )
@@ -499,22 +513,25 @@ class TestOrchestratorQualityGateIntegration:
             lock_releaser=lambda _: 0,
         )
 
+        log_path = tmp_path / "issue-pass.jsonl"
+        log_path.touch()
+
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            # Populate log path so quality gate runs
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
-                success=True,  # Gate passed
+                success=True,  # Success triggers closure
                 summary="Completed successfully",
+                session_log_path=log_path,
             )
 
-        with patch.object(
-            orchestrator, "run_implementer", side_effect=mock_run_implementer
-        ):
+        # Direct method replacement instead of patch.object
+        original_run_implementer = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        try:
             success_count, _total = await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]
 
         assert success_count == 1
         assert any(r.issue_id == "issue-pass" for r in orchestrator._state.completed)
@@ -815,257 +832,152 @@ class TestLockDirNestedCreation:
 
 
 class TestGateFlowSequencing:
-    """Test Gate 1-4 sequencing with check_with_resolution."""
+    """Test Gate 1-4 sequencing with check_with_resolution.
+
+    Uses FakeIssueProvider for behavioral assertions on issue state changes.
+    """
 
     @pytest.mark.asyncio
     async def test_no_op_resolution_skips_per_issue_validation(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """No-op resolution should skip Gate 2/3 (commit + validation evidence)."""
-        from src.domain.validation.spec import IssueResolution, ResolutionOutcome
-
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
-
-        # Gate returns passed with no-change resolution
-        no_change_resolution = IssueResolution(
-            outcome=ResolutionOutcome.NO_CHANGE,
-            rationale="Already implemented by another agent",
+        fake_issues = FakeIssueProvider(
+            {"issue-noop": FakeIssue(id="issue-noop", priority=1)}
         )
-        # Resolution is used to verify no-op handling
-        assert no_change_resolution.outcome == ResolutionOutcome.NO_CHANGE
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        close_calls: list[str] = []
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
-        async def mock_close_async(issue_id: str) -> bool:
-            close_calls.append(issue_id)
-            return True
+        log_path = tmp_path / "issue-noop.jsonl"
+        log_path.touch()
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
                 success=True,
                 summary="No changes needed - already done",
+                session_log_path=log_path,
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-noop"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(
-                orchestrator.beads, "close_async", side_effect=mock_close_async
-            ),
-            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch.object(
-                orchestrator.beads, "close_eligible_epics_async", return_value=False
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        # Direct method replacement
+        original = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        try:
             success_count, _total = await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original  # type: ignore[method-assign]
 
-        # Issue should be closed despite no commit
+        # Assert on FakeIssueProvider state
         assert success_count == 1
-        assert "issue-noop" in close_calls
+        assert "issue-noop" in fake_issues.closed
 
     @pytest.mark.asyncio
     async def test_obsolete_resolution_skips_per_issue_validation(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Obsolete resolution should skip Gate 2/3 (commit + validation evidence)."""
-        from src.domain.validation.spec import IssueResolution, ResolutionOutcome
-
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
-
-        obsolete_resolution = IssueResolution(
-            outcome=ResolutionOutcome.OBSOLETE,
-            rationale="Feature was removed in refactoring",
+        fake_issues = FakeIssueProvider(
+            {"issue-obsolete": FakeIssue(id="issue-obsolete", priority=1)}
         )
-        # Resolution is used to verify obsolete handling
-        assert obsolete_resolution.outcome == ResolutionOutcome.OBSOLETE
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        close_calls: list[str] = []
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
-        async def mock_close_async(issue_id: str) -> bool:
-            close_calls.append(issue_id)
-            return True
+        log_path = tmp_path / "issue-obsolete.jsonl"
+        log_path.touch()
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
                 success=True,
                 summary="Issue obsolete - no longer relevant",
+                session_log_path=log_path,
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-obsolete"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(
-                orchestrator.beads, "close_async", side_effect=mock_close_async
-            ),
-            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch.object(
-                orchestrator.beads, "close_eligible_epics_async", return_value=False
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        # Direct method replacement
+        original = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        try:
             success_count, _total = await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original  # type: ignore[method-assign]
 
-        # Issue should be closed despite no commit
+        # Assert on FakeIssueProvider state
         assert success_count == 1
-        assert "issue-obsolete" in close_calls
+        assert "issue-obsolete" in fake_issues.closed
 
 
 class TestRetryExhaustion:
-    """Test retry exhaustion and failure handling."""
+    """Test retry exhaustion and failure handling.
+
+    Uses FakeIssueProvider for behavioral assertions on followup state.
+    """
 
     @pytest.mark.asyncio
     async def test_gate_retry_exhaustion_marks_failed(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """When gate retries are exhausted, issue should be marked failed."""
+        fake_issues = FakeIssueProvider(
+            {"issue-retry-fail": FakeIssue(id="issue-retry-fail", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
+            max_issues=1,
             max_gate_retries=2,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
         )
 
-        followup_calls: list[str] = []
-
-        async def mock_mark_followup_async(
-            issue_id: str, reason: str, log_path: Path | None = None
-        ) -> bool:
-            followup_calls.append(issue_id)
-            return True
+        log_path = tmp_path / "issue-retry-fail.jsonl"
+        log_path.touch()
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator._state.active_session_log_paths[issue_id] = log_path
-            # Gate always fails
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
                 success=False,
                 summary="Quality gate failed: Missing validation commands",
                 gate_attempts=2,
+                session_log_path=log_path,
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-retry-fail"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(
-                orchestrator.beads,
-                "mark_needs_followup_async",
-                side_effect=mock_mark_followup_async,
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        # Direct method replacement
+        original = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        try:
             success_count, _total = await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original  # type: ignore[method-assign]
 
         assert success_count == 0
-        assert "issue-retry-fail" in followup_calls
+        # Assert on FakeIssueProvider state
+        assert len(fake_issues.followup_calls) == 1
+        assert fake_issues.followup_calls[0][0] == "issue-retry-fail"
         assert "issue-retry-fail" in orchestrator.failed_issues
 
     @pytest.mark.asyncio
@@ -1073,66 +985,42 @@ class TestRetryExhaustion:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """When no progress is detected, retries should stop early."""
+        fake_issues = FakeIssueProvider(
+            {"issue-no-progress": FakeIssue(id="issue-no-progress", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
         orchestrator = make_orchestrator(
             repo_path=tmp_path,
             max_agents=1,
+            max_issues=1,
             max_gate_retries=5,  # Many retries available
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
         )
 
+        log_path = tmp_path / "issue-no-progress.jsonl"
+        log_path.touch()
+
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator._state.active_session_log_paths[issue_id] = log_path
-            # Gate fails with no_progress - should stop retrying
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
                 success=False,
                 summary="Quality gate failed: No progress",
                 gate_attempts=2,  # Only 2 attempts despite 5 max
+                session_log_path=log_path,
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-no-progress"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(
-                orchestrator.beads, "mark_needs_followup_async", return_value=True
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        # Direct method replacement
+        original = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        try:
             await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original  # type: ignore[method-assign]
 
         # Should have failed due to no progress
         assert "issue-no-progress" in orchestrator.failed_issues
@@ -1161,14 +1049,30 @@ class TestDisableValidationsRespected:
 
 
 class TestRunLevelValidation:
-    """Test run-level validation after all issues complete."""
+    """Test run-level validation after all issues complete.
+
+    Uses FakeIssueProvider for behavioral assertions on close/followup state.
+    """
 
     @pytest.mark.asyncio
     async def test_run_returns_non_zero_exit_on_failure(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Run should indicate failure when issues fail."""
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
+        fake_issues = FakeIssueProvider(
+            {"failing-issue": FakeIssue(id="failing-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             return IssueResult(
@@ -1178,47 +1082,13 @@ class TestRunLevelValidation:
                 summary="Implementation failed",
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["failing-issue"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(
-                orchestrator.beads, "mark_needs_followup_async", return_value=True
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        # Direct method replacement
+        original = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        try:
             success_count, _total = await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original  # type: ignore[method-assign]
 
         assert success_count == 0
         assert _total == 1
@@ -1228,194 +1098,104 @@ class TestRunLevelValidation:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Issues should only be closed when quality gate passes."""
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
+        fake_issues = FakeIssueProvider(
+            {"issue-pass": FakeIssue(id="issue-pass", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        close_calls: list[str] = []
-        followup_calls: list[str] = []
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
-        async def mock_close_async(issue_id: str) -> bool:
-            close_calls.append(issue_id)
-            return True
-
-        async def mock_mark_followup_async(
-            issue_id: str, reason: str, log_path: Path | None = None
-        ) -> bool:
-            followup_calls.append(issue_id)
-            return True
+        log_path = tmp_path / "issue-pass.jsonl"
+        log_path.touch()
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            # Populate log path so quality gate runs
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
                 success=True,  # Gate passed
                 summary="Completed successfully",
+                session_log_path=log_path,
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-pass"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(
-                orchestrator.beads, "close_async", side_effect=mock_close_async
-            ),
-            patch.object(
-                orchestrator.beads,
-                "close_eligible_epics_async",
-                return_value=False,
-            ),
-            patch.object(
-                orchestrator.beads,
-                "mark_needs_followup_async",
-                side_effect=mock_mark_followup_async,
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        # Direct method replacement
+        original = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        try:
             success_count, _total = await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original  # type: ignore[method-assign]
 
         assert success_count == 1
-        assert "issue-pass" in close_calls
+        # Assert on FakeIssueProvider state
+        assert "issue-pass" in fake_issues.closed
 
     @pytest.mark.asyncio
     async def test_failed_issue_not_closed(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Failed issues should not be closed, only marked needs-followup."""
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
+        fake_issues = FakeIssueProvider(
+            {"issue-fail": FakeIssue(id="issue-fail", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        close_calls: list[str] = []
-        followup_calls: list[str] = []
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
-        async def mock_close_async(issue_id: str) -> bool:
-            close_calls.append(issue_id)
-            return True
-
-        async def mock_mark_followup_async(
-            issue_id: str, reason: str, log_path: Path | None = None
-        ) -> bool:
-            followup_calls.append(issue_id)
-            return True
+        log_path = tmp_path / "issue-fail.jsonl"
+        log_path.touch()
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
                 success=False,  # Gate failed
                 summary="Quality gate failed: Missing commit",
+                session_log_path=log_path,
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-fail"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(
-                orchestrator.beads, "close_async", side_effect=mock_close_async
-            ),
-            patch.object(
-                orchestrator.beads,
-                "close_eligible_epics_async",
-                return_value=False,
-            ),
-            patch.object(
-                orchestrator.beads,
-                "mark_needs_followup_async",
-                side_effect=mock_mark_followup_async,
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        # Direct method replacement
+        original = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        try:
             await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original  # type: ignore[method-assign]
 
-        # Issue should NOT be closed
-        assert "issue-fail" not in close_calls
+        # Issue should NOT be closed - assert on FakeIssueProvider state
+        assert "issue-fail" not in fake_issues.closed
         # But should be marked needs-followup
-        assert "issue-fail" in followup_calls
+        assert len(fake_issues.followup_calls) == 1
+        assert fake_issues.followup_calls[0][0] == "issue-fail"
 
 
 class TestValidationResultMetadata:
     """Test validation metadata population from gate evidence.
 
     Verifies mala-3qp.8: Gate and metadata share the same validation result.
-    Validation evidence parsed during gate check is reused for metadata,
-    eliminating duplicate validation runs.
+    Uses FakeIssueProvider for issue state and captures RunMetadata for assertions.
     """
 
     @pytest.mark.asyncio
     async def test_validation_result_populated_from_gate_evidence(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """Validation metadata should be derived from gate result's validation_evidence.
-
-        This tests mala-3qp.8: Gate and metadata share the same validation result,
-        avoiding duplicate validation parsing.
-        """
+        """Validation metadata should be derived from gate result's validation_evidence."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
         from src.domain.quality_gate import (
             CommandKind,
@@ -1423,9 +1203,22 @@ class TestValidationResultMetadata:
             ValidationEvidence,
         )
 
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
+        fake_issues = FakeIssueProvider(
+            {"issue-with-validation": FakeIssue(id="issue-with-validation", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        # Track recorded issues
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+
+        # Track recorded issues via direct method replacement
         recorded_issues: list[IssueRun] = []
         original_record = RunMetadata.record_issue
 
@@ -1449,7 +1242,6 @@ class TestValidationResultMetadata:
         )
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            # Simulate gate result being stored (as done by AsyncGateRunner)
             orchestrator.async_gate_runner.last_gate_results[issue_id] = gate_result
             return IssueResult(
                 issue_id=issue_id,
@@ -1458,49 +1250,15 @@ class TestValidationResultMetadata:
                 summary="Completed successfully",
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-with-validation"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(orchestrator.beads, "close_async", return_value=True),
-            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch.object(
-                orchestrator.beads, "close_eligible_epics_async", return_value=False
-            ),
-            patch.object(RunMetadata, "record_issue", capture_record),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-        ):
+        # Direct method replacements
+        original_run = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]
+        try:
             await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original_run  # type: ignore[method-assign]
+            RunMetadata.record_issue = original_record  # type: ignore[method-assign]
 
         # Verify an issue was recorded
         assert len(recorded_issues) == 1
@@ -1510,7 +1268,6 @@ class TestValidationResultMetadata:
         # Validation field should be populated from gate evidence
         assert issue_run.validation is not None
         assert issue_run.validation.passed is True
-        # Commands run should match what was in evidence (using kind.value)
         assert set(issue_run.validation.commands_run) == {
             "test",
             "lint",
@@ -1523,11 +1280,7 @@ class TestValidationResultMetadata:
     async def test_gate_and_metadata_share_same_validation_evidence(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """Gate decisions and metadata should derive from the same validation result.
-
-        This tests mala-3qp.8: No duplicate validation parsing - both gate decisions
-        and metadata use the same ValidationEvidence object stored in gate result.
-        """
+        """Gate decisions and metadata should derive from the same validation result."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
         from src.domain.quality_gate import (
             CommandKind,
@@ -1535,7 +1288,24 @@ class TestValidationResultMetadata:
             ValidationEvidence,
         )
 
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
+        fake_issues = FakeIssueProvider(
+            {
+                "issue-failed-validation": FakeIssue(
+                    id="issue-failed-validation", priority=1
+                )
+            }
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
         # Track recorded issues
         recorded_issues: list[IssueRun] = []
@@ -1561,7 +1331,6 @@ class TestValidationResultMetadata:
         )
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            # Simulate gate result being stored
             orchestrator.async_gate_runner.last_gate_results[issue_id] = gate_result
             return IssueResult(
                 issue_id=issue_id,
@@ -1570,49 +1339,15 @@ class TestValidationResultMetadata:
                 summary="Quality gate failed: Validation commands failed",
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-failed-validation"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(orchestrator.beads, "close_async", return_value=True),
-            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch.object(
-                orchestrator.beads, "close_eligible_epics_async", return_value=False
-            ),
-            patch.object(RunMetadata, "record_issue", capture_record),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-        ):
+        # Direct method replacements
+        original_run = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]
+        try:
             await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original_run  # type: ignore[method-assign]
+            RunMetadata.record_issue = original_record  # type: ignore[method-assign]
 
         # Verify an issue was recorded
         assert len(recorded_issues) == 1
@@ -1627,14 +1362,12 @@ class TestValidationResultMetadata:
         # Validation metadata should derive from same evidence
         assert issue_run.validation is not None
         assert issue_run.validation.passed is False
-        # Commands run uses kind.value
         assert set(issue_run.validation.commands_run) == {
             "test",
             "lint",
             "format",
             "typecheck",
         }
-        # Failed commands should match gate evidence
         assert issue_run.validation.commands_failed == ["ruff check"]
 
 
@@ -1644,6 +1377,8 @@ class TestResolutionRecordingInMetadata:
     Verifies mala-yg9.1.1: When check_with_resolution returns a resolution
     (NO_CHANGE or OBSOLETE), it should be propagated through IssueResult
     to IssueRun and persisted via RunMetadata.
+
+    Uses FakeIssueProvider for issue state and captures RunMetadata for assertions.
     """
 
     @pytest.mark.asyncio
@@ -1654,7 +1389,20 @@ class TestResolutionRecordingInMetadata:
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
         from src.domain.validation.spec import IssueResolution, ResolutionOutcome
 
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
+        fake_issues = FakeIssueProvider(
+            {"issue-no-change": FakeIssue(id="issue-no-change", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
         # Track recorded issues
         recorded_issues: list[IssueRun] = []
@@ -1670,62 +1418,28 @@ class TestResolutionRecordingInMetadata:
             rationale="Already implemented by another agent",
         )
 
+        log_path = tmp_path / "issue-no-change.jsonl"
+        log_path.touch()
+
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
                 success=True,
                 summary="No changes needed - already done",
                 resolution=no_change_resolution,
+                session_log_path=log_path,
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-no-change"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(orchestrator.beads, "close_async", return_value=True),
-            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch.object(
-                orchestrator.beads, "close_eligible_epics_async", return_value=False
-            ),
-            patch.object(RunMetadata, "record_issue", capture_record),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        # Direct method replacements
+        original_run = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]
+        try:
             success_count, total = await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original_run  # type: ignore[method-assign]
+            RunMetadata.record_issue = original_record  # type: ignore[method-assign]
 
         # Verify issue was successful
         assert success_count == 1
@@ -1747,7 +1461,20 @@ class TestResolutionRecordingInMetadata:
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
         from src.domain.validation.spec import IssueResolution, ResolutionOutcome
 
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
+        fake_issues = FakeIssueProvider(
+            {"issue-obsolete": FakeIssue(id="issue-obsolete", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
         # Track recorded issues
         recorded_issues: list[IssueRun] = []
@@ -1763,68 +1490,34 @@ class TestResolutionRecordingInMetadata:
             rationale="Feature removed in refactoring",
         )
 
+        log_path = tmp_path / "issue-obsolete.jsonl"
+        log_path.touch()
+
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
                 success=True,
                 summary="Issue obsolete - no longer relevant",
                 resolution=obsolete_resolution,
+                session_log_path=log_path,
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-obsolete"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(orchestrator.beads, "close_async", return_value=True),
-            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch.object(
-                orchestrator.beads, "close_eligible_epics_async", return_value=False
-            ),
-            patch.object(RunMetadata, "record_issue", capture_record),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        # Direct method replacements
+        original_run = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]
+        try:
             success_count, total = await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original_run  # type: ignore[method-assign]
+            RunMetadata.record_issue = original_record  # type: ignore[method-assign]
 
         # Verify issue was successful
         assert success_count == 1
         assert total == 1
 
-        # Verify resolution was recorded in IssueRun (normal commit flow)
+        # Verify resolution was recorded in IssueRun
         assert len(recorded_issues) == 1
         issue_run = recorded_issues[0]
         assert issue_run.issue_id == "issue-obsolete"
@@ -1839,7 +1532,20 @@ class TestResolutionRecordingInMetadata:
         """Normal success (with commit) should have no resolution marker."""
         from src.infra.io.log_output.run_metadata import IssueRun, RunMetadata
 
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
+        fake_issues = FakeIssueProvider(
+            {"issue-normal": FakeIssue(id="issue-normal", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
         # Track recorded issues
         recorded_issues: list[IssueRun] = []
@@ -1849,63 +1555,28 @@ class TestResolutionRecordingInMetadata:
             recorded_issues.append(issue)
             original_record(self, issue)
 
+        log_path = tmp_path / "issue-normal.jsonl"
+        log_path.touch()
+
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator._state.active_session_log_paths[issue_id] = log_path
-            # Normal success - no resolution marker
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
                 success=True,
                 summary="Implemented feature successfully",
                 resolution=None,  # No resolution for normal commits
+                session_log_path=log_path,
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["issue-normal"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(orchestrator.beads, "close_async", return_value=True),
-            patch.object(orchestrator.beads, "commit_issues_async", return_value=True),
-            patch.object(
-                orchestrator.beads, "close_eligible_epics_async", return_value=False
-            ),
-            patch.object(RunMetadata, "record_issue", capture_record),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        # Direct method replacements
+        original_run = orchestrator.run_implementer
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        RunMetadata.record_issue = capture_record  # type: ignore[method-assign]
+        try:
             success_count, total = await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original_run  # type: ignore[method-assign]
+            RunMetadata.record_issue = original_record  # type: ignore[method-assign]
 
         # Verify issue was successful
         assert success_count == 1
@@ -1923,6 +1594,10 @@ class TestEpicClosureAfterChildCompletion:
 
     Verifies mala-0k7: Epics should close after each agent completion, not just
     at run end, so other agents can see updated epic status during the run.
+
+    Note: These tests require epic_verifier which is only created with BeadsClient.
+    Since FakeIssueProvider doesn't wire up epic_verifier, tests that need
+    verify_and_close_epic must use the default orchestrator with patching.
     """
 
     @pytest.mark.asyncio
@@ -1930,11 +1605,11 @@ class TestEpicClosureAfterChildCompletion:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """verify_and_close_epic should be called for the affected epic after issue closes."""
+        # Use default orchestrator (not FakeIssueProvider) to get epic_verifier
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
 
         epic_closure_calls: list[str] = []
 
-        # Create mock for epic_verifier.verify_and_close_epic
         from src.core.models import EpicVerificationResult
 
         async def mock_verify_and_close_epic(
@@ -1944,15 +1619,11 @@ class TestEpicClosureAfterChildCompletion:
             epic_closure_calls.append(epic_id)
             return EpicVerificationResult(
                 verified_count=1,
-                passed_count=1,  # Simulates epic was verified and closed
+                passed_count=1,
                 failed_count=0,
                 verdicts={},
                 remediation_issues_created=[],
             )
-
-        async def mock_close_eligible_epics_async() -> bool:
-            epic_closure_calls.append("close_eligible_called")
-            return True  # Simulate epic was closed
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             log_path = tmp_path / f"{issue_id}.jsonl"
@@ -1985,7 +1656,6 @@ class TestEpicClosureAfterChildCompletion:
         async def mock_claim_async(issue_id: str) -> bool:
             return True
 
-        # Mock get_parent_epic_async to return a parent epic
         async def mock_get_parent_epic_async(issue_id: str) -> str | None:
             return "parent-epic" if issue_id == "child-issue" else None
 
@@ -2004,11 +1674,6 @@ class TestEpicClosureAfterChildCompletion:
                 orchestrator.beads,
                 "get_parent_epic_async",
                 side_effect=mock_get_parent_epic_async,
-            ),
-            patch.object(
-                orchestrator.beads,
-                "close_eligible_epics_async",
-                side_effect=mock_close_eligible_epics_async,
             ),
             patch.object(
                 orchestrator.epic_verifier,
@@ -2034,7 +1699,21 @@ class TestEpicClosureAfterChildCompletion:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """close_eligible_epics_async should NOT be called when issue fails."""
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=1)
+        # This test uses FakeIssueProvider since it doesn't need epic_verifier
+        fake_issues = FakeIssueProvider(
+            {"failing-child": FakeIssue(id="failing-child", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            max_issues=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
         epic_closure_calls: list[str] = []
 
@@ -2042,64 +1721,28 @@ class TestEpicClosureAfterChildCompletion:
             epic_closure_calls.append("called")
             return True
 
+        log_path = tmp_path / "failing-child.jsonl"
+        log_path.touch()
+
         async def mock_run_implementer(issue_id: str) -> IssueResult:
-            log_path = tmp_path / f"{issue_id}.jsonl"
-            log_path.touch()
-            orchestrator._state.active_session_log_paths[issue_id] = log_path
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
                 success=False,  # Gate failed
                 summary="Quality gate failed: Missing commit",
+                session_log_path=log_path,
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["failing-child"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(orchestrator.beads, "close_async", return_value=True),
-            patch.object(
-                orchestrator.beads,
-                "close_eligible_epics_async",
-                side_effect=mock_close_eligible_epics_async,
-            ),
-            patch.object(
-                orchestrator.beads, "mark_needs_followup_async", return_value=True
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.get_runs_dir", return_value=tmp_path),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        # Direct method replacements
+        original_run = orchestrator.run_implementer
+        original_close = orchestrator.beads.close_eligible_epics_async
+        orchestrator.run_implementer = mock_run_implementer  # type: ignore[method-assign]
+        orchestrator.beads.close_eligible_epics_async = mock_close_eligible_epics_async  # type: ignore[method-assign]
+        try:
             await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original_run  # type: ignore[method-assign]
+            orchestrator.beads.close_eligible_epics_async = original_close  # type: ignore[method-assign]
 
         # Epic closure should NOT have been called since issue failed
         assert len(epic_closure_calls) == 0
@@ -2109,10 +1752,11 @@ class TestEpicClosureAfterChildCompletion:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Multiple issues from same epic should only trigger one verification."""
+        # Use default orchestrator (not FakeIssueProvider) to get epic_verifier
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=2)
 
         epic_closure_calls: list[str] = []
-        issues_processed = []
+        issues_processed: list[str] = []
 
         from src.core.models import EpicVerificationResult
 
@@ -2128,10 +1772,6 @@ class TestEpicClosureAfterChildCompletion:
                 verdicts={},
                 remediation_issues_created=[],
             )
-
-        async def mock_close_eligible_epics_async() -> bool:
-            epic_closure_calls.append("close_eligible_called")
-            return True
 
         async def mock_run_implementer(issue_id: str) -> IssueResult:
             issues_processed.append(issue_id)
@@ -2165,7 +1805,6 @@ class TestEpicClosureAfterChildCompletion:
         async def mock_claim_async(issue_id: str) -> bool:
             return True
 
-        # Both child issues belong to the same parent epic
         async def mock_get_parent_epic_async(issue_id: str) -> str | None:
             if issue_id in ("child-1", "child-2"):
                 return "same-parent-epic"
@@ -2186,11 +1825,6 @@ class TestEpicClosureAfterChildCompletion:
                 orchestrator.beads,
                 "get_parent_epic_async",
                 side_effect=mock_get_parent_epic_async,
-            ),
-            patch.object(
-                orchestrator.beads,
-                "close_eligible_epics_async",
-                side_effect=mock_close_eligible_epics_async,
             ),
             patch.object(
                 orchestrator.epic_verifier,
@@ -2218,10 +1852,11 @@ class TestEpicClosureAfterChildCompletion:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Issues from different epics should each trigger verification for their epic."""
+        # Use default orchestrator (not FakeIssueProvider) to get epic_verifier
         orchestrator = make_orchestrator(repo_path=tmp_path, max_agents=2)
 
         epic_closure_calls: list[str] = []
-        issues_processed = []
+        issues_processed: list[str] = []
 
         from src.core.models import EpicVerificationResult
 
@@ -2270,7 +1905,6 @@ class TestEpicClosureAfterChildCompletion:
         async def mock_claim_async(issue_id: str) -> bool:
             return True
 
-        # Each child issue belongs to a different parent epic
         async def mock_get_parent_epic_async(issue_id: str) -> str | None:
             if issue_id == "child-1":
                 return "epic-1"
