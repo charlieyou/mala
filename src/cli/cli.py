@@ -37,6 +37,7 @@ _LAZY_NAMES = frozenset(
         "BeadsClient",
         "MalaConfig",
         "MalaOrchestrator",
+        "OrderPreference",
         "OrchestratorConfig",
         "create_orchestrator",
         "get_all_locks",
@@ -375,26 +376,26 @@ class ConfigOverrideResult:
 
 def _build_cli_args_metadata(
     *,
-    disable_validations: str | None,
+    disable: list[str] | None,
     coverage_threshold: float | None,
     wip: bool,
     max_issues: int | None,
     max_gate_retries: int,
     max_review_retries: int,
-    epic_override: str | None,
+    epic_override: list[str] | None,
     resolved: ResolvedConfig,
     braintrust_enabled: bool,
 ) -> dict[str, object]:
     """Build the cli_args metadata dictionary for logging and OrchestratorConfig.
 
     Args:
-        disable_validations: Raw disable validations string from CLI.
+        disable: List of validation names to disable from CLI.
         coverage_threshold: Coverage threshold from CLI.
         wip: Whether WIP prioritization is enabled.
         max_issues: Maximum issues to process.
         max_gate_retries: Maximum gate retry attempts.
         max_review_retries: Maximum review retry attempts.
-        epic_override: Raw epic override string from CLI.
+        epic_override: List of epic IDs to override from CLI.
         resolved: Resolved config with effective values.
         braintrust_enabled: Whether braintrust actually initialized successfully.
 
@@ -402,7 +403,7 @@ def _build_cli_args_metadata(
         Dictionary of CLI arguments for logging/metadata.
     """
     return {
-        "disable_validations": disable_validations,
+        "disable": disable,
         "coverage_threshold": coverage_threshold,
         "wip": wip,
         "max_issues": max_issues,
@@ -515,24 +516,47 @@ def _handle_dry_run(
     raise typer.Exit(0)
 
 
+def _normalize_repeatable_option(values: list[str] | None) -> list[str]:
+    """Normalize a repeatable option that may contain comma-separated values.
+
+    Supports both:
+    - Repeated: --disable coverage --disable review
+    - Comma-separated: --disable "coverage,review"
+    - Mixed: --disable coverage --disable "review,e2e"
+
+    Returns:
+        Flattened list of stripped, non-empty values.
+    """
+    if not values:
+        return []
+    result: list[str] = []
+    for val in values:
+        # Split by comma for backward compat
+        for part in val.split(","):
+            stripped = part.strip()
+            if stripped:
+                result.append(stripped)
+    return result
+
+
 def _validate_run_args(
     only: str | None,
-    disable_validations: str | None,
+    disable: list[str] | None,
     coverage_threshold: float | None,
     epic: str | None,
     orphans_only: bool,
-    epic_override: str | None,
+    epic_override: list[str] | None,
     repo_path: Path,
 ) -> ValidatedRunArgs:
     """Validate and parse CLI arguments, raising typer.Exit(1) on errors.
 
     Args:
         only: Comma-separated issue IDs to process (--only flag)
-        disable_validations: Comma-separated validation names to disable
+        disable: List of validation names to disable (repeatable, comma-separated supported)
         coverage_threshold: Coverage threshold percentage (0-100)
         epic: Epic ID to filter by
         orphans_only: Whether to only process orphan issues
-        epic_override: Comma-separated epic IDs to override
+        epic_override: List of epic IDs to override (repeatable, comma-separated supported)
         repo_path: Path to the repository (must exist)
 
     Returns:
@@ -551,16 +575,15 @@ def _validate_run_args(
             log("✗", "Invalid --only value: no valid issue IDs found", Colors.RED)
             raise typer.Exit(1)
 
-    # Parse --disable-validations flag into a set
+    # Parse --disable flag into a set (supports both repeatable and comma-separated)
     disable_set: set[str] | None = None
-    if disable_validations:
-        disable_set = {
-            val.strip() for val in disable_validations.split(",") if val.strip()
-        }
+    normalized_disable = _normalize_repeatable_option(disable)
+    if normalized_disable:
+        disable_set = set(normalized_disable)
         if not disable_set:
             log(
                 "✗",
-                "Invalid --disable-validations value: no valid values found",
+                "Invalid --disable value: no valid values found",
                 Colors.RED,
             )
             raise typer.Exit(1)
@@ -569,7 +592,7 @@ def _validate_run_args(
         if unknown:
             log(
                 "✗",
-                f"Unknown --disable-validations value(s): {', '.join(sorted(unknown))}. "
+                f"Unknown --disable value(s): {', '.join(sorted(unknown))}. "
                 f"Valid values: {', '.join(sorted(VALID_DISABLE_VALUES))}",
                 Colors.RED,
             )
@@ -594,12 +617,11 @@ def _validate_run_args(
         )
         raise typer.Exit(1)
 
-    # Parse --epic-override flag into a set of epic IDs
+    # Parse --epic-override flag into a set of epic IDs (supports both repeatable and comma-separated)
     epic_override_ids: set[str] = set()
-    if epic_override:
-        epic_override_ids = {
-            eid.strip() for eid in epic_override.split(",") if eid.strip()
-        }
+    normalized_epic_override = _normalize_repeatable_option(epic_override)
+    if normalized_epic_override:
+        epic_override_ids = set(normalized_epic_override)
         if not epic_override_ids:
             log(
                 "✗",
@@ -705,12 +727,12 @@ def run(
             rich_help_panel="Quality Gates",
         ),
     ] = 3,
-    disable_validations: Annotated[
-        str | None,
+    disable: Annotated[
+        list[str] | None,
         typer.Option(
-            "--disable-validations",
+            "--disable",
             help=(
-                "Comma-separated validations to skip. Options: "
+                "Validations to skip (repeatable). Options: "
                 "post-validate (skip pytest/ruff/ty after commits), "
                 "integration-tests (exclude @pytest.mark.integration tests), "
                 "coverage (disable coverage threshold check), "
@@ -753,6 +775,14 @@ def run(
             rich_help_panel="Scope & Ordering",
         ),
     ] = True,
+    order: Annotated[
+        str | None,
+        typer.Option(
+            "--order",
+            help="Issue ordering: 'focus' (default, epic-grouped), 'priority' (global priority), 'input' (preserve --scope ids: order)",
+            rich_help_panel="Scope & Ordering",
+        ),
+    ] = None,
     dry_run: Annotated[
         bool,
         typer.Option(
@@ -803,10 +833,10 @@ def run(
         ),
     ] = None,
     epic_override: Annotated[
-        str | None,
+        list[str] | None,
         typer.Option(
             "--epic-override",
-            help="Comma-separated epic IDs to close without verification (explicit human bypass)",
+            help="Epic IDs to close without verification (repeatable)",
             rich_help_panel="Epic Verification",
         ),
     ] = None,
@@ -844,17 +874,41 @@ def run(
 
     repo_path = repo_path.resolve()
 
-    # Handle --scope option (calls parse_scope which raises NotImplementedError for now)
+    # Handle --scope option
+    scope_config: ScopeConfig | None = None
     if scope is not None:
         scope_config = parse_scope(scope)
-        # When implemented, scope_config.ids will populate only_ids
-        # For now, parse_scope raises NotImplementedError
-        _ = scope_config  # Placeholder for future use
+
+    # Parse and validate --order option
+    order_preference = _lazy("OrderPreference").FOCUS  # default
+    if order is not None:
+        order_lower = order.lower()
+        if order_lower == "focus":
+            order_preference = _lazy("OrderPreference").FOCUS
+        elif order_lower == "priority":
+            order_preference = _lazy("OrderPreference").PRIORITY
+        elif order_lower == "input":
+            order_preference = _lazy("OrderPreference").INPUT
+            # --order input requires --scope ids:
+            if scope_config is None or scope_config.scope_type != "ids":
+                log(
+                    "✗",
+                    "--order input requires --scope ids:<id,...>",
+                    Colors.RED,
+                )
+                raise typer.Exit(1)
+        else:
+            log(
+                "✗",
+                f"Invalid --order value: '{order}'. Valid values: focus, priority, input",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
 
     # Validate and parse CLI arguments
     validated = _validate_run_args(
         only=only,
-        disable_validations=disable_validations,
+        disable=disable,
         coverage_threshold=coverage_threshold,
         epic=epic,
         orphans_only=orphans_only,
@@ -905,7 +959,7 @@ def run(
 
     # Build cli_args metadata for logging
     cli_args = _build_cli_args_metadata(
-        disable_validations=disable_validations,
+        disable=disable,
         coverage_threshold=coverage_threshold,
         wip=prioritize_wip,
         max_issues=max_issues,
@@ -931,6 +985,7 @@ def run(
         coverage_threshold=coverage_threshold,
         prioritize_wip=prioritize_wip,
         focus=focus,
+        order_preference=order_preference,
         cli_args=cli_args,
         epic_override_ids=epic_override_ids,
         orphans_only=orphans_only,
@@ -1277,6 +1332,10 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from ..orchestration.orchestrator import MalaOrchestrator
 
         _lazy_modules[name] = MalaOrchestrator
+    elif name == "OrderPreference":
+        from ..orchestration.types import OrderPreference
+
+        _lazy_modules[name] = OrderPreference
     elif name == "OrchestratorConfig":
         from ..orchestration.types import OrchestratorConfig
 

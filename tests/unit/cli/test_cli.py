@@ -740,10 +740,10 @@ def test_status_all_flag(
     assert "max-agents: unlimited" in output
 
 
-def test_run_disable_validations_valid(
+def test_run_disable_valid_comma_separated(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that valid --disable-validations values are accepted and passed to orchestrator."""
+    """Test that comma-separated --disable values work (backward compat)."""
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"
@@ -760,7 +760,7 @@ def test_run_disable_validations_valid(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations="coverage,integration-tests,e2e",
+            disable=["coverage,integration-tests,e2e"],
         )
 
     assert excinfo.value.exit_code == 0
@@ -772,10 +772,42 @@ def test_run_disable_validations_valid(
     }
 
 
-def test_run_disable_validations_invalid_value(
+def test_run_disable_valid_repeatable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that unknown --disable-validations values produce a clear CLI error."""
+    """Test that repeatable --disable values work."""
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            disable=["coverage", "integration-tests", "e2e"],
+        )
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_orch_config is not None
+    assert DummyOrchestrator.last_orch_config.disable_validations == {
+        "coverage",
+        "integration-tests",
+        "e2e",
+    }
+
+
+def test_run_disable_invalid_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that unknown --disable values produce a clear CLI error."""
     cli = _reload_cli(monkeypatch)
 
     logs: list[tuple[object, ...]] = []
@@ -791,41 +823,45 @@ def test_run_disable_validations_invalid_value(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations="coverage,invalid-value,bad-option",
+            disable=["coverage", "invalid-value", "bad-option"],
         )
 
     assert excinfo.value.exit_code == 1
     assert logs
     # Check error message mentions the unknown values
     error_msg = str(logs[-1])
-    assert "Unknown --disable-validations" in error_msg
+    assert "Unknown --disable" in error_msg
     assert "bad-option" in error_msg
     assert "invalid-value" in error_msg
 
 
-def test_run_disable_validations_empty_value(
+def test_run_disable_empty_value_treated_as_none(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that empty --disable-validations value produces error."""
+    """Test that empty --disable value is treated as None (no disable)."""
     cli = _reload_cli(monkeypatch)
-
-    logs: list[tuple[object, ...]] = []
-
-    def _log(*args: object, **_kwargs: object) -> None:
-        logs.append(args)
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "log", _log)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations=" , , ",
+            disable=[" , , "],
         )
 
-    assert excinfo.value.exit_code == 1
+    # Empty values normalize to None, which is valid
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_orch_config is not None
+    assert DummyOrchestrator.last_orch_config.disable_validations is None
 
 
 def test_run_validation_flags_passed_to_orchestrator(
@@ -848,7 +884,7 @@ def test_run_validation_flags_passed_to_orchestrator(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations="post-validate",
+            disable=["post-validate"],
             coverage_threshold=72.5,
         )
 
@@ -1033,10 +1069,10 @@ def test_run_wip_hidden_from_help(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "--wip" not in result.output
 
 
-def test_run_review_disabled_via_disable_validations(
+def test_run_review_disabled_via_disable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that review can be disabled via --disable-validations=review."""
+    """Test that review can be disabled via --disable review."""
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"
@@ -1053,7 +1089,7 @@ def test_run_review_disabled_via_disable_validations(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations="review",
+            disable=["review"],
         )
 
     assert excinfo.value.exit_code == 0
@@ -1061,7 +1097,7 @@ def test_run_review_disabled_via_disable_validations(
     assert DummyOrchestrator.last_orch_config.disable_validations == {"review"}
 
 
-def test_disable_validations_legacy_codex_value_rejected(
+def test_disable_legacy_codex_value_rejected(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Test that legacy codex-review value is rejected (use 'review' instead)."""
@@ -1080,12 +1116,12 @@ def test_disable_validations_legacy_codex_value_rejected(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations="codex-review",
+            disable=["codex-review"],
         )
 
     assert excinfo.value.exit_code == 1
     error_msg = str(logs[-1])
-    assert "Unknown --disable-validations" in error_msg
+    assert "Unknown --disable" in error_msg
     assert "codex-review" in error_msg
 
 
@@ -1693,11 +1729,11 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             only="issue-1, issue-2",
-            disable_validations="coverage, e2e",
+            disable=["coverage, e2e"],
             coverage_threshold=80.0,
             epic=None,
             orphans_only=False,
-            epic_override="epic-a, epic-b",
+            epic_override=["epic-a, epic-b"],
             repo_path=tmp_path,
         )
 
@@ -1711,7 +1747,7 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             only=None,
-            disable_validations=None,
+            disable=None,
             coverage_threshold=None,
             epic=None,
             orphans_only=False,
@@ -1730,7 +1766,7 @@ class TestValidateRunArgs:
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 only="  ,  ,  ",
-                disable_validations=None,
+                disable=None,
                 coverage_threshold=None,
                 epic=None,
                 orphans_only=False,
@@ -1739,32 +1775,30 @@ class TestValidateRunArgs:
             )
         assert excinfo.value.exit_code == 1
 
-    def test_invalid_disable_validations_empty_raises_exit(
-        self, tmp_path: Path
-    ) -> None:
-        """Empty --disable-validations value raises Exit(1)."""
+    def test_empty_disable_treated_as_none(self, tmp_path: Path) -> None:
+        """Empty --disable value is treated as None (no disable)."""
+        from src.cli.cli import _validate_run_args
+
+        result = _validate_run_args(
+            only=None,
+            disable=["  ,  "],
+            coverage_threshold=None,
+            epic=None,
+            orphans_only=False,
+            epic_override=None,
+            repo_path=tmp_path,
+        )
+        # Empty values normalize to None
+        assert result.disable_set is None
+
+    def test_unknown_disable_value_raises_exit(self, tmp_path: Path) -> None:
+        """Unknown --disable value raises Exit(1)."""
         from src.cli.cli import _validate_run_args
 
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 only=None,
-                disable_validations="  ,  ",
-                coverage_threshold=None,
-                epic=None,
-                orphans_only=False,
-                epic_override=None,
-                repo_path=tmp_path,
-            )
-        assert excinfo.value.exit_code == 1
-
-    def test_unknown_disable_validation_value_raises_exit(self, tmp_path: Path) -> None:
-        """Unknown --disable-validations value raises Exit(1)."""
-        from src.cli.cli import _validate_run_args
-
-        with pytest.raises(typer.Exit) as excinfo:
-            _validate_run_args(
-                only=None,
-                disable_validations="coverage, unknown-value",
+                disable=["coverage", "unknown-value"],
                 coverage_threshold=None,
                 epic=None,
                 orphans_only=False,
@@ -1780,7 +1814,7 @@ class TestValidateRunArgs:
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 only=None,
-                disable_validations=None,
+                disable=None,
                 coverage_threshold=-5.0,
                 epic=None,
                 orphans_only=False,
@@ -1796,7 +1830,7 @@ class TestValidateRunArgs:
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 only=None,
-                disable_validations=None,
+                disable=None,
                 coverage_threshold=150.0,
                 epic=None,
                 orphans_only=False,
@@ -1812,7 +1846,7 @@ class TestValidateRunArgs:
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 only=None,
-                disable_validations=None,
+                disable=None,
                 coverage_threshold=None,
                 epic="some-epic",
                 orphans_only=True,
@@ -1821,21 +1855,21 @@ class TestValidateRunArgs:
             )
         assert excinfo.value.exit_code == 1
 
-    def test_invalid_epic_override_empty_raises_exit(self, tmp_path: Path) -> None:
-        """Empty --epic-override value raises Exit(1)."""
+    def test_empty_epic_override_treated_as_empty_set(self, tmp_path: Path) -> None:
+        """Empty --epic-override value is treated as empty set."""
         from src.cli.cli import _validate_run_args
 
-        with pytest.raises(typer.Exit) as excinfo:
-            _validate_run_args(
-                only=None,
-                disable_validations=None,
-                coverage_threshold=None,
-                epic=None,
-                orphans_only=False,
-                epic_override="  ,  ,  ",
-                repo_path=tmp_path,
-            )
-        assert excinfo.value.exit_code == 1
+        result = _validate_run_args(
+            only=None,
+            disable=None,
+            coverage_threshold=None,
+            epic=None,
+            orphans_only=False,
+            epic_override=["  ,  ,  "],
+            repo_path=tmp_path,
+        )
+        # Empty values normalize to empty set
+        assert result.epic_override_ids == set()
 
     def test_nonexistent_repo_path_raises_exit(self, tmp_path: Path) -> None:
         """Non-existent repo_path raises Exit(1)."""
@@ -1845,7 +1879,7 @@ class TestValidateRunArgs:
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 only=None,
-                disable_validations=None,
+                disable=None,
                 coverage_threshold=None,
                 epic=None,
                 orphans_only=False,
@@ -1860,7 +1894,7 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             only=None,
-            disable_validations=None,
+            disable=None,
             coverage_threshold=0.0,
             epic=None,
             orphans_only=False,
@@ -1876,7 +1910,7 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             only=None,
-            disable_validations=None,
+            disable=None,
             coverage_threshold=100.0,
             epic=None,
             orphans_only=False,
@@ -1885,6 +1919,52 @@ class TestValidateRunArgs:
         )
         # No exception raised
         assert result.only_ids is None
+
+    def test_repeatable_disable_values(self, tmp_path: Path) -> None:
+        """Repeatable --disable values work correctly."""
+        from src.cli.cli import _validate_run_args
+
+        result = _validate_run_args(
+            only=None,
+            disable=["coverage", "review", "e2e"],
+            coverage_threshold=None,
+            epic=None,
+            orphans_only=False,
+            epic_override=None,
+            repo_path=tmp_path,
+        )
+        assert result.disable_set == {"coverage", "review", "e2e"}
+
+    def test_repeatable_epic_override_values(self, tmp_path: Path) -> None:
+        """Repeatable --epic-override values work correctly."""
+        from src.cli.cli import _validate_run_args
+
+        result = _validate_run_args(
+            only=None,
+            disable=None,
+            coverage_threshold=None,
+            epic=None,
+            orphans_only=False,
+            epic_override=["epic-1", "epic-2"],
+            repo_path=tmp_path,
+        )
+        assert result.epic_override_ids == {"epic-1", "epic-2"}
+
+    def test_mixed_comma_and_repeatable(self, tmp_path: Path) -> None:
+        """Mixed comma-separated and repeatable values work correctly."""
+        from src.cli.cli import _validate_run_args
+
+        result = _validate_run_args(
+            only=None,
+            disable=["coverage,review", "e2e"],
+            coverage_threshold=None,
+            epic=None,
+            orphans_only=False,
+            epic_override=["epic-1,epic-2", "epic-3"],
+            repo_path=tmp_path,
+        )
+        assert result.disable_set == {"coverage", "review", "e2e"}
+        assert result.epic_override_ids == {"epic-1", "epic-2", "epic-3"}
 
 
 # ============================================================================
