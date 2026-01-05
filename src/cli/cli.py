@@ -553,25 +553,37 @@ def run(
     max_agents: Annotated[
         int | None,
         typer.Option(
-            "--max-agents", "-n", help="Maximum concurrent agents (default: unlimited)"
+            "--max-agents",
+            "-n",
+            help="Maximum concurrent agents (default: unlimited)",
+            rich_help_panel="Execution Limits",
         ),
     ] = None,
     timeout: Annotated[
         int | None,
         typer.Option(
-            "--timeout", "-t", help="Timeout per agent in minutes (default: 60)"
+            "--timeout",
+            "-t",
+            help="Timeout per agent in minutes (default: 60)",
+            rich_help_panel="Execution Limits",
         ),
     ] = None,
     max_issues: Annotated[
         int | None,
         typer.Option(
-            "--max-issues", "-i", help="Maximum issues to process (default: unlimited)"
+            "--max-issues",
+            "-i",
+            help="Maximum issues to process (default: unlimited)",
+            rich_help_panel="Execution Limits",
         ),
     ] = None,
     epic: Annotated[
         str | None,
         typer.Option(
-            "--epic", "-e", help="Only process tasks that are children of this epic"
+            "--epic",
+            "-e",
+            help="Only process tasks that are children of this epic",
+            rich_help_panel="Scope & Ordering",
         ),
     ] = None,
     only: Annotated[
@@ -580,6 +592,7 @@ def run(
             "--only",
             "-o",
             help="Comma-separated list of issue IDs to process exclusively",
+            rich_help_panel="Scope & Ordering",
         ),
     ] = None,
     scope: Annotated[
@@ -588,6 +601,7 @@ def run(
             "--scope",
             "-s",
             help="Scope filter (e.g., 'ids:T-1,T-2'). Replaces --only.",
+            rich_help_panel="Scope & Ordering",
         ),
     ] = None,
     max_gate_retries: Annotated[
@@ -595,6 +609,7 @@ def run(
         typer.Option(
             "--max-gate-retries",
             help="Maximum quality gate retry attempts per issue (default: 3)",
+            rich_help_panel="Quality Gates",
         ),
     ] = 3,
     max_review_retries: Annotated[
@@ -602,6 +617,7 @@ def run(
         typer.Option(
             "--max-review-retries",
             help="Maximum codex review retry attempts per issue (default: 3)",
+            rich_help_panel="Quality Gates",
         ),
     ] = 3,
     disable_validations: Annotated[
@@ -616,6 +632,7 @@ def run(
                 "e2e (skip end-to-end fixture tests), "
                 "review (skip LLM code review)"
             ),
+            rich_help_panel="Quality Gates",
         ),
     ] = None,
     coverage_threshold: Annotated[
@@ -623,6 +640,7 @@ def run(
         typer.Option(
             "--coverage-threshold",
             help="Minimum coverage percentage (0-100). If not set, uses 'no decrease' mode which requires coverage >= previous baseline.",
+            rich_help_panel="Quality Gates",
         ),
     ] = None,
     wip: Annotated[
@@ -632,6 +650,7 @@ def run(
             "-r",
             "--wip",
             help="Prioritize in_progress issues before open issues",
+            rich_help_panel="Scope & Ordering",
         ),
     ] = False,
     focus: Annotated[
@@ -639,6 +658,7 @@ def run(
         typer.Option(
             "--focus/--no-focus",
             help="Group tasks by epic for focused work (default: on); --no-focus uses priority-only ordering",
+            rich_help_panel="Scope & Ordering",
         ),
     ] = True,
     dry_run: Annotated[
@@ -646,6 +666,7 @@ def run(
         typer.Option(
             "--dry-run",
             help="Preview task order without processing; shows what would be run",
+            rich_help_panel="Debugging",
         ),
     ] = False,
     verbose: Annotated[
@@ -654,6 +675,7 @@ def run(
             "--verbose",
             "-v",
             help="Enable verbose output; shows full tool arguments instead of single line per tool call",
+            rich_help_panel="Debugging",
         ),
     ] = False,
     review_timeout: Annotated[
@@ -661,6 +683,7 @@ def run(
         typer.Option(
             "--review-timeout",
             help="Timeout in seconds for review operations (default: 1200)",
+            rich_help_panel="Review Backend",
         ),
     ] = None,
     cerberus_spawn_args: Annotated[
@@ -668,6 +691,7 @@ def run(
         typer.Option(
             "--cerberus-spawn-args",
             help="Extra args for `review-gate spawn-code-review` (shlex-style string)",
+            rich_help_panel="Review Backend",
         ),
     ] = None,
     cerberus_wait_args: Annotated[
@@ -675,6 +699,7 @@ def run(
         typer.Option(
             "--cerberus-wait-args",
             help="Extra args for `review-gate wait` (shlex-style string)",
+            rich_help_panel="Review Backend",
         ),
     ] = None,
     cerberus_env: Annotated[
@@ -682,6 +707,7 @@ def run(
         typer.Option(
             "--cerberus-env",
             help="Extra env for review-gate (JSON object or comma KEY=VALUE list)",
+            rich_help_panel="Review Backend",
         ),
     ] = None,
     epic_override: Annotated[
@@ -689,6 +715,7 @@ def run(
         typer.Option(
             "--epic-override",
             help="Comma-separated epic IDs to close without verification (explicit human bypass)",
+            rich_help_panel="Epic Verification",
         ),
     ] = None,
     orphans_only: Annotated[
@@ -696,6 +723,7 @@ def run(
         typer.Option(
             "--orphans-only",
             help="Only process issues with no parent epic (standalone/orphan issues)",
+            rich_help_panel="Scope & Ordering",
         ),
     ] = False,
     max_epic_verification_retries: Annotated[
@@ -703,6 +731,7 @@ def run(
         typer.Option(
             "--max-epic-verification-retries",
             help="Maximum retries for epic verification loop (default: 3)",
+            rich_help_panel="Epic Verification",
         ),
     ] = None,
     deadlock_detection: Annotated[
@@ -710,6 +739,7 @@ def run(
         typer.Option(
             "--deadlock-detection/--no-deadlock-detection",
             help="Enable deadlock detection (default: on); --no-deadlock-detection disables it",
+            rich_help_panel="Debugging",
         ),
     ] = True,
 ) -> Never:
