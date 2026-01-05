@@ -922,10 +922,10 @@ def test_run_validation_flags_defaults(
     assert DummyOrchestrator.last_orch_config.focus is True
 
 
-def test_run_wip_flag_passed_to_orchestrator(
+def test_run_resume_flag_passed_to_orchestrator(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that --wip flag is correctly passed to orchestrator."""
+    """Test that --resume flag sets prioritize_wip in orchestrator config."""
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"

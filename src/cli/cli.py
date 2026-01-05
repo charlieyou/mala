@@ -580,13 +580,6 @@ def _validate_run_args(
     normalized_disable = _normalize_repeatable_option(disable)
     if normalized_disable:
         disable_set = set(normalized_disable)
-        if not disable_set:
-            log(
-                "✗",
-                "Invalid --disable value: no valid values found",
-                Colors.RED,
-            )
-            raise typer.Exit(1)
         # Validate against known values
         unknown = disable_set - VALID_DISABLE_VALUES
         if unknown:
@@ -731,6 +724,7 @@ def run(
         list[str] | None,
         typer.Option(
             "--disable",
+            "--disable-validations",
             help=(
                 "Validations to skip (repeatable). Options: "
                 "post-validate (skip pytest/ruff/ty after commits), "
