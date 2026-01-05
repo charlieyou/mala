@@ -277,15 +277,24 @@ class IssueExecutionCoordinator:
                             )
                             # Interrupted during poll retry wait
                             await abort_callback()
+                            # Finalize any tasks that completed during abort
+                            for issue_id, t in list(self.active_tasks.items()):
+                                if t.done():
+                                    await finalize_callback(issue_id, t)
+                                    watch_state.completed_count += 1
+                            # Run final validation if needed
+                            exit_code = 130
                             if (
                                 watch_state.completed_count
                                 > watch_state.last_validation_at
                             ):
                                 if validation_callback:
-                                    await validation_callback()
+                                    validation_passed = await validation_callback()
+                                    if not validation_passed:
+                                        exit_code = 1
                             return RunResult(
                                 issues_spawned,
-                                exit_code=130,
+                                exit_code=exit_code,
                                 exit_reason="interrupted",
                             )
                         except TimeoutError:
@@ -302,22 +311,23 @@ class IssueExecutionCoordinator:
             if ready:
                 self.event_sink.on_ready_issues(list(ready))
 
-            # Spawn agents while we have capacity and ready issues
+            # Spawn agents while we have capacity, ready issues, and haven't hit limit
+            # Note: max_issues counts terminal states (completed_count), not spawn attempts
+            # Once limit_reached, stop spawning but let active tasks complete
             while (
-                self.config.max_agents is None
-                or len(self.active_tasks) < self.config.max_agents
-            ) and ready:
+                not limit_reached
+                and (
+                    self.config.max_agents is None
+                    or len(self.active_tasks) < self.config.max_agents
+                )
+                and ready
+            ):
                 issue_id = ready.pop(0)
                 if issue_id not in self.active_tasks:
                     task = await spawn_callback(issue_id)
                     if task is not None:
                         self.register_task(issue_id, task)
                         issues_spawned += 1
-                        if (
-                            self.config.max_issues is not None
-                            and issues_spawned >= self.config.max_issues
-                        ):
-                            break
 
             # Exit if no active work
             if not self.active_tasks:
@@ -344,7 +354,8 @@ class IssueExecutionCoordinator:
                     # Idle: no ready issues AND no active agents
                     if watch_config and watch_config.enabled:
                         # Detect transition to idle and rate-limit logging
-                        now = time.time()
+                        # Use monotonic clock to avoid NTP/clock change issues
+                        now = time.monotonic()
                         if not watch_state.was_idle:
                             watch_state.was_idle = True
                             watch_state.last_idle_log_time = now
@@ -367,6 +378,9 @@ class IssueExecutionCoordinator:
                                     timeout=watch_config.poll_interval_seconds,
                                 )
                                 # Event was set - SIGINT received during idle
+                                # Call abort_callback for consistent lifecycle hooks
+                                # (even though active_tasks is empty in idle branch)
+                                await abort_callback()
                                 # Run final validation if any issues completed
                                 if (
                                     watch_state.completed_count
@@ -443,13 +457,21 @@ class IssueExecutionCoordinator:
                     await asyncio.gather(
                         *self.active_tasks.values(), return_exceptions=True
                     )
+                    # Finalize any tasks that completed during gather
+                    for issue_id, t in list(self.active_tasks.items()):
+                        if t.done():
+                            await finalize_callback(issue_id, t)
+                            watch_state.completed_count += 1
                 # Run final validation if needed
+                exit_code = 130
                 if watch_state.completed_count > watch_state.last_validation_at:
                     if validation_callback:
-                        await validation_callback()
+                        validation_passed = await validation_callback()
+                        if not validation_passed:
+                            exit_code = 1
                 return RunResult(
                     issues_spawned,
-                    exit_code=130,
+                    exit_code=exit_code,
                     exit_reason="interrupted",
                 )
 

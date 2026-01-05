@@ -290,13 +290,25 @@ class TestRunLoop:
 
     @pytest.mark.asyncio
     async def test_respects_max_issues(self, event_sink: MockEventSink) -> None:
-        """Loop stops spawning after max_issues."""
-        beads = MockIssueProvider(ready_issues=[["issue-1", "issue-2", "issue-3"]])
+        """Loop exits with limit_reached after max_issues completions."""
+        # max_issues counts terminal states (completions), not spawn attempts
+        # Use max_agents=1 to ensure sequential execution so limit_reached is checked
+        # between completions, preventing spawning the 3rd issue.
+        # Each poll returns remaining issues so they're available for subsequent spawns.
+        beads = MockIssueProvider(
+            ready_issues=[
+                ["issue-1", "issue-2", "issue-3"],  # First poll
+                ["issue-2", "issue-3"],  # After issue-1 excluded
+                ["issue-3"],  # After issue-2 excluded
+            ]
+        )
         coord = IssueExecutionCoordinator(
             beads=beads,  # type: ignore[arg-type]
             event_sink=event_sink,  # type: ignore[arg-type]
-            config=CoordinatorConfig(max_issues=2),
+            config=CoordinatorConfig(max_issues=2, max_agents=1),
         )
+
+        completed_count = 0
 
         async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
             async def work() -> None:
@@ -306,11 +318,16 @@ class TestRunLoop:
             return task
 
         async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+            nonlocal completed_count
             coord.mark_completed(issue_id)
+            completed_count += 1
 
         result = await coord.run_loop(spawn_callback, finalize_callback, AsyncMock())
 
-        assert result.issues_spawned == 2
+        # With max_agents=1, issues run sequentially. After 2 complete, limit_reached
+        # prevents spawning the 3rd issue.
+        assert completed_count == 2
+        assert result.exit_reason == "limit_reached"
         assert ("no_more_issues", ("limit_reached (2)",)) in event_sink.events
 
     @pytest.mark.asyncio
