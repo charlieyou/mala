@@ -19,10 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.tools.locking import cleanup_agent_locks
@@ -36,22 +34,23 @@ from src.domain.validation.spec import extract_lint_tools_from_spec
 from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
-    from src.core.protocols import MalaEventSink, SDKClientFactoryProtocol
-    from src.infra.io.log_output.run_metadata import (
-        RunMetadata,
-        ValidationResult as MetaValidationResult,
-    )
+    from pathlib import Path
+
     from src.core.protocols import (
         CommandRunnerPort,
         EnvConfigPort,
         GateChecker,
         LockManagerPort,
+        MalaEventSink,
+        McpServerFactory,
+        SDKClientFactoryProtocol,
     )
     from src.domain.validation.result import ValidationResult
     from src.domain.validation.spec import ValidationSpec
-
-# Type alias for MCP server factory (outside TYPE_CHECKING since it's used in dataclass)
-McpServerFactory = Callable[[str, Path, Callable | None], dict[str, Any]]
+    from src.infra.io.log_output.run_metadata import (
+        RunMetadata,
+        ValidationResult as MetaValidationResult,
+    )
 
 
 class _FixerPromptNotSet:

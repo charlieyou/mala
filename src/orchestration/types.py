@@ -19,11 +19,6 @@ from dataclasses import dataclass, field
 from pathlib import Path  # noqa: TC003 - needed at runtime for dataclass field
 from typing import TYPE_CHECKING
 
-# Re-export from core.models for backward compatibility within orchestration layer
-from src.core.models import RunResult as RunResult
-from src.core.models import WatchConfig as WatchConfig
-from src.core.models import WatchState as WatchState
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 

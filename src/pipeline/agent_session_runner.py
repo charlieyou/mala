@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from src.core.models import IssueResolution
     from src.core.protocols import (
         MalaEventSink,
+        McpServerFactory,
         ReviewIssueProtocol,
         SDKClientFactoryProtocol,
     )
@@ -81,9 +82,6 @@ if TYPE_CHECKING:
         AgentTextCallback,
         ToolUseCallback,
     )
-
-# Type alias for MCP server factory (outside TYPE_CHECKING since it's used in dataclass)
-McpServerFactory = Callable[[str, Path, Callable | None], dict[str, Any]]
 
 
 # Module-level logger for idle retry messages

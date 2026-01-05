@@ -23,12 +23,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.models import LockEvent
-
-    # Type alias matching McpServerFactory from agent_runtime.py
-    McpServerFactory = Callable[
-        [str, Path, Callable[[LockEvent], object] | None],
-        dict[str, Any],
-    ]
+    from src.core.protocols import McpServerFactory
 
 
 def _create_mcp_server_factory() -> McpServerFactory:
@@ -46,14 +41,13 @@ def _create_mcp_server_factory() -> McpServerFactory:
         repo_path: Path,
         emit_lock_event: Callable[[LockEvent], object] | None,
     ) -> dict[str, Any]:
-        servers: dict[str, Any] = {}
-        if agent_id is not None:
-            servers["mala-locking"] = create_locking_mcp_server(
+        return {
+            "mala-locking": create_locking_mcp_server(
                 agent_id=agent_id,
                 repo_namespace=str(repo_path),
                 emit_lock_event=emit_lock_event if emit_lock_event else _noop,
             )
-        return servers
+        }
 
     return factory
 
@@ -79,7 +73,7 @@ class TestAgentRuntimeBuilder:
         runtime = (
             AgentRuntimeBuilder(repo_path, "test-agent-123", factory)
             .with_env()
-            .with_mcp()
+            .with_mcp(servers={})  # Explicitly disable locking for test
             .with_disallowed_tools()
             .build()
         )
@@ -97,7 +91,10 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """with_env() includes PATH, LOCK_DIR, AGENT_ID, REPO_NAMESPACE."""
         runtime = (
-            AgentRuntimeBuilder(repo_path, "agent-xyz", factory).with_env().build()
+            AgentRuntimeBuilder(repo_path, "agent-xyz", factory)
+            .with_env()
+            .with_mcp(servers={})  # Explicitly disable locking for test
+            .build()
         )
 
         assert "PATH" in runtime.env
@@ -114,6 +111,7 @@ class TestAgentRuntimeBuilder:
         runtime = (
             AgentRuntimeBuilder(repo_path, "agent-1", factory)
             .with_env(extra={"CUSTOM_VAR": "value123"})
+            .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
 
@@ -133,7 +131,7 @@ class TestAgentRuntimeBuilder:
         result2 = builder.with_env()
         assert result2 is builder
 
-        result3 = builder.with_mcp()
+        result3 = builder.with_mcp(servers={})  # Explicitly disable locking
         assert result3 is builder
 
         result4 = builder.with_disallowed_tools()
@@ -147,7 +145,11 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """Pre-tool hooks are in correct order (order matters for security)."""
-        runtime = AgentRuntimeBuilder(repo_path, "agent-hooks", factory).build()
+        runtime = (
+            AgentRuntimeBuilder(repo_path, "agent-hooks", factory)
+            .with_mcp(servers={})  # Explicitly disable locking for test
+            .build()
+        )
 
         # Should have at least: dangerous_commands, disallowed_tools, lock_enforcement,
         # file_cache, lint_cache
@@ -164,7 +166,11 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """Stop hook is included by default."""
-        runtime = AgentRuntimeBuilder(repo_path, "agent-stop", factory).build()
+        runtime = (
+            AgentRuntimeBuilder(repo_path, "agent-stop", factory)
+            .with_mcp(servers={})  # Explicitly disable locking for test
+            .build()
+        )
 
         assert len(runtime.stop_hooks) == 1
 
@@ -176,6 +182,7 @@ class TestAgentRuntimeBuilder:
         runtime = (
             AgentRuntimeBuilder(repo_path, "agent-no-stop", factory)
             .with_hooks(include_stop_hook=False)
+            .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
 
@@ -191,6 +198,7 @@ class TestAgentRuntimeBuilder:
         runtime = (
             AgentRuntimeBuilder(repo_path, "agent-deadlock", factory)
             .with_hooks(deadlock_monitor=mock_monitor)
+            .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
 
@@ -208,6 +216,7 @@ class TestAgentRuntimeBuilder:
         runtime = (
             AgentRuntimeBuilder(repo_path, "agent-lint", factory)
             .with_lint_tools({"ruff", "mypy"})
+            .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
 
@@ -236,9 +245,12 @@ class TestAgentRuntimeBuilder:
         """with_disallowed_tools(tools) passes tools to options."""
         tools = ["dangerous_tool", "another_tool"]
 
-        AgentRuntimeBuilder(repo_path, "agent-disallow", factory).with_disallowed_tools(
-            tools
-        ).build()
+        (
+            AgentRuntimeBuilder(repo_path, "agent-disallow", factory)
+            .with_disallowed_tools(tools)
+            .with_mcp(servers={})  # Explicitly disable locking for test
+            .build()
+        )
 
         assert len(factory.created_options) == 1
         assert factory.created_options[0]["disallowed_tools"] == tools
@@ -248,7 +260,11 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """Hooks dict has correct structure for SDK."""
-        AgentRuntimeBuilder(repo_path, "agent-struct", factory).build()
+        (
+            AgentRuntimeBuilder(repo_path, "agent-struct", factory)
+            .with_mcp(servers={})  # Explicitly disable locking for test
+            .build()
+        )
 
         assert len(factory.created_options) == 1
         hooks = factory.created_options[0]["hooks"]
@@ -263,7 +279,11 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """build() creates env even if with_env() not called."""
-        runtime = AgentRuntimeBuilder(repo_path, "agent-default", factory).build()
+        runtime = (
+            AgentRuntimeBuilder(repo_path, "agent-default", factory)
+            .with_mcp(servers={})  # Explicitly disable locking for test
+            .build()
+        )
 
         # Should still have env with required vars
         assert "AGENT_ID" in runtime.env

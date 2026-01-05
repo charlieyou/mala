@@ -34,18 +34,14 @@ _UNSET = _Unset.TOKEN
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
-    from typing import Any
 
     from src.core.models import LockEvent
-    from src.core.protocols import DeadlockMonitorProtocol, SDKClientFactoryProtocol
+    from src.core.protocols import (
+        DeadlockMonitorProtocol,
+        McpServerFactory,
+        SDKClientFactoryProtocol,
+    )
     from src.infra.hooks import FileReadCache, LintCache
-
-    # Type alias for MCP server factory function
-    # Takes (agent_id, repo_path, emit_lock_event) -> dict of MCP server configs
-    McpServerFactory = Callable[
-        [str, Path, Callable[[LockEvent], object] | None],
-        dict[str, Any],
-    ]
 
 
 @dataclass
@@ -215,7 +211,7 @@ class AgentRuntimeBuilder:
         """Configure disallowed tools.
 
         Args:
-            tools: List of disallowed tool names. If None, uses get_disallowed_tools().
+            tools: List of disallowed tool names. If None, uses MALA_DISALLOWED_TOOLS.
 
         Returns:
             Self for chaining.
@@ -256,8 +252,12 @@ class AgentRuntimeBuilder:
             Dictionary of MCP server configurations.
         """
         if self._mcp_server_factory is None:
-            # No factory provided - return empty servers (no locking)
-            return {}
+            msg = (
+                "MCP server factory is required. Either provide mcp_server_factory "
+                "or explicitly set mcp_servers={} via with_mcp_servers() to run "
+                "without locking tools."
+            )
+            raise ValueError(msg)
 
         return self._mcp_server_factory(
             self._agent_id,

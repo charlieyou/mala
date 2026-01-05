@@ -16,7 +16,9 @@ Design principles:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.infra.io.log_output.console import is_verbose_enabled
@@ -275,19 +277,17 @@ def create_mcp_server_factory() -> Callable[
         emit_lock_event: Callable | None,
     ) -> dict[str, object]:
         """Create MCP servers for an agent."""
-        servers: dict[str, object] = {}
 
-        if agent_id is not None:
-            # No-op handler if emit_lock_event is None
-            def _noop_handler(event: object) -> None:
-                pass
+        # No-op handler if emit_lock_event is None
+        def _noop_handler(event: object) -> None:
+            pass
 
-            servers["mala-locking"] = create_locking_mcp_server(
+        return {
+            "mala-locking": create_locking_mcp_server(
                 agent_id=agent_id,
                 repo_namespace=str(repo_path),
                 emit_lock_event=emit_lock_event or _noop_handler,
             )
-
-        return servers
+        }
 
     return factory

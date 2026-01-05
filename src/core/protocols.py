@@ -22,11 +22,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from collections.abc import Callable
+from pathlib import Path
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
-    from pathlib import Path
     from types import TracebackType
     from typing import Self
+
+
+# =============================================================================
+# Type Aliases
+# =============================================================================
+# Centralized type aliases used across multiple modules.
+# =============================================================================
+
+# Factory function for creating MCP servers configuration.
+# Parameters: agent_id, repo_path, optional emit_lock_event callback
+# Returns: Dict mapping server names to server configurations
+McpServerFactory = Callable[[str, Path, Callable | None], dict[str, object]]
 
 
 # =============================================================================

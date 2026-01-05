@@ -97,7 +97,9 @@ if TYPE_CHECKING:
     from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
     from src.pipeline.issue_finalizer import IssueFinalizer
 
-    from .types import OrchestratorConfig, RunResult, WatchConfig, _DerivedConfig
+    from src.core.models import RunResult, WatchConfig
+
+    from .types import OrchestratorConfig, _DerivedConfig
 
 
 # Version (from package metadata)

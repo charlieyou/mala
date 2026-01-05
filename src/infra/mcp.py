@@ -6,16 +6,3 @@ directly in agent_runtime.py.
 """
 
 from __future__ import annotations
-
-
-def get_disallowed_tools() -> list[str]:
-    """Get list of disallowed tools.
-
-    Always includes MALA_DISALLOWED_TOOLS (tools disabled for mala agents).
-
-    Returns:
-        List of tool names that should be disallowed.
-    """
-    from src.infra.tool_config import MALA_DISALLOWED_TOOLS
-
-    return list(MALA_DISALLOWED_TOOLS)

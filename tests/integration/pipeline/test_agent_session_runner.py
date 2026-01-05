@@ -34,11 +34,26 @@ from src.domain.quality_gate import GateResult
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
 if TYPE_CHECKING:
-    from src.core.protocols import SDKClientProtocol
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
+    from src.core.protocols import McpServerFactory, SDKClientProtocol
     from src.domain.lifecycle import RetryState
+
+
+def make_noop_mcp_factory() -> McpServerFactory:
+    """Create a no-op MCP server factory for tests (no locking).
+
+    Returns a factory that returns empty servers, disabling locking.
+    This is used for tests that don't need the locking MCP server.
+    """
+
+    def factory(
+        agent_id: str, repo_path: Path, emit_lock_event: Callable | None
+    ) -> dict[str, object]:
+        return {}
+
+    return factory
 
 
 def make_test_prompts() -> SessionPrompts:
@@ -203,6 +218,7 @@ class TestAgentSessionRunnerBasics:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,  # Disable review for basic tests
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.fixture
@@ -314,6 +330,7 @@ class TestAgentSessionRunnerBasics:
             prompts=make_test_prompts(),
             idle_timeout_seconds=0.1,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         fake_client = HangingSDKClient()
         fake_factory = FakeSDKClientFactory(fake_client)
@@ -347,6 +364,7 @@ class TestAgentSessionRunnerBasics:
             prompts=make_test_prompts(),
             idle_timeout_seconds=0.2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         slow_client = SlowSDKClient(delay=0.05)
         fake_factory = FakeSDKClientFactory(slow_client)
@@ -395,6 +413,7 @@ class TestAgentSessionRunnerBasics:
             prompts=make_test_prompts(),
             idle_timeout_seconds=0,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         slow_client = SlowSDKClient(delay=0.2)
         fake_factory = FakeSDKClientFactory(slow_client)
@@ -451,6 +470,7 @@ class TestAgentSessionRunnerGateHandling:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.mark.asyncio
@@ -513,6 +533,7 @@ class TestAgentSessionRunnerGateHandling:
             prompts=make_test_prompts(),
             max_gate_retries=1,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         fake_client = FakeSDKClient(result_message=make_result_message())
@@ -575,6 +596,7 @@ class TestAgentSessionRunnerCallbacks:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.mark.asyncio
@@ -664,6 +686,7 @@ class TestAgentSessionRunnerConfig:
             max_gate_retries=5,
             max_review_retries=4,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         assert config.timeout_seconds == 120
@@ -743,6 +766,7 @@ class TestAgentSessionRunnerStreamingCallbacks:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.mark.asyncio
@@ -1062,6 +1086,7 @@ class TestAgentSessionRunnerEventSink:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.mark.asyncio
@@ -1151,6 +1176,7 @@ class TestAgentSessionRunnerEventSink:
             prompts=make_test_prompts(),
             max_gate_retries=1,  # Fail immediately
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         fake_client = FakeSDKClient(result_message=make_result_message())
@@ -1234,6 +1260,7 @@ class TestAgentSessionRunnerEventSink:
             prompts=make_test_prompts(),
             max_gate_retries=2,  # Allow 1 retry
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         fake_client = FakeSDKClient(result_message=make_result_message())
@@ -1357,6 +1384,7 @@ class TestAgentSessionRunnerEventSink:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=True,  # Enable review
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         fake_client = FakeSDKClient(result_message=make_result_message())
@@ -1455,6 +1483,7 @@ class TestAgentSessionRunnerEventSink:
             max_gate_retries=3,
             max_review_retries=2,  # Allow 1 retry
             review_enabled=True,  # Enable review
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         fake_client = FakeSDKClient(result_message=make_result_message())
@@ -1602,6 +1631,7 @@ class TestContextPressureDetection:
             review_enabled=False,  # Disable review for this test
             context_restart_threshold=0.95,  # High threshold - won't trigger
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         runner = AgentSessionRunner(
             config=config,
@@ -1651,6 +1681,7 @@ class TestContextPressureDetection:
             timeout_seconds=60,
             prompts=make_test_prompts(),
             review_enabled=False,  # Disable review for this test
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         runner = AgentSessionRunner(
             config=config,
@@ -1712,6 +1743,7 @@ class TestContextPressureDetection:
             review_enabled=False,
             context_restart_threshold=0.90,
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         runner = AgentSessionRunner(
             config=config, sdk_client_factory=mock_sdk_client_factory
@@ -1797,6 +1829,7 @@ class TestContextPressureDetection:
             review_enabled=False,  # Disable review for this test
             context_restart_threshold=0.90,
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         runner = AgentSessionRunner(
             config=config,
@@ -1847,6 +1880,7 @@ class TestIdleTimeoutRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         factory = SequencedSDKClientFactory([hanging_client, success_client])
@@ -1910,6 +1944,7 @@ class TestIdleTimeoutRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         factory = SequencedSDKClientFactory(clients)
@@ -1952,6 +1987,7 @@ class TestIdleTimeoutRetry:
             idle_timeout_seconds=0.01,
             max_idle_retries=0,  # No retries allowed
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         factory = FakeSDKClientFactory(client)
@@ -1997,6 +2033,7 @@ class TestIdleTimeoutRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         factory = SequencedSDKClientFactory([hanging_client, success_client])
@@ -2065,6 +2102,7 @@ class TestIdleTimeoutRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         factory = FakeSDKClientFactory(hanging_client)
@@ -2112,6 +2150,7 @@ class TestIdleTimeoutRetry:
             prompts=make_test_prompts(),
             idle_timeout_seconds=0.01,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         def get_log_path(session_id: str) -> Path:
@@ -2176,6 +2215,7 @@ class TestIdleTimeoutRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 5.0, 15.0),
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         factory = SequencedSDKClientFactory([hanging1, hanging2, success_client])
@@ -2262,6 +2302,7 @@ class TestIdleTimeoutRetry:
             prompts=make_test_prompts(),
             max_gate_retries=2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         # Track which session IDs we return
@@ -2387,6 +2428,7 @@ class TestInitializeSession:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=True,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.fixture
@@ -2490,6 +2532,7 @@ class TestInitializeSession:
             timeout_seconds=3000,  # 50 min -> derived = 600
             prompts=make_test_prompts(),
             idle_timeout_seconds=None,  # Let it be computed
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
@@ -2515,6 +2558,7 @@ class TestInitializeSession:
             timeout_seconds=600,  # 10 min -> derived = 120 < 300
             prompts=make_test_prompts(),
             idle_timeout_seconds=None,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
@@ -2540,6 +2584,7 @@ class TestInitializeSession:
             timeout_seconds=6000,  # 100 min -> derived = 1200 > 900
             prompts=make_test_prompts(),
             idle_timeout_seconds=None,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
@@ -2565,6 +2610,7 @@ class TestInitializeSession:
             timeout_seconds=600,
             prompts=make_test_prompts(),
             idle_timeout_seconds=0,  # Explicitly disabled
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
@@ -2590,6 +2636,7 @@ class TestInitializeSession:
             timeout_seconds=600,
             prompts=make_test_prompts(),
             idle_timeout_seconds=42.5,  # Explicit value
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
@@ -2620,6 +2667,7 @@ class TestBuildSessionOutput:
             prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.fixture
@@ -3109,6 +3157,7 @@ class TestCheckReviewNoProgress:
             max_gate_retries=3,
             max_review_retries=3,
             review_enabled=True,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.fixture
@@ -3310,6 +3359,7 @@ class TestRunLifecycleLoop:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.mark.asyncio
@@ -3711,6 +3761,7 @@ class TestSessionRestartLoop:
             review_enabled=False,
             context_restart_threshold=0.90,
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         runner = AgentSessionRunner(
@@ -3801,6 +3852,7 @@ class TestSessionRestartLoop:
             review_enabled=False,
             context_restart_threshold=0.90,
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         runner = AgentSessionRunner(
@@ -3898,6 +3950,7 @@ class TestSessionRestartLoop:
             review_enabled=False,
             context_restart_threshold=0.90,
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         runner = AgentSessionRunner(
@@ -3976,6 +4029,7 @@ class TestSessionRestartLoop:
             review_enabled=False,
             context_restart_threshold=0.90,
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         runner = AgentSessionRunner(
