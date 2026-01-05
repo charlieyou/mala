@@ -1536,7 +1536,7 @@ def test_dry_run_passes_flags_to_beads_client(
 
     assert DummyBeadsClient.last_kwargs is not None
     assert DummyBeadsClient.last_kwargs["epic_id"] == "test-epic"
-    assert DummyBeadsClient.last_kwargs["only_ids"] == {"id-1", "id-2"}
+    assert DummyBeadsClient.last_kwargs["only_ids"] == ["id-1", "id-2"]
     assert DummyBeadsClient.last_kwargs["prioritize_wip"] is True
     assert DummyBeadsClient.last_kwargs["focus"] is False
 
@@ -1716,7 +1716,7 @@ class TestHandleDryRun:
 
         assert DummyBeadsClient.last_kwargs is not None
         assert DummyBeadsClient.last_kwargs["epic_id"] == "my-epic"
-        assert DummyBeadsClient.last_kwargs["only_ids"] == {"id-1", "id-2"}
+        assert DummyBeadsClient.last_kwargs["only_ids"] == ["id-1", "id-2"]
         assert DummyBeadsClient.last_kwargs["prioritize_wip"] is True
         assert DummyBeadsClient.last_kwargs["focus"] is True
         assert DummyBeadsClient.last_kwargs["orphans_only"] is True

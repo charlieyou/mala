@@ -95,8 +95,8 @@ class IssueManager:
         Args:
             issues: List of issue dicts to filter.
             exclude_ids: Set of issue IDs to exclude.
-            epic_children: If set, only include issues in this set.
-            only_ids: If set, only include issues in this set.
+            epic_children: If provided, only include issues in this set.
+            only_ids: If provided, only include issues in this list.
 
         Returns:
             Filtered list of issues.

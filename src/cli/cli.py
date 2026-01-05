@@ -576,11 +576,9 @@ def _handle_dry_run(
 
     async def _dry_run() -> int:
         beads = _lazy("BeadsClient")(repo_path)
-        # Convert list to set for BeadsClient compatibility
-        ids_set = set(only_ids) if only_ids else None
         issues = await beads.get_ready_issues_async(
             epic_id=epic,
-            only_ids=ids_set,
+            only_ids=only_ids,
             prioritize_wip=wip,
             focus=focus,
             orphans_only=orphans_only,
