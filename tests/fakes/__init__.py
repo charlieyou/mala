@@ -12,16 +12,27 @@ See CLAUDE.md "Testing Philosophy" and "Fakes over mocks" for guidelines.
 
 Planned fakes (to be implemented):
 - FakeIssueProvider: In-memory issue storage implementing IssueProvider
-- FakeLockManager: In-memory lock coordination implementing LockManagerPort
-- FakeEpicVerificationModel: Controlled epic verification implementing EpicVerificationModel
 """
 
 from tests.fakes.command_runner import FakeCommandRunner, UnregisteredCommandError
+from tests.fakes.epic_model import (
+    FakeEpicVerificationModel,
+    VerificationAttempt,
+    make_failing_verdict,
+    make_passing_verdict,
+)
 from tests.fakes.event_sink import FakeEventSink, RecordedEvent
+from tests.fakes.lock_manager import FakeLockManager, LockAcquireCall
 
 __all__ = [
     "FakeCommandRunner",
+    "FakeEpicVerificationModel",
     "FakeEventSink",
+    "FakeLockManager",
+    "LockAcquireCall",
     "RecordedEvent",
     "UnregisteredCommandError",
+    "VerificationAttempt",
+    "make_failing_verdict",
+    "make_passing_verdict",
 ]
