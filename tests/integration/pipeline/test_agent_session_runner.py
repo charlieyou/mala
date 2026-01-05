@@ -3325,7 +3325,7 @@ class TestCheckReviewNoProgress:
             LifecycleContext,
             LifecycleState,
         )
-        from src.pipeline.agent_session_runner import ReviewEffectResult
+        from src.pipeline.lifecycle_effect_handler import ReviewEffectResult
 
         fake_sink = FakeEventSink()
 

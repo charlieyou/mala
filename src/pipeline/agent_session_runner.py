@@ -310,27 +310,6 @@ class SessionCallbacks:
 
 
 @dataclass
-class ReviewEffectResult:
-    """Result from review effect processing.
-
-    Encapsulates the multi-value return from LifecycleEffectHandler's
-    review processing methods with named fields for clarity.
-    """
-
-    pending_query: str | None
-    """Query to send for review retry, or None if no retry needed."""
-
-    should_break: bool
-    """Whether the caller should break out of the message iteration loop."""
-
-    cerberus_log_path: str | None
-    """Path to Cerberus review log file, if captured."""
-
-    transition_result: TransitionResult
-    """Lifecycle transition result."""
-
-
-@dataclass
 class AgentSessionRunner:
     """Runs agent sessions with lifecycle management.
 
@@ -573,6 +552,7 @@ class AgentSessionRunner:
                         state.session_id[:8],
                     )
                     pending_query = retry_query
+                    result = gate_trans
                     state.msg_state.pending_session_id = state.session_id
                     state.msg_state.idle_retry_count = 0
                     continue

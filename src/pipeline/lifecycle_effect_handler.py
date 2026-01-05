@@ -36,9 +36,30 @@ if TYPE_CHECKING:
     from .agent_session_runner import (
         AgentSessionConfig,
         AgentSessionInput,
-        ReviewEffectResult,
         SessionCallbacks,
     )
+
+
+@dataclass
+class ReviewEffectResult:
+    """Result from review effect processing.
+
+    Encapsulates the multi-value return from LifecycleEffectHandler's
+    review processing methods with named fields for clarity.
+    """
+
+    pending_query: str | None
+    """Query to send for review retry, or None if no retry needed."""
+
+    should_break: bool
+    """Whether the caller should break out of the message iteration loop."""
+
+    cerberus_log_path: str | None
+    """Path to Cerberus review log file, if captured."""
+
+    transition_result: TransitionResult
+    """Lifecycle transition result."""
+
 
 logger = logging.getLogger(__name__)
 
@@ -156,9 +177,6 @@ def _make_review_effect_result(
     Returns:
         ReviewEffectResult with appropriate should_break flag.
     """
-    # Import here to avoid circular imports at module level
-    from .agent_session_runner import ReviewEffectResult
-
     should_break = effect in (Effect.COMPLETE_SUCCESS, Effect.COMPLETE_FAILURE)
     return ReviewEffectResult(
         pending_query=pending_query,
@@ -215,8 +233,9 @@ class LifecycleEffectHandler:
             callbacks=callbacks,
             event_sink=event_sink,
         )
-        pending_query, trans = await handler.process_gate_check(...)
-        review_effect = await handler.process_review_effect(...)
+        handler.process_gate_check(input, lifecycle, lifecycle_ctx)
+        retry_query, should_break, trans = handler.process_gate_effect(...)
+        review_effect = handler.process_review_effect(...)
 
     Attributes:
         config: Session configuration with prompts and retry limits.
@@ -412,22 +431,8 @@ class LifecycleEffectHandler:
         if self.event_sink is not None:
             self.event_sink.on_review_skipped_no_progress(input.issue_id)
 
-        # Create synthetic failed review with a blocking issue to ensure
-        # the lifecycle treats this as failure (not success with no issues)
-        from src.infra.clients.review_output_parser import ReviewIssue
-
-        synthetic_issue = ReviewIssue(
-            title="No progress detected",
-            body="Agent made no changes since last review attempt",
-            priority=0,  # P0 is blocking
-            file="",
-            line_start=0,
-            line_end=0,
-            reviewer="lifecycle-effect-handler",
-        )
-        synthetic = ReviewResult(
-            passed=False, issues=[synthetic_issue], parse_error=None
-        )
+        # Create synthetic failed review
+        synthetic = ReviewResult(passed=False, issues=[], parse_error=None)
         new_offset = (
             self.callbacks.get_log_offset(
                 log_path,
@@ -442,9 +447,6 @@ class LifecycleEffectHandler:
             new_offset,
             no_progress=True,
         )
-        # Import here to avoid circular imports at module level
-        from .agent_session_runner import ReviewEffectResult
-
         return ReviewEffectResult(
             pending_query=None,
             should_break=True,
