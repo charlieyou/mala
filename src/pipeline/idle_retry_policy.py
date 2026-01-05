@@ -64,12 +64,9 @@ class RetryConfig:
         """Validate configuration invariants."""
         if self.max_idle_retries < 0:
             raise ValueError("max_idle_retries must be non-negative")
-        # Backoff is indexed by retry_count - 1, so we need max_idle_retries entries
-        # (retry 1 uses index 0, retry 2 uses index 1, etc.)
-        # If fewer entries provided, _apply_retry_backoff will reuse the last entry
-        if self.max_idle_retries > 0 and len(self.idle_retry_backoff) == 0:
+        if self.max_idle_retries > 0 and not self.idle_resume_prompt:
             raise ValueError(
-                "idle_retry_backoff must have at least 1 entry when max_idle_retries > 0"
+                "idle_resume_prompt must be non-empty when max_idle_retries > 0"
             )
 
 
@@ -97,9 +94,10 @@ class IdleTimeoutRetryPolicy:
         policy = IdleTimeoutRetryPolicy(
             sdk_client_factory=factory,
             stream_processor_factory=lambda: create_processor(),
-            config=RetryConfig(max_idle_retries=2),
+            config=RetryConfig(max_idle_retries=2, idle_resume_prompt="Continue {issue_id}"),
         )
         result = await policy.execute_iteration(
+            issue_id="ISSUE-123",
             query="...",
             options=sdk_options,
             state=msg_state,
