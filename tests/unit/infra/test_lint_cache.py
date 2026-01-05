@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 
 from src.domain.validation.lint_cache import LintCache, LintCacheEntry, LintCacheKey
-from src.infra.tools.command_runner import CommandRunner
+from src.infra.tools.command_runner import CommandResult
+from tests.fakes.command_runner import FakeCommandRunner
 
 
 class TestLintCacheKey:
@@ -74,17 +75,30 @@ class TestLintCacheWithMocks:
         return repo
 
     @pytest.fixture
-    def command_runner(self, repo_path: Path) -> CommandRunner:
-        """Provide a command runner for tests."""
-        return CommandRunner(cwd=repo_path)
+    def failing_command_runner(self) -> FakeCommandRunner:
+        """Provide a command runner that simulates git failures (non-git repo)."""
+        runner = FakeCommandRunner()
+        # Simulate git commands failing (non-git repo)
+        runner.responses[("git", "rev-parse", "HEAD")] = CommandResult(
+            command=["git", "rev-parse", "HEAD"],
+            returncode=128,
+            stdout="",
+            stderr="fatal: not a git repository",
+        )
+        return runner
 
     def test_handles_non_git_repo(
-        self, cache_dir: Path, repo_path: Path, command_runner: CommandRunner
+        self,
+        cache_dir: Path,
+        repo_path: Path,
+        failing_command_runner: FakeCommandRunner,
     ) -> None:
         """Test behavior when repo is not a git repository."""
-        # git commands will fail since it's not a real git repo
+        # git commands will fail since we configured the fake to return errors
         cache = LintCache(
-            cache_dir=cache_dir, repo_path=repo_path, command_runner=command_runner
+            cache_dir=cache_dir,
+            repo_path=repo_path,
+            command_runner=failing_command_runner,
         )
 
         # Should not crash, just return False (can't verify state)
