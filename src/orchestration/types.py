@@ -246,14 +246,16 @@ class WatchState:
         completed_count: Total issues completed in this watch session.
         last_validation_at: Completed count at last validation.
         next_validation_threshold: Run validation when completed_count reaches this.
+            Must be initialized from WatchConfig.validate_every to stay in sync.
         consecutive_poll_failures: Count of consecutive poll failures.
         last_idle_log_time: Timestamp of last idle log message.
         was_idle: Whether the previous poll found no ready issues.
     """
 
+    # No default - must be explicitly set from WatchConfig.validate_every
+    next_validation_threshold: int
     completed_count: int = 0
     last_validation_at: int = 0
-    next_validation_threshold: int = 10
     consecutive_poll_failures: int = 0
     last_idle_log_time: float = 0.0
     was_idle: bool = False
@@ -265,7 +267,7 @@ class RunResult:
 
     Attributes:
         issues_spawned: Number of issues spawned during the run.
-        exit_code: Exit code (0=success, 1=validation_failed, 2=poll_failed, 3=error, 130=interrupted).
+        exit_code: Exit code (0=success, 1=validation_failed, 2=invalid_args, 3=poll_failed, 130=interrupted).
         exit_reason: Human-readable exit reason.
     """
 
