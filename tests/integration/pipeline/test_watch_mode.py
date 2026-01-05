@@ -60,11 +60,12 @@ class TestSigintHandling:
         async def set_interrupt_after_idle() -> None:
             """Wait for idle state then trigger interrupt."""
             # Wait for watch_idle event (indicates we're in idle sleep)
-            for _ in range(50):  # 50 * 0.01s = 0.5s max wait
+            for _ in range(100):  # 100 * 0.01s = 1.0s max wait
                 if event_sink.has_event("watch_idle"):
-                    break
+                    interrupt_event.set()
+                    return
                 await asyncio.sleep(0.01)
-            interrupt_event.set()
+            pytest.fail("watch_idle event never observed before timeout")
 
         # Run coordinator and interrupt task concurrently
         async with asyncio.timeout(2.0):
@@ -82,7 +83,7 @@ class TestSigintHandling:
             f"Expected exit code 130, got {result.exit_code}"
         )
         assert result.exit_reason == "interrupted"
-        assert event_sink.has_event("watch_idle"), "Should have entered idle state"
+        # watch_idle is guaranteed by set_interrupt_after_idle() (fails if not seen)
 
     @pytest.mark.asyncio
     async def test_sigint_during_active_processing_exits_with_code_130(self) -> None:
@@ -190,13 +191,15 @@ class TestIssuePolling:
         async def add_issue_after_idle() -> None:
             """Wait for idle then add a new issue."""
             # Wait for idle state
-            for _ in range(50):
+            for _ in range(100):  # 100 * 0.01s = 1.0s max wait
                 if event_sink.has_event("watch_idle"):
-                    break
+                    # Add a new issue while idle
+                    provider.issues["new-issue"] = FakeIssue(
+                        id="new-issue", status="open"
+                    )
+                    return
                 await asyncio.sleep(0.01)
-
-            # Add a new issue while idle
-            provider.issues["new-issue"] = FakeIssue(id="new-issue", status="open")
+            pytest.fail("watch_idle event never observed before timeout")
 
         async with asyncio.timeout(2.0):
             add_task = asyncio.create_task(add_issue_after_idle())
