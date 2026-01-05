@@ -157,6 +157,7 @@ class SequencedSDKClientFactory:
     def __init__(self, clients: list[FakeSDKClient]):
         self.clients = clients
         self.create_calls: list[Any] = []
+        self.with_resume_calls: list[tuple[object, str | None]] = []
         self._index = 0
 
     def create(self, options: object) -> SDKClientProtocol:
@@ -164,6 +165,18 @@ class SequencedSDKClientFactory:
         client = self.clients[min(self._index, len(self.clients) - 1)]
         self._index += 1
         return cast("SDKClientProtocol", client)
+
+    def with_resume(self, options: object, resume: str | None) -> object:
+        """Create a copy of options with a different resume session ID."""
+        self.with_resume_calls.append((options, resume))
+        if isinstance(options, dict):
+            return {**options, "resume": resume}
+        # For real ClaudeAgentOptions, use dataclass fields
+        from dataclasses import fields
+
+        kwargs = {f.name: getattr(options, f.name) for f in fields(options)}  # type: ignore[arg-type]
+        kwargs["resume"] = resume
+        return type(options)(**kwargs)  # type: ignore[return-value]
 
     def create_options(
         self,
@@ -177,6 +190,7 @@ class SequencedSDKClientFactory:
         disallowed_tools: list[str] | None = None,
         env: dict[str, str] | None = None,
         hooks: dict[str, list[object]] | None = None,
+        resume: str | None = None,
     ) -> object:
         return {
             "cwd": cwd,
@@ -188,6 +202,7 @@ class SequencedSDKClientFactory:
             "disallowed_tools": disallowed_tools,
             "env": env,
             "hooks": hooks,
+            "resume": resume,
         }
 
     def create_hook_matcher(
@@ -1924,7 +1939,9 @@ class TestIdleTimeoutRetry:
         # Verify second client used resume prompt with session_id
         assert len(success_client.queries) == 1
         assert "Continue on issue test-123" in success_client.queries[0][0]
-        assert success_client.queries[0][1] == "hang-session-123"
+        # Resume is now passed via with_resume on options, not via query session_id
+        assert len(factory.with_resume_calls) == 1
+        assert factory.with_resume_calls[0][1] == "hang-session-123"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -2324,6 +2341,12 @@ class TestIdleTimeoutRetry:
                 sid = session_ids[min(self.idx, len(session_ids) - 1)]
                 self.idx += 1
                 return cast("SDKClientProtocol", make_client_for_session(sid))
+
+            def with_resume(self, options: object, resume: str | None) -> object:
+                """Create a copy of options with resume session ID."""
+                if isinstance(options, dict):
+                    return {**options, "resume": resume}
+                return options
 
             def create_options(
                 self,

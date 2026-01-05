@@ -52,14 +52,14 @@
 
 ## Layer Dependencies
 
-Import boundaries are **enforced by import-linter** with 10 contracts. The dependency graph follows:
+Import boundaries are **enforced by import-linter** (see `pyproject.toml` for current contracts). The dependency graph follows:
 
 | Layer | Can Import |
 |-------|------------|
 | `cli` | all lower layers (typically uses `orchestration`, `infra`) |
 | `orchestration` | `pipeline`, `domain`, `infra`, `core` |
-| `pipeline` | `domain`, `infra`, `core` |
-| `domain` | `infra`, `core` |
+| `pipeline` | `domain`, `core` (not `infra.clients`) |
+| `domain` | `core` only (not `infra`) |
 | `infra` | `core` |
 | `core` | (none - leaf layer) |
 
@@ -541,10 +541,10 @@ Expected to pass (tighten invariants without refactors):
   - `anthropic` is only allowed in `src.infra.clients`.
   - These constraints target direct imports; indirect use via the approved wrappers is allowed.
 
-Hardening constraints (strict by design; expected to fail until refactors):
+Hardening constraints (aspirational; not yet enforced):
 - **Single DI boundary for clients:** only `src.orchestration.factory` may import `src.infra.clients`. All other orchestration modules must rely on injected protocols.
-- **Hooks are runtime‑only:** `src.infra.hooks` must not import `src.infra.tool_config` (or other configuration wiring) except for the disallowed tools list.
-- **SDK boundary enforcement:** `claude_agent_sdk` must not appear outside infra’s SDK boundary modules. This is expected to fail until hook/MCP wiring is fully separated from SDK‑specific code.
+- **Hooks are runtime‑only:** `src.infra.hooks` must not import `src.infra.agent_runtime` (to maintain clean separation between hook logic and SDK-specific runtime code).
+- **SDK boundary enforcement:** `claude_agent_sdk` must not appear outside infra's SDK boundary modules. This is expected to fail until hook/MCP wiring is fully separated from SDK‑specific code.
 
 ### 3) Protocol-Based Interfaces
 
