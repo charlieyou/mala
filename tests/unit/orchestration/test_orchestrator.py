@@ -2792,7 +2792,7 @@ class TestOrchestratorFactory:
             timeout_minutes=30,
             max_issues=10,
             epic_id="epic-123",
-            only_ids={"issue-1", "issue-2"},
+            only_ids=["issue-1", "issue-2"],
             max_gate_retries=5,
             max_review_retries=2,
             disable_validations={"coverage"},
@@ -2807,7 +2807,7 @@ class TestOrchestratorFactory:
         assert orchestrator.timeout_seconds == 30 * 60
         assert orchestrator.max_issues == 10
         assert orchestrator.epic_id == "epic-123"
-        assert orchestrator.only_ids == {"issue-1", "issue-2"}
+        assert orchestrator.only_ids == ["issue-1", "issue-2"]
         assert orchestrator.max_gate_retries == 5
         assert orchestrator.max_review_retries == 2
         assert orchestrator.coverage_threshold == 80.0

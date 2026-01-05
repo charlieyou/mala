@@ -321,7 +321,7 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     # Check OrchestratorConfig passed to create_orchestrator
     orch_config = DummyOrchestrator.last_orch_config
     assert orch_config is not None
-    assert orch_config.only_ids == {"id-1", "id-2"}
+    assert orch_config.only_ids == ["id-1", "id-2"]
     # review_timeout is passed via cli_args for logging/metadata
     assert orch_config.cli_args["review_timeout"] == 600
     # Check MalaConfig
@@ -1655,7 +1655,7 @@ class TestValidateRunArgs:
             repo_path=tmp_path,
         )
 
-        assert result.only_ids == {"issue-1", "issue-2"}
+        assert result.only_ids == ["issue-1", "issue-2"]
         assert result.disable_set == {"coverage", "e2e"}
         assert result.epic_override_ids == {"epic-a", "epic-b"}
 
@@ -2158,3 +2158,53 @@ class TestApplyConfigOverrides:
 
         assert result.updated_config is not None
         assert result.updated_config.deadlock_detection_enabled is False
+
+
+# ============================================================================
+# Tests for --scope option and parse_scope function
+# ============================================================================
+
+
+class TestScopeOption:
+    """Tests for the --scope CLI option and parse_scope function."""
+
+    def test_scope_option_triggers_not_implemented_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Test that --scope option raises NotImplementedError (TDD red state).
+
+        This test verifies that the scope parsing skeleton is in place
+        and correctly raises NotImplementedError until T002 implements it.
+        """
+        cli = _reload_cli(monkeypatch)
+
+        config_dir = tmp_path / "config"
+        monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+        monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+        # The --scope option should trigger parse_scope which raises NotImplementedError
+        with pytest.raises(NotImplementedError) as excinfo:
+            cli.run(repo_path=tmp_path, scope="ids:T-1,T-2")
+
+        assert "Scope parsing is not yet implemented" in str(excinfo.value)
+        assert "T002" in str(excinfo.value)
+
+    def test_parse_scope_raises_not_implemented(self) -> None:
+        """Test that parse_scope raises NotImplementedError directly."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(NotImplementedError) as excinfo:
+            parse_scope("ids:T-1,T-2")
+
+        assert "Scope parsing is not yet implemented" in str(excinfo.value)
+
+    def test_scope_config_dataclass_exists(self) -> None:
+        """Test that ScopeConfig dataclass is defined with expected fields."""
+        from src.cli.cli import ScopeConfig
+
+        # ScopeConfig should be importable and have ids field
+        config = ScopeConfig()
+        assert config.ids is None
+
+        config_with_ids = ScopeConfig(ids=["T-1", "T-2"])
+        assert config_with_ids.ids == ["T-1", "T-2"]

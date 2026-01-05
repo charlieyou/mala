@@ -102,7 +102,7 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
         timeout_minutes: int | None = None,
         max_issues: int | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         braintrust_enabled: bool | None = None,
         max_gate_retries: int = 3,
         max_review_retries: int = 3,

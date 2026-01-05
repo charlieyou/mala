@@ -55,7 +55,7 @@ class OrchestratorConfig:
         timeout_minutes: Timeout per agent in minutes (None = default 60).
         max_issues: Maximum issues to process (None = unlimited).
         epic_id: Only process tasks under this epic.
-        only_ids: Comma-separated list of issue IDs to process exclusively.
+        only_ids: List of issue IDs to process exclusively.
         braintrust_enabled: Enable Braintrust tracing.
         max_gate_retries: Maximum quality gate retry attempts per issue.
         max_review_retries: Maximum code review retry attempts per issue.
@@ -75,7 +75,7 @@ class OrchestratorConfig:
     timeout_minutes: int | None = None
     max_issues: int | None = None
     epic_id: str | None = None
-    only_ids: set[str] | None = None
+    only_ids: list[str] | None = None
     braintrust_enabled: bool | None = None
     max_gate_retries: int = 3
     max_review_retries: int = 3
@@ -206,7 +206,7 @@ class IssueFilterConfig:
         max_agents: Maximum concurrent agents (None = unlimited).
         max_issues: Maximum issues to process (None = unlimited).
         epic_id: Only process tasks under this epic.
-        only_ids: Set of issue IDs to process exclusively.
+        only_ids: List of issue IDs to process exclusively.
         prioritize_wip: Prioritize in_progress issues before open issues.
         focus: Group tasks by epic for focused work.
         orphans_only: Only process issues with no parent epic.
@@ -216,7 +216,7 @@ class IssueFilterConfig:
     max_agents: int | None = None
     max_issues: int | None = None
     epic_id: str | None = None
-    only_ids: set[str] | None = None
+    only_ids: list[str] | None = None
     prioritize_wip: bool = False
     focus: bool = True
     orphans_only: bool = False

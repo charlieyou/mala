@@ -106,7 +106,7 @@ def mock_issue_filter_config() -> IssueFilterConfig:
         max_agents=4,
         max_issues=10,
         epic_id="test-epic",
-        only_ids={"issue-1", "issue-2"},
+        only_ids=["issue-1", "issue-2"],
         prioritize_wip=True,
         focus=True,
         orphans_only=False,
@@ -206,7 +206,7 @@ class TestIssueFilterConfigDataclass:
         assert mock_issue_filter_config.max_agents == 4
         assert mock_issue_filter_config.max_issues == 10
         assert mock_issue_filter_config.epic_id == "test-epic"
-        assert mock_issue_filter_config.only_ids == {"issue-1", "issue-2"}
+        assert mock_issue_filter_config.only_ids == ["issue-1", "issue-2"]
         assert mock_issue_filter_config.prioritize_wip is True
         assert mock_issue_filter_config.focus is True
         assert mock_issue_filter_config.orphans_only is False

@@ -236,10 +236,36 @@ VALID_DISABLE_VALUES = frozenset(
 
 
 @dataclass(frozen=True)
+class ScopeConfig:
+    """Parsed scope configuration from --scope option.
+
+    Attributes:
+        ids: List of issue IDs to process (from 'ids:' prefix).
+    """
+
+    ids: list[str] | None = None
+
+
+def parse_scope(scope: str) -> ScopeConfig:
+    """Parse the --scope option value into a ScopeConfig.
+
+    Args:
+        scope: The scope string (e.g., 'ids:T-1,T-2').
+
+    Returns:
+        ScopeConfig with parsed values.
+
+    Raises:
+        NotImplementedError: Scope parsing is not yet implemented.
+    """
+    raise NotImplementedError("Scope parsing is not yet implemented (T002)")
+
+
+@dataclass(frozen=True)
 class ValidatedRunArgs:
     """Validated and parsed CLI arguments for the run command."""
 
-    only_ids: set[str] | None
+    only_ids: list[str] | None
     disable_set: set[str] | None
     epic_override_ids: set[str]
 
@@ -368,7 +394,7 @@ def _apply_config_overrides(
 def _handle_dry_run(
     repo_path: Path,
     epic: str | None,
-    only_ids: set[str] | None,
+    only_ids: list[str] | None,
     wip: bool,
     focus: bool,
     orphans_only: bool,
@@ -378,7 +404,7 @@ def _handle_dry_run(
     Args:
         repo_path: Path to the repository.
         epic: Epic ID to filter by.
-        only_ids: Set of specific issue IDs to process.
+        only_ids: List of specific issue IDs to process.
         wip: Whether to prioritize WIP issues.
         focus: Whether focus mode is enabled.
         orphans_only: Whether to only process orphan issues.
@@ -389,9 +415,11 @@ def _handle_dry_run(
 
     async def _dry_run() -> None:
         beads = _lazy("BeadsClient")(repo_path)
+        # Convert list to set for BeadsClient compatibility
+        ids_set = set(only_ids) if only_ids else None
         issues = await beads.get_ready_issues_async(
             epic_id=epic,
-            only_ids=only_ids,
+            only_ids=ids_set,
             prioritize_wip=wip,
             focus=focus,
             orphans_only=orphans_only,
@@ -428,12 +456,12 @@ def _validate_run_args(
     Raises:
         typer.Exit: If any validation fails
     """
-    # Parse --only flag into a set of issue IDs
-    only_ids: set[str] | None = None
+    # Parse --only flag into a list of issue IDs
+    only_ids: list[str] | None = None
     if only:
-        only_ids = {
+        only_ids = [
             issue_id.strip() for issue_id in only.split(",") if issue_id.strip()
-        }
+        ]
         if not only_ids:
             log("✗", "Invalid --only value: no valid issue IDs found", Colors.RED)
             raise typer.Exit(1)
@@ -552,6 +580,14 @@ def run(
             "--only",
             "-o",
             help="Comma-separated list of issue IDs to process exclusively",
+        ),
+    ] = None,
+    scope: Annotated[
+        str | None,
+        typer.Option(
+            "--scope",
+            "-s",
+            help="Scope filter (e.g., 'ids:T-1,T-2'). Replaces --only.",
         ),
     ] = None,
     max_gate_retries: Annotated[
@@ -680,6 +716,13 @@ def run(
     set_verbose(verbose)
 
     repo_path = repo_path.resolve()
+
+    # Handle --scope option (calls parse_scope which raises NotImplementedError for now)
+    if scope is not None:
+        scope_config = parse_scope(scope)
+        # When implemented, scope_config.ids will populate only_ids
+        # For now, parse_scope raises NotImplementedError
+        _ = scope_config  # Placeholder for future use
 
     # Validate and parse CLI arguments
     validated = _validate_run_args(

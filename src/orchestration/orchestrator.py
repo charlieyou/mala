@@ -324,7 +324,7 @@ class MalaOrchestrator:
             max_agents=self.max_agents,
             max_issues=self._max_issues,
             epic_id=self.epic_id,
-            only_ids=set(self.only_ids) if self.only_ids else None,
+            only_ids=self.only_ids,
             prioritize_wip=self.prioritize_wip,
             focus=self.focus,
             orphans_only=self.orphans_only,
