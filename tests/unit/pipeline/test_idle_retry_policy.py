@@ -123,18 +123,11 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         return {"cwd": cwd, "model": model}
 
 
-class FakeLintCache(LintCache):
-    """Fake LintCache for testing."""
-
-    def __init__(self) -> None:
-        # Don't call parent __init__ - we just need to satisfy the interface
-        pass
-
-    def detect_lint_command(self, command: str) -> str | None:
-        return None
-
-    def mark_success(self, lint_type: str, command: str = "") -> None:
-        pass
+def _create_mock_lint_cache() -> MagicMock:
+    """Create a MagicMock that satisfies the LintCache interface."""
+    mock = MagicMock(spec=LintCache)
+    mock.detect_lint_command.return_value = None
+    return mock
 
 
 @dataclass
@@ -192,8 +185,8 @@ def sdk_factory() -> FakeSDKClientFactory:
 
 
 @pytest.fixture
-def lint_cache() -> FakeLintCache:
-    return FakeLintCache()
+def lint_cache() -> MagicMock:
+    return _create_mock_lint_cache()
 
 
 @pytest.fixture
@@ -290,7 +283,7 @@ class TestExecuteIterationSuccess:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: FakeLintCache,
+        lint_cache: MagicMock,
     ) -> None:
         """Normal execution returns success with session ID."""
         sdk_factory.configure_next_client(responses=[])
@@ -336,7 +329,7 @@ class TestExecuteIterationTimeout:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: FakeLintCache,
+        lint_cache: MagicMock,
     ) -> None:
         """Timeout triggers backoff and retry with resume prompt."""
         sdk_factory.configure_next_client(responses=[])
@@ -388,7 +381,7 @@ class TestExecuteIterationTimeout:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: FakeLintCache,
+        lint_cache: MagicMock,
     ) -> None:
         """Max retries exceeded raises IdleTimeoutError."""
         for _ in range(3):
@@ -437,7 +430,7 @@ class TestRetryConfigZeroMaxRetries:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: FakeLintCache,
+        lint_cache: MagicMock,
     ) -> None:
         """max_idle_retries=0 causes immediate failure on first timeout."""
         sdk_factory.configure_next_client(responses=[])
@@ -480,7 +473,7 @@ class TestBackoffTiming:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: FakeLintCache,
+        lint_cache: MagicMock,
     ) -> None:
         """Backoff uses configured delays from idle_retry_backoff."""
         for _ in range(3):
@@ -526,15 +519,15 @@ class TestBackoffTiming:
 
         assert result.success is True
         # Retry 1 uses backoff[0] = 0.0 (no sleep since 0)
-        # Retry 2 uses backoff[1] = 5.0
-        assert 5.0 in sleep_calls
+        # Retry 2 uses backoff[1] = 5.0 (only non-zero backoff triggers sleep)
+        assert sleep_calls == [5.0]
 
     @pytest.mark.asyncio
     async def test_backoff_reuses_last_entry(
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: FakeLintCache,
+        lint_cache: MagicMock,
     ) -> None:
         """Backoff reuses last entry when retry count exceeds backoff length."""
         for _ in range(4):
@@ -594,7 +587,7 @@ class TestRetryWithoutSessionId:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: FakeLintCache,
+        lint_cache: MagicMock,
     ) -> None:
         """Retry without session_id and no tool calls keeps original query."""
         sdk_factory.configure_next_client(responses=[])
@@ -638,7 +631,7 @@ class TestRetryWithoutSessionId:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: FakeLintCache,
+        lint_cache: MagicMock,
     ) -> None:
         """Retry with tool calls but no session_id raises IdleTimeoutError."""
         sdk_factory.configure_next_client(responses=[])
@@ -683,7 +676,7 @@ class TestDisconnectBehavior:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: FakeLintCache,
+        lint_cache: MagicMock,
     ) -> None:
         """Client disconnect is called when timeout occurs."""
         sdk_factory.configure_next_client(responses=[])
@@ -725,7 +718,7 @@ class TestStateManagement:
         self,
         sdk_factory: FakeSDKClientFactory,
         lifecycle_ctx: LifecycleContext,
-        lint_cache: FakeLintCache,
+        lint_cache: MagicMock,
     ) -> None:
         """State fields are reset at the start of execute_iteration."""
         sdk_factory.configure_next_client(responses=[])
