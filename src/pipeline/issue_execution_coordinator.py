@@ -160,6 +160,7 @@ class IssueExecutionCoordinator:
         validation_callback: Callable[[], Awaitable[bool]] | None,
         watch_state: WatchState,
         issues_spawned: int,
+        watch_enabled: bool,
     ) -> RunResult:
         """Handle SIGINT by aborting active tasks, running final validation, and returning.
 
@@ -175,7 +176,7 @@ class IssueExecutionCoordinator:
         if not isinstance(watch_state.last_validation_at, int):
             watch_state.last_validation_at = 0
         if watch_state.completed_count > watch_state.last_validation_at:
-            if validation_callback:
+            if watch_enabled and validation_callback:
                 validation_passed = await validation_callback()
                 watch_state.last_validation_at = watch_state.completed_count
                 if not validation_passed:
@@ -220,6 +221,7 @@ class IssueExecutionCoordinator:
                 watch_config.validate_every if watch_config else 10
             )
         )
+        watch_enabled = bool(watch_config and watch_config.enabled)
 
         # Track interrupt_task outside the loop to ensure cleanup on any exit path
         interrupt_task: asyncio.Task[object] | None = None
@@ -249,7 +251,11 @@ class IssueExecutionCoordinator:
                 # Check for interrupt (SIGINT)
                 if interrupt_event and interrupt_event.is_set():
                     return await self._handle_interrupt(
-                        abort_callback, validation_callback, watch_state, issues_spawned
+                        abort_callback,
+                        validation_callback,
+                        watch_state,
+                        issues_spawned,
+                        watch_enabled,
                     )
 
                 # Check for abort
@@ -311,7 +317,8 @@ class IssueExecutionCoordinator:
                             await abort_callback()
                             # Run final validation if any issues completed
                             if (
-                                watch_state.completed_count
+                                watch_enabled
+                                and watch_state.completed_count
                                 > watch_state.last_validation_at
                                 and validation_callback
                             ):
@@ -347,6 +354,7 @@ class IssueExecutionCoordinator:
                                     validation_callback,
                                     watch_state,
                                     issues_spawned,
+                                    watch_enabled,
                                 )
                             except TimeoutError:
                                 pass  # Normal timeout, retry poll
@@ -396,7 +404,7 @@ class IssueExecutionCoordinator:
                         )
                         # Run final validation if needed
                         if watch_state.completed_count > watch_state.last_validation_at:
-                            if validation_callback:
+                            if watch_enabled and validation_callback:
                                 validation_passed = await validation_callback()
                                 watch_state.last_validation_at = (
                                     watch_state.completed_count
@@ -449,6 +457,7 @@ class IssueExecutionCoordinator:
                                         validation_callback,
                                         watch_state,
                                         issues_spawned,
+                                        watch_enabled,
                                     )
                                 except TimeoutError:
                                     pass  # Normal timeout, continue loop
@@ -463,7 +472,7 @@ class IssueExecutionCoordinator:
                                 watch_state.completed_count
                                 > watch_state.last_validation_at
                             ):
-                                if validation_callback:
+                                if watch_enabled and validation_callback:
                                     validation_passed = await validation_callback()
                                     watch_state.last_validation_at = (
                                         watch_state.completed_count
@@ -529,7 +538,11 @@ class IssueExecutionCoordinator:
                 # Check for interrupt after processing completions
                 if interrupt_event and interrupt_event.is_set():
                     return await self._handle_interrupt(
-                        abort_callback, validation_callback, watch_state, issues_spawned
+                        abort_callback,
+                        validation_callback,
+                        watch_state,
+                        issues_spawned,
+                        watch_enabled,
                     )
 
                 # Check if validation threshold crossed
