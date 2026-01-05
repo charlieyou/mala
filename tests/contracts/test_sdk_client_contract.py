@@ -92,17 +92,18 @@ class TestFakeSDKClientBehavior:
 
     @pytest.mark.unit
     async def test_receive_response_yields_messages(self) -> None:
-        """receive_response() yields configured messages."""
+        """receive_response() yields configured messages without SDK dependency."""
         msg1 = {"type": "text", "content": "Hello"}
         msg2 = {"type": "text", "content": "World"}
-        client = FakeSDKClient(messages=[msg1, msg2])
+        # Set result_message=None to avoid SDK import in unit test
+        client = FakeSDKClient(messages=[msg1, msg2], result_message=None)
 
         messages = []
         async for msg in client.receive_response():
             messages.append(msg)
 
-        # Should have configured messages plus default ResultMessage
-        assert len(messages) == 3
+        # Should have only configured messages (no ResultMessage)
+        assert len(messages) == 2
         assert messages[0] == msg1
         assert messages[1] == msg2
 
@@ -148,8 +149,9 @@ class TestFakeSDKClientBehavior:
     def test_backward_compatibility_aliases(self) -> None:
         """Backward compatibility aliases work correctly."""
         client = FakeSDKClient()
-        # _query_calls should alias queries
-        assert client._query_calls is client.queries
+        # _query_calls should alias queries - verify mutation affects both
+        client.queries.append(("test", None))
+        assert ("test", None) in client._query_calls
         # _disconnect_called should alias disconnect_called
         assert client._disconnect_called == client.disconnect_called
 
