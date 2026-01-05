@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, cast
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from src.infra.clients.review_output_parser import ReviewResult
     from src.core.protocols import (
         CodeReviewer,
         GateChecker,
@@ -83,11 +82,11 @@ class ReviewOutput:
     """Output from a code review check.
 
     Attributes:
-        result: The ReviewResult from the review.
+        result: The ReviewResultProtocol from the review.
         session_log_path: Path to the review session log (if captured).
     """
 
-    result: ReviewResult | ReviewResultProtocol
+    result: ReviewResultProtocol
     session_log_path: str | None = None
 
 

@@ -18,7 +18,7 @@ from src.domain.lifecycle import Effect
 from src.domain.prompts import (
     get_default_validation_commands as _get_default_validation_commands,
 )
-from src.infra.clients.cerberus_review import format_review_issues
+from src.pipeline.review_formatter import format_review_issues
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -38,6 +38,21 @@ if TYPE_CHECKING:
         AgentSessionInput,
         SessionCallbacks,
     )
+
+
+@dataclass
+class SyntheticReviewOutcome:
+    """A synthetic review outcome for no-progress scenarios.
+
+    This is a simple dataclass that satisfies the ReviewOutcome protocol
+    used by the lifecycle state machine. It allows the pipeline to create
+    synthetic failed reviews without importing from infra.clients.
+    """
+
+    passed: bool
+    issues: list  # list[ReviewIssue] but we use empty list
+    parse_error: str | None = None
+    fatal_error: bool = False
 
 
 @dataclass
@@ -403,8 +418,6 @@ class LifecycleEffectHandler:
             ReviewEffectResult if no progress detected (caller should return early),
             None if review should proceed normally.
         """
-        from src.infra.clients.review_output_parser import ReviewResult
-
         # Only check on retry attempts (attempt > 1) when callback is configured
         if (
             lifecycle_ctx.retry_state.review_attempt <= 1
@@ -432,7 +445,7 @@ class LifecycleEffectHandler:
             self.event_sink.on_review_skipped_no_progress(input.issue_id)
 
         # Create synthetic failed review
-        synthetic = ReviewResult(passed=False, issues=[], parse_error=None)
+        synthetic = SyntheticReviewOutcome(passed=False, issues=[])
         new_offset = (
             self.callbacks.get_log_offset(
                 log_path,

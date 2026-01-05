@@ -11,7 +11,6 @@ from typing import cast
 
 import pytest
 
-from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
 from src.pipeline.review_runner import (
     NoProgressInput,
     ReviewInput,
@@ -25,14 +24,38 @@ from src.domain.validation.spec import ValidationSpec
 
 
 @dataclass
+class FakeReviewIssue:
+    """Fake review issue for testing that satisfies ReviewIssueProtocol."""
+
+    file: str
+    line_start: int
+    line_end: int
+    priority: int | None
+    title: str
+    body: str
+    reviewer: str
+
+
+@dataclass
+class FakeReviewResult:
+    """Fake review result for testing that satisfies ReviewResultProtocol."""
+
+    passed: bool
+    issues: list[FakeReviewIssue] = field(default_factory=list)
+    parse_error: str | None = None
+    fatal_error: bool = False
+    review_log_path: Path | None = None
+
+
+@dataclass
 class FakeCodeReviewer:
     """Fake code reviewer for testing.
 
     Returns predetermined results without invoking Cerberus CLI.
     """
 
-    result: ReviewResult = field(
-        default_factory=lambda: ReviewResult(passed=True, issues=[])
+    result: FakeReviewResult = field(
+        default_factory=lambda: FakeReviewResult(passed=True, issues=[])
     )
     calls: list[dict] = field(default_factory=list)
 
@@ -44,7 +67,7 @@ class FakeCodeReviewer:
         claude_session_id: str | None = None,
         *,
         commit_shas: Sequence[str] | None = None,
-    ) -> ReviewResult:
+    ) -> FakeReviewResult:
         """Record call and return configured result."""
         self.calls.append(
             {
@@ -207,7 +230,7 @@ class TestReviewRunnerBasics:
         tmp_path: Path,
     ) -> None:
         """Runner should capture review log path when available."""
-        result = ReviewResult(
+        result = FakeReviewResult(
             passed=True,
             issues=[],
             review_log_path=Path("/path/to/review.jsonl"),
@@ -290,7 +313,7 @@ class TestReviewRunnerResults:
     @pytest.mark.asyncio
     async def test_review_passed(self, tmp_path: Path) -> None:
         """Runner should return passed result correctly."""
-        result = ReviewResult(passed=True, issues=[])
+        result = FakeReviewResult(passed=True, issues=[])
         fake_reviewer = FakeCodeReviewer(result=result)
         runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
 
@@ -309,7 +332,7 @@ class TestReviewRunnerResults:
     async def test_review_failed_with_issues(self, tmp_path: Path) -> None:
         """Runner should return failed result with issues."""
         issues = [
-            ReviewIssue(
+            FakeReviewIssue(
                 title="[P1] Bug found",
                 body="Description",
                 priority=1,
@@ -319,7 +342,7 @@ class TestReviewRunnerResults:
                 reviewer="cerberus",
             )
         ]
-        result = ReviewResult(passed=False, issues=issues)
+        result = FakeReviewResult(passed=False, issues=issues)
         fake_reviewer = FakeCodeReviewer(result=result)
         runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
 
@@ -338,7 +361,7 @@ class TestReviewRunnerResults:
     @pytest.mark.asyncio
     async def test_review_failed_with_parse_error(self, tmp_path: Path) -> None:
         """Runner should return failed result with parse error."""
-        result = ReviewResult(
+        result = FakeReviewResult(
             passed=False,
             issues=[],
             parse_error="Invalid JSON output",
@@ -544,7 +567,7 @@ class TestReviewOutput:
 
     def test_output_required_fields(self) -> None:
         """Output should have required fields with defaults."""
-        result = ReviewResult(passed=True, issues=[])
+        result = FakeReviewResult(passed=True, issues=[])
         output = ReviewOutput(result=result)
 
         assert output.result.passed is True
@@ -552,7 +575,7 @@ class TestReviewOutput:
 
     def test_output_with_session_log(self) -> None:
         """Output should include session log path."""
-        result = ReviewResult(passed=True, issues=[])
+        result = FakeReviewResult(passed=True, issues=[])
         output = ReviewOutput(
             result=result,
             session_log_path="/path/to/log.jsonl",
@@ -584,13 +607,13 @@ class TestContextFileCleanup:
                 claude_session_id: str | None = None,
                 *,
                 commit_shas: Sequence[str] | None = None,
-            ) -> ReviewResult:
+            ) -> FakeReviewResult:
                 nonlocal context_file_path
                 context_file_path = context_file
                 # Verify file exists during review
                 assert context_file is not None
                 assert context_file.exists()
-                return ReviewResult(passed=True, issues=[])
+                return FakeReviewResult(passed=True, issues=[])
 
         runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
 
@@ -627,7 +650,7 @@ class TestContextFileCleanup:
                 claude_session_id: str | None = None,
                 *,
                 commit_shas: Sequence[str] | None = None,
-            ) -> ReviewResult:
+            ) -> FakeReviewResult:
                 nonlocal context_file_path
                 context_file_path = context_file
                 # Verify file exists during review

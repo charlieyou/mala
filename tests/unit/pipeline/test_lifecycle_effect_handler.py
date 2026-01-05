@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from dataclasses import dataclass, field
+
 from src.domain.lifecycle import (
     ImplementerLifecycle,
     LifecycleConfig,
@@ -16,7 +18,6 @@ from src.domain.lifecycle import (
     LifecycleState,
 )
 from src.domain.quality_gate import GateResult
-from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
 from src.pipeline.agent_session_runner import (
     AgentSessionConfig,
     AgentSessionInput,
@@ -27,6 +28,29 @@ from src.pipeline.lifecycle_effect_handler import LifecycleEffectHandler
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@dataclass
+class FakeReviewIssue:
+    """Fake review issue for testing that satisfies ReviewIssue protocol."""
+
+    file: str
+    line_start: int
+    line_end: int
+    priority: int | None
+    title: str
+    body: str
+    reviewer: str
+
+
+@dataclass
+class FakeReviewResult:
+    """Fake review result for testing that satisfies ReviewOutcome protocol."""
+
+    passed: bool
+    issues: list[FakeReviewIssue] = field(default_factory=list)
+    parse_error: str | None = None
+    fatal_error: bool = False
 
 
 def make_test_prompts() -> SessionPrompts:
@@ -381,7 +405,7 @@ class TestProcessReviewEffect:
         lifecycle_ctx.retry_state.review_attempt = 1
 
         input_data = AgentSessionInput(issue_id="test-review", prompt="Test")
-        review_result = ReviewResult(passed=True, issues=[], parse_error=None)
+        review_result = FakeReviewResult(passed=True, issues=[])
 
         effect = handler.process_review_effect(
             input_data, review_result, lifecycle, lifecycle_ctx, 1000, None
@@ -414,10 +438,10 @@ class TestProcessReviewEffect:
         lifecycle_ctx.retry_state.review_attempt = 1
 
         input_data = AgentSessionInput(issue_id="test-rev-retry", prompt="Test")
-        review_result = ReviewResult(
+        review_result = FakeReviewResult(
             passed=False,
             issues=[
-                ReviewIssue(
+                FakeReviewIssue(
                     title="Bug found",
                     body="A bug was found",
                     priority=1,
@@ -427,7 +451,6 @@ class TestProcessReviewEffect:
                     reviewer="gemini",
                 ),
             ],
-            parse_error=None,
         )
 
         effect = handler.process_review_effect(
