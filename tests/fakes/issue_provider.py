@@ -24,7 +24,7 @@ class FakeIssue:
     """In-memory representation of an issue for FakeIssueProvider."""
 
     id: str
-    status: str = "ready"
+    status: str = "open"
     priority: int = 0  # Match IssueManager.get_priority default
     parent_epic: str | None = None
     description: str = ""
@@ -88,7 +88,8 @@ class FakeIssueProvider:
 
         exclude = exclude_ids or set()
         # Collect eligible issues - include in_progress when prioritize_wip=True
-        eligible_statuses = {"ready", "in_progress"} if prioritize_wip else {"ready"}
+        # "open" status = ready for pickup (matches `bd ready` which returns open+unblocked)
+        eligible_statuses = {"open", "in_progress"} if prioritize_wip else {"open"}
         candidates: list[dict[str, object]] = []
 
         for issue_id, issue in self.issues.items():
@@ -148,10 +149,10 @@ class FakeIssueProvider:
         return True
 
     async def reopen_issue_async(self, issue_id: str) -> bool:
-        """Reopen an issue by setting status to ready."""
+        """Reopen an issue by setting status to open."""
         if issue_id not in self.issues:
             return False
-        self.issues[issue_id].status = "ready"
+        self.issues[issue_id].status = "open"
         self.reopened.add(issue_id)
         return True
 
@@ -194,10 +195,10 @@ class FakeIssueProvider:
     async def reset_async(
         self, issue_id: str, log_path: Path | None = None, error: str | None = None
     ) -> bool:
-        """Reset an issue back to ready status."""
+        """Reset an issue back to open status (ready for pickup)."""
         if issue_id not in self.issues:
             return False
-        self.issues[issue_id].status = "ready"
+        self.issues[issue_id].status = "open"
         self.reset_calls.append((issue_id, log_path, error))
         # Remove from claimed if it was claimed
         self.claimed.discard(issue_id)

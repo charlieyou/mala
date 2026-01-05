@@ -51,21 +51,21 @@ async def fake_provider() -> AsyncIterator[FakeIssueProvider]:
     issues = {
         "issue-1": FakeIssue(
             id="issue-1",
-            status="ready",
+            status="open",
             priority=1,
             description="Test issue 1",
             tags=["tag-1"],
         ),
         "issue-2": FakeIssue(
             id="issue-2",
-            status="ready",
+            status="open",
             priority=2,
             parent_epic="epic-1",
             description="Test issue 2",
         ),
         "epic-1": FakeIssue(
             id="epic-1",
-            status="ready",
+            status="open",
             priority=1,
             description="Test epic",
             issue_type="epic",  # Mark as epic so it's filtered from get_ready_async
@@ -301,7 +301,7 @@ class TestFakeIssueProviderContract:
 
     @pytest.mark.integration
     async def test_reopen_issue(self, fake_provider: FakeIssueProvider) -> None:
-        """reopen_issue_async sets status to ready for pickup."""
+        """reopen_issue_async sets status to open for pickup."""
         # First claim and mark needs-followup
         await fake_provider.claim_async("issue-1")
         await fake_provider.mark_needs_followup_async("issue-1", "Deadlock victim")
@@ -310,7 +310,7 @@ class TestFakeIssueProviderContract:
         assert result is True
         # Issue should be tracked in reopened set
         assert "issue-1" in fake_provider.reopened
-        # Issue should be eligible for pickup again
+        # Issue should be eligible for pickup again (open + unblocked = ready)
         ready = await fake_provider.get_ready_async()
         assert "issue-1" in ready
 
