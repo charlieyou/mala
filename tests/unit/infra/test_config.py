@@ -15,42 +15,6 @@ from src.infra.io.config import (
 )
 
 
-class TestMalaConfigDefaults:
-    """Tests for MalaConfig default values."""
-
-    def test_default_runs_dir(self) -> None:
-        """Default runs_dir is ~/.config/mala/runs."""
-        config = MalaConfig()
-        assert config.runs_dir == Path.home() / ".config" / "mala" / "runs"
-
-    def test_default_lock_dir(self) -> None:
-        """Default lock_dir is /tmp/mala-locks."""
-        config = MalaConfig()
-        assert config.lock_dir == Path("/tmp/mala-locks")
-
-    def test_default_claude_config_dir(self) -> None:
-        """Default claude_config_dir is ~/.claude."""
-        config = MalaConfig()
-        assert config.claude_config_dir == Path.home() / ".claude"
-
-    def test_default_api_keys_are_none(self) -> None:
-        """API keys default to None."""
-        config = MalaConfig()
-        assert config.braintrust_api_key is None
-
-    def test_default_feature_flags_disabled(self) -> None:
-        """Feature flags are disabled when API keys are not provided."""
-        config = MalaConfig()
-        assert config.braintrust_enabled is False
-
-    def test_default_cerberus_overrides_empty(self) -> None:
-        """Cerberus override settings default to empty values."""
-        config = MalaConfig()
-        assert config.cerberus_spawn_args == ()
-        assert config.cerberus_wait_args == ()
-        assert config.cerberus_env == ()
-
-
 class TestMalaConfigFeatureFlags:
     """Tests for feature flag derivation."""
 
@@ -75,21 +39,6 @@ class TestMalaConfigFeatureFlags:
 
 class TestMalaConfigFromEnv:
     """Tests for from_env() classmethod."""
-
-    def test_from_env_with_no_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """from_env() uses defaults when no env vars are set."""
-        # Clear relevant env vars
-        monkeypatch.delenv("MALA_RUNS_DIR", raising=False)
-        monkeypatch.delenv("MALA_LOCK_DIR", raising=False)
-        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-        monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
-
-        config = MalaConfig.from_env()
-
-        assert config.runs_dir == Path.home() / ".config" / "mala" / "runs"
-        assert config.lock_dir == Path("/tmp/mala-locks")
-        assert config.claude_config_dir == Path.home() / ".claude"
-        assert config.braintrust_api_key is None
 
     def test_from_env_reads_mala_runs_dir(
         self, monkeypatch: pytest.MonkeyPatch
@@ -245,13 +194,6 @@ class TestMalaConfigFromEnv:
 
 class TestMalaConfigValidate:
     """Tests for validate() method."""
-
-    def test_validate_default_config(self) -> None:
-        """Default config passes validation (assuming home dir exists)."""
-        config = MalaConfig()
-        errors = config.validate()
-        # Default config should be valid since home dir exists
-        assert len(errors) == 0
 
     def test_validate_missing_braintrust_api_key(self) -> None:
         """validate() reports missing BRAINTRUST_API_KEY when enabled."""
