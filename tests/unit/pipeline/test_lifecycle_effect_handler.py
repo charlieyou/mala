@@ -79,6 +79,17 @@ class FakeEventSink:
     def on_gate_passed(self, agent_id: str, issue_id: str | None = None) -> None:
         self._record("on_gate_passed", agent_id, issue_id=issue_id)
 
+    def on_gate_failed(
+        self,
+        agent_id: str | None,
+        attempt: int,
+        max_attempts: int,
+        issue_id: str | None = None,
+    ) -> None:
+        self._record(
+            "on_gate_failed", agent_id, attempt, max_attempts, issue_id=issue_id
+        )
+
     def on_gate_retry(
         self,
         agent_id: str,

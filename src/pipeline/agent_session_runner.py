@@ -47,7 +47,10 @@ from src.pipeline.idle_retry_policy import (
     IdleTimeoutRetryPolicy,
     RetryConfig,
 )
-from src.pipeline.lifecycle_effect_handler import LifecycleEffectHandler
+from src.pipeline.lifecycle_effect_handler import (
+    LifecycleEffectHandler,
+    _count_blocking_issues,
+)
 from src.pipeline.message_stream_processor import (
     ContextPressureError,
     IdleTimeoutError,
@@ -604,13 +607,15 @@ class AgentSessionRunner:
                 )
                 review_duration = time.time() - review_start
                 issue_count = len(review_result.issues) if review_result.issues else 0
+                blocking_count = _count_blocking_issues(review_result.issues)
                 logger.debug(
                     "Session %s: review completed in %.1fs "
-                    "(passed=%s, issues=%d, parse_error=%s)",
+                    "(passed=%s, issues=%d, blocking=%d, parse_error=%s)",
                     input.issue_id,
                     review_duration,
                     review_result.passed,
                     issue_count,
+                    blocking_count,
                     review_result.parse_error,
                 )
 
