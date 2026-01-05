@@ -135,12 +135,15 @@ class AgentRuntimeBuilder:
     def with_hooks(
         self,
         *,
-        deadlock_monitor: DeadlockMonitorProtocol | None = None,
-        include_stop_hook: bool = True,
-        include_mala_disallowed_tools_hook: bool = True,
-        include_lock_enforcement_hook: bool = True,
+        deadlock_monitor: DeadlockMonitorProtocol | None | _Unset = _UNSET,
+        include_stop_hook: bool | _Unset = _UNSET,
+        include_mala_disallowed_tools_hook: bool | _Unset = _UNSET,
+        include_lock_enforcement_hook: bool | _Unset = _UNSET,
     ) -> AgentRuntimeBuilder:
         """Configure hook behavior.
+
+        Only parameters that are explicitly provided will be updated;
+        omitted parameters preserve their current state.
 
         Args:
             deadlock_monitor: Optional DeadlockMonitor for lock event hooks.
@@ -155,10 +158,16 @@ class AgentRuntimeBuilder:
         Returns:
             Self for chaining.
         """
-        self._deadlock_monitor = deadlock_monitor
-        self._include_stop_hook = include_stop_hook
-        self._include_mala_disallowed_tools_hook = include_mala_disallowed_tools_hook
-        self._include_lock_enforcement_hook = include_lock_enforcement_hook
+        if deadlock_monitor is not _UNSET:
+            self._deadlock_monitor = deadlock_monitor
+        if include_stop_hook is not _UNSET:
+            self._include_stop_hook = include_stop_hook
+        if include_mala_disallowed_tools_hook is not _UNSET:
+            self._include_mala_disallowed_tools_hook = (
+                include_mala_disallowed_tools_hook
+            )
+        if include_lock_enforcement_hook is not _UNSET:
+            self._include_lock_enforcement_hook = include_lock_enforcement_hook
         return self
 
     def with_env(self, extra: dict[str, str] | None = None) -> AgentRuntimeBuilder:
@@ -260,8 +269,9 @@ class AgentRuntimeBuilder:
         """
         if self._mcp_server_factory is None:
             msg = (
-                "MCP server factory is required. Either provide mcp_server_factory "
-                "or explicitly provide servers via with_mcp(servers={...})."
+                "MCP server factory is required. Either provide mcp_server_factory, "
+                "explicitly provide servers via with_mcp(servers={...}), "
+                "or disable lock enforcement via with_hooks(include_lock_enforcement_hook=False)."
             )
             raise ValueError(msg)
 
