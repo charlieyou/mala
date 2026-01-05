@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -624,28 +624,29 @@ class TestEmptyFilepathsRejection:
         assert "non-empty" in content["error"]
 
 
-def _create_mcp_server_factory() -> object:
+def _create_mcp_server_factory() -> Callable[
+    [str, Path, Callable[[LockEvent], object] | None], dict[str, Any]
+]:
     """Create the MCP server factory for tests.
 
     This mirrors the factory created in orchestration_wiring.create_mcp_server_factory().
     """
     from src.infra.tools.locking_mcp import create_locking_mcp_server
 
+    def _noop(event: LockEvent) -> None:
+        pass
+
     def factory(
         agent_id: str,
         repo_path: Path,
-        emit_lock_event: object,
-    ) -> dict[str, object]:
-        servers: dict[str, object] = {}
+        emit_lock_event: Callable[[LockEvent], object] | None,
+    ) -> dict[str, Any]:
+        servers: dict[str, Any] = {}
         if agent_id is not None:
-
-            def _noop(event: object) -> None:
-                pass
-
             servers["mala-locking"] = create_locking_mcp_server(
                 agent_id=agent_id,
                 repo_namespace=str(repo_path),
-                emit_lock_event=emit_lock_event or _noop,
+                emit_lock_event=emit_lock_event if emit_lock_event else _noop,
             )
         return servers
 

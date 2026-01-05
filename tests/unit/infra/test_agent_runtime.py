@@ -5,7 +5,7 @@ Tests the centralized agent runtime configuration builder.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -19,31 +19,39 @@ from src.infra.hooks import (
 from tests.fakes.sdk_client import FakeSDKClientFactory
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
+    from src.core.models import LockEvent
 
-def _create_mcp_server_factory() -> object:
+    # Type alias matching McpServerFactory from agent_runtime.py
+    McpServerFactory = Callable[
+        [str, Path, Callable[[LockEvent], object] | None],
+        dict[str, Any],
+    ]
+
+
+def _create_mcp_server_factory() -> McpServerFactory:
     """Create a mock MCP server factory for tests.
 
     Returns a factory that produces a dict with 'mala-locking' key.
     """
     from src.infra.tools.locking_mcp import create_locking_mcp_server
 
+    def _noop(event: LockEvent) -> None:
+        pass
+
     def factory(
         agent_id: str,
-        repo_path: object,
-        emit_lock_event: object,
-    ) -> dict[str, object]:
-        servers: dict[str, object] = {}
+        repo_path: Path,
+        emit_lock_event: Callable[[LockEvent], object] | None,
+    ) -> dict[str, Any]:
+        servers: dict[str, Any] = {}
         if agent_id is not None:
-
-            def _noop(event: object) -> None:
-                pass
-
             servers["mala-locking"] = create_locking_mcp_server(
                 agent_id=agent_id,
                 repo_namespace=str(repo_path),
-                emit_lock_event=emit_lock_event or _noop,
+                emit_lock_event=emit_lock_event if emit_lock_event else _noop,
             )
         return servers
 
