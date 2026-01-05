@@ -274,6 +274,8 @@ def _build_cli_args_metadata(
     epic_override: str | None,
     resolved: ResolvedConfig,
     braintrust_enabled: bool,
+    watch: bool,
+    validate_every: int,
 ) -> dict[str, object]:
     """Build the cli_args metadata dictionary for logging and OrchestratorConfig.
 
@@ -287,6 +289,8 @@ def _build_cli_args_metadata(
         epic_override: Raw epic override string from CLI.
         resolved: Resolved config with effective values.
         braintrust_enabled: Whether braintrust actually initialized successfully.
+        watch: Whether watch mode is enabled.
+        validate_every: Run validation after every N issues.
 
     Returns:
         Dictionary of CLI arguments for logging/metadata.
@@ -305,6 +309,8 @@ def _build_cli_args_metadata(
         "cerberus_env": dict(resolved.cerberus_env),
         "epic_override": epic_override,
         "max_epic_verification_retries": resolved.max_epic_verification_retries,
+        "watch": watch,
+        "validate_every": validate_every,
     }
 
 
@@ -686,6 +692,7 @@ def run(
         int,
         typer.Option(
             "--validate-every",
+            min=1,
             help="Run validation after every N issues complete (default: 10, only in watch mode)",
         ),
     ] = 10,
@@ -694,10 +701,7 @@ def run(
     # Apply verbose setting
     set_verbose(verbose)
 
-    # Validate numeric arguments (exit code 2 for invalid arguments)
-    if validate_every < 1:
-        log("✗", "Error: --validate-every must be at least 1", Colors.RED)
-        raise typer.Exit(2)
+    # Validate max_issues (Typer min= doesn't work well with Optional[int])
     if max_issues is not None and max_issues < 1:
         log("✗", "Error: --max-issues must be at least 1", Colors.RED)
         raise typer.Exit(2)
@@ -767,6 +771,8 @@ def run(
         epic_override=epic_override,
         resolved=override_result.resolved,
         braintrust_enabled=_braintrust_enabled,
+        watch=watch,
+        validate_every=validate_every,
     )
 
     # Build OrchestratorConfig and run
