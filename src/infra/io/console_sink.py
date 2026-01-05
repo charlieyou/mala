@@ -515,6 +515,21 @@ class ConsoleEventSink(BaseEventSink):
             f"blocker={info.blocker_id}({blocker_issue})",
         )
 
+    def on_watch_idle(self, wait_seconds: float, issues_blocked: int | None) -> None:
+        if issues_blocked is None or issues_blocked == 0:
+            log(
+                "◦",
+                f"{Colors.MUTED}Idle: no ready issues. Polling in {wait_seconds:.0f}s...{Colors.RESET}",
+                agent_id="run",
+            )
+        else:
+            log(
+                "◦",
+                f"{Colors.MUTED}Idle: {issues_blocked} issues exist but none ready. "
+                f"Polling in {wait_seconds:.0f}s...{Colors.RESET}",
+                agent_id="run",
+            )
+
 
 # Protocol assertion to verify implementation compliance
 assert isinstance(ConsoleEventSink(), MalaEventSink)

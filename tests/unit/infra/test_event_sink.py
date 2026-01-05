@@ -225,6 +225,10 @@ class TestBaseEventSink:
         )
         assert sink.on_deadlock_detected(deadlock_info) is None
 
+        # Watch mode events
+        assert sink.on_watch_idle(30.0, None) is None
+        assert sink.on_watch_idle(60.0, 5) is None
+
     def test_can_be_subclassed_for_selective_override(self) -> None:
         """BaseEventSink can be subclassed with selective method overrides."""
 
@@ -370,6 +374,10 @@ class TestNullEventSink:
             blocker_issue_id="issue-1",
         )
         assert sink.on_deadlock_detected(deadlock_info) is None
+
+        # Watch mode events
+        assert sink.on_watch_idle(30.0, None) is None
+        assert sink.on_watch_idle(60.0, 5) is None
 
     def test_can_be_called_multiple_times(self) -> None:
         """NullEventSink methods can be called repeatedly."""
@@ -858,3 +866,38 @@ class TestConsoleEventSink:
         message = call_args[0][1]
         # None values should display as "unknown"
         assert "unknown" in message
+
+    @patch("src.infra.io.console_sink.log")
+    def test_on_watch_idle_no_ready_issues(self, mock_log: MagicMock) -> None:
+        """on_watch_idle logs 'no ready issues' when issues_blocked is None or 0."""
+        sink = ConsoleEventSink()
+
+        # Test with None
+        sink.on_watch_idle(30.0, None)
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        message = call_args[0][1]
+        assert "Idle: no ready issues" in message
+        assert "30s" in message
+
+        mock_log.reset_mock()
+
+        # Test with 0
+        sink.on_watch_idle(45.5, 0)
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        message = call_args[0][1]
+        assert "Idle: no ready issues" in message
+        assert "46s" in message  # 45.5 rounds to 46
+
+    @patch("src.infra.io.console_sink.log")
+    def test_on_watch_idle_blocked_issues(self, mock_log: MagicMock) -> None:
+        """on_watch_idle logs blocked count when issues exist but none ready."""
+        sink = ConsoleEventSink()
+
+        sink.on_watch_idle(60.0, 5)
+        mock_log.assert_called_once()
+        call_args = mock_log.call_args
+        message = call_args[0][1]
+        assert "Idle: 5 issues exist but none ready" in message
+        assert "60s" in message
