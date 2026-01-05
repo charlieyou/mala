@@ -176,6 +176,9 @@ class StateCaptureTracker:
         self.captured_values["tool_calls_this_turn"] = state.tool_calls_this_turn
         self.captured_values["first_message_received"] = state.first_message_received
         self.captured_values["pending_tool_ids"] = state.pending_tool_ids.copy()
+        self.captured_values["pending_lint_commands"] = (
+            state.pending_lint_commands.copy()
+        )
         return MessageIterationResult(success=True, session_id="sess")
 
 
@@ -738,6 +741,7 @@ class TestStateManagement:
         state.tool_calls_this_turn = 5
         state.first_message_received = True
         state.pending_tool_ids = {"stale-tool-1", "stale-tool-2"}
+        state.pending_lint_commands = {"stale-lint-1": ("ruff", "ruff check foo.py")}
 
         await policy.execute_iteration(
             query="Test query",
@@ -752,3 +756,72 @@ class TestStateManagement:
         assert tracker.captured_values["tool_calls_this_turn"] == 0
         assert tracker.captured_values["first_message_received"] is False
         assert tracker.captured_values["pending_tool_ids"] == set()
+        assert tracker.captured_values["pending_lint_commands"] == {}
+
+    @pytest.mark.asyncio
+    async def test_pending_lint_commands_cleared_on_idle_retry(
+        self,
+        sdk_factory: FakeSDKClientFactory,
+        lifecycle_ctx: LifecycleContext,
+        lint_cache: MagicMock,
+    ) -> None:
+        """pending_lint_commands are cleared when retrying after idle timeout."""
+        # First attempt: times out; second: succeeds
+        for _ in range(2):
+            sdk_factory.configure_next_client(responses=[])
+
+        call_count = 0
+        captured_on_retry: dict[str, object] = {}
+
+        async def capture_on_retry(
+            stream: IdleTimeoutStream,
+            issue_id: str,
+            state: MessageIterationState,
+            lifecycle_ctx: LifecycleContext,
+            lint_cache: LintCache,
+            query_start: float,
+            tracer: TelemetrySpan | None,
+        ) -> MessageIterationResult:
+            nonlocal call_count, captured_on_retry
+            call_count += 1
+            if call_count == 1:
+                # First attempt: populate stale lint commands, then timeout
+                state.pending_lint_commands["tool-abc"] = ("ruff", "ruff check .")
+                raise IdleTimeoutError("idle timeout")
+            # Second attempt: capture state after retry preparation
+            captured_on_retry["pending_lint_commands"] = (
+                state.pending_lint_commands.copy()
+            )
+            captured_on_retry["pending_tool_ids"] = state.pending_tool_ids.copy()
+            return MessageIterationResult(success=True, session_id="sess")
+
+        mock_processor = MagicMock()
+        mock_processor.process_stream = capture_on_retry
+
+        config = RetryConfig(
+            max_idle_retries=1,
+            idle_retry_backoff=(0.0,),
+            idle_resume_prompt="Continue {issue_id}",
+        )
+        policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=sdk_factory,
+            stream_processor_factory=lambda: mock_processor,
+            config=config,
+        )
+
+        state = MessageIterationState()
+        lifecycle_ctx.session_id = "test-session"
+
+        await policy.execute_iteration(
+            query="Test query",
+            issue_id="TEST-11",
+            options={},
+            state=state,
+            lifecycle_ctx=lifecycle_ctx,
+            lint_cache=lint_cache,
+            idle_timeout_seconds=300.0,
+        )
+
+        assert call_count == 2
+        assert captured_on_retry["pending_lint_commands"] == {}
+        assert captured_on_retry["pending_tool_ids"] == set()

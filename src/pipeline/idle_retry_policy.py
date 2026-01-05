@@ -165,6 +165,7 @@ class IdleTimeoutRetryPolicy:
         state.tool_calls_this_turn = 0
         state.first_message_received = False
         state.pending_tool_ids.clear()
+        state.pending_lint_commands.clear()
 
         while pending_query is not None:
             # Backoff before retry (not on first attempt)
@@ -306,6 +307,7 @@ class IdleTimeoutRetryPolicy:
         # Clear pending state from previous attempt to avoid
         # hanging on stale tool IDs (they won't resolve on new stream)
         state.pending_tool_ids.clear()
+        state.pending_lint_commands.clear()
         state.first_message_received = False
         resume_id = state.session_id or lifecycle_ctx.session_id
 
