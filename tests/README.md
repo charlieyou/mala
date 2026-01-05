@@ -40,7 +40,7 @@ The `fakes/` module provides in-memory implementations of mala protocols for tes
 
 Fakes implement real protocol contracts, which means:
 1. Interface mismatches are caught at test time (not production)
-2. Tests assert on behavior (outputs, state) not interactions (call counts)
+2. Tests assert on behavior (outputs, state) not interactions
 3. Contract tests can verify both fake and real implementations
 
 ### Usage
@@ -65,6 +65,8 @@ async def test_issue_processing():
 
 ## Running Tests
 
+See [CLAUDE.md](../CLAUDE.md#testing) for full test commands.
+
 ```bash
 uv run pytest                              # Unit + integration (default)
 uv run pytest -m unit                      # Unit tests only
@@ -74,38 +76,38 @@ uv run pytest -m e2e                       # E2E tests (requires auth)
 
 ## Documented Mock/Patch Exceptions
 
-The following mock and patch usages are intentional and documented exceptions to the "fakes over mocks" guideline:
+The following mock and patch usages are intentional exceptions to the "fakes over mocks" guideline. Each is documented with rationale.
 
 ### Patches for External Dependencies
 
 | File | Patch Target | Rationale |
 |------|--------------|-----------|
-| `test_locking_mcp.py` | `try_lock`, `get_lock_holder`, `wait_for_lock_async`, `release_lock`, `cleanup_agent_locks` | MCP tool handlers use module-level functions from `locking.py`. Patches isolate handler logic from filesystem lock operations. The module architecture doesn't support dependency injection without significant refactoring. |
-| `test_idle_retry_policy.py` | `asyncio.sleep` | Standard pattern for testing async timing/backoff without actual delays. |
-| `test_validation.py` | `SpecResultBuilder._run_e2e` | E2E tests require complex fixture setup. Patching allows testing E2E triggering logic without running actual E2E. |
-| `test_validation.py` | `create_worktree` | Tests worktree failure handling without git worktree operations. |
-| `test_validation.py` | `is_baseline_stale` | Controls coverage baseline staleness for deterministic tests. |
-| `test_run_metadata.py` | `get_runs_dir`, env vars | Tests run metadata persistence with controlled paths. |
-| `test_watch_mode.py` | `time.monotonic` | Controls time progression for deterministic timing tests. |
+| `tests/unit/infra/tools/test_locking_mcp.py` | `try_lock`, `get_lock_holder`, `wait_for_lock_async`, `release_lock`, `cleanup_agent_locks` | MCP tool handlers use module-level functions. Patches isolate handler logic from filesystem operations. |
+| `tests/unit/pipeline/test_idle_retry_policy.py` | `asyncio.sleep` | Standard pattern for testing async timing/backoff without actual delays. |
+| `tests/unit/domain/test_validation.py` | `SpecResultBuilder._run_e2e`, `create_worktree`, `is_baseline_stale`, `LintCache.should_skip` | E2E/worktree/coverage internals that require complex setup or filesystem access. |
+| `tests/unit/pipeline/test_run_metadata.py` | `get_runs_dir`, env vars | Tests run metadata persistence with controlled paths. |
+| `tests/unit/pipeline/test_watch_mode.py` | `time.monotonic` | Controls time progression for deterministic timing tests. |
+| `tests/unit/domain/test_spec_workspace.py` | `create_worktree`, `remove_worktree` | Tests worktree lifecycle without git worktree operations. |
+| `tests/unit/infra/test_cerberus_review.py` | `CommandRunner`, `os.environ` | Tests review orchestration with controlled subprocess behavior. |
+| `tests/unit/infra/test_cerberus_gate_cli.py` | `os.environ` | Tests CLI behavior with controlled environment. |
+| `tests/unit/orchestration/test_orchestrator.py` | `AgentSessionConfig.__init__` | Tests orchestrator wiring without full SDK initialization. |
+| `tests/unit/cli/test_cli.py` | `USER_CONFIG_DIR` env | Tests CLI with controlled config paths. |
+| `tests/unit/infra/test_beads_client.py` | `monkeypatch.setattr` for internal methods | Tests beads client caching and subprocess behavior. |
 
 ### MagicMock/AsyncMock Usage
 
 | Pattern | Rationale |
 |---------|-----------|
-| `MagicMock(spec=LintCache)` | `LintCache` from `src/infra/hooks` satisfies `LintCacheProtocol`. Mock with spec ensures interface compliance. Creating a fake would duplicate the real implementation. |
-| `AsyncMock` for callbacks | Callback functions (e.g., `spawn_callback`, `finalize_callback`) are simple callables. AsyncMock tracks invocation without needing a full fake. |
-| `MagicMock` for SDK internals | Claude SDK types like `SdkMcpTool` have complex initialization. Mocking with spec validates interface usage. |
+| `MagicMock(spec=LintCache)` | `LintCache` satisfies `LintCacheProtocol`. Mock with spec ensures interface compliance. |
+| `AsyncMock` for callbacks | Callback functions are simple callables. AsyncMock tracks invocation without needing a full fake. |
+| `MagicMock` for SDK internals | Claude SDK types have complex initialization. Mocking with spec validates interface usage. |
 
-### call_count Assertions
+### Observable State vs call_count
 
-Some tests use `.call_count` assertions. These are **not** implementation-detail tests but rather behavioral assertions:
+Tests should prefer observable state assertions over `call_count`. However, some tests use `call_count` or track invocations to verify optimization behaviors that are part of the contract:
 
-- **Caching behavior** (`test_beads_client.py`): Verifies cache prevents redundant subprocess calls
-- **Validation scheduling** (`test_watch_mode.py`): Verifies validation triggers at correct thresholds
-- **Short-circuit logic** (`test_quality_gate.py`): Verifies no git commands for obsolete resolution
+- **Caching** (`test_beads_client.py`): Verifies cache prevents redundant subprocess calls by tracking call lists
+- **Validation scheduling** (`test_watch_mode.py`): Verifies validation triggers at correct thresholds via callback invocation tracking
+- **Short-circuit logic** (`test_quality_gate.py`): Verifies no commands run for obsolete resolution via `FakeCommandRunner.calls`
 
-These assertions test observable optimization behaviors that are part of the contract.
-
-## Running Tests
-
-See [CLAUDE.md](../CLAUDE.md#testing) for test commands and markers.
+These patterns test **optimization guarantees**, not implementation details. Prefer tracking calls in a list (observable state) over `AsyncMock.call_count` where practical.

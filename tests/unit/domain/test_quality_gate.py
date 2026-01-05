@@ -25,6 +25,7 @@ from src.domain.quality_gate import (
     ValidationEvidence,
     check_evidence_against_spec,
 )
+from tests.fakes import FakeCommandRunner
 
 
 @pytest.fixture
@@ -1275,11 +1276,9 @@ class TestEvidenceGateSkipsValidation:
         )
         log_path.write_text(log_content + "\n")
 
-        # Create mock command runner
-        mock_runner = make_mock_command_runner(
-            CommandResult(command=[], returncode=0, stdout="", stderr="")
-        )
-        gate = QualityGate(tmp_path, log_provider, command_runner=mock_runner)
+        # Create FakeCommandRunner to track calls
+        fake_runner = FakeCommandRunner(allow_unregistered=True)
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
         # Create minimal mala.yaml for test
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
@@ -1292,7 +1291,7 @@ class TestEvidenceGateSkipsValidation:
 
         assert result.passed is True
         # No git commands should be called for obsolete resolution
-        assert mock_runner.run.call_count == 0
+        assert len(fake_runner.calls) == 0
 
 
 class TestClearFailureMessages:
