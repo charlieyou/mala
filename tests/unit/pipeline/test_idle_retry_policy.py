@@ -7,7 +7,7 @@ stream processor, and lifecycle context.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -290,7 +290,8 @@ class TestExecuteIterationTimeout:
         assert state.idle_retry_count == 1
         assert len(sdk_factory.with_resume_calls) == 1
         assert sdk_factory.with_resume_calls[0][1] == "existing-session"
-        assert sdk_factory.create_calls[1].get("resume") == "existing-session"
+        options = cast("dict[str, Any]", sdk_factory.create_calls[1])
+        assert options.get("resume") == "existing-session"
 
     @pytest.mark.asyncio
     async def test_execute_iteration_max_retries_exceeded(

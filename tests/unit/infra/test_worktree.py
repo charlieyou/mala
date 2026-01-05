@@ -690,6 +690,7 @@ class TestRemoveWorktreeFailurePropagation:
         """git worktree remove failure should be reported even if directory was deleted."""
         # Ensure directory doesn't exist (simulating already-deleted directory)
         # Note: created_ctx._path is set but directory not created
+        assert created_ctx._path is not None
         assert not created_ctx._path.exists()
 
         # Git command fails
