@@ -197,7 +197,10 @@ class MalaOrchestrator:
         self._init_pipeline_runners()
 
     def _init_runtime_state(self) -> None:
-        """Initialize runtime state.
+        """Initialize runtime state during __init__.
+
+        Called once in __init__. OrchestratorState is reset at the start of
+        each run() call to ensure clean per-run state.
 
         Note: active_tasks, failed_issues, abort_run, and abort_reason are
         delegated to issue_coordinator to maintain a single source of truth.
@@ -796,6 +799,9 @@ class MalaOrchestrator:
 
     async def run(self) -> tuple[int, int]:
         """Main orchestration loop. Returns (success_count, total_count)."""
+        # Reset per-run state to ensure clean state if orchestrator is reused
+        self._state = OrchestratorState()
+
         run_config = build_event_run_config(
             repo_path=self.repo_path,
             max_agents=self.max_agents,
