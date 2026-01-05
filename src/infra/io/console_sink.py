@@ -4,6 +4,7 @@ Provides ConsoleEventSink which outputs orchestrator events to the console
 using the log helpers from log_output/console.py.
 """
 
+import math
 import re
 from typing import Any
 
@@ -516,17 +517,18 @@ class ConsoleEventSink(BaseEventSink):
         )
 
     def on_watch_idle(self, wait_seconds: float, issues_blocked: int | None) -> None:
+        poll_s = math.ceil(wait_seconds)
         if issues_blocked is None or issues_blocked == 0:
             log(
                 "◦",
-                f"{Colors.MUTED}Idle: no ready issues. Polling in {wait_seconds:.0f}s...{Colors.RESET}",
+                f"{Colors.MUTED}Idle: no ready issues. Polling in {poll_s}s...{Colors.RESET}",
                 agent_id="run",
             )
         else:
             log(
                 "◦",
                 f"{Colors.MUTED}Idle: {issues_blocked} issues exist but none ready. "
-                f"Polling in {wait_seconds:.0f}s...{Colors.RESET}",
+                f"Polling in {poll_s}s...{Colors.RESET}",
                 agent_id="run",
             )
 

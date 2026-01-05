@@ -874,21 +874,17 @@ class TestConsoleEventSink:
 
         # Test with None
         sink.on_watch_idle(30.0, None)
-        mock_log.assert_called_once()
-        call_args = mock_log.call_args
-        message = call_args[0][1]
+        message = mock_log.call_args[0][1]
         assert "Idle: no ready issues" in message
         assert "30s" in message
 
         mock_log.reset_mock()
 
-        # Test with 0
+        # Test with 0 - 45.5 rounds up to 46 (math.ceil)
         sink.on_watch_idle(45.5, 0)
-        mock_log.assert_called_once()
-        call_args = mock_log.call_args
-        message = call_args[0][1]
+        message = mock_log.call_args[0][1]
         assert "Idle: no ready issues" in message
-        assert "46s" in message  # 45.5 rounds to 46
+        assert "46s" in message
 
     @patch("src.infra.io.console_sink.log")
     def test_on_watch_idle_blocked_issues(self, mock_log: MagicMock) -> None:
@@ -896,8 +892,6 @@ class TestConsoleEventSink:
         sink = ConsoleEventSink()
 
         sink.on_watch_idle(60.0, 5)
-        mock_log.assert_called_once()
-        call_args = mock_log.call_args
-        message = call_args[0][1]
+        message = mock_log.call_args[0][1]
         assert "Idle: 5 issues exist but none ready" in message
         assert "60s" in message
