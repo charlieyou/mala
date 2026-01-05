@@ -39,20 +39,21 @@ from src.domain.lifecycle import (
     LifecycleContext,
     LifecycleState,
 )
-from src.domain.prompts import (
-    get_default_validation_commands as _get_default_validation_commands,
-)
 from src.pipeline.context_pressure_handler import (
     ContextPressureConfig,
     ContextPressureHandler,
 )
-from src.infra.clients.cerberus_review import format_review_issues
-from src.infra.clients.review_output_parser import ReviewResult
+from src.pipeline.idle_retry_policy import (
+    IdleTimeoutRetryPolicy,
+    RetryConfig,
+)
+from src.pipeline.lifecycle_effect_handler import (
+    LifecycleEffectHandler,
+    _count_blocking_issues,
+)
 from src.pipeline.message_stream_processor import (
     ContextPressureError,
     IdleTimeoutError,
-    IdleTimeoutStream,
-    MessageIterationResult,
     MessageIterationState,
     MessageStreamProcessor,
     StreamProcessorCallbacks,
@@ -60,20 +61,16 @@ from src.pipeline.message_stream_processor import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from src.core.models import IssueResolution
     from src.core.protocols import (
         MalaEventSink,
         ReviewIssueProtocol,
         SDKClientFactoryProtocol,
-        SDKClientProtocol,
     )
     from src.domain.deadlock import DeadlockMonitor
     from src.domain.lifecycle import (
         GateOutcome,
         RetryState,
-        ReviewIssue,
         ReviewOutcome,
         TransitionResult,
     )
@@ -88,9 +85,6 @@ if TYPE_CHECKING:
 
 # Module-level logger for idle retry messages
 logger = logging.getLogger(__name__)
-
-# Timeout for disconnect() call
-DISCONNECT_TIMEOUT = 10.0
 
 
 # Type aliases for callbacks
@@ -319,182 +313,6 @@ class SessionCallbacks:
 
 
 @dataclass
-class ReviewEffectResult:
-    """Result from _handle_review_effect method.
-
-    Encapsulates the multi-value return from review effect handling
-    with named fields for clarity.
-    """
-
-    pending_query: str | None
-    """Query to send for review retry, or None if no retry needed."""
-
-    should_break: bool
-    """Whether the caller should break out of the message iteration loop."""
-
-    cerberus_log_path: str | None
-    """Path to Cerberus review log file, if captured."""
-
-    transition_result: TransitionResult
-    """Lifecycle transition result."""
-
-
-def _emit_review_result_events(
-    event_sink: MalaEventSink | None,
-    input: AgentSessionInput,
-    result: TransitionResult,
-    review_result: ReviewOutcome,
-    lifecycle_ctx: LifecycleContext,
-    max_review_retries: int,
-    blocking_count: int,
-) -> None:
-    """Emit events based on review result transition.
-
-    Handles event emission for:
-    - COMPLETE_SUCCESS: on_review_passed
-    - RUN_REVIEW (parse error): on_warning
-    - SEND_REVIEW_RETRY: on_review_retry with blocking_count
-    """
-    if event_sink is None:
-        return
-
-    if result.effect == Effect.COMPLETE_SUCCESS:
-        event_sink.on_review_passed(
-            input.issue_id,
-            issue_id=input.issue_id,
-        )
-        return
-
-    if result.effect == Effect.RUN_REVIEW:
-        error_detail = review_result.parse_error or "unknown error"
-        event_sink.on_warning(
-            f"Review tool error: {error_detail}; retrying",
-            agent_id=input.issue_id,
-        )
-        return
-
-    if result.effect == Effect.SEND_REVIEW_RETRY:
-        logger.debug(
-            "Session %s: SEND_REVIEW_RETRY triggered "
-            "(attempt %d/%d, %d blocking issues)",
-            input.issue_id,
-            lifecycle_ctx.retry_state.review_attempt,
-            max_review_retries,
-            blocking_count,
-        )
-        event_sink.on_review_retry(
-            input.issue_id,
-            lifecycle_ctx.retry_state.review_attempt,
-            max_review_retries,
-            error_count=blocking_count or None,
-            parse_error=review_result.parse_error,
-            issue_id=input.issue_id,
-        )
-
-
-def _emit_gate_passed_events(
-    event_sink: MalaEventSink | None,
-    issue_id: str,
-    review_attempt: int,
-) -> None:
-    """Emit gate passed events when first entering review.
-
-    Only emits events on the first review attempt (review_attempt == 1),
-    indicating the gate has just passed.
-
-    Args:
-        event_sink: Event sink to emit to, or None to skip emission.
-        issue_id: The issue identifier.
-        review_attempt: Current review attempt number (1-based).
-    """
-    if review_attempt != 1 or event_sink is None:
-        return
-
-    event_sink.on_gate_passed(
-        issue_id,
-        issue_id=issue_id,
-    )
-    event_sink.on_validation_result(
-        issue_id,
-        passed=True,
-        issue_id=issue_id,
-    )
-
-
-def _count_blocking_issues(issues: list[ReviewIssue] | None) -> int:
-    """Count issues with priority <= 1 (P0 or P1).
-
-    Args:
-        issues: List of review issues, or None.
-
-    Returns:
-        Number of blocking (high-priority) issues.
-    """
-    if not issues:
-        return 0
-    return sum(1 for i in issues if i.priority is not None and i.priority <= 1)
-
-
-def _make_review_effect_result(
-    effect: Effect,
-    cerberus_log_path: str | None,
-    transition_result: TransitionResult,
-    pending_query: str | None = None,
-) -> ReviewEffectResult:
-    """Build ReviewEffectResult based on effect type.
-
-    Args:
-        effect: The lifecycle effect to handle.
-        cerberus_log_path: Path to Cerberus review log.
-        transition_result: Lifecycle transition result.
-        pending_query: Query string for SEND_REVIEW_RETRY effect.
-
-    Returns:
-        ReviewEffectResult with appropriate should_break flag.
-    """
-    should_break = effect in (Effect.COMPLETE_SUCCESS, Effect.COMPLETE_FAILURE)
-    return ReviewEffectResult(
-        pending_query=pending_query,
-        should_break=should_break,
-        cerberus_log_path=cerberus_log_path,
-        transition_result=transition_result,
-    )
-
-
-def _build_review_retry_prompt(
-    review_result: ReviewOutcome,
-    lifecycle_ctx: LifecycleContext,
-    issue_id: str,
-    repo_path: Path,
-    max_review_retries: int,
-    review_followup_template: str,
-) -> str:
-    """Build the follow-up prompt for review retry.
-
-    Args:
-        review_result: The review outcome with issues to address.
-        lifecycle_ctx: Lifecycle context with retry state.
-        issue_id: The issue identifier.
-        repo_path: Repository path for formatting issue paths.
-        max_review_retries: Maximum number of review retries.
-        review_followup_template: Template for review follow-up prompts.
-
-    Returns:
-        Formatted prompt string for the agent to address review issues.
-    """
-    review_issues_text = format_review_issues(
-        review_result.issues,  # type: ignore[arg-type]
-        base_path=repo_path,
-    )
-    return review_followup_template.format(
-        attempt=lifecycle_ctx.retry_state.review_attempt,
-        max_attempts=max_review_retries,
-        review_issues=review_issues_text,
-        issue_id=issue_id,
-    )
-
-
-@dataclass
 class AgentSessionRunner:
     """Runs agent sessions with lifecycle management.
 
@@ -528,6 +346,8 @@ class AgentSessionRunner:
     callbacks: SessionCallbacks = field(default_factory=SessionCallbacks)
     event_sink: MalaEventSink | None = None
     _context_pressure_handler: ContextPressureHandler = field(init=False, repr=False)
+    _retry_policy: IdleTimeoutRetryPolicy = field(init=False, repr=False)
+    _effect_handler: LifecycleEffectHandler = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Initialize derived components."""
@@ -537,6 +357,23 @@ class AgentSessionRunner:
                 continuation_template=self.config.prompts.continuation,
             ),
             sdk_client_factory=self.sdk_client_factory,
+        )
+        # Initialize retry policy with stream processor factory
+        retry_config = RetryConfig(
+            max_idle_retries=self.config.max_idle_retries,
+            idle_retry_backoff=self.config.idle_retry_backoff,
+            idle_resume_prompt=self.config.prompts.idle_resume,
+        )
+        self._retry_policy = IdleTimeoutRetryPolicy(
+            sdk_client_factory=self.sdk_client_factory,
+            stream_processor_factory=self._get_stream_processor,
+            config=retry_config,
+        )
+        # Initialize lifecycle effect handler
+        self._effect_handler = LifecycleEffectHandler(
+            config=self.config,
+            callbacks=self.callbacks,
+            event_sink=self.event_sink,
         )
 
     def _initialize_session(
@@ -639,7 +476,7 @@ class AgentSessionRunner:
         while not lifecycle.is_terminal:
             # === QUERY + MESSAGE ITERATION ===
             if pending_query is not None:
-                iter_result = await self._run_message_iteration(
+                iter_result = await self._retry_policy.execute_iteration(
                     query=pending_query,
                     issue_id=input.issue_id,
                     options=session_cfg.options,
@@ -685,132 +522,160 @@ class AgentSessionRunner:
 
             # Handle RUN_GATE
             if result.effect == Effect.RUN_GATE:
-                pending_query, gate_trans = await self._handle_gate_check(
-                    input, state, lifecycle, lifecycle_ctx
+                # Emit validation started BEFORE the gate check
+                self._effect_handler.process_gate_check(input, lifecycle, lifecycle_ctx)
+
+                if self.callbacks.on_gate_check is None:
+                    raise ValueError("on_gate_check callback must be set")
+
+                assert state.log_path is not None
+                gate_result, new_offset = await self.callbacks.on_gate_check(
+                    input.issue_id, state.log_path, lifecycle_ctx.retry_state
                 )
-                if pending_query is not None:
+
+                retry_query, should_break, gate_trans = (
+                    self._effect_handler.process_gate_effect(
+                        input, gate_result, lifecycle, lifecycle_ctx, new_offset
+                    )
+                )
+                if should_break:
+                    if lifecycle.is_terminal:
+                        state.final_result = lifecycle_ctx.final_result
+                        break
+                    result = gate_trans
+                elif retry_query is not None:
+                    if state.session_id is None:
+                        raise IdleTimeoutError(
+                            "Cannot retry gate: session_id not received from SDK"
+                        )
+                    logger.debug(
+                        "Session %s: queueing gate retry prompt (%d chars, session_id=%s)",
+                        input.issue_id,
+                        len(retry_query),
+                        state.session_id[:8],
+                    )
+                    pending_query = retry_query
+                    result = gate_trans
                     state.msg_state.pending_session_id = state.session_id
                     state.msg_state.idle_retry_count = 0
                     continue
-                if lifecycle.is_terminal:
-                    state.final_result = lifecycle_ctx.final_result
-                    break
-                # Update result with gate transition for next effect check
-                result = gate_trans
+                else:
+                    result = gate_trans
 
             # Handle RUN_REVIEW
             if result.effect == Effect.RUN_REVIEW:
-                pending_query, review_result = await self._handle_review_check(
-                    input, state, lifecycle, lifecycle_ctx
+                assert state.log_path is not None
+                cerberus_log_path: str | None = None
+
+                # Emit gate passed events when first entering review
+                self._effect_handler.process_review_check(input, lifecycle_ctx)
+
+                # Check no-progress before running review
+                if no_progress_result := self._effect_handler.check_review_no_progress(
+                    input, state.log_path, lifecycle, lifecycle_ctx, cerberus_log_path
+                ):
+                    if no_progress_result.cerberus_log_path is not None:
+                        state.cerberus_review_log_path = (
+                            no_progress_result.cerberus_log_path
+                        )
+                    result = no_progress_result.transition_result
+                    if lifecycle.is_terminal:
+                        state.final_result = lifecycle_ctx.final_result
+                        break
+                    continue
+
+                # Emit review_started event
+                self._effect_handler.emit_review_started(input, lifecycle_ctx)
+
+                if self.callbacks.on_review_check is None:
+                    raise ValueError("on_review_check callback must be set")
+
+                logger.debug(
+                    "Session %s: starting review (attempt %d/%d, session_id=%s)",
+                    input.issue_id,
+                    lifecycle_ctx.retry_state.review_attempt,
+                    self.config.max_review_retries,
+                    lifecycle_ctx.session_id[:8] if lifecycle_ctx.session_id else None,
                 )
-                if review_result is not None:
-                    result = review_result
-                if pending_query is not None:
+                review_start = time.time()
+                review_result = await self.callbacks.on_review_check(
+                    input.issue_id,
+                    input.issue_description,
+                    input.baseline_commit,
+                    lifecycle_ctx.session_id,
+                    lifecycle_ctx.retry_state,
+                )
+                review_duration = time.time() - review_start
+                issue_count = len(review_result.issues) if review_result.issues else 0
+                blocking_count = _count_blocking_issues(review_result.issues)
+                logger.debug(
+                    "Session %s: review completed in %.1fs "
+                    "(passed=%s, issues=%d, blocking=%d, parse_error=%s)",
+                    input.issue_id,
+                    review_duration,
+                    review_result.passed,
+                    issue_count,
+                    blocking_count,
+                    review_result.parse_error,
+                )
+
+                # Check for fatal error
+                if review_result.fatal_error:
+                    if self.callbacks.on_abort is not None:
+                        self.callbacks.on_abort(
+                            review_result.parse_error or "Unrecoverable review error"
+                        )
+
+                # Capture Cerberus review log if available
+                log_attr = getattr(review_result, "review_log_path", None)
+                if log_attr is not None:
+                    cerberus_log_path = str(log_attr)
+
+                # Get new log offset
+                new_offset = (
+                    self.callbacks.get_log_offset(
+                        state.log_path,
+                        lifecycle_ctx.retry_state.log_offset,
+                    )
+                    if self.callbacks.get_log_offset
+                    else 0
+                )
+
+                # Process review result via effect handler
+                review_effect = self._effect_handler.process_review_effect(
+                    input,
+                    review_result,
+                    lifecycle,
+                    lifecycle_ctx,
+                    new_offset,
+                    cerberus_log_path,
+                )
+
+                if review_effect.cerberus_log_path is not None:
+                    state.cerberus_review_log_path = review_effect.cerberus_log_path
+                result = review_effect.transition_result
+                if review_effect.should_break:
+                    if lifecycle.is_terminal:
+                        state.final_result = lifecycle_ctx.final_result
+                        break
+                    continue
+                if review_effect.pending_query is not None:
+                    if state.session_id is None:
+                        raise IdleTimeoutError(
+                            "Cannot retry review: session_id not received from SDK"
+                        )
+                    logger.debug(
+                        "Session %s: queueing review retry prompt (%d chars, session_id=%s)",
+                        input.issue_id,
+                        len(review_effect.pending_query),
+                        state.session_id[:8],
+                    )
+                    pending_query = review_effect.pending_query
                     state.msg_state.pending_session_id = state.session_id
                     state.msg_state.idle_retry_count = 0
-                if lifecycle.is_terminal:
-                    state.final_result = lifecycle_ctx.final_result
-                    break
                 continue
 
         state.final_result = lifecycle_ctx.final_result
-
-    async def _handle_gate_check(
-        self,
-        input: AgentSessionInput,
-        state: SessionExecutionState,
-        lifecycle: ImplementerLifecycle,
-        lifecycle_ctx: LifecycleContext,
-    ) -> tuple[str | None, TransitionResult]:
-        """Handle RUN_GATE effect - emit events and run gate check.
-
-        Args:
-            input: Session input with issue_id.
-            state: Session execution state.
-            lifecycle: Lifecycle state machine.
-            lifecycle_ctx: Lifecycle context.
-
-        Returns:
-            Tuple of (pending query for retry or None, transition result).
-        """
-        # Emit validation started BEFORE the gate check
-        if self.event_sink is not None:
-            self.event_sink.on_validation_started(
-                input.issue_id, issue_id=input.issue_id
-            )
-            self.event_sink.on_gate_started(
-                input.issue_id,
-                lifecycle_ctx.retry_state.gate_attempt,
-                self.config.max_gate_retries,
-                issue_id=input.issue_id,
-            )
-
-        if self.callbacks.on_gate_check is None:
-            raise ValueError("on_gate_check callback must be set")
-
-        assert state.log_path is not None
-        gate_result, new_offset = await self.callbacks.on_gate_check(
-            input.issue_id, state.log_path, lifecycle_ctx.retry_state
-        )
-
-        retry_query, should_break, trans_result = self._handle_gate_effect(
-            input, gate_result, lifecycle, lifecycle_ctx, new_offset
-        )
-        if should_break:
-            return None, trans_result
-        if retry_query is not None:
-            if state.session_id is None:
-                raise IdleTimeoutError(
-                    "Cannot retry gate: session_id not received from SDK"
-                )
-            logger.debug(
-                "Session %s: queueing gate retry prompt (%d chars, session_id=%s)",
-                input.issue_id,
-                len(retry_query),
-                state.session_id[:8],
-            )
-            return retry_query, trans_result
-        return None, trans_result
-
-    async def _handle_review_check(
-        self,
-        input: AgentSessionInput,
-        state: SessionExecutionState,
-        lifecycle: ImplementerLifecycle,
-        lifecycle_ctx: LifecycleContext,
-    ) -> tuple[str | None, TransitionResult | None]:
-        """Handle RUN_REVIEW effect - run review and process result.
-
-        Args:
-            input: Session input with issue_id, description, baseline.
-            state: Session execution state.
-            lifecycle: Lifecycle state machine.
-            lifecycle_ctx: Lifecycle context.
-
-        Returns:
-            Tuple of (pending_query for retry, transition_result).
-        """
-        assert state.log_path is not None
-        review_effect = await self._handle_review_effect(
-            input, state.log_path, state.session_id, lifecycle, lifecycle_ctx
-        )
-        if review_effect.cerberus_log_path is not None:
-            state.cerberus_review_log_path = review_effect.cerberus_log_path
-        if review_effect.should_break:
-            return None, review_effect.transition_result
-        if review_effect.pending_query is not None:
-            if state.session_id is None:
-                raise IdleTimeoutError(
-                    "Cannot retry review: session_id not received from SDK"
-                )
-            logger.debug(
-                "Session %s: queueing review retry prompt (%d chars, session_id=%s)",
-                input.issue_id,
-                len(review_effect.pending_query),
-                state.session_id[:8],
-            )
-            return review_effect.pending_query, review_effect.transition_result
-        return None, review_effect.transition_result
 
     def _build_session_output(
         self,
@@ -910,395 +775,6 @@ class AgentSessionRunner:
         result = lifecycle.on_log_ready(lifecycle_ctx)
         return log_path, result
 
-    def _handle_gate_effect(
-        self,
-        input: AgentSessionInput,
-        gate_result: GateOutcome,
-        lifecycle: ImplementerLifecycle,
-        lifecycle_ctx: LifecycleContext,
-        new_offset: int,
-    ) -> tuple[str | None, bool, TransitionResult]:
-        """Handle RUN_GATE effect - process gate result and emit events.
-
-        Args:
-            input: Session input with issue_id.
-            gate_result: Result from gate check callback.
-            lifecycle: Lifecycle state machine.
-            lifecycle_ctx: Lifecycle context.
-            new_offset: New log offset after gate check.
-
-        Returns:
-            Tuple of (pending_query for retry or None, should_break, transition_result).
-        """
-        result = lifecycle.on_gate_result(lifecycle_ctx, gate_result, new_offset)
-
-        if result.effect == Effect.COMPLETE_SUCCESS:
-            _emit_gate_passed_events(self.event_sink, input.issue_id, review_attempt=1)
-            return None, True, result  # break
-
-        if result.effect == Effect.COMPLETE_FAILURE:
-            if self.event_sink is not None:
-                self.event_sink.on_gate_failed(
-                    input.issue_id,
-                    lifecycle_ctx.retry_state.gate_attempt,
-                    self.config.max_gate_retries,
-                    issue_id=input.issue_id,
-                )
-                self.event_sink.on_gate_result(
-                    input.issue_id,
-                    passed=False,
-                    failure_reasons=list(gate_result.failure_reasons),
-                    issue_id=input.issue_id,
-                )
-                self.event_sink.on_validation_result(
-                    input.issue_id,
-                    passed=False,
-                    issue_id=input.issue_id,
-                )
-            return None, True, result  # break
-
-        if result.effect == Effect.SEND_GATE_RETRY:
-            if self.event_sink is not None:
-                self.event_sink.on_gate_retry(
-                    input.issue_id,
-                    lifecycle_ctx.retry_state.gate_attempt,
-                    self.config.max_gate_retries,
-                    issue_id=input.issue_id,
-                )
-                self.event_sink.on_gate_result(
-                    input.issue_id,
-                    passed=False,
-                    failure_reasons=list(gate_result.failure_reasons),
-                    issue_id=input.issue_id,
-                )
-                # Emit validation_result before retry so every
-                # on_validation_started has a corresponding result
-                self.event_sink.on_validation_result(
-                    input.issue_id,
-                    passed=False,
-                    issue_id=input.issue_id,
-                )
-            # Build follow-up prompt
-            failure_text = "\n".join(f"- {r}" for r in gate_result.failure_reasons)
-            # Get validation commands or use defaults
-            cmds = (
-                self.config.prompt_validation_commands
-                or _get_default_validation_commands()
-            )
-            pending_query = self.config.prompts.gate_followup.format(
-                attempt=lifecycle_ctx.retry_state.gate_attempt,
-                max_attempts=self.config.max_gate_retries,
-                failure_reasons=failure_text,
-                issue_id=input.issue_id,
-                lint_command=cmds.lint,
-                format_command=cmds.format,
-                typecheck_command=cmds.typecheck,
-                test_command=cmds.test,
-            )
-            return pending_query, False, result  # continue with retry
-
-        # RUN_REVIEW or other effects - pass through
-        return None, False, result
-
-    def _check_review_no_progress(
-        self,
-        input: AgentSessionInput,
-        log_path: Path,
-        lifecycle: ImplementerLifecycle,
-        lifecycle_ctx: LifecycleContext,
-        cerberus_review_log_path: str | None,
-    ) -> ReviewEffectResult | None:
-        """Check if review retry has made no progress and should be skipped.
-
-        Args:
-            input: Session input with issue_id.
-            log_path: Path to log file.
-            lifecycle: Lifecycle state machine.
-            lifecycle_ctx: Lifecycle context.
-            cerberus_review_log_path: Path to Cerberus review log, if any.
-
-        Returns:
-            ReviewEffectResult if no progress detected (caller should return early),
-            None if review should proceed normally.
-        """
-        # Only check on retry attempts (attempt > 1) when callback is configured
-        if (
-            lifecycle_ctx.retry_state.review_attempt <= 1
-            or self.callbacks.on_review_no_progress is None
-        ):
-            return None
-
-        current_commit = (
-            lifecycle_ctx.last_gate_result.commit_hash
-            if lifecycle_ctx.last_gate_result
-            else None
-        )
-        no_progress = self.callbacks.on_review_no_progress(
-            log_path,
-            lifecycle_ctx.retry_state.log_offset,
-            lifecycle_ctx.retry_state.previous_commit_hash,
-            current_commit,
-        )
-
-        if not no_progress:
-            return None
-
-        # Emit event for no-progress skip
-        if self.event_sink is not None:
-            self.event_sink.on_review_skipped_no_progress(input.issue_id)
-
-        # Create synthetic failed review
-        synthetic = ReviewResult(passed=False, issues=[], parse_error=None)
-        new_offset = (
-            self.callbacks.get_log_offset(
-                log_path,
-                lifecycle_ctx.retry_state.log_offset,
-            )
-            if self.callbacks.get_log_offset
-            else 0
-        )
-        no_progress_result = lifecycle.on_review_result(
-            lifecycle_ctx,
-            synthetic,
-            new_offset,
-            no_progress=True,
-        )
-        return ReviewEffectResult(
-            pending_query=None,
-            should_break=True,
-            cerberus_log_path=cerberus_review_log_path,
-            transition_result=no_progress_result,
-        )
-
-    async def _handle_review_effect(
-        self,
-        input: AgentSessionInput,
-        log_path: Path,
-        session_id: str | None,
-        lifecycle: ImplementerLifecycle,
-        lifecycle_ctx: LifecycleContext,
-    ) -> ReviewEffectResult:
-        """Handle RUN_REVIEW effect - run review and process result.
-
-        Args:
-            input: Session input with issue_id, description, baseline.
-            log_path: Path to log file.
-            session_id: Current SDK session ID.
-            lifecycle: Lifecycle state machine.
-            lifecycle_ctx: Lifecycle context.
-
-        Returns:
-            ReviewEffectResult with pending_query, should_break, cerberus_log_path,
-            and transition_result.
-        """
-        cerberus_review_log_path: str | None = None
-
-        # Emit gate passed events when first entering review
-        # (review_attempt == 1 means gate just passed)
-        _emit_gate_passed_events(
-            self.event_sink, input.issue_id, lifecycle_ctx.retry_state.review_attempt
-        )
-
-        # Check no-progress before running review
-        if no_progress_result := self._check_review_no_progress(
-            input, log_path, lifecycle, lifecycle_ctx, cerberus_review_log_path
-        ):
-            return no_progress_result
-
-        if self.event_sink is not None:
-            self.event_sink.on_review_started(
-                input.issue_id,
-                lifecycle_ctx.retry_state.review_attempt,
-                self.config.max_review_retries,
-                issue_id=input.issue_id,
-            )
-
-        if self.callbacks.on_review_check is None:
-            raise ValueError("on_review_check callback must be set")
-
-        logger.debug(
-            "Session %s: starting review (attempt %d/%d, session_id=%s)",
-            input.issue_id,
-            lifecycle_ctx.retry_state.review_attempt,
-            self.config.max_review_retries,
-            lifecycle_ctx.session_id[:8] if lifecycle_ctx.session_id else None,
-        )
-        review_start = time.time()
-        review_result = await self.callbacks.on_review_check(
-            input.issue_id,
-            input.issue_description,
-            input.baseline_commit,
-            lifecycle_ctx.session_id,
-            lifecycle_ctx.retry_state,
-        )
-        review_duration = time.time() - review_start
-        issue_count = len(review_result.issues) if review_result.issues else 0
-        blocking = _count_blocking_issues(review_result.issues)
-        logger.debug(
-            "Session %s: review completed in %.1fs "
-            "(passed=%s, issues=%d, blocking=%d, parse_error=%s)",
-            input.issue_id,
-            review_duration,
-            review_result.passed,
-            issue_count,
-            blocking,
-            review_result.parse_error,
-        )
-
-        # Check for fatal error
-        if review_result.fatal_error:
-            if self.callbacks.on_abort is not None:
-                self.callbacks.on_abort(
-                    review_result.parse_error or "Unrecoverable review error"
-                )
-
-        # Capture Cerberus review log if available
-        log_attr = getattr(review_result, "review_log_path", None)
-        if log_attr is not None:
-            cerberus_review_log_path = str(log_attr)
-
-        # Get new log offset
-        new_offset = (
-            self.callbacks.get_log_offset(
-                log_path,
-                lifecycle_ctx.retry_state.log_offset,
-            )
-            if self.callbacks.get_log_offset
-            else 0
-        )
-
-        result = lifecycle.on_review_result(lifecycle_ctx, review_result, new_offset)
-
-        # Emit appropriate events based on transition result
-        _emit_review_result_events(
-            self.event_sink,
-            input,
-            result,
-            review_result,
-            lifecycle_ctx,
-            self.config.max_review_retries,
-            blocking,
-        )
-
-        # Build pending_query only for SEND_REVIEW_RETRY
-        pending_query = None
-        if result.effect == Effect.SEND_REVIEW_RETRY:
-            pending_query = _build_review_retry_prompt(
-                review_result,
-                lifecycle_ctx,
-                input.issue_id,
-                self.config.repo_path,
-                self.config.max_review_retries,
-                self.config.prompts.review_followup,
-            )
-
-        return _make_review_effect_result(
-            result.effect,
-            cerberus_review_log_path,
-            result,
-            pending_query,
-        )
-
-    async def _apply_retry_backoff(self, retry_count: int) -> None:
-        """Apply backoff delay before an idle retry attempt.
-
-        Args:
-            retry_count: Current retry count (1-based).
-        """
-        if self.config.idle_retry_backoff:
-            backoff_idx = min(
-                retry_count - 1,
-                len(self.config.idle_retry_backoff) - 1,
-            )
-            backoff = self.config.idle_retry_backoff[backoff_idx]
-        else:
-            backoff = 0.0
-        if backoff > 0:
-            logger.info(f"Idle retry {retry_count}: waiting {backoff}s")
-            await asyncio.sleep(backoff)
-
-    async def _disconnect_client_safely(
-        self, client: SDKClientProtocol, issue_id: str
-    ) -> None:
-        """Disconnect SDK client with timeout, logging any failures."""
-        try:
-            await asyncio.wait_for(
-                client.disconnect(),
-                timeout=DISCONNECT_TIMEOUT,
-            )
-        except TimeoutError:
-            logger.warning("disconnect() timed out, subprocess abandoned")
-        except Exception as e:
-            logger.debug(f"Error during disconnect: {e}")
-
-    def _prepare_idle_retry(
-        self,
-        state: MessageIterationState,
-        lifecycle_ctx: LifecycleContext,
-        issue_id: str,
-    ) -> str:
-        """Prepare state for idle retry and return the next query.
-
-        Updates state.idle_retry_count, state.pending_session_id, and clears
-        state.pending_tool_ids.
-
-        Raises:
-            IdleTimeoutError: If retry is not possible (max retries exceeded,
-                or tool calls occurred without session context).
-
-        Returns:
-            The query to use for the retry attempt.
-        """
-        # Check if we can retry
-        if state.idle_retry_count >= self.config.max_idle_retries:
-            logger.error(
-                f"Session {issue_id}: max idle retries "
-                f"({self.config.max_idle_retries}) exceeded"
-            )
-            raise IdleTimeoutError(
-                f"Max idle retries ({self.config.max_idle_retries}) exceeded"
-            )
-
-        # Prepare for retry
-        state.idle_retry_count += 1
-        # Clear pending state from previous attempt to avoid
-        # hanging on stale tool IDs (they won't resolve on new stream)
-        state.pending_tool_ids.clear()
-        state.first_message_received = False
-        resume_id = state.session_id or lifecycle_ctx.session_id
-
-        if resume_id is not None:
-            state.pending_session_id = resume_id
-            pending_query = self.config.prompts.idle_resume.format(issue_id=issue_id)
-            logger.info(
-                f"Session {issue_id}: retrying with resume "
-                f"(session_id={resume_id[:8]}..., "
-                f"attempt {state.idle_retry_count})"
-            )
-            # Reset tool calls after decision to preserve safety check
-            state.tool_calls_this_turn = 0
-            return pending_query
-        elif state.tool_calls_this_turn == 0:
-            state.pending_session_id = None
-            # Keep original query - caller must provide it
-            logger.info(
-                f"Session {issue_id}: retrying with fresh session "
-                f"(no session_id, no side effects, "
-                f"attempt {state.idle_retry_count})"
-            )
-            # Return empty string to signal caller to keep original query
-            return ""
-        else:
-            logger.error(
-                f"Session {issue_id}: cannot retry - "
-                f"{state.tool_calls_this_turn} tool calls "
-                "occurred without session_id"
-            )
-            raise IdleTimeoutError(
-                f"Cannot retry: {state.tool_calls_this_turn} tool calls "
-                "occurred without session context"
-            )
-
     def _get_stream_processor(self) -> MessageStreamProcessor:
         """Create a MessageStreamProcessor with current config/callbacks."""
         config = StreamProcessorConfig(
@@ -1310,144 +786,6 @@ class AgentSessionRunner:
             on_agent_text=self.callbacks.on_agent_text,
         )
         return MessageStreamProcessor(config, callbacks)
-
-    async def _process_message_stream(
-        self,
-        stream: AsyncIterator[Any],
-        issue_id: str,
-        state: MessageIterationState,
-        lifecycle_ctx: LifecycleContext,
-        lint_cache: LintCache,
-        query_start: float,
-        tracer: TelemetrySpan | None,
-    ) -> MessageIterationResult:
-        """Process SDK message stream and update state.
-
-        Delegates to MessageStreamProcessor for stream iteration logic.
-
-        Args:
-            stream: The message stream to process.
-            issue_id: Issue ID for logging.
-            state: Mutable state for the iteration.
-            lifecycle_ctx: Lifecycle context for session state.
-            lint_cache: Cache for lint command results.
-            query_start: Timestamp when query was sent.
-            tracer: Optional telemetry span context.
-
-        Returns:
-            MessageIterationResult with success status.
-        """
-        processor = self._get_stream_processor()
-        return await processor.process_stream(
-            stream, issue_id, state, lifecycle_ctx, lint_cache, query_start, tracer
-        )
-
-    async def _run_message_iteration(
-        self,
-        query: str,
-        issue_id: str,
-        options: object,
-        state: MessageIterationState,
-        lifecycle_ctx: LifecycleContext,
-        lint_cache: LintCache,
-        idle_timeout_seconds: float | None,
-        tracer: TelemetrySpan | None = None,
-    ) -> MessageIterationResult:
-        """Run a single message iteration with idle retry handling.
-
-        Sends a query to the SDK and processes the response stream.
-        Handles idle timeouts with automatic retry logic.
-
-        Args:
-            query: The query to send to the agent.
-            issue_id: Issue ID for logging.
-            options: SDK client options.
-            state: Mutable state for the iteration.
-            lifecycle_ctx: Lifecycle context for session state.
-            lint_cache: Cache for lint command results.
-            idle_timeout_seconds: Idle timeout (None to disable).
-            tracer: Optional telemetry span context.
-
-        Returns:
-            MessageIterationResult with success status and updated state.
-
-        Raises:
-            IdleTimeoutError: If max idle retries exceeded.
-        """
-        pending_query: str | None = query
-        state.tool_calls_this_turn = 0
-        state.first_message_received = False
-        state.pending_tool_ids.clear()
-
-        while pending_query is not None:
-            # Backoff before retry (not on first attempt)
-            if state.idle_retry_count > 0:
-                await self._apply_retry_backoff(state.idle_retry_count)
-
-            # Create client for this attempt
-            client = self.sdk_client_factory.create(options)
-
-            try:
-                async with client:
-                    # Send query
-                    query_start = time.time()
-                    if state.pending_session_id is not None:
-                        logger.debug(
-                            "Session %s: sending query with session_id=%s...",
-                            issue_id,
-                            state.pending_session_id[:8],
-                        )
-                        await client.query(
-                            pending_query, session_id=state.pending_session_id
-                        )
-                    else:
-                        logger.debug(
-                            "Session %s: sending query (new session)",
-                            issue_id,
-                        )
-                        await client.query(pending_query)
-
-                    # Wrap stream with idle timeout handling
-                    stream = IdleTimeoutStream(
-                        client.receive_response(),
-                        idle_timeout_seconds,
-                        state.pending_tool_ids,
-                    )
-
-                    try:
-                        return await self._process_message_stream(
-                            stream,
-                            issue_id,
-                            state,
-                            lifecycle_ctx,
-                            lint_cache,
-                            query_start,
-                            tracer,
-                        )
-
-                    except IdleTimeoutError:
-                        # Disconnect on idle timeout
-                        idle_duration = time.time() - query_start
-                        logger.warning(
-                            f"Session {issue_id}: idle timeout after "
-                            f"{idle_duration:.1f}s, first_msg={state.first_message_received}, "
-                            f"{state.tool_calls_this_turn} tool calls, disconnecting subprocess"
-                        )
-                        await self._disconnect_client_safely(client, issue_id)
-
-                        # Prepare state for retry (may raise IdleTimeoutError)
-                        retry_query = self._prepare_idle_retry(
-                            state, lifecycle_ctx, issue_id
-                        )
-                        # Empty string means keep original query
-                        if retry_query:
-                            pending_query = retry_query
-
-            except IdleTimeoutError:
-                raise
-
-        # Should not reach here
-        return MessageIterationResult(success=False)
 
     async def run_session(
         self,
