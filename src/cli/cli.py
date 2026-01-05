@@ -374,6 +374,75 @@ class ConfigOverrideResult:
         return self.error is not None
 
 
+def _emit_deprecation_warning(old_flag: str, new_flag: str) -> None:
+    """Emit a deprecation warning to stderr for a deprecated CLI flag.
+
+    Args:
+        old_flag: The deprecated flag name (e.g., '--wip').
+        new_flag: The recommended replacement flag (e.g., '--resume').
+    """
+    msg = f"Deprecation warning: '{old_flag}' is deprecated, use '{new_flag}' instead"
+    log("⚠", msg, Colors.YELLOW)
+
+
+def _emit_deprecation_warnings(
+    *,
+    wip: bool,
+    resume: bool,
+    epic: str | None,
+    only: str | None,
+    orphans_only: bool,
+    focus: bool,
+    scope: str | None,
+    order: str | None,
+) -> None:
+    """Emit deprecation warnings for old CLI flags.
+
+    Warnings go to stderr via log() to avoid polluting stdout.
+    """
+    # --wip → --resume
+    if wip:
+        if resume:
+            # Both specified: redundancy warning
+            log(
+                "⚠",
+                "Redundant flags: '--wip' and '--resume' both specified. "
+                "'--wip' is deprecated, use '--resume' alone.",
+                Colors.YELLOW,
+            )
+        else:
+            _emit_deprecation_warning("--wip", "--resume")
+
+    # --epic → --scope epic:<id>
+    if epic is not None:
+        new_cmd = f"--scope epic:{epic}"
+        if scope is not None and scope.startswith("epic:"):
+            # Conflict: --epic X --scope epic:Y → new flag wins
+            log(
+                "⚠",
+                f"Conflict: '--epic {epic}' and '--scope {scope}' both specified. "
+                f"'--scope' takes precedence. '--epic' is deprecated.",
+                Colors.YELLOW,
+            )
+        else:
+            _emit_deprecation_warning("--epic", new_cmd)
+
+    # --only → --scope ids:<ids>
+    if only is not None:
+        new_cmd = f"--scope ids:{only}"
+        _emit_deprecation_warning("--only", new_cmd)
+
+    # --orphans-only → --scope orphans
+    if orphans_only:
+        _emit_deprecation_warning("--orphans-only", "--scope orphans")
+
+    # --focus/--no-focus → --order
+    # Note: focus defaults to True, so we warn only if explicitly set to non-default
+    # Since focus=True is default, warn only on --no-focus (focus=False).
+    if not focus:
+        _emit_deprecation_warning("--no-focus", "--order priority")
+
+
 def _build_cli_args_metadata(
     *,
     disable: list[str] | None,
@@ -899,6 +968,18 @@ def run(
     """Run parallel issue processing."""
     # Apply verbose setting
     set_verbose(verbose)
+
+    # Emit deprecation warnings for old flags (before any processing)
+    _emit_deprecation_warnings(
+        wip=wip,
+        resume=resume,
+        epic=epic,
+        only=only,
+        orphans_only=orphans_only,
+        focus=focus,
+        scope=scope,
+        order=order,
+    )
 
     # Combine --resume and --wip (hidden alias) into single prioritize_wip flag
     prioritize_wip = resume or wip
