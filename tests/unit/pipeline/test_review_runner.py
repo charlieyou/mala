@@ -7,7 +7,7 @@ without actual Cerberus CLI or subprocess dependencies.
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -19,11 +19,12 @@ from src.pipeline.review_runner import (
     ReviewRunnerConfig,
 )
 from src.core.protocols import (
-    CodeReviewer,
-    GateChecker,
     ReviewIssueProtocol,
     ReviewResultProtocol,
-)  # noqa: TC001 - needed at runtime for cast()
+)
+
+if TYPE_CHECKING:
+    from src.core.protocols import CodeReviewer, GateChecker
 from src.domain.quality_gate import CommitResult, GateResult, ValidationEvidence
 from src.domain.validation.spec import ValidationSpec
 

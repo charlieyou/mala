@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from src.core.protocols import ReviewIssueProtocol  # noqa: TC001 - runtime for dataclass field
 from src.domain.lifecycle import Effect
 from src.domain.prompts import (
     get_default_validation_commands as _get_default_validation_commands,
@@ -23,7 +24,7 @@ from src.pipeline.review_formatter import format_review_issues
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols import MalaEventSink, ReviewIssueProtocol
+    from src.core.protocols import MalaEventSink
     from src.domain.lifecycle import (
         GateOutcome,
         ImplementerLifecycle,
