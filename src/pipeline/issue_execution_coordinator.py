@@ -230,7 +230,12 @@ class IssueExecutionCoordinator:
                 try:
                     await interrupt_task
                 except asyncio.CancelledError:
-                    pass  # Expected when we cancel it
+                    # Only suppress if this is from our cancelled interrupt_task,
+                    # not from the current task being cancelled externally
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
+                    # Otherwise suppress - expected when we cancel interrupt_task
 
         try:
             while True:
