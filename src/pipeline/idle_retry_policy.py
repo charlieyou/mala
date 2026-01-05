@@ -56,7 +56,7 @@ class RetryConfig:
         idle_resume_prompt: Template for idle resume prompts.
     """
 
-    max_idle_retries: int = 2
+    max_idle_retries: int = 0
     idle_retry_backoff: tuple[float, ...] = (0.0, 5.0, 15.0)
     idle_resume_prompt: str = ""
 

@@ -1805,8 +1805,8 @@ class TestContextPressureDetection:
         lint_cache = MagicMock()
 
         with pytest.raises(ContextPressureError) as exc_info:
-            # Wrap stream with IdleTimeoutStream (no timeout, empty pending_tool_ids)
-            stream = IdleTimeoutStream(mock_stream(), None, set())
+            # Wrap stream with IdleTimeoutStream (no timeout, shared pending_tool_ids)
+            stream = IdleTimeoutStream(mock_stream(), None, state.pending_tool_ids)
             # Get a fresh stream processor from the factory
             stream_processor = runner._get_stream_processor()
             await runner._retry_policy._process_message_stream(
