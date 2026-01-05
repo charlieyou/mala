@@ -403,7 +403,7 @@ def _build_cli_args_metadata(
         Dictionary of CLI arguments for logging/metadata.
     """
     return {
-        "disable": disable,
+        "disable_validations": disable,  # Keep original key for backward compat
         "coverage_threshold": coverage_threshold,
         "wip": wip,
         "max_issues": max_issues,
@@ -615,13 +615,6 @@ def _validate_run_args(
     normalized_epic_override = _normalize_repeatable_option(epic_override)
     if normalized_epic_override:
         epic_override_ids = set(normalized_epic_override)
-        if not epic_override_ids:
-            log(
-                "✗",
-                "Invalid --epic-override value: no valid epic IDs found",
-                Colors.RED,
-            )
-            raise typer.Exit(1)
 
     # Validate repo_path exists
     if not repo_path.exists():
