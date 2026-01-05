@@ -141,10 +141,10 @@ class FakeIssueProvider:
         return True
 
     async def reopen_issue_async(self, issue_id: str) -> bool:
-        """Reopen an issue by setting status to open."""
+        """Reopen an issue by setting status to ready."""
         if issue_id not in self.issues:
             return False
-        self.issues[issue_id].status = "open"
+        self.issues[issue_id].status = "ready"
         self.reopened.add(issue_id)
         return True
 

@@ -296,15 +296,18 @@ class TestFakeIssueProviderContract:
 
     @pytest.mark.integration
     async def test_reopen_issue(self, fake_provider: FakeIssueProvider) -> None:
-        """reopen_issue_async sets status to open."""
+        """reopen_issue_async sets status to ready for pickup."""
         # First claim and mark needs-followup
         await fake_provider.claim_async("issue-1")
         await fake_provider.mark_needs_followup_async("issue-1", "Deadlock victim")
         # Now reopen
         result = await fake_provider.reopen_issue_async("issue-1")
         assert result is True
-        # Issue should have status "open" now (tracked in reopened set)
+        # Issue should be tracked in reopened set
         assert "issue-1" in fake_provider.reopened
+        # Issue should be eligible for pickup again
+        ready = await fake_provider.get_ready_async()
+        assert "issue-1" in ready
 
     @pytest.mark.integration
     async def test_reopen_issue_nonexistent(
