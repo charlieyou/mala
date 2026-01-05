@@ -267,7 +267,7 @@ class RunResult:
 
     Attributes:
         issues_spawned: Number of issues spawned during the run.
-        exit_code: Exit code (0=success, 1=validation_failed, 2=invalid_args, 3=poll_failed, 130=interrupted).
+        exit_code: Exit code (0=success, 1=validation_failed, 2=invalid_args, 3=abort, 130=interrupted).
         exit_reason: Human-readable exit reason.
     """
 
