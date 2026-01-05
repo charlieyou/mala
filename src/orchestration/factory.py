@@ -398,4 +398,6 @@ def create_orchestrator(
         _telemetry_provider=telemetry_provider,
         _event_sink=event_sink,
         _epic_verifier=epic_verifier,
+        runs_dir=deps.runs_dir if deps else None,
+        lock_releaser=deps.lock_releaser if deps else None,
     )

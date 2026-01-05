@@ -20,6 +20,8 @@ from pathlib import Path  # noqa: TC003 - needed at runtime for dataclass field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.core.protocols import (
         CodeReviewer,
         CommandRunnerPort,
@@ -106,6 +108,8 @@ class OrchestratorDependencies:
         log_provider: LogProvider for session log access.
         telemetry_provider: TelemetryProvider for tracing.
         event_sink: MalaEventSink for run lifecycle logging.
+        runs_dir: Directory for run markers (for testing).
+        lock_releaser: Function to release locks (for testing).
     """
 
     issue_provider: IssueProvider | None = None
@@ -114,6 +118,8 @@ class OrchestratorDependencies:
     log_provider: LogProvider | None = None
     telemetry_provider: TelemetryProvider | None = None
     event_sink: MalaEventSink | None = None
+    runs_dir: Path | None = None
+    lock_releaser: Callable[[list[str]], int] | None = None
 
 
 @dataclass
