@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from src.core.models import EpicVerdict, EpicVerificationResult
 from src.infra.io.config import MalaConfig
 from src.pipeline.issue_result import IssueResult
 from src.pipeline.epic_verification_coordinator import (
@@ -24,104 +23,16 @@ from src.pipeline.epic_verification_coordinator import (
     EpicVerificationConfig,
     EpicVerificationCoordinator,
 )
+from tests.fakes import (
+    FakeVerificationResults,
+    make_failing_verification_result as make_failing_result,
+    make_not_eligible_verification_result as make_not_eligible_result,
+    make_passing_verification_result as make_passing_result,
+)
 
 if TYPE_CHECKING:
+    from src.core.models import EpicVerificationResult
     from src.infra.io.log_output.run_metadata import RunMetadata
-
-
-# ---------------------------------------------------------------------------
-# Test helpers: Fake verification result sequences
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class VerificationAttempt:
-    """Record of a verification attempt for observable assertions."""
-
-    epic_id: str
-    force: bool
-    result: EpicVerificationResult
-
-
-@dataclass
-class FakeVerificationResults:
-    """Returns EpicVerificationResult from a pre-configured sequence.
-
-    Each call to verify() returns the next result. If exhausted, returns
-    the last result (or a default passing result if sequence was empty).
-
-    Observable state:
-        attempts: list of VerificationAttempt recording all calls
-    """
-
-    results: list[EpicVerificationResult] = field(default_factory=list)
-    attempts: list[VerificationAttempt] = field(default_factory=list)
-    _call_index: int = field(default=0, repr=False)
-
-    async def verify(self, epic_id: str, force: bool) -> EpicVerificationResult:
-        """Return next result from sequence, recording the attempt."""
-        if self._call_index < len(self.results):
-            result = self.results[self._call_index]
-            self._call_index += 1
-        elif self.results:
-            # Return last result if exhausted
-            result = self.results[-1]
-        else:
-            # Default passing result
-            result = make_passing_result()
-
-        self.attempts.append(VerificationAttempt(epic_id, force, result))
-        return result
-
-
-def make_passing_result(epic_id: str = "epic-1") -> EpicVerificationResult:
-    """Create a passing EpicVerificationResult."""
-    return EpicVerificationResult(
-        verified_count=1,
-        passed_count=1,
-        failed_count=0,
-        verdicts={
-            epic_id: EpicVerdict(
-                passed=True,
-                unmet_criteria=[],
-                confidence=0.95,
-                reasoning="All criteria met",
-            )
-        },
-        remediation_issues_created=[],
-    )
-
-
-def make_failing_result(
-    epic_id: str = "epic-1",
-    remediation_issues: list[str] | None = None,
-) -> EpicVerificationResult:
-    """Create a failing EpicVerificationResult."""
-    return EpicVerificationResult(
-        verified_count=1,
-        passed_count=0,
-        failed_count=1,
-        verdicts={
-            epic_id: EpicVerdict(
-                passed=False,
-                unmet_criteria=[],
-                confidence=0.9,
-                reasoning="Criteria not met",
-            )
-        },
-        remediation_issues_created=remediation_issues or [],
-    )
-
-
-def make_not_eligible_result() -> EpicVerificationResult:
-    """Create a result indicating epic not eligible (children still open)."""
-    return EpicVerificationResult(
-        verified_count=0,
-        passed_count=0,
-        failed_count=0,
-        verdicts={},
-        remediation_issues_created=[],
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -23,6 +23,29 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 
+def _make_default_result_message() -> object:
+    """Create a default ResultMessage for completing SDK response iteration.
+
+    Imports claude_agent_sdk lazily to avoid import errors in environments
+    where the SDK is not installed.
+    """
+    from claude_agent_sdk import ResultMessage
+
+    return ResultMessage(
+        subtype="result",
+        duration_ms=0,
+        duration_api_ms=0,
+        is_error=False,
+        num_turns=1,
+        session_id="fake-session",
+        result=None,
+    )
+
+
+# Sentinel to distinguish "no result message configured" from "explicitly set to None"
+_NO_RESULT_MESSAGE = object()
+
+
 @dataclass
 class FakeSDKClient(SDKClientProtocol):
     """In-memory fake SDK client for testing.
@@ -30,9 +53,13 @@ class FakeSDKClient(SDKClientProtocol):
     Allows tests to configure response messages and errors. Tracks all
     queries and disconnect calls for verification.
 
+    By default, yields a minimal ResultMessage to complete iteration. Set
+    result_message=None explicitly to suppress this (for hang simulation).
+
     Attributes:
         messages: Messages to yield from receive_response() before result.
         result_message: Final message to yield (typically ResultMessage).
+            Defaults to a minimal ResultMessage. Set to None to suppress.
         query_error: If set, raise this on query().
         queries: List of (prompt, session_id) tuples from query() calls.
         disconnect_called: Whether disconnect() was called.
@@ -40,7 +67,7 @@ class FakeSDKClient(SDKClientProtocol):
     """
 
     messages: list[Any] = field(default_factory=list)
-    result_message: Any | None = None
+    result_message: Any = field(default=_NO_RESULT_MESSAGE)
     query_error: Exception | None = None
     queries: list[tuple[str, str | None]] = field(default_factory=list)
     disconnect_called: bool = False
@@ -75,11 +102,20 @@ class FakeSDKClient(SDKClientProtocol):
             raise self.query_error
 
     async def receive_response(self) -> AsyncIterator[Any]:
-        """Yield configured messages, then result_message if set."""
+        """Yield configured messages, then result_message.
+
+        If result_message was not configured, yields a default ResultMessage.
+        If result_message was explicitly set to None, yields nothing after messages.
+        """
         for msg in self.messages:
             yield msg
-        if self.result_message is not None:
+        if self.result_message is _NO_RESULT_MESSAGE:
+            # Default: yield a minimal ResultMessage to complete iteration
+            yield _make_default_result_message()
+        elif self.result_message is not None:
+            # Explicitly configured result message
             yield self.result_message
+        # If result_message is None, don't yield anything (for hang simulation)
 
     async def disconnect(self) -> None:
         """Mark client as disconnected, optionally with delay."""
