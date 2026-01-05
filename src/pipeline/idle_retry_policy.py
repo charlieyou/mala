@@ -283,7 +283,7 @@ class IdleTimeoutRetryPolicy:
         """Prepare state for idle retry and return the next query.
 
         Updates state.idle_retry_count, state.pending_session_id, and clears
-        state.pending_tool_ids.
+        state.pending_tool_ids and state.pending_lint_commands.
 
         Raises:
             IdleTimeoutError: If retry is not possible (max retries exceeded,
