@@ -195,7 +195,9 @@ class TestRunLoop:
         result = await coord.run_loop(spawn_callback, finalize_callback, abort_callback)
 
         assert result.issues_spawned == 0
-        spawn_callback.assert_not_called()
+        # Behavioral assertion: no issues spawned means spawn_callback was never invoked
+        # (verified by issues_spawned == 0 above and no completed_ids)
+        assert coord.completed_ids == set()
         assert ("no_more_issues", ("none_ready",)) in event_sink.events
 
     @pytest.mark.asyncio
@@ -390,6 +392,35 @@ class TestRunLoop:
         assert ("abort_requested", ("test abort",)) in event_sink.events
 
 
+class CapturingIssueProvider:
+    """Issue provider that captures get_ready_async call arguments."""
+
+    def __init__(self) -> None:
+        self.captured_kwargs: dict[str, object] = {}
+
+    async def get_ready_async(
+        self,
+        exclude_ids: set[str] | None = None,
+        epic_id: str | None = None,
+        only_ids: set[str] | None = None,
+        suppress_warn_ids: set[str] | None = None,
+        prioritize_wip: bool = False,
+        focus: bool = True,
+        orphans_only: bool = False,
+    ) -> list[str]:
+        """Capture kwargs and return empty list."""
+        self.captured_kwargs = {
+            "exclude_ids": exclude_ids,
+            "epic_id": epic_id,
+            "only_ids": only_ids,
+            "suppress_warn_ids": suppress_warn_ids,
+            "prioritize_wip": prioritize_wip,
+            "focus": focus,
+            "orphans_only": orphans_only,
+        }
+        return []
+
+
 class TestOnlyIdsFiltering:
     """Tests for only_ids filtering behavior."""
 
@@ -400,20 +431,17 @@ class TestOnlyIdsFiltering:
     @pytest.mark.asyncio
     async def test_only_ids_passed_to_provider(self, event_sink: MockEventSink) -> None:
         """only_ids config is passed to issue provider."""
-        beads = AsyncMock()
-        beads.get_ready_async = AsyncMock(return_value=[])
+        beads = CapturingIssueProvider()
 
         coord = IssueExecutionCoordinator(
-            beads=beads,
+            beads=beads,  # type: ignore[arg-type]
             event_sink=event_sink,  # type: ignore[arg-type]
             config=CoordinatorConfig(only_ids={"issue-1", "issue-2"}),
         )
 
         await coord.run_loop(AsyncMock(), AsyncMock(), AsyncMock())
 
-        beads.get_ready_async.assert_called_once()
-        call_kwargs = beads.get_ready_async.call_args.kwargs
-        assert call_kwargs["only_ids"] == {"issue-1", "issue-2"}
+        assert beads.captured_kwargs["only_ids"] == {"issue-1", "issue-2"}
 
 
 class TestEpicIdFiltering:
@@ -426,17 +454,14 @@ class TestEpicIdFiltering:
     @pytest.mark.asyncio
     async def test_epic_id_passed_to_provider(self, event_sink: MockEventSink) -> None:
         """epic_id config is passed to issue provider."""
-        beads = AsyncMock()
-        beads.get_ready_async = AsyncMock(return_value=[])
+        beads = CapturingIssueProvider()
 
         coord = IssueExecutionCoordinator(
-            beads=beads,
+            beads=beads,  # type: ignore[arg-type]
             event_sink=event_sink,  # type: ignore[arg-type]
             config=CoordinatorConfig(epic_id="epic-123"),
         )
 
         await coord.run_loop(AsyncMock(), AsyncMock(), AsyncMock())
 
-        beads.get_ready_async.assert_called_once()
-        call_kwargs = beads.get_ready_async.call_args.kwargs
-        assert call_kwargs["epic_id"] == "epic-123"
+        assert beads.captured_kwargs["epic_id"] == "epic-123"

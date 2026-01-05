@@ -1776,12 +1776,23 @@ class TestGetBlockedCountAsync:
     async def test_calls_bd_list_with_correct_args(self, tmp_path: Path) -> None:
         """Should call bd list with --status blocked --json -t task."""
         beads = BeadsClient(tmp_path)
+        captured_cmds: list[list[str]] = []
+
+        async def capturing_run(cmd: list[str]) -> CommandResult:
+            captured_cmds.append(cmd)
+            return make_command_result(stdout="[]")
 
         with pytest.MonkeyPatch.context() as mp:
-            mock_run = AsyncMock(return_value=make_command_result(stdout="[]"))
-            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            mp.setattr(beads, "_run_subprocess_async", capturing_run)
             await beads.get_blocked_count_async()
 
-        mock_run.assert_called_once_with(
-            ["bd", "list", "--status", "blocked", "--json", "-t", "task"]
-        )
+        assert len(captured_cmds) == 1
+        assert captured_cmds[0] == [
+            "bd",
+            "list",
+            "--status",
+            "blocked",
+            "--json",
+            "-t",
+            "task",
+        ]

@@ -923,7 +923,7 @@ class TestPollFailureHandling:
         assert result.exit_code == 3
         assert result.exit_reason == "poll_failed"
         # Validation should have been called because an issue completed
-        assert validation_callback.called
+        assert validation_callback.call_count >= 1
 
 
 class TestWatchModeIdleBehavior:

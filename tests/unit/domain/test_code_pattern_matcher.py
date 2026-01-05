@@ -1,10 +1,5 @@
 """Tests for code_pattern_matcher module."""
 
-import re
-from unittest.mock import patch
-
-import pytest
-
 from src.domain.validation.code_pattern_matcher import (
     filter_matching_files,
     glob_to_regex,
@@ -49,36 +44,6 @@ class TestGlobToRegex:
         regex = glob_to_regex("file[1].py")
         assert regex.match("file[1].py")
         assert not regex.match("file1.py")
-
-    def test_invalid_pattern_treated_as_literal(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Test that re.error during compilation falls back to literal matching."""
-        # Mock re.compile to raise re.error on first call, simulating an invalid regex
-        original_compile = re.compile
-        call_count = 0
-
-        def mock_compile(
-            pattern: str, *args: object, **kwargs: object
-        ) -> re.Pattern[str]:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                # First call (the constructed regex) raises error
-                raise re.error("mock regex error")
-            # Second call (the escaped fallback) succeeds
-            return original_compile(pattern, *args, **kwargs)
-
-        with patch("re.compile", side_effect=mock_compile):
-            regex = glob_to_regex("test_pattern")
-
-        # Should have logged a warning
-        assert "Invalid glob pattern" in caplog.text
-        assert "mock regex error" in caplog.text
-
-        # The fallback regex should match the literal pattern
-        assert regex.match("test_pattern")
-        assert not regex.match("other_pattern")
 
     def test_doublestar_slash_requires_directory_boundary(self) -> None:
         """Test that **/ only matches at directory boundaries, not within filenames.

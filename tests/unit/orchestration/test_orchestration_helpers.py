@@ -10,7 +10,7 @@ Tests for:
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -803,26 +803,23 @@ class TestBuildRunMetadata:
 
     def test_basic_metadata(self, tmp_path: Path) -> None:
         """Should build RunMetadata with correct config."""
-        with patch(
-            "src.infra.io.log_output.run_metadata.configure_debug_logging"
-        ) as mock_debug:
-            mock_debug.return_value = tmp_path / "debug.log"
-
-            metadata = build_run_metadata(
-                repo_path=tmp_path,
-                max_agents=4,
-                timeout_seconds=1800,
-                max_issues=10,
-                epic_id="test-epic",
-                only_ids={"bd-1"},
-                braintrust_enabled=True,
-                max_gate_retries=3,
-                max_review_retries=2,
-                review_enabled=True,
-                orphans_only=False,
-                cli_args={"verbose": True},
-                version="1.0.0",
-            )
+        # build_run_metadata creates RunMetadata which may configure debug logging.
+        # We test the resulting config values, not whether internal logging was called.
+        metadata = build_run_metadata(
+            repo_path=tmp_path,
+            max_agents=4,
+            timeout_seconds=1800,
+            max_issues=10,
+            epic_id="test-epic",
+            only_ids={"bd-1"},
+            braintrust_enabled=True,
+            max_gate_retries=3,
+            max_review_retries=2,
+            review_enabled=True,
+            orphans_only=False,
+            cli_args={"verbose": True},
+            version="1.0.0",
+        )
 
         assert metadata.repo_path == tmp_path
         assert metadata.version == "1.0.0"
@@ -838,26 +835,21 @@ class TestBuildRunMetadata:
 
     def test_none_timeout(self, tmp_path: Path) -> None:
         """Should handle None timeout."""
-        with patch(
-            "src.infra.io.log_output.run_metadata.configure_debug_logging"
-        ) as mock_debug:
-            mock_debug.return_value = None
-
-            metadata = build_run_metadata(
-                repo_path=tmp_path,
-                max_agents=None,
-                timeout_seconds=None,
-                max_issues=None,
-                epic_id=None,
-                only_ids=None,
-                braintrust_enabled=False,
-                max_gate_retries=3,
-                max_review_retries=2,
-                review_enabled=False,
-                orphans_only=False,
-                cli_args=None,
-                version="1.0.0",
-            )
+        metadata = build_run_metadata(
+            repo_path=tmp_path,
+            max_agents=None,
+            timeout_seconds=None,
+            max_issues=None,
+            epic_id=None,
+            only_ids=None,
+            braintrust_enabled=False,
+            max_gate_retries=3,
+            max_review_retries=2,
+            review_enabled=False,
+            orphans_only=False,
+            cli_args=None,
+            version="1.0.0",
+        )
 
         assert metadata.config.timeout_minutes is None
         assert metadata.config.max_agents is None
