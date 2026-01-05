@@ -9,7 +9,7 @@ Tests for:
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -30,6 +30,7 @@ from src.orchestration.review_tracking import (
     create_review_tracking_issues,
 )
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
 if TYPE_CHECKING:
     from src.core.protocols import IssueProvider, MalaEventSink
@@ -257,59 +258,8 @@ class FakeReviewIssue:
     reviewer: str
 
 
-class FakeIssueProvider:
-    """Fake IssueProvider for testing review tracking."""
-
-    def __init__(self) -> None:
-        self.created_issues: list[dict[str, Any]] = []
-        self.existing_tags: dict[str, str] = {}
-        self.issue_descriptions: dict[str, str] = {}
-        self.updated_descriptions: list[tuple[str, str]] = []
-        self.updated_issues: list[tuple[str, str | None, str | None]] = []
-
-    async def find_issue_by_tag_async(self, tag: str) -> str | None:
-        return self.existing_tags.get(tag)
-
-    async def get_issue_description_async(self, issue_id: str) -> str | None:
-        return self.issue_descriptions.get(issue_id)
-
-    async def update_issue_description_async(
-        self, issue_id: str, description: str
-    ) -> bool:
-        self.updated_descriptions.append((issue_id, description))
-        self.issue_descriptions[issue_id] = description
-        return True
-
-    async def update_issue_async(
-        self,
-        issue_id: str,
-        *,
-        title: str | None = None,
-        priority: str | None = None,
-    ) -> bool:
-        self.updated_issues.append((issue_id, title, priority))
-        return True
-
-    async def create_issue_async(
-        self,
-        title: str,
-        description: str,
-        priority: str,
-        tags: list[str],
-        parent_id: str | None = None,
-    ) -> str | None:
-        issue_id = f"new-{len(self.created_issues) + 1}"
-        self.created_issues.append(
-            {
-                "id": issue_id,
-                "title": title,
-                "description": description,
-                "priority": priority,
-                "tags": tags,
-                "parent_id": parent_id,
-            }
-        )
-        return issue_id
+# FakeIssueProvider moved to tests/fakes/issue_provider.py
+# Import from there: from tests.fakes.issue_provider import FakeIssueProvider
 
 
 class FakeEventSink:
@@ -583,7 +533,26 @@ class TestCreateReviewTrackingIssues:
     @pytest.mark.asyncio
     async def test_skips_duplicate_findings_for_same_source(self) -> None:
         """Should skip if exact findings already exist in source issue's tracker."""
-        beads = FakeIssueProvider()
+        # Pre-populate existing tracking issue for this source
+        import hashlib
+
+        # Content-based dedup tag - fingerprints are now hex hashes
+        content = "src/foo.py:10:10:Consider refactoring"
+        individual_fp = hashlib.sha256(content.encode()).hexdigest()[:16]
+        # For a single finding, pipe-join of one element equals the element itself.
+        # The production code uses "|".join(sorted([fp])) which equals just fp.
+        content_hash = hashlib.sha256(individual_fp.encode()).hexdigest()[:12]
+        dedup_tag = f"review_finding:{content_hash}"
+
+        beads = FakeIssueProvider(
+            {
+                "existing-issue-1": FakeIssue(
+                    id="existing-issue-1",
+                    description=f"## Review Findings\n<!-- {dedup_tag} -->",
+                    tags=["source:bd-test-3"],
+                )
+            }
+        )
         event_sink = FakeEventSink()
 
         review_issues = [
@@ -597,22 +566,6 @@ class TestCreateReviewTrackingIssues:
                 reviewer="gemini",
             )
         ]
-
-        # Pre-populate existing tracking issue for this source
-        import hashlib
-
-        # Content-based dedup tag - fingerprints are now hex hashes
-        content = "src/foo.py:10:10:Consider refactoring"
-        individual_fp = hashlib.sha256(content.encode()).hexdigest()[:16]
-        # For a single finding, pipe-join of one element equals the element itself.
-        # The production code uses "|".join(sorted([fp])) which equals just fp.
-        content_hash = hashlib.sha256(individual_fp.encode()).hexdigest()[:12]
-        dedup_tag = f"review_finding:{content_hash}"
-
-        beads.existing_tags["source:bd-test-3"] = "existing-issue-1"
-        beads.issue_descriptions["existing-issue-1"] = (
-            f"## Review Findings\n<!-- {dedup_tag} -->"
-        )
 
         await create_review_tracking_issues(
             beads=cast("IssueProvider", beads),
@@ -629,9 +582,6 @@ class TestCreateReviewTrackingIssues:
     @pytest.mark.asyncio
     async def test_appends_new_findings_to_existing_issue(self) -> None:
         """Should append new findings to existing tracking issue for same source."""
-        beads = FakeIssueProvider()
-        event_sink = FakeEventSink()
-
         # First set of findings (already in the existing issue)
         existing_desc = """## Review Findings
 
@@ -652,8 +602,16 @@ This issue consolidates 1 non-blocking finding from code review.
 
 <!-- review_finding:abc123 -->
 """
-        beads.existing_tags["source:bd-test-6"] = "existing-issue-1"
-        beads.issue_descriptions["existing-issue-1"] = existing_desc
+        beads = FakeIssueProvider(
+            {
+                "existing-issue-1": FakeIssue(
+                    id="existing-issue-1",
+                    description=existing_desc,
+                    tags=["source:bd-test-6"],
+                )
+            }
+        )
+        event_sink = FakeEventSink()
 
         # New findings to append
         new_issues = [

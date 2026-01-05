@@ -9,9 +9,6 @@ they:
 3. Enable behavior-based testing (assert outputs/state) over interaction testing
 
 See CLAUDE.md "Testing Philosophy" and "Fakes over mocks" for guidelines.
-
-Planned fakes (to be implemented):
-- FakeIssueProvider: In-memory issue storage implementing IssueProvider
 """
 
 from tests.fakes.command_runner import FakeCommandRunner, UnregisteredCommandError
@@ -22,12 +19,15 @@ from tests.fakes.epic_model import (
     make_passing_verdict,
 )
 from tests.fakes.event_sink import FakeEventSink, RecordedEvent
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 from tests.fakes.lock_manager import FakeLockManager, LockAcquireCall
 
 __all__ = [
     "FakeCommandRunner",
     "FakeEpicVerificationModel",
     "FakeEventSink",
+    "FakeIssue",
+    "FakeIssueProvider",
     "FakeLockManager",
     "LockAcquireCall",
     "RecordedEvent",
