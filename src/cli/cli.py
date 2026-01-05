@@ -455,7 +455,14 @@ def _emit_deprecation_warnings(
     # Note: focus defaults to True in typer, so we can only detect explicit --no-focus.
     # Explicit --focus cannot be distinguished from the default value.
     if not focus:
-        _emit_deprecation_warning("--no-focus", "--order priority")
+        if order is not None:
+            # Conflict/redundancy: both --no-focus and --order specified
+            _warn_stderr(
+                f"Redundant flags: '--no-focus' and '--order {order}' both specified. "
+                "'--no-focus' is deprecated, use '--order' alone."
+            )
+        else:
+            _emit_deprecation_warning("--no-focus", "--order priority")
 
 
 def _build_cli_args_metadata(

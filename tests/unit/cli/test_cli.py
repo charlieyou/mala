@@ -2787,6 +2787,58 @@ class TestDeprecationWarnings:
         assert "--no-focus" in captured.err
         assert "--order priority" in captured.err
 
+    def test_no_focus_with_order_focus_emits_redundancy_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--no-focus --order focus emits redundancy warning (order takes precedence)."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic=None,
+            only=None,
+            orphans_only=False,
+            focus=False,
+            scope=None,
+            order="focus",
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Redundant flags" in captured.err
+        assert "--no-focus" in captured.err
+        assert "--order focus" in captured.err
+        assert "deprecated" in captured.err
+        # Should NOT say "Deprecation warning" or suggest --order priority
+        assert "--order priority" not in captured.err
+
+    def test_no_focus_with_order_priority_emits_redundancy_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--no-focus --order priority emits redundancy warning."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic=None,
+            only=None,
+            orphans_only=False,
+            focus=False,
+            scope=None,
+            order="priority",
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Redundant flags" in captured.err
+        assert "--no-focus" in captured.err
+        assert "--order priority" in captured.err
+        assert "deprecated" in captured.err
+        # Should NOT be a "Deprecation warning" suggesting conversion
+        assert "Deprecation warning" not in captured.err
+
     def test_no_warning_when_using_new_flags_only(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
