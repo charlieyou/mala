@@ -24,9 +24,9 @@ tests/
 
 ## Fakes Module (`tests/fakes/`)
 
-The `fakes/` module will provide in-memory implementations of mala protocols for testing.
+The `fakes/` module provides in-memory implementations of mala protocols for testing.
 
-**Planned fakes** (to be implemented):
+**Available fakes**:
 
 | Fake | Protocol | Purpose |
 |------|----------|---------|
@@ -43,17 +43,17 @@ Fakes implement real protocol contracts, which means:
 2. Tests assert on behavior (outputs, state) not interactions (call counts)
 3. Contract tests can verify both fake and real implementations
 
-### Usage (once fakes are implemented)
+### Usage
 
 ```python
-# Example usage pattern (FakeIssueProvider not yet available)
 import pytest
-from tests.fakes import FakeIssueProvider
+from tests.fakes import FakeIssue, FakeIssueProvider
 
 @pytest.mark.asyncio
 async def test_issue_processing():
-    provider = FakeIssueProvider()
-    provider.add_issue(id="test-1", title="Test")  # Add issue to fake
+    provider = FakeIssueProvider(
+        {"test-1": FakeIssue(id="test-1", status="open", title="Test")}
+    )
 
     # Test code that uses provider (IssueProvider is an async protocol)
     issue_ids = await provider.get_ready_async()
@@ -72,15 +72,15 @@ uv run pytest -m integration -n auto       # Integration in parallel
 uv run pytest -m e2e                       # E2E tests (requires auth)
 ```
 
-## Baseline Metrics (2026-01-05)
+## Baseline Metrics (2026-01-05, post-migration snapshot)
 
 Current mock/patch usage to be reduced through fakes migration:
 
 | Metric | Count |
 |--------|-------|
-| `MagicMock`/`AsyncMock` | 854 |
-| `with patch`/`@patch` | 196 |
-| `.assert_called*` | 64 |
+| `MagicMock`/`AsyncMock` | 687 |
+| `with patch`/`@patch` | 81 |
+| `.assert_called*` | 13 |
 
 Commands to measure these metrics:
 
