@@ -14,6 +14,7 @@ When prerequisites are missing, real provider tests skip gracefully.
 import os
 import shutil
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -29,6 +30,11 @@ def _has_bd_cli() -> bool:
 def _has_beads_workspace() -> bool:
     """Check if BEADS_TEST_WORKSPACE env var is set."""
     return os.environ.get("BEADS_TEST_WORKSPACE") is not None
+
+
+def _can_run_real_provider() -> bool:
+    """Check if real provider tests can run."""
+    return _has_bd_cli() and _has_beads_workspace()
 
 
 # Type alias for providers - both fake and real implement IssueProvider protocol
@@ -61,6 +67,21 @@ async def fake_provider() -> AsyncIterator[FakeIssueProvider]:
         ),
     }
     yield FakeIssueProvider(issues)
+
+
+@pytest.fixture
+async def real_provider() -> AsyncIterator[IssueProviderLike]:
+    """Create a BeadsClient for real provider tests.
+
+    Skips if bd CLI or BEADS_TEST_WORKSPACE not available.
+    """
+    if not _can_run_real_provider():
+        pytest.skip("Requires bd CLI and BEADS_TEST_WORKSPACE env var")
+
+    from src.infra.clients.beads_client import BeadsClient
+
+    workspace = Path(os.environ["BEADS_TEST_WORKSPACE"])
+    yield BeadsClient(repo_path=workspace)
 
 
 class TestFakeIssueProviderContract:
@@ -107,6 +128,21 @@ class TestFakeIssueProviderContract:
         issue1_idx = ready.index("issue-1")
         issue2_idx = ready.index("issue-2")
         assert issue1_idx < issue2_idx
+
+    @pytest.mark.integration
+    async def test_get_ready_prioritize_wip_includes_in_progress(
+        self, fake_provider: FakeIssueProvider
+    ) -> None:
+        """get_ready_async with prioritize_wip=True includes in_progress issues first."""
+        # Claim issue-2 to make it in_progress
+        await fake_provider.claim_async("issue-2")
+        # Without prioritize_wip, in_progress issues are excluded
+        ready_normal = await fake_provider.get_ready_async(prioritize_wip=False)
+        assert "issue-2" not in ready_normal
+        # With prioritize_wip, in_progress issues are included and sorted first
+        ready_wip = await fake_provider.get_ready_async(prioritize_wip=True)
+        assert "issue-2" in ready_wip
+        assert ready_wip.index("issue-2") == 0  # in_progress comes first
 
     @pytest.mark.integration
     async def test_claim_marks_in_progress(

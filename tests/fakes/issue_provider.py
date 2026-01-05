@@ -25,11 +25,12 @@ class FakeIssue:
 
     id: str
     status: str = "ready"
-    priority: int = 5
+    priority: int = 0  # Match IssueManager.get_priority default
     parent_epic: str | None = None
     description: str = ""
     tags: list[str] = field(default_factory=list)
     title: str = ""
+    updated_at: str = ""
 
 
 class FakeIssueProvider:
@@ -76,14 +77,21 @@ class FakeIssueProvider:
         focus: bool = True,
         orphans_only: bool = False,
     ) -> list[str]:
-        """Get list of ready issue IDs, sorted by priority."""
+        """Get list of ready issue IDs, sorted by priority.
+
+        Uses IssueManager.sort_issues for sorting to ensure parity with real impl.
+        """
+        from src.infra.issue_manager import IssueManager
+
         exclude = exclude_ids or set()
-        result: list[str] = []
+        # Collect eligible issues - include in_progress when prioritize_wip=True
+        eligible_statuses = {"ready", "in_progress"} if prioritize_wip else {"ready"}
+        candidates: list[dict[str, object]] = []
 
         for issue_id, issue in self.issues.items():
             if issue_id in exclude:
                 continue
-            if issue.status != "ready":
+            if issue.status not in eligible_statuses:
                 continue
             if only_ids is not None and issue_id not in only_ids:
                 continue
@@ -91,16 +99,20 @@ class FakeIssueProvider:
                 continue
             if orphans_only and issue.parent_epic is not None:
                 continue
-            result.append(issue_id)
+            # Convert to dict format expected by IssueManager
+            candidates.append(
+                {
+                    "id": issue_id,
+                    "status": issue.status,
+                    "priority": issue.priority,
+                    "parent_epic": issue.parent_epic,
+                    "updated_at": issue.updated_at,
+                }
+            )
 
-        # Sort by priority (lower = higher priority)
-        result.sort(key=lambda iid: self.issues[iid].priority)
-
-        # If prioritize_wip, sort in_progress first (but we filter to ready only)
-        # This parameter affects sorting when mixing statuses; since we filter
-        # to ready only, it has no effect here but is accepted for protocol compat
-
-        return result
+        # Delegate sorting to IssueManager for behavioral parity
+        sorted_issues = IssueManager.sort_issues(candidates, focus, prioritize_wip)
+        return [str(i["id"]) for i in sorted_issues]
 
     async def claim_async(self, issue_id: str) -> bool:
         """Claim an issue by setting status to in_progress."""
@@ -275,4 +287,4 @@ def _priority_to_int(priority: str) -> int:
             return int(priority[1:])
         except ValueError:
             pass
-    return 5  # Default priority
+    return 0  # Match IssueManager.get_priority default
