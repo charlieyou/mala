@@ -14,7 +14,6 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.core.protocols import ReviewIssueProtocol  # noqa: TC001 - runtime for dataclass field
 from src.domain.lifecycle import Effect
 from src.domain.prompts import (
     get_default_validation_commands as _get_default_validation_commands,
@@ -51,7 +50,7 @@ class SyntheticReviewOutcome:
     """
 
     passed: bool
-    issues: list[ReviewIssueProtocol]
+    issues: list[ReviewIssue]
     parse_error: str | None = None
     fatal_error: bool = False
     review_log_path: Path | None = None
@@ -225,7 +224,7 @@ def _build_review_retry_prompt(
         Formatted prompt string for the agent to address review issues.
     """
     review_issues_text = format_review_issues(
-        review_result.issues,  # type: ignore[arg-type]
+        review_result.issues,  # type: ignore[arg-type]  # ReviewIssue ⊂ ReviewIssueProtocol
         base_path=repo_path,
     )
     return review_followup_template.format(

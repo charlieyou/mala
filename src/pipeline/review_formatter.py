@@ -32,14 +32,14 @@ def _to_relative_path(file_path: str, resolved_base: Path) -> str:
         Relative path suitable for display. If relativization fails,
         returns the original path to preserve directory context.
     """
+    path = Path(file_path)
     # If already relative, return as-is
-    if not Path(file_path).is_absolute():
+    if not path.is_absolute():
         return file_path
 
     try:
-        abs_path = Path(file_path)
-        if abs_path.is_relative_to(resolved_base):
-            return str(abs_path.relative_to(resolved_base))
+        if path.is_relative_to(resolved_base):
+            return str(path.relative_to(resolved_base))
     except (ValueError, OSError):
         pass
 
