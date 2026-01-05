@@ -190,6 +190,19 @@ class IssueExecutionCoordinator:
                 len(self.active_tasks),
                 len(self.completed_ids),
             )
+            # Check for interrupt (SIGINT)
+            if interrupt_event and interrupt_event.is_set():
+                await abort_callback()
+                # Run final validation if any issues completed
+                if watch_state.completed_count > watch_state.last_validation_at:
+                    if validation_callback:
+                        await validation_callback()
+                return RunResult(
+                    issues_spawned,
+                    exit_code=130,
+                    exit_reason="interrupted",
+                )
+
             # Check for abort
             if self.abort_run:
                 await abort_callback()
@@ -234,22 +247,57 @@ class IssueExecutionCoordinator:
                     watch_state.consecutive_poll_failures += 1
 
                     if watch_state.consecutive_poll_failures >= 3:
+                        # Abort any active tasks before returning
+                        await abort_callback()
                         # Run final validation if any issues completed
                         if watch_state.completed_count > watch_state.last_validation_at:
                             if validation_callback:
-                                await validation_callback()
+                                valid = await validation_callback()
+                                if not valid:
+                                    return RunResult(
+                                        issues_spawned,
+                                        exit_code=1,
+                                        exit_reason="validation_failed",
+                                    )
                         return RunResult(
                             issues_spawned,
                             exit_code=3,
                             exit_reason="poll_failed",
                         )
 
-                    # Wait and retry
+                    # Interruptible wait before retry
                     poll_interval = (
                         watch_config.poll_interval_seconds if watch_config else 60.0
                     )
-                    await sleep_fn(poll_interval)
-                    continue
+                    if interrupt_event:
+                        try:
+                            await asyncio.wait_for(
+                                interrupt_event.wait(),
+                                timeout=poll_interval,
+                            )
+                            # Interrupted during poll retry wait
+                            await abort_callback()
+                            if (
+                                watch_state.completed_count
+                                > watch_state.last_validation_at
+                            ):
+                                if validation_callback:
+                                    await validation_callback()
+                            return RunResult(
+                                issues_spawned,
+                                exit_code=130,
+                                exit_reason="interrupted",
+                            )
+                        except TimeoutError:
+                            pass  # Normal timeout, retry poll
+                    else:
+                        await sleep_fn(poll_interval)
+
+                    # If tasks are active, handle completions before retrying poll
+                    if self.active_tasks:
+                        ready = []  # No new ready issues, but fall through to task handling
+                    else:
+                        continue  # No active tasks, retry poll immediately
 
             if ready:
                 self.event_sink.on_ready_issues(list(ready))
