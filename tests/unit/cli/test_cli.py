@@ -117,6 +117,23 @@ class TestImportSafety:
         try:
             monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
 
+            # Mock braintrust wrapper to avoid real initialization (which creates
+            # background threads that hang on process exit)
+            setup_called = {"called": False}
+
+            class MockWrapper:
+                @staticmethod
+                def setup_claude_agent_sdk(project: str) -> None:
+                    setup_called["called"] = True
+
+            monkeypatch.setitem(sys.modules, "braintrust", type(sys)("braintrust"))
+            monkeypatch.setitem(
+                sys.modules, "braintrust.wrappers", type(sys)("braintrust.wrappers")
+            )
+            monkeypatch.setitem(
+                sys.modules, "braintrust.wrappers.claude_agent_sdk", MockWrapper
+            )
+
             import src.cli.cli
 
             # Reset state
@@ -139,6 +156,9 @@ class TestImportSafety:
             assert load_called["called"], "bootstrap() should call load_user_env()"
             assert src.cli.cli._bootstrapped, (
                 "bootstrap() should set _bootstrapped = True"
+            )
+            assert setup_called["called"], (
+                "bootstrap() should call setup_claude_agent_sdk when API key present"
             )
         finally:
             # Reload modules from disk to restore clean state for other tests

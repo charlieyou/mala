@@ -16,10 +16,6 @@ if TYPE_CHECKING:
 
 from claude_agent_sdk.types import PreToolUseHookInput
 
-# Call bootstrap() to ensure env is loaded before tests that may need it
-from src.cli.cli import bootstrap
-
-bootstrap()
 
 # Type alias for the hook input factory
 HookInputFactory = Callable[[str, str], PreToolUseHookInput]
