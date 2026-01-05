@@ -850,6 +850,7 @@ class MalaOrchestrator:
             orphans_only=self.orphans_only,
             cli_args=self.cli_args,
             version=__version__,
+            runs_dir=runs_dir,
         )
         per_issue_spec = build_validation_spec(
             self.repo_path,

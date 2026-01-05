@@ -21,7 +21,9 @@ from src.core.models import (
 from src.infra.tools.env import get_lock_dir, get_repo_runs_dir
 
 
-def configure_debug_logging(repo_path: Path, run_id: str) -> Path | None:
+def configure_debug_logging(
+    repo_path: Path, run_id: str, runs_dir: Path | None = None
+) -> Path | None:
     """Configure Python logging to write debug logs to a file.
 
     Creates a debug log file alongside run metadata at:
@@ -38,6 +40,8 @@ def configure_debug_logging(repo_path: Path, run_id: str) -> Path | None:
     Args:
         repo_path: Repository path for log directory.
         run_id: Run ID (UUID) for filename.
+        runs_dir: Optional custom runs directory. If None, uses default from
+            get_repo_runs_dir().
 
     Returns:
         Path to the debug log file, or None if logging could not be configured
@@ -48,12 +52,14 @@ def configure_debug_logging(repo_path: Path, run_id: str) -> Path | None:
         return None
 
     try:
-        runs_dir = get_repo_runs_dir(repo_path)
-        runs_dir.mkdir(parents=True, exist_ok=True)
+        effective_runs_dir = (
+            runs_dir if runs_dir is not None else get_repo_runs_dir(repo_path)
+        )
+        effective_runs_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
         short_id = run_id[:8]
-        log_path = runs_dir / f"{timestamp}_{short_id}.debug.log"
+        log_path = effective_runs_dir / f"{timestamp}_{short_id}.debug.log"
 
         # Create file handler for debug logs
         handler = logging.FileHandler(log_path)
@@ -198,6 +204,7 @@ class RunMetadata:
         repo_path: Path,
         config: RunConfig,
         version: str,
+        runs_dir: Path | None = None,
     ):
         self.run_id = str(uuid.uuid4())
         self.started_at = datetime.now(UTC)
@@ -205,12 +212,13 @@ class RunMetadata:
         self.repo_path = repo_path
         self.config = config
         self.version = version
+        self._runs_dir = runs_dir
         self.issues: dict[str, IssueRun] = {}
         # Run-level validation results (from mala-e0i)
         self.run_validation: ValidationResult | None = None
         # Configure debug logging for this run (always enabled)
         self.debug_log_path: Path | None = configure_debug_logging(
-            repo_path, self.run_id
+            repo_path, self.run_id, runs_dir=runs_dir
         )
 
     def record_issue(self, issue: IssueRun) -> None:
@@ -468,8 +476,12 @@ class RunMetadata:
         # Clean up debug logging handler before saving (idempotent)
         self.cleanup()
 
-        # Use repo-specific subdirectory
-        runs_dir = get_repo_runs_dir(self.repo_path)
+        # Use repo-specific subdirectory (or custom runs_dir if provided)
+        runs_dir = (
+            self._runs_dir
+            if self._runs_dir is not None
+            else get_repo_runs_dir(self.repo_path)
+        )
         runs_dir.mkdir(parents=True, exist_ok=True)
 
         # Use timestamp + short UUID for filename

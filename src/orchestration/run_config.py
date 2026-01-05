@@ -87,6 +87,7 @@ def build_run_metadata(
     orphans_only: bool,
     cli_args: dict[str, object] | None,
     version: str,
+    runs_dir: Path | None = None,
 ) -> RunMetadata:
     """Create run metadata tracker with current configuration.
 
@@ -104,6 +105,7 @@ def build_run_metadata(
         orphans_only: Whether to only process issues without parent epic.
         cli_args: CLI arguments for logging.
         version: Mala version string.
+        runs_dir: Optional custom runs directory for test isolation.
 
     Returns:
         RunMetadata instance for the run.
@@ -121,4 +123,4 @@ def build_run_metadata(
         orphans_only=orphans_only,
         cli_args=cli_args,
     )
-    return RunMetadata(repo_path, run_config, version)
+    return RunMetadata(repo_path, run_config, version, runs_dir=runs_dir)
