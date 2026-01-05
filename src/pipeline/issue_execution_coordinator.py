@@ -16,8 +16,13 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from src.orchestration.types import RunResult, WatchState
+
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from src.core.protocols import IssueProvider, MalaEventSink
+    from src.orchestration.types import WatchConfig
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +149,11 @@ class IssueExecutionCoordinator:
         spawn_callback: SpawnCallback,
         finalize_callback: FinalizeCallback,
         abort_callback: AbortCallback,
-    ) -> int:
+        watch_config: WatchConfig | None = None,
+        interrupt_event: asyncio.Event | None = None,
+        validation_callback: Callable[[], Awaitable[bool]] | None = None,
+        sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> RunResult:
         """Run the main agent spawning and completion loop.
 
         Args:
@@ -155,11 +164,25 @@ class IssueExecutionCoordinator:
                 Receives issue_id and the completed task.
             abort_callback: Called when abort is triggered.
                 Should cancel and finalize all active tasks.
+            watch_config: Watch mode configuration. If None or not enabled,
+                loop exits when no work remains.
+            interrupt_event: Event set to signal graceful shutdown (e.g., SIGINT).
+            validation_callback: Called periodically in watch mode to run validation.
+                Returns True if validation passed, False otherwise.
+            sleep_fn: Async sleep function, injectable for testing.
 
         Returns:
-            Number of issues spawned.
+            RunResult with issues_spawned, exit_code, and exit_reason.
         """
         issues_spawned = 0
+
+        # Initialize watch state from config (used in T004-T006)
+        _watch_state = WatchState(
+            next_validation_threshold=(
+                watch_config.validate_every if watch_config else 10
+            )
+        )
+        _ = _watch_state  # Silence unused variable warning until T004
 
         while True:
             logger.debug(
@@ -170,7 +193,11 @@ class IssueExecutionCoordinator:
             # Check for abort
             if self.abort_run:
                 await abort_callback()
-                break
+                return RunResult(
+                    issues_spawned=issues_spawned,
+                    exit_code=3,
+                    exit_reason="abort",
+                )
 
             # Check if we've hit the issue limit
             limit_reached = (
@@ -228,9 +255,18 @@ class IssueExecutionCoordinator:
                     self.event_sink.on_no_more_issues(
                         f"limit_reached ({self.config.max_issues})"
                     )
+                    return RunResult(
+                        issues_spawned=issues_spawned,
+                        exit_code=0,
+                        exit_reason="limit_reached",
+                    )
                 elif not ready:
                     self.event_sink.on_no_more_issues("none_ready")
-                break
+                    return RunResult(
+                        issues_spawned=issues_spawned,
+                        exit_code=0,
+                        exit_reason="success",
+                    )
 
             # Wait for at least one task to complete
             self.event_sink.on_waiting_for_agents(len(self.active_tasks))
@@ -249,9 +285,16 @@ class IssueExecutionCoordinator:
             # Check for abort after processing completions
             if self.abort_run:
                 await abort_callback()
-                break
+                return RunResult(
+                    issues_spawned=issues_spawned,
+                    exit_code=3,
+                    exit_reason="abort",
+                )
 
-        return issues_spawned
+        # This should not be reached; included for type safety
+        return RunResult(
+            issues_spawned=issues_spawned, exit_code=0, exit_reason="success"
+        )
 
     def register_task(self, issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
         """Register an active task for an issue.

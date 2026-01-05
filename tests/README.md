@@ -76,10 +76,23 @@ uv run pytest -m e2e                       # E2E tests (requires auth)
 
 Current mock/patch usage to be reduced through fakes migration:
 
-| Metric | Count | Command |
-|--------|-------|---------|
-| `MagicMock`/`AsyncMock` | 854 | `rg -c -e MagicMock -e AsyncMock tests/ --type py \| awk -F: '{s+=$2}END{print s}'` |
-| `with patch`/`@patch` | 196 | `rg -c -e 'with patch' -e '@patch' tests/ --type py \| awk -F: '{s+=$2}END{print s}'` |
-| `.assert_called*` | 64 | `rg -c '\.assert_called' tests/ --type py \| awk -F: '{s+=$2}END{print s}'` |
+| Metric | Count |
+|--------|-------|
+| `MagicMock`/`AsyncMock` | 854 |
+| `with patch`/`@patch` | 196 |
+| `.assert_called*` | 64 |
+
+Commands to measure these metrics:
+
+```bash
+# MagicMock/AsyncMock count
+rg -c -e MagicMock -e AsyncMock tests/ --type py | awk -F: '{s+=$2}END{print s}'
+
+# with patch/@patch count
+rg -c -e 'with patch' -e '@patch' tests/ --type py | awk -F: '{s+=$2}END{print s}'
+
+# .assert_called* count
+rg -c '\.assert_called' tests/ --type py | awk -F: '{s+=$2}END{print s}'
+```
 
 Goal: Reduce these counts by migrating tests to use fakes from `tests/fakes/`.

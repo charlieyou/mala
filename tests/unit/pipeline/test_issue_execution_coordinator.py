@@ -192,9 +192,9 @@ class TestRunLoop:
         finalize_callback = AsyncMock()
         abort_callback = AsyncMock()
 
-        count = await coord.run_loop(spawn_callback, finalize_callback, abort_callback)
+        result = await coord.run_loop(spawn_callback, finalize_callback, abort_callback)
 
-        assert count == 0
+        assert result.issues_spawned == 0
         spawn_callback.assert_not_called()
         assert ("no_more_issues", ("none_ready",)) in event_sink.events
 
@@ -221,9 +221,9 @@ class TestRunLoop:
         async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
             coord.mark_completed(issue_id)
 
-        count = await coord.run_loop(spawn_callback, finalize_callback, AsyncMock())
+        result = await coord.run_loop(spawn_callback, finalize_callback, AsyncMock())
 
-        assert count == 1
+        assert result.issues_spawned == 1
         assert "issue-1" in coord.completed_ids
 
     @pytest.mark.asyncio
@@ -308,9 +308,9 @@ class TestRunLoop:
         async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
             coord.mark_completed(issue_id)
 
-        count = await coord.run_loop(spawn_callback, finalize_callback, AsyncMock())
+        result = await coord.run_loop(spawn_callback, finalize_callback, AsyncMock())
 
-        assert count == 2
+        assert result.issues_spawned == 2
         assert ("no_more_issues", ("limit_reached (2)",)) in event_sink.events
 
     @pytest.mark.asyncio
@@ -327,9 +327,9 @@ class TestRunLoop:
             coord.mark_failed(issue_id)
             return None
 
-        count = await coord.run_loop(spawn_callback, AsyncMock(), AsyncMock())
+        result = await coord.run_loop(spawn_callback, AsyncMock(), AsyncMock())
 
-        assert count == 0
+        assert result.issues_spawned == 0
         assert "issue-1" in coord.failed_issues
 
     @pytest.mark.asyncio
