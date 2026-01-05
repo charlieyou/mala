@@ -2575,12 +2575,12 @@ class TestParseScope:
 
 
 class TestDeprecationWarnings:
-    """Tests for deprecation warning emission on old CLI flags."""
+    """Tests for deprecation warning emission on old CLI flags (to stderr)."""
 
     def test_wip_emits_deprecation_warning(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--wip alone emits warning suggesting --resume."""
+        """--wip alone emits warning suggesting --resume to stderr."""
         from src.cli.cli import _emit_deprecation_warnings
 
         _emit_deprecation_warnings(
@@ -2595,14 +2595,15 @@ class TestDeprecationWarnings:
         )
 
         captured = capsys.readouterr()
-        assert "Deprecation warning" in captured.out
-        assert "--wip" in captured.out
-        assert "--resume" in captured.out
+        assert captured.out == ""  # stdout stays clean
+        assert "Deprecation warning" in captured.err
+        assert "--wip" in captured.err
+        assert "--resume" in captured.err
 
     def test_wip_and_resume_emits_redundancy_warning(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--wip --resume together emits redundancy warning."""
+        """--wip --resume together emits redundancy warning to stderr."""
         from src.cli.cli import _emit_deprecation_warnings
 
         _emit_deprecation_warnings(
@@ -2617,14 +2618,15 @@ class TestDeprecationWarnings:
         )
 
         captured = capsys.readouterr()
-        assert "Redundant" in captured.out
-        assert "--wip" in captured.out
-        assert "--resume" in captured.out
+        assert captured.out == ""
+        assert "Redundant" in captured.err
+        assert "--wip" in captured.err
+        assert "--resume" in captured.err
 
     def test_epic_emits_deprecation_warning(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--epic E-123 emits warning suggesting --scope epic:E-123."""
+        """--epic E-123 emits warning suggesting --scope epic:E-123 to stderr."""
         from src.cli.cli import _emit_deprecation_warnings
 
         _emit_deprecation_warnings(
@@ -2639,14 +2641,15 @@ class TestDeprecationWarnings:
         )
 
         captured = capsys.readouterr()
-        assert "Deprecation warning" in captured.out
-        assert "--epic" in captured.out
-        assert "--scope epic:E-123" in captured.out
+        assert captured.out == ""
+        assert "Deprecation warning" in captured.err
+        assert "--epic" in captured.err
+        assert "--scope epic:E-123" in captured.err
 
     def test_epic_and_scope_conflict_emits_conflict_warning(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--epic E-1 --scope epic:E-2 emits conflict warning (scope wins)."""
+        """--epic E-1 --scope epic:E-2 emits conflict warning to stderr."""
         from src.cli.cli import _emit_deprecation_warnings
 
         _emit_deprecation_warnings(
@@ -2661,15 +2664,16 @@ class TestDeprecationWarnings:
         )
 
         captured = capsys.readouterr()
-        assert "Conflict" in captured.out
-        assert "--epic E-1" in captured.out
-        assert "--scope epic:E-2" in captured.out
-        assert "precedence" in captured.out
+        assert captured.out == ""
+        assert "Conflict" in captured.err
+        assert "--epic E-1" in captured.err
+        assert "--scope epic:E-2" in captured.err
+        assert "deprecated" in captured.err
 
     def test_only_emits_deprecation_warning(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--only T-1,T-2 emits warning suggesting --scope ids:T-1,T-2."""
+        """--only T-1,T-2 emits warning suggesting --scope ids:T-1,T-2 to stderr."""
         from src.cli.cli import _emit_deprecation_warnings
 
         _emit_deprecation_warnings(
@@ -2684,14 +2688,15 @@ class TestDeprecationWarnings:
         )
 
         captured = capsys.readouterr()
-        assert "Deprecation warning" in captured.out
-        assert "--only" in captured.out
-        assert "--scope ids:T-1,T-2" in captured.out
+        assert captured.out == ""
+        assert "Deprecation warning" in captured.err
+        assert "--only" in captured.err
+        assert "--scope ids:T-1,T-2" in captured.err
 
     def test_orphans_only_emits_deprecation_warning(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--orphans-only emits warning suggesting --scope orphans."""
+        """--orphans-only emits warning suggesting --scope orphans to stderr."""
         from src.cli.cli import _emit_deprecation_warnings
 
         _emit_deprecation_warnings(
@@ -2706,14 +2711,15 @@ class TestDeprecationWarnings:
         )
 
         captured = capsys.readouterr()
-        assert "Deprecation warning" in captured.out
-        assert "--orphans-only" in captured.out
-        assert "--scope orphans" in captured.out
+        assert captured.out == ""
+        assert "Deprecation warning" in captured.err
+        assert "--orphans-only" in captured.err
+        assert "--scope orphans" in captured.err
 
     def test_no_focus_emits_deprecation_warning(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--no-focus emits warning suggesting --order priority."""
+        """--no-focus emits warning suggesting --order priority to stderr."""
         from src.cli.cli import _emit_deprecation_warnings
 
         _emit_deprecation_warnings(
@@ -2728,9 +2734,10 @@ class TestDeprecationWarnings:
         )
 
         captured = capsys.readouterr()
-        assert "Deprecation warning" in captured.out
-        assert "--no-focus" in captured.out
-        assert "--order priority" in captured.out
+        assert captured.out == ""
+        assert "Deprecation warning" in captured.err
+        assert "--no-focus" in captured.err
+        assert "--order priority" in captured.err
 
     def test_no_warning_when_using_new_flags_only(
         self, capsys: pytest.CaptureFixture[str]
@@ -2750,14 +2757,13 @@ class TestDeprecationWarnings:
         )
 
         captured = capsys.readouterr()
-        assert "Deprecation" not in captured.out
-        assert "Redundant" not in captured.out
-        assert "Conflict" not in captured.out
+        assert captured.out == ""
+        assert captured.err == ""
 
     def test_multiple_deprecation_warnings(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Multiple old flags emit multiple warnings."""
+        """Multiple old flags emit multiple warnings to stderr."""
         from src.cli.cli import _emit_deprecation_warnings
 
         _emit_deprecation_warnings(
@@ -2772,8 +2778,10 @@ class TestDeprecationWarnings:
         )
 
         captured = capsys.readouterr()
-        assert captured.out.count("Deprecation warning") >= 3
-        assert "--wip" in captured.out
-        assert "--epic" in captured.out
-        assert "--orphans-only" in captured.out
-        assert "--no-focus" in captured.out
+        assert captured.out == ""
+        # Should have warnings for --wip, --epic, --orphans-only, --no-focus
+        assert captured.err.count("Deprecation warning") >= 3
+        assert "--wip" in captured.err
+        assert "--epic" in captured.err
+        assert "--orphans-only" in captured.err
+        assert "--no-focus" in captured.err

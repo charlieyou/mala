@@ -374,6 +374,11 @@ class ConfigOverrideResult:
         return self.error is not None
 
 
+def _warn_stderr(msg: str) -> None:
+    """Emit a warning message to stderr with yellow color and warning icon."""
+    print(f"{Colors.YELLOW}⚠ {msg}{Colors.RESET}", file=sys.stderr)
+
+
 def _emit_deprecation_warning(old_flag: str, new_flag: str) -> None:
     """Emit a deprecation warning to stderr for a deprecated CLI flag.
 
@@ -382,7 +387,7 @@ def _emit_deprecation_warning(old_flag: str, new_flag: str) -> None:
         new_flag: The recommended replacement flag (e.g., '--resume').
     """
     msg = f"Deprecation warning: '{old_flag}' is deprecated, use '{new_flag}' instead"
-    log("⚠", msg, Colors.YELLOW)
+    _warn_stderr(msg)
 
 
 def _emit_deprecation_warnings(
@@ -398,17 +403,15 @@ def _emit_deprecation_warnings(
 ) -> None:
     """Emit deprecation warnings for old CLI flags.
 
-    Warnings go to stderr via log() to avoid polluting stdout.
+    Warnings go to stderr to avoid polluting stdout.
     """
     # --wip → --resume
     if wip:
         if resume:
             # Both specified: redundancy warning
-            log(
-                "⚠",
+            _warn_stderr(
                 "Redundant flags: '--wip' and '--resume' both specified. "
-                "'--wip' is deprecated, use '--resume' alone.",
-                Colors.YELLOW,
+                "'--wip' is deprecated, use '--resume' alone."
             )
         else:
             _emit_deprecation_warning("--wip", "--resume")
@@ -417,12 +420,10 @@ def _emit_deprecation_warnings(
     if epic is not None:
         new_cmd = f"--scope epic:{epic}"
         if scope is not None and scope.startswith("epic:"):
-            # Conflict: --epic X --scope epic:Y → new flag wins
-            log(
-                "⚠",
+            # Conflict: both --epic and --scope epic: specified
+            _warn_stderr(
                 f"Conflict: '--epic {epic}' and '--scope {scope}' both specified. "
-                f"'--scope' takes precedence. '--epic' is deprecated.",
-                Colors.YELLOW,
+                f"'--epic' is deprecated, use '--scope' only."
             )
         else:
             _emit_deprecation_warning("--epic", new_cmd)
@@ -436,9 +437,9 @@ def _emit_deprecation_warnings(
     if orphans_only:
         _emit_deprecation_warning("--orphans-only", "--scope orphans")
 
-    # --focus/--no-focus → --order
-    # Note: focus defaults to True, so we warn only if explicitly set to non-default
-    # Since focus=True is default, warn only on --no-focus (focus=False).
+    # --no-focus → --order priority
+    # Note: focus defaults to True in typer, so we can only detect explicit --no-focus.
+    # Explicit --focus cannot be distinguished from the default value.
     if not focus:
         _emit_deprecation_warning("--no-focus", "--order priority")
 
