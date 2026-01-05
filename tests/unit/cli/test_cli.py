@@ -2693,6 +2693,30 @@ class TestDeprecationWarnings:
         assert "--only" in captured.err
         assert "--scope ids:T-1,T-2" in captured.err
 
+    def test_only_and_scope_conflict_emits_conflict_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--only X --scope ids:Y emits conflict warning to stderr."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic=None,
+            only="T-1,T-2",
+            orphans_only=False,
+            focus=True,
+            scope="ids:T-3,T-4",
+            order=None,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Conflict" in captured.err
+        assert "--only T-1,T-2" in captured.err
+        assert "--scope ids:T-3,T-4" in captured.err
+        assert "deprecated" in captured.err
+
     def test_orphans_only_emits_deprecation_warning(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -2715,6 +2739,30 @@ class TestDeprecationWarnings:
         assert "Deprecation warning" in captured.err
         assert "--orphans-only" in captured.err
         assert "--scope orphans" in captured.err
+
+    def test_orphans_only_and_scope_conflict_emits_conflict_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--orphans-only --scope orphans emits conflict warning to stderr."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic=None,
+            only=None,
+            orphans_only=True,
+            focus=True,
+            scope="orphans",
+            order=None,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Conflict" in captured.err
+        assert "--orphans-only" in captured.err
+        assert "--scope orphans" in captured.err
+        assert "deprecated" in captured.err
 
     def test_no_focus_emits_deprecation_warning(
         self, capsys: pytest.CaptureFixture[str]

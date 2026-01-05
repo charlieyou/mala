@@ -431,11 +431,25 @@ def _emit_deprecation_warnings(
     # --only → --scope ids:<ids>
     if only is not None:
         new_cmd = f"--scope ids:{only}"
-        _emit_deprecation_warning("--only", new_cmd)
+        if scope is not None and scope.startswith("ids:"):
+            # Conflict: both --only and --scope ids: specified
+            _warn_stderr(
+                f"Conflict: '--only {only}' and '--scope {scope}' both specified. "
+                f"'--only' is deprecated, use '--scope' only."
+            )
+        else:
+            _emit_deprecation_warning("--only", new_cmd)
 
     # --orphans-only → --scope orphans
     if orphans_only:
-        _emit_deprecation_warning("--orphans-only", "--scope orphans")
+        if scope is not None and scope == "orphans":
+            # Conflict: both --orphans-only and --scope orphans specified
+            _warn_stderr(
+                "Conflict: '--orphans-only' and '--scope orphans' both specified. "
+                "'--orphans-only' is deprecated, use '--scope' only."
+            )
+        else:
+            _emit_deprecation_warning("--orphans-only", "--scope orphans")
 
     # --no-focus → --order priority
     # Note: focus defaults to True in typer, so we can only detect explicit --no-focus.
@@ -1002,10 +1016,15 @@ def run(
     repo_path = repo_path.resolve()
 
     # Handle --scope option (new flag takes precedence over old flags)
+    # When --scope is specified, it fully overrides all deprecated scope flags
     scope_config: ScopeConfig | None = None
     if scope is not None:
         scope_config = parse_scope(scope)
-        # Apply scope_config to override old flags when --scope is used
+        # Clear all old scope flags first, then set the one from --scope
+        epic = None
+        only = None
+        orphans_only = False
+        # Apply scope_config value
         if scope_config.scope_type == "epic" and scope_config.epic_id is not None:
             epic = scope_config.epic_id
         elif scope_config.scope_type == "ids" and scope_config.ids is not None:
