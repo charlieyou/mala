@@ -23,7 +23,7 @@ from src.pipeline.review_formatter import format_review_issues
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.core.protocols import MalaEventSink
+    from src.core.protocols import MalaEventSink, ReviewIssueProtocol
     from src.domain.lifecycle import (
         GateOutcome,
         ImplementerLifecycle,
@@ -44,15 +44,16 @@ if TYPE_CHECKING:
 class SyntheticReviewOutcome:
     """A synthetic review outcome for no-progress scenarios.
 
-    This is a simple dataclass that satisfies the ReviewOutcome protocol
+    This is a simple dataclass that satisfies the ReviewResultProtocol
     used by the lifecycle state machine. It allows the pipeline to create
     synthetic failed reviews without importing from infra.clients.
     """
 
     passed: bool
-    issues: list  # list[ReviewIssue] but we use empty list
+    issues: list[ReviewIssueProtocol]
     parse_error: str | None = None
     fatal_error: bool = False
+    review_log_path: Path | None = None
 
 
 @dataclass

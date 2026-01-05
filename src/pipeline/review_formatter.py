@@ -4,8 +4,8 @@ This module provides formatting utilities for review issues that are used
 within the pipeline layer. This keeps the pipeline decoupled from infra
 client implementations.
 
-The formatter works with any object that satisfies the ReviewIssue protocol
-from src.domain.lifecycle.
+The formatter works with any object that satisfies ReviewIssueProtocol
+from src.core.protocols.
 """
 
 from __future__ import annotations
@@ -16,33 +16,30 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from src.domain.lifecycle import ReviewIssue
+    from src.core.protocols import ReviewIssueProtocol
 
 
-def _to_relative_path(file_path: str, base_path: Path | None = None) -> str:
+def _to_relative_path(file_path: str, resolved_base: Path) -> str:
     """Convert an absolute file path to a relative path for display.
 
     Strips the base path prefix to show paths relative to the repository root.
 
     Args:
         file_path: Absolute or relative file path.
-        base_path: Base path (typically repository root) for relativization.
-            If None, uses Path.cwd() as fallback.
+        resolved_base: Pre-resolved base path for relativization.
 
     Returns:
         Relative path suitable for display. If relativization fails,
         returns the original path to preserve directory context.
     """
     # If already relative, return as-is
-    if not file_path.startswith("/"):
+    if not Path(file_path).is_absolute():
         return file_path
 
-    # Use provided base_path or fall back to cwd
-    base = base_path.resolve() if base_path else Path.cwd()
     try:
         abs_path = Path(file_path)
-        if abs_path.is_relative_to(base):
-            return str(abs_path.relative_to(base))
+        if abs_path.is_relative_to(resolved_base):
+            return str(abs_path.relative_to(resolved_base))
     except (ValueError, OSError):
         pass
 
@@ -51,12 +48,12 @@ def _to_relative_path(file_path: str, base_path: Path | None = None) -> str:
 
 
 def format_review_issues(
-    issues: Sequence[ReviewIssue], base_path: Path | None = None
+    issues: Sequence[ReviewIssueProtocol], base_path: Path | None = None
 ) -> str:
     """Format review issues as a human-readable string for follow-up prompts.
 
     Args:
-        issues: Sequence of objects satisfying the ReviewIssue protocol.
+        issues: Sequence of objects satisfying ReviewIssueProtocol.
         base_path: Base path (typically repository root) for path relativization.
             If None, uses Path.cwd() as fallback.
 
@@ -65,6 +62,9 @@ def format_review_issues(
     """
     if not issues:
         return "No specific issues found."
+
+    # Resolve base_path once outside the loop (Finding 6)
+    resolved_base = base_path.resolve() if base_path else Path.cwd()
 
     lines: list[str] = []
     current_file: str | None = None
@@ -81,7 +81,7 @@ def format_review_issues(
 
     for issue in sorted_issues:
         # Convert absolute paths to relative for cleaner display
-        display_file = _to_relative_path(issue.file, base_path)
+        display_file = _to_relative_path(issue.file, resolved_base)
         if display_file != current_file:
             if current_file is not None:
                 lines.append("")  # Blank line between files
@@ -93,10 +93,12 @@ def format_review_issues(
             if issue.line_start != issue.line_end
             else f"L{issue.line_start}"
         )
-        # Include reviewer attribution
-        reviewer_tag = f"[{issue.reviewer}]" if issue.reviewer else ""
-        lines.append(f"  {loc}: {reviewer_tag} {issue.title}")
+        # Include reviewer attribution (Finding 7: no extra space when empty)
+        reviewer_tag = f"[{issue.reviewer}] " if issue.reviewer else ""
+        lines.append(f"  {loc}: {reviewer_tag}{issue.title}")
         if issue.body:
-            lines.append(f"    {issue.body}")
+            # Finding 4: Indent multi-line bodies properly
+            indented_body = issue.body.replace("\n", "\n    ")
+            lines.append(f"    {indented_body}")
 
     return "\n".join(lines)
