@@ -26,6 +26,7 @@ from src.domain.prompts import load_prompts
 from src.infra.tools.env import PROMPTS_DIR
 from src.infra.tools.command_runner import CommandRunner
 
+from src.core.models import OrderPreference
 from src.core.protocols import LogProvider
 from tests.fakes.issue_provider import FakeIssueProvider, FakeIssue
 
@@ -799,11 +800,12 @@ class TestLockDirNestedCreation:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             return []
 
@@ -1641,11 +1643,12 @@ class TestEpicClosureAfterChildCompletion:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1790,11 +1793,12 @@ class TestEpicClosureAfterChildCompletion:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal call_count
             call_count += 1
@@ -1890,11 +1894,12 @@ class TestEpicClosureAfterChildCompletion:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal call_count
             call_count += 1
@@ -2064,11 +2069,12 @@ class TestFailedRunQualityGateEvidence:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -2792,7 +2798,7 @@ class TestOrchestratorFactory:
             timeout_minutes=30,
             max_issues=10,
             epic_id="epic-123",
-            only_ids={"issue-1", "issue-2"},
+            only_ids=["issue-1", "issue-2"],
             max_gate_retries=5,
             max_review_retries=2,
             disable_validations={"coverage"},
@@ -2807,7 +2813,7 @@ class TestOrchestratorFactory:
         assert orchestrator.timeout_seconds == 30 * 60
         assert orchestrator.max_issues == 10
         assert orchestrator.epic_id == "epic-123"
-        assert orchestrator.only_ids == {"issue-1", "issue-2"}
+        assert orchestrator.only_ids == ["issue-1", "issue-2"]
         assert orchestrator.max_gate_retries == 5
         assert orchestrator.max_review_retries == 2
         assert orchestrator.coverage_threshold == 80.0

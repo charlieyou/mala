@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from src.orchestration.orchestrator import MalaOrchestrator
 
+from src.core.models import OrderPreference
 from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
 from src.orchestration.orchestrator import IssueResult
 from src.pipeline.run_coordinator import (
@@ -832,11 +833,12 @@ class TestRunLevelValidationIntegration:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -894,11 +896,12 @@ class TestRunLevelValidationIntegration:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -972,11 +975,12 @@ class TestRunLevelValidationIntegration:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal first_call
             if first_call:
@@ -1042,11 +1046,12 @@ class TestRunLevelValidationIntegration:
         async def mock_get_ready_async(
             exclude_ids: set[str] | None = None,
             epic_id: str | None = None,
-            only_ids: set[str] | None = None,
+            only_ids: list[str] | None = None,
             suppress_warn_ids: set[str] | None = None,
             prioritize_wip: bool = False,
             focus: bool = True,
             orphans_only: bool = False,
+            order_preference: OrderPreference = OrderPreference.FOCUS,
         ) -> list[str]:
             nonlocal first_call
             if first_call:

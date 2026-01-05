@@ -41,7 +41,6 @@ from .types import (
     _DerivedConfig,
 )
 
-# Re-export for backwards compatibility
 __all__ = [
     "DEFAULT_AGENT_TIMEOUT_MINUTES",
     "OrchestratorConfig",

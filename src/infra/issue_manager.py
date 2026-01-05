@@ -11,6 +11,8 @@ without mutating inputs.
 
 from __future__ import annotations
 
+from src.core.models import OrderPreference
+
 
 class IssueManager:
     """Pure domain logic for issue sorting and filtering.
@@ -82,7 +84,7 @@ class IssueManager:
         issues: list[dict[str, object]],
         exclude_ids: set[str],
         epic_children: set[str] | None,
-        only_ids: set[str] | None,
+        only_ids: list[str] | None,
     ) -> list[dict[str, object]]:
         """Apply filtering rules to issues.
 
@@ -95,19 +97,22 @@ class IssueManager:
         Args:
             issues: List of issue dicts to filter.
             exclude_ids: Set of issue IDs to exclude.
-            epic_children: If set, only include issues in this set.
-            only_ids: If set, only include issues in this set.
+            epic_children: If provided, only include issues in this set.
+            only_ids: If provided, only include issues in this list.
 
         Returns:
             Filtered list of issues.
         """
+        # Convert only_ids list to set for O(1) membership lookup
+        only_id_set = set(only_ids) if only_ids is not None else None
+
         return [
             i
             for i in issues
             if str(i["id"]) not in exclude_ids
             and i.get("issue_type") != "epic"
             and (epic_children is None or str(i["id"]) in epic_children)
-            and (only_ids is None or str(i["id"]) in only_ids)
+            and (only_id_set is None or str(i["id"]) in only_id_set)
         ]
 
     @staticmethod
@@ -196,14 +201,21 @@ class IssueManager:
 
     @staticmethod
     def sort_issues(
-        issues: list[dict[str, object]], focus: bool, prioritize_wip: bool
+        issues: list[dict[str, object]],
+        focus: bool,
+        prioritize_wip: bool,
+        only_ids: list[str] | None = None,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
     ) -> list[dict[str, object]]:
-        """Sort issues by focus mode vs priority.
+        """Sort issues by order_preference (authoritative over focus flag).
 
         Args:
             issues: List of issue dicts to sort.
-            focus: If True, group by parent epic and sort by epic groups.
-            prioritize_wip: If True, put in_progress issues first.
+            focus: Legacy flag (ignored when order_preference is set explicitly).
+            prioritize_wip: If True, put in_progress issues first (ignored for INPUT order).
+            only_ids: Optional list of issue IDs for input order preservation.
+            order_preference: Issue ordering preference (focus, priority, or input).
+                This is the authoritative source of truth for ordering.
 
         Returns:
             Sorted list of issue dicts.
@@ -211,11 +223,22 @@ class IssueManager:
         if not issues:
             return issues
 
-        result = (
-            IssueManager.sort_by_epic_groups(list(issues))
-            if focus
-            else sorted(issues, key=lambda i: i.get("priority") or 0)
-        )
+        # INPUT order: preserve user-specified order from only_ids
+        # Note: prioritize_wip is ignored for INPUT order to preserve exact user order
+        if order_preference == OrderPreference.INPUT and only_ids:
+            # Create index map for O(1) lookup
+            id_order = {id_: idx for idx, id_ in enumerate(only_ids)}
+            return sorted(
+                issues,
+                key=lambda i: id_order.get(str(i["id"]), len(only_ids)),
+            )
+
+        # order_preference is authoritative - PRIORITY uses priority sort, FOCUS uses epic groups
+        if order_preference == OrderPreference.PRIORITY:
+            result = sorted(issues, key=lambda i: i.get("priority") or 0)
+        else:
+            # FOCUS order (default): group by epic
+            result = IssueManager.sort_by_epic_groups(list(issues))
 
         if prioritize_wip:
             return sorted(
@@ -225,14 +248,14 @@ class IssueManager:
 
     @staticmethod
     def find_missing_ids(
-        only_ids: set[str] | None,
+        only_ids: list[str] | None,
         issues: list[dict[str, object]],
         suppress_ids: set[str],
     ) -> set[str]:
         """Find IDs from only_ids that are not in issues.
 
         Args:
-            only_ids: Set of expected issue IDs (None means no filtering).
+            only_ids: List of expected issue IDs (None means no filtering).
             issues: List of issue dicts to check against.
             suppress_ids: IDs to exclude from the missing set.
 
@@ -241,7 +264,7 @@ class IssueManager:
         """
         if not only_ids:
             return set()
-        return only_ids - {str(i["id"]) for i in issues} - suppress_ids
+        return set(only_ids) - {str(i["id"]) for i in issues} - suppress_ids
 
     @staticmethod
     def filter_orphans_only(

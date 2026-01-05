@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from collections.abc import Callable
 from pathlib import Path
 
+from src.core.models import OrderPreference
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
     from types import TracebackType
@@ -464,22 +466,24 @@ class IssueProvider(Protocol):
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
     ) -> list[str]:
         """Get list of ready issue IDs, sorted by priority.
 
         Args:
             exclude_ids: Set of issue IDs to exclude from results.
             epic_id: Optional epic ID to filter by - only return children.
-            only_ids: Optional set of issue IDs to include exclusively.
+            only_ids: Optional list of issue IDs to include exclusively.
             suppress_warn_ids: Set of issue IDs to suppress from warnings.
             prioritize_wip: If True, sort in_progress issues first.
             focus: If True, group tasks by parent epic.
             orphans_only: If True, only return issues with no parent epic.
+            order_preference: Issue ordering preference (focus, priority, or input).
 
         Returns:
             List of issue IDs sorted by priority (lower = higher priority).

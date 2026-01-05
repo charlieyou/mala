@@ -327,7 +327,7 @@ def test_run_success_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     # Check OrchestratorConfig passed to create_orchestrator
     orch_config = DummyOrchestrator.last_orch_config
     assert orch_config is not None
-    assert orch_config.only_ids == {"id-1", "id-2"}
+    assert orch_config.only_ids == ["id-1", "id-2"]
     # review_timeout is passed via cli_args for logging/metadata
     assert orch_config.cli_args["review_timeout"] == 600
     # Check MalaConfig
@@ -746,10 +746,10 @@ def test_status_all_flag(
     assert "max-agents: unlimited" in output
 
 
-def test_run_disable_validations_valid(
+def test_run_disable_valid_comma_separated(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that valid --disable-validations values are accepted and passed to orchestrator."""
+    """Test that comma-separated --disable values work (backward compat)."""
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"
@@ -766,7 +766,7 @@ def test_run_disable_validations_valid(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations="coverage,integration-tests,e2e",
+            disable=["coverage,integration-tests,e2e"],
         )
 
     assert excinfo.value.exit_code == 0
@@ -778,10 +778,42 @@ def test_run_disable_validations_valid(
     }
 
 
-def test_run_disable_validations_invalid_value(
+def test_run_disable_valid_repeatable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that unknown --disable-validations values produce a clear CLI error."""
+    """Test that repeatable --disable values work."""
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            disable=["coverage", "integration-tests", "e2e"],
+        )
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_orch_config is not None
+    assert DummyOrchestrator.last_orch_config.disable_validations == {
+        "coverage",
+        "integration-tests",
+        "e2e",
+    }
+
+
+def test_run_disable_invalid_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that unknown --disable values produce a clear CLI error."""
     cli = _reload_cli(monkeypatch)
 
     logs: list[tuple[object, ...]] = []
@@ -797,41 +829,45 @@ def test_run_disable_validations_invalid_value(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations="coverage,invalid-value,bad-option",
+            disable=["coverage", "invalid-value", "bad-option"],
         )
 
     assert excinfo.value.exit_code == 1
     assert logs
     # Check error message mentions the unknown values
     error_msg = str(logs[-1])
-    assert "Unknown --disable-validations" in error_msg
+    assert "Unknown --disable" in error_msg
     assert "bad-option" in error_msg
     assert "invalid-value" in error_msg
 
 
-def test_run_disable_validations_empty_value(
+def test_run_disable_empty_value_treated_as_none(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that empty --disable-validations value produces error."""
+    """Test that empty --disable value is treated as None (no disable)."""
     cli = _reload_cli(monkeypatch)
-
-    logs: list[tuple[object, ...]] = []
-
-    def _log(*args: object, **_kwargs: object) -> None:
-        logs.append(args)
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "log", _log)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations=" , , ",
+            disable=[" , , "],
         )
 
-    assert excinfo.value.exit_code == 1
+    # Empty values normalize to None, which is valid
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_orch_config is not None
+    assert DummyOrchestrator.last_orch_config.disable_validations is None
 
 
 def test_run_validation_flags_passed_to_orchestrator(
@@ -854,7 +890,7 @@ def test_run_validation_flags_passed_to_orchestrator(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations="post-validate",
+            disable=["post-validate"],
             coverage_threshold=72.5,
         )
 
@@ -890,31 +926,6 @@ def test_run_validation_flags_defaults(
     assert DummyOrchestrator.last_orch_config.coverage_threshold is None
     assert DummyOrchestrator.last_orch_config.prioritize_wip is False
     assert DummyOrchestrator.last_orch_config.focus is True
-
-
-def test_run_wip_flag_passed_to_orchestrator(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Test that --wip flag is correctly passed to orchestrator."""
-    cli = _reload_cli(monkeypatch)
-
-    config_dir = tmp_path / "config"
-    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestration.factory
-
-    monkeypatch.setattr(
-        src.orchestration.factory,
-        "create_orchestrator",
-        _make_dummy_create_orchestrator(),
-    )
-    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
-
-    with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, wip=True)
-
-    assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_orch_config is not None
-    assert DummyOrchestrator.last_orch_config.prioritize_wip is True
 
 
 def test_run_focus_flag_default_true(
@@ -967,10 +978,10 @@ def test_run_no_focus_flag_passed_to_orchestrator(
     assert DummyOrchestrator.last_orch_config.focus is False
 
 
-def test_run_focus_composes_with_wip(
+def test_run_focus_composes_with_resume(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that --focus and --wip flags compose correctly."""
+    """Test that --focus and --resume flags compose correctly."""
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"
@@ -985,7 +996,7 @@ def test_run_focus_composes_with_wip(
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, focus=True, wip=True)
+        cli.run(repo_path=tmp_path, focus=True, resume=True)
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
@@ -993,10 +1004,56 @@ def test_run_focus_composes_with_wip(
     assert DummyOrchestrator.last_orch_config.prioritize_wip is True
 
 
-def test_run_review_disabled_via_disable_validations(
+@pytest.mark.parametrize(
+    "flag",
+    ["--resume", "-r", "--wip"],
+    ids=["resume_long", "resume_short", "wip_alias"],
+)
+def test_run_resume_flags_set_prioritize_wip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, flag: str
+) -> None:
+    """Test that --resume, -r, and --wip all set prioritize_wip=True via CLI parsing."""
+    from typer.testing import CliRunner
+
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", str(tmp_path), flag])
+
+    assert result.exit_code == 0
+    assert DummyOrchestrator.last_orch_config is not None
+    assert DummyOrchestrator.last_orch_config.prioritize_wip is True
+
+
+def test_run_wip_hidden_from_help(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that --wip is hidden from --help output (--resume is the public name)."""
+    from typer.testing import CliRunner
+
+    cli = _reload_cli(monkeypatch)
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", "--help"])
+
+    # --resume should be visible
+    assert "--resume" in result.output
+    # --wip should be hidden
+    assert "--wip" not in result.output
+
+
+def test_run_review_disabled_via_disable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that review can be disabled via --disable-validations=review."""
+    """Test that review can be disabled via --disable review."""
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"
@@ -1013,7 +1070,7 @@ def test_run_review_disabled_via_disable_validations(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations="review",
+            disable=["review"],
         )
 
     assert excinfo.value.exit_code == 0
@@ -1021,7 +1078,7 @@ def test_run_review_disabled_via_disable_validations(
     assert DummyOrchestrator.last_orch_config.disable_validations == {"review"}
 
 
-def test_disable_validations_legacy_codex_value_rejected(
+def test_disable_legacy_codex_value_rejected(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Test that legacy codex-review value is rejected (use 'review' instead)."""
@@ -1040,12 +1097,12 @@ def test_disable_validations_legacy_codex_value_rejected(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            disable_validations="codex-review",
+            disable=["codex-review"],
         )
 
     assert excinfo.value.exit_code == 1
     error_msg = str(logs[-1])
-    assert "Unknown --disable-validations" in error_msg
+    assert "Unknown --disable" in error_msg
     assert "codex-review" in error_msg
 
 
@@ -1107,10 +1164,8 @@ def test_run_review_timeout_custom(
     assert config.review_timeout == 600
 
 
-def test_run_cerberus_overrides(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Test that Cerberus CLI overrides apply to config and cli_args."""
+def test_run_review_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that --review-* CLI options apply to config and cli_args."""
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"
@@ -1127,9 +1182,9 @@ def test_run_cerberus_overrides(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            cerberus_spawn_args="--foo bar --flag",
-            cerberus_wait_args="--baz qux",
-            cerberus_env="FOO=bar,BAZ=qux",
+            review_spawn_args="--foo bar --flag",
+            review_wait_args="--baz qux",
+            review_env="FOO=bar,BAZ=qux",
         )
 
     assert excinfo.value.exit_code == 0
@@ -1141,9 +1196,101 @@ def test_run_cerberus_overrides(
     assert dict(config.cerberus_env) == {"FOO": "bar", "BAZ": "qux"}
 
     cli_args = DummyOrchestrator.last_orch_config.cli_args
-    assert cli_args["cerberus_spawn_args"] == ["--foo", "bar", "--flag"]
-    assert cli_args["cerberus_wait_args"] == ["--baz", "qux"]
-    assert cli_args["cerberus_env"] == {"FOO": "bar", "BAZ": "qux"}
+    assert cli_args["review_spawn_args"] == ["--foo", "bar", "--flag"]
+    assert cli_args["review_wait_args"] == ["--baz", "qux"]
+    assert cli_args["review_env"] == {"FOO": "bar", "BAZ": "qux"}
+
+
+def test_run_cerberus_aliases_backward_compatible(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that hidden --cerberus-* aliases still work for backward compatibility."""
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            cerberus_spawn_args="--model opus",
+            cerberus_wait_args="--poll 5",
+            cerberus_env="KEY=value",
+        )
+
+    assert excinfo.value.exit_code == 0
+    config = DummyOrchestrator.last_mala_config
+    assert config.cerberus_spawn_args == ("--model", "opus")
+    assert config.cerberus_wait_args == ("--poll", "5")
+    assert dict(config.cerberus_env) == {"KEY": "value"}
+
+
+def test_run_review_options_take_precedence_over_cerberus(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --review-* options take precedence when both are specified."""
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            review_spawn_args="--new-flag",
+            cerberus_spawn_args="--old-flag",
+        )
+
+    assert excinfo.value.exit_code == 0
+    config = DummyOrchestrator.last_mala_config
+    # --review-* should win
+    assert config.cerberus_spawn_args == ("--new-flag",)
+
+
+def test_run_review_empty_string_takes_precedence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --review-spawn-args="" clears the value even if cerberus alias has value."""
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            review_spawn_args="",  # Explicit empty string to clear
+            cerberus_spawn_args="--should-be-ignored",
+        )
+
+    assert excinfo.value.exit_code == 0
+    config = DummyOrchestrator.last_mala_config
+    # Empty string should take precedence, resulting in empty tuple
+    assert config.cerberus_spawn_args == ()
 
 
 def test_run_no_codex_thinking_mode_flag(
@@ -1389,13 +1536,13 @@ def test_dry_run_passes_flags_to_beads_client(
             dry_run=True,
             epic="test-epic",
             only="id-1,id-2",
-            wip=True,
+            resume=True,
             focus=False,
         )
 
     assert DummyBeadsClient.last_kwargs is not None
     assert DummyBeadsClient.last_kwargs["epic_id"] == "test-epic"
-    assert DummyBeadsClient.last_kwargs["only_ids"] == {"id-1", "id-2"}
+    assert DummyBeadsClient.last_kwargs["only_ids"] == ["id-1", "id-2"]
     assert DummyBeadsClient.last_kwargs["prioritize_wip"] is True
     assert DummyBeadsClient.last_kwargs["focus"] is False
 
@@ -1537,6 +1684,8 @@ class TestHandleDryRun:
             src.orchestration.cli_support, "BeadsClient", MockBeadsClient
         )
 
+        from src.core.models import OrderPreference
+
         with pytest.raises(typer.Exit) as excinfo:
             cli._handle_dry_run(
                 repo_path=tmp_path,
@@ -1545,6 +1694,7 @@ class TestHandleDryRun:
                 wip=False,
                 focus=False,
                 orphans_only=False,
+                order_preference=OrderPreference.FOCUS,
             )
 
         assert excinfo.value.exit_code == 0
@@ -1563,22 +1713,26 @@ class TestHandleDryRun:
             src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
         )
 
+        from src.core.models import OrderPreference
+
         with pytest.raises(typer.Exit):
             cli._handle_dry_run(
                 repo_path=tmp_path,
                 epic="my-epic",
-                only_ids={"id-1", "id-2"},
+                only_ids=["id-1", "id-2"],
                 wip=True,
                 focus=True,
                 orphans_only=True,
+                order_preference=OrderPreference.FOCUS,
             )
 
         assert DummyBeadsClient.last_kwargs is not None
         assert DummyBeadsClient.last_kwargs["epic_id"] == "my-epic"
-        assert DummyBeadsClient.last_kwargs["only_ids"] == {"id-1", "id-2"}
+        assert DummyBeadsClient.last_kwargs["only_ids"] == ["id-1", "id-2"]
         assert DummyBeadsClient.last_kwargs["prioritize_wip"] is True
         assert DummyBeadsClient.last_kwargs["focus"] is True
         assert DummyBeadsClient.last_kwargs["orphans_only"] is True
+        assert DummyBeadsClient.last_kwargs["order_preference"] == OrderPreference.FOCUS
 
     def test_calls_display_dry_run_tasks(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1602,6 +1756,8 @@ class TestHandleDryRun:
         )
         monkeypatch.setattr(cli, "display_dry_run_tasks", mock_display)
 
+        from src.core.models import OrderPreference
+
         with pytest.raises(typer.Exit):
             cli._handle_dry_run(
                 repo_path=tmp_path,
@@ -1610,6 +1766,7 @@ class TestHandleDryRun:
                 wip=False,
                 focus=True,
                 orphans_only=False,
+                order_preference=OrderPreference.FOCUS,
             )
 
         assert captured_issues == mock_issues
@@ -1618,13 +1775,15 @@ class TestHandleDryRun:
     def test_raises_typer_exit_zero(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """_handle_dry_run always raises typer.Exit(0)."""
+        """_handle_dry_run defaults to Exit(0) when fail_on_empty is False."""
         cli = _reload_cli(monkeypatch)
 
         DummyBeadsClient.issues_to_return = []
         monkeypatch.setattr(
             src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
         )
+
+        from src.core.models import OrderPreference
 
         with pytest.raises(typer.Exit) as excinfo:
             cli._handle_dry_run(
@@ -1634,6 +1793,61 @@ class TestHandleDryRun:
                 wip=False,
                 focus=False,
                 orphans_only=False,
+                order_preference=OrderPreference.FOCUS,
+            )
+
+        assert excinfo.value.exit_code == 0
+
+    def test_fail_on_empty_exits_one_when_no_issues(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """_handle_dry_run exits with code 1 when fail_on_empty=True and no issues."""
+        cli = _reload_cli(monkeypatch)
+
+        DummyBeadsClient.issues_to_return = []
+        monkeypatch.setattr(
+            src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
+        )
+
+        from src.core.models import OrderPreference
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cli._handle_dry_run(
+                repo_path=tmp_path,
+                epic=None,
+                only_ids=None,
+                wip=False,
+                focus=False,
+                orphans_only=False,
+                order_preference=OrderPreference.FOCUS,
+                fail_on_empty=True,
+            )
+
+        assert excinfo.value.exit_code == 1
+
+    def test_fail_on_empty_exits_zero_when_issues_found(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """_handle_dry_run exits with code 0 when fail_on_empty=True and issues exist."""
+        cli = _reload_cli(monkeypatch)
+
+        DummyBeadsClient.issues_to_return = [{"id": "issue-1"}]
+        monkeypatch.setattr(
+            src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
+        )
+
+        from src.core.models import OrderPreference
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cli._handle_dry_run(
+                repo_path=tmp_path,
+                epic=None,
+                only_ids=None,
+                wip=False,
+                focus=False,
+                orphans_only=False,
+                order_preference=OrderPreference.FOCUS,
+                fail_on_empty=True,
             )
 
         assert excinfo.value.exit_code == 0
@@ -1653,15 +1867,15 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             only="issue-1, issue-2",
-            disable_validations="coverage, e2e",
+            disable=["coverage, e2e"],
             coverage_threshold=80.0,
             epic=None,
             orphans_only=False,
-            epic_override="epic-a, epic-b",
+            epic_override=["epic-a, epic-b"],
             repo_path=tmp_path,
         )
 
-        assert result.only_ids == {"issue-1", "issue-2"}
+        assert result.only_ids == ["issue-1", "issue-2"]
         assert result.disable_set == {"coverage", "e2e"}
         assert result.epic_override_ids == {"epic-a", "epic-b"}
 
@@ -1671,7 +1885,7 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             only=None,
-            disable_validations=None,
+            disable=None,
             coverage_threshold=None,
             epic=None,
             orphans_only=False,
@@ -1690,7 +1904,7 @@ class TestValidateRunArgs:
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 only="  ,  ,  ",
-                disable_validations=None,
+                disable=None,
                 coverage_threshold=None,
                 epic=None,
                 orphans_only=False,
@@ -1699,32 +1913,30 @@ class TestValidateRunArgs:
             )
         assert excinfo.value.exit_code == 1
 
-    def test_invalid_disable_validations_empty_raises_exit(
-        self, tmp_path: Path
-    ) -> None:
-        """Empty --disable-validations value raises Exit(1)."""
+    def test_empty_disable_treated_as_none(self, tmp_path: Path) -> None:
+        """Empty --disable value is treated as None (no disable)."""
+        from src.cli.cli import _validate_run_args
+
+        result = _validate_run_args(
+            only=None,
+            disable=["  ,  "],
+            coverage_threshold=None,
+            epic=None,
+            orphans_only=False,
+            epic_override=None,
+            repo_path=tmp_path,
+        )
+        # Empty values normalize to None
+        assert result.disable_set is None
+
+    def test_unknown_disable_value_raises_exit(self, tmp_path: Path) -> None:
+        """Unknown --disable value raises Exit(1)."""
         from src.cli.cli import _validate_run_args
 
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 only=None,
-                disable_validations="  ,  ",
-                coverage_threshold=None,
-                epic=None,
-                orphans_only=False,
-                epic_override=None,
-                repo_path=tmp_path,
-            )
-        assert excinfo.value.exit_code == 1
-
-    def test_unknown_disable_validation_value_raises_exit(self, tmp_path: Path) -> None:
-        """Unknown --disable-validations value raises Exit(1)."""
-        from src.cli.cli import _validate_run_args
-
-        with pytest.raises(typer.Exit) as excinfo:
-            _validate_run_args(
-                only=None,
-                disable_validations="coverage, unknown-value",
+                disable=["coverage", "unknown-value"],
                 coverage_threshold=None,
                 epic=None,
                 orphans_only=False,
@@ -1740,7 +1952,7 @@ class TestValidateRunArgs:
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 only=None,
-                disable_validations=None,
+                disable=None,
                 coverage_threshold=-5.0,
                 epic=None,
                 orphans_only=False,
@@ -1756,7 +1968,7 @@ class TestValidateRunArgs:
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 only=None,
-                disable_validations=None,
+                disable=None,
                 coverage_threshold=150.0,
                 epic=None,
                 orphans_only=False,
@@ -1772,7 +1984,7 @@ class TestValidateRunArgs:
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 only=None,
-                disable_validations=None,
+                disable=None,
                 coverage_threshold=None,
                 epic="some-epic",
                 orphans_only=True,
@@ -1781,21 +1993,21 @@ class TestValidateRunArgs:
             )
         assert excinfo.value.exit_code == 1
 
-    def test_invalid_epic_override_empty_raises_exit(self, tmp_path: Path) -> None:
-        """Empty --epic-override value raises Exit(1)."""
+    def test_empty_epic_override_treated_as_empty_set(self, tmp_path: Path) -> None:
+        """Empty --epic-override value is treated as empty set."""
         from src.cli.cli import _validate_run_args
 
-        with pytest.raises(typer.Exit) as excinfo:
-            _validate_run_args(
-                only=None,
-                disable_validations=None,
-                coverage_threshold=None,
-                epic=None,
-                orphans_only=False,
-                epic_override="  ,  ,  ",
-                repo_path=tmp_path,
-            )
-        assert excinfo.value.exit_code == 1
+        result = _validate_run_args(
+            only=None,
+            disable=None,
+            coverage_threshold=None,
+            epic=None,
+            orphans_only=False,
+            epic_override=["  ,  ,  "],
+            repo_path=tmp_path,
+        )
+        # Empty values normalize to empty set
+        assert result.epic_override_ids == set()
 
     def test_nonexistent_repo_path_raises_exit(self, tmp_path: Path) -> None:
         """Non-existent repo_path raises Exit(1)."""
@@ -1805,7 +2017,7 @@ class TestValidateRunArgs:
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 only=None,
-                disable_validations=None,
+                disable=None,
                 coverage_threshold=None,
                 epic=None,
                 orphans_only=False,
@@ -1820,7 +2032,7 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             only=None,
-            disable_validations=None,
+            disable=None,
             coverage_threshold=0.0,
             epic=None,
             orphans_only=False,
@@ -1836,7 +2048,7 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             only=None,
-            disable_validations=None,
+            disable=None,
             coverage_threshold=100.0,
             epic=None,
             orphans_only=False,
@@ -1845,6 +2057,52 @@ class TestValidateRunArgs:
         )
         # No exception raised
         assert result.only_ids is None
+
+    def test_repeatable_disable_values(self, tmp_path: Path) -> None:
+        """Repeatable --disable values work correctly."""
+        from src.cli.cli import _validate_run_args
+
+        result = _validate_run_args(
+            only=None,
+            disable=["coverage", "review", "e2e"],
+            coverage_threshold=None,
+            epic=None,
+            orphans_only=False,
+            epic_override=None,
+            repo_path=tmp_path,
+        )
+        assert result.disable_set == {"coverage", "review", "e2e"}
+
+    def test_repeatable_epic_override_values(self, tmp_path: Path) -> None:
+        """Repeatable --epic-override values work correctly."""
+        from src.cli.cli import _validate_run_args
+
+        result = _validate_run_args(
+            only=None,
+            disable=None,
+            coverage_threshold=None,
+            epic=None,
+            orphans_only=False,
+            epic_override=["epic-1", "epic-2"],
+            repo_path=tmp_path,
+        )
+        assert result.epic_override_ids == {"epic-1", "epic-2"}
+
+    def test_mixed_comma_and_repeatable(self, tmp_path: Path) -> None:
+        """Mixed comma-separated and repeatable values work correctly."""
+        from src.cli.cli import _validate_run_args
+
+        result = _validate_run_args(
+            only=None,
+            disable=["coverage,review", "e2e"],
+            coverage_threshold=None,
+            epic=None,
+            orphans_only=False,
+            epic_override=["epic-1,epic-2", "epic-3"],
+            repo_path=tmp_path,
+        )
+        assert result.disable_set == {"coverage", "review", "e2e"}
+        assert result.epic_override_ids == {"epic-1", "epic-2", "epic-3"}
 
 
 # ============================================================================
@@ -2164,3 +2422,491 @@ class TestApplyConfigOverrides:
 
         assert result.updated_config is not None
         assert result.updated_config.deadlock_detection_enabled is False
+
+
+# ============================================================================
+# Tests for --scope option and parse_scope function
+# ============================================================================
+
+
+class TestParseScope:
+    """Tests for the parse_scope function."""
+
+    def test_parse_scope_all(self) -> None:
+        """Test that 'all' scope returns ScopeConfig with scope_type='all'."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("all")
+        assert result.scope_type == "all"
+        assert result.ids is None
+        assert result.epic_id is None
+
+    def test_parse_scope_all_with_whitespace(self) -> None:
+        """Test that 'all' scope handles leading/trailing whitespace."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("  all  ")
+        assert result.scope_type == "all"
+
+    def test_parse_scope_orphans(self) -> None:
+        """Test that 'orphans' scope returns ScopeConfig with scope_type='orphans'."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("orphans")
+        assert result.scope_type == "orphans"
+        assert result.ids is None
+        assert result.epic_id is None
+
+    def test_parse_scope_epic(self) -> None:
+        """Test that 'epic:<id>' scope parses correctly."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("epic:E-123")
+        assert result.scope_type == "epic"
+        assert result.epic_id == "E-123"
+        assert result.ids is None
+
+    def test_parse_scope_epic_with_whitespace(self) -> None:
+        """Test that 'epic:<id>' scope handles whitespace around ID."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("epic:  E-123  ")
+        assert result.scope_type == "epic"
+        assert result.epic_id == "E-123"
+
+    def test_parse_scope_epic_empty_id_raises_exit(self) -> None:
+        """Test that 'epic:' with no ID raises Exit(1)."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("epic:")
+        assert excinfo.value.exit_code == 1
+
+    def test_parse_scope_epic_whitespace_only_id_raises_exit(self) -> None:
+        """Test that 'epic:   ' with whitespace-only ID raises Exit(1)."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("epic:   ")
+        assert excinfo.value.exit_code == 1
+
+    def test_parse_scope_ids_single(self) -> None:
+        """Test that 'ids:<id>' with single ID parses correctly."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("ids:T-1")
+        assert result.scope_type == "ids"
+        assert result.ids == ["T-1"]
+        assert result.epic_id is None
+
+    def test_parse_scope_ids_multiple(self) -> None:
+        """Test that 'ids:<id1>,<id2>,<id3>' parses correctly with order preserved."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("ids:T-1,T-2,T-3")
+        assert result.scope_type == "ids"
+        assert result.ids == ["T-1", "T-2", "T-3"]
+
+    def test_parse_scope_ids_with_whitespace(self) -> None:
+        """Test that 'ids:' handles whitespace around IDs."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("ids:  T-1  ,  T-2  ,  T-3  ")
+        assert result.scope_type == "ids"
+        assert result.ids == ["T-1", "T-2", "T-3"]
+
+    def test_parse_scope_ids_deduplicates_with_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Test that 'ids:' deduplicates IDs and emits warning."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("ids:T-1,T-1,T-2")
+        assert result.scope_type == "ids"
+        assert result.ids == ["T-1", "T-2"]  # T-1 deduplicated
+
+        captured = capsys.readouterr()
+        assert "Duplicate IDs removed" in captured.out
+        assert "T-1" in captured.out
+
+    def test_parse_scope_ids_deduplicates_preserves_first_occurrence(self) -> None:
+        """Test that deduplication preserves first occurrence order."""
+        from src.cli.cli import parse_scope
+
+        result = parse_scope("ids:T-3,T-1,T-2,T-1,T-3")
+        assert result.ids == ["T-3", "T-1", "T-2"]  # First occurrences only
+
+    def test_parse_scope_ids_empty_raises_exit(self) -> None:
+        """Test that 'ids:' with no IDs raises Exit(1)."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("ids:")
+        assert excinfo.value.exit_code == 1
+
+    def test_parse_scope_ids_whitespace_only_raises_exit(self) -> None:
+        """Test that 'ids:   ' with whitespace-only raises Exit(1)."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("ids:   ")
+        assert excinfo.value.exit_code == 1
+
+    def test_parse_scope_ids_empty_between_commas_raises_exit(self) -> None:
+        """Test that 'ids:,,' with empty entries raises Exit(1)."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("ids:, , ,")
+        assert excinfo.value.exit_code == 1
+
+    def test_parse_scope_invalid_format_raises_exit(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Test that invalid scope format raises Exit(1) with helpful message."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("invalid:xyz")
+        assert excinfo.value.exit_code == 1
+
+        captured = capsys.readouterr()
+        assert "Invalid --scope value" in captured.out
+        assert "invalid:xyz" in captured.out
+        assert "Valid formats:" in captured.out
+
+    def test_parse_scope_unknown_keyword_raises_exit(self) -> None:
+        """Test that unknown scope keyword raises Exit(1)."""
+        from src.cli.cli import parse_scope
+
+        with pytest.raises(typer.Exit) as excinfo:
+            parse_scope("unknown")
+        assert excinfo.value.exit_code == 1
+
+    def test_scope_config_dataclass_fields(self) -> None:
+        """Test that ScopeConfig dataclass has expected fields and defaults."""
+        from src.cli.cli import ScopeConfig
+
+        # Default values
+        config = ScopeConfig()
+        assert config.scope_type == "all"
+        assert config.ids is None
+        assert config.epic_id is None
+
+        # With all fields
+        config_full = ScopeConfig(scope_type="ids", ids=["T-1", "T-2"], epic_id=None)
+        assert config_full.scope_type == "ids"
+        assert config_full.ids == ["T-1", "T-2"]
+
+
+class TestDeprecationWarnings:
+    """Tests for deprecation warning emission on old CLI flags (to stderr)."""
+
+    def test_wip_emits_deprecation_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--wip alone emits warning suggesting --resume to stderr."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=True,
+            resume=False,
+            epic=None,
+            only=None,
+            orphans_only=False,
+            focus=True,
+            scope=None,
+            order=None,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""  # stdout stays clean
+        assert "Deprecation warning" in captured.err
+        assert "--wip" in captured.err
+        assert "--resume" in captured.err
+
+    def test_wip_and_resume_emits_redundancy_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--wip --resume together emits redundancy warning to stderr."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=True,
+            resume=True,
+            epic=None,
+            only=None,
+            orphans_only=False,
+            focus=True,
+            scope=None,
+            order=None,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Redundant" in captured.err
+        assert "--wip" in captured.err
+        assert "--resume" in captured.err
+
+    def test_epic_emits_deprecation_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--epic E-123 emits warning suggesting --scope epic:E-123 to stderr."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic="E-123",
+            only=None,
+            orphans_only=False,
+            focus=True,
+            scope=None,
+            order=None,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Deprecation warning" in captured.err
+        assert "--epic" in captured.err
+        assert "--scope epic:E-123" in captured.err
+
+    def test_epic_and_scope_conflict_emits_conflict_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--epic E-1 --scope epic:E-2 emits conflict warning to stderr."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic="E-1",
+            only=None,
+            orphans_only=False,
+            focus=True,
+            scope="epic:E-2",
+            order=None,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Conflict" in captured.err
+        assert "--epic E-1" in captured.err
+        assert "--scope epic:E-2" in captured.err
+        assert "deprecated" in captured.err
+
+    def test_only_emits_deprecation_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--only T-1,T-2 emits warning suggesting --scope ids:T-1,T-2 to stderr."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic=None,
+            only="T-1,T-2",
+            orphans_only=False,
+            focus=True,
+            scope=None,
+            order=None,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Deprecation warning" in captured.err
+        assert "--only" in captured.err
+        assert "--scope ids:T-1,T-2" in captured.err
+
+    def test_only_and_scope_conflict_emits_conflict_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--only X --scope ids:Y emits conflict warning to stderr."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic=None,
+            only="T-1,T-2",
+            orphans_only=False,
+            focus=True,
+            scope="ids:T-3,T-4",
+            order=None,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Conflict" in captured.err
+        assert "--only T-1,T-2" in captured.err
+        assert "--scope ids:T-3,T-4" in captured.err
+        assert "deprecated" in captured.err
+
+    def test_orphans_only_emits_deprecation_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--orphans-only emits warning suggesting --scope orphans to stderr."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic=None,
+            only=None,
+            orphans_only=True,
+            focus=True,
+            scope=None,
+            order=None,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Deprecation warning" in captured.err
+        assert "--orphans-only" in captured.err
+        assert "--scope orphans" in captured.err
+
+    def test_orphans_only_and_scope_conflict_emits_conflict_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--orphans-only --scope orphans emits conflict warning to stderr."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic=None,
+            only=None,
+            orphans_only=True,
+            focus=True,
+            scope="orphans",
+            order=None,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Conflict" in captured.err
+        assert "--orphans-only" in captured.err
+        assert "--scope orphans" in captured.err
+        assert "deprecated" in captured.err
+
+    def test_no_focus_emits_deprecation_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--no-focus emits warning suggesting --order priority to stderr."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic=None,
+            only=None,
+            orphans_only=False,
+            focus=False,
+            scope=None,
+            order=None,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Deprecation warning" in captured.err
+        assert "--no-focus" in captured.err
+        assert "--order priority" in captured.err
+
+    def test_no_focus_with_order_focus_emits_redundancy_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--no-focus --order focus emits redundancy warning (order takes precedence)."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic=None,
+            only=None,
+            orphans_only=False,
+            focus=False,
+            scope=None,
+            order="focus",
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Redundant flags" in captured.err
+        assert "--no-focus" in captured.err
+        assert "--order focus" in captured.err
+        assert "deprecated" in captured.err
+        # Should NOT say "Deprecation warning" or suggest --order priority
+        assert "--order priority" not in captured.err
+
+    def test_no_focus_with_order_priority_emits_redundancy_warning(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--no-focus --order priority emits redundancy warning."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=False,
+            epic=None,
+            only=None,
+            orphans_only=False,
+            focus=False,
+            scope=None,
+            order="priority",
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Redundant flags" in captured.err
+        assert "--no-focus" in captured.err
+        assert "--order priority" in captured.err
+        assert "deprecated" in captured.err
+        # Should NOT be a "Deprecation warning" suggesting conversion
+        assert "Deprecation warning" not in captured.err
+
+    def test_no_warning_when_using_new_flags_only(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """No deprecation warning when only new flags are used."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=False,
+            resume=True,
+            epic=None,
+            only=None,
+            orphans_only=False,
+            focus=True,
+            scope="epic:E-1",
+            order="focus",
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
+
+    def test_multiple_deprecation_warnings(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Multiple old flags emit multiple warnings to stderr."""
+        from src.cli.cli import _emit_deprecation_warnings
+
+        _emit_deprecation_warnings(
+            wip=True,
+            resume=False,
+            epic="E-1",
+            only=None,
+            orphans_only=True,
+            focus=False,
+            scope=None,
+            order=None,
+        )
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        # Should have warnings for --wip, --epic, --orphans-only, --no-focus
+        assert captured.err.count("Deprecation warning") >= 3
+        assert "--wip" in captured.err
+        assert "--epic" in captured.err
+        assert "--orphans-only" in captured.err
+        assert "--no-focus" in captured.err

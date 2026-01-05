@@ -61,9 +61,9 @@ class TestApplyFilters:
         assert [r["id"] for r in result] == ["a", "c"]
 
     def test_filters_by_only_ids(self) -> None:
-        """Should include only issues in only_ids set."""
+        """Should include only issues in only_ids list."""
         issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-        result = IssueManager.apply_filters(issues, set(), None, {"b"})
+        result = IssueManager.apply_filters(issues, set(), None, ["b"])
         assert [r["id"] for r in result] == ["b"]
 
     def test_combines_all_filters(self) -> None:
@@ -74,14 +74,14 @@ class TestApplyFilters:
             {"id": "c"},
             {"id": "d"},
         ]
-        # Exclude "d", only allow epic children {"a", "c", "d"}, only_ids {"a", "d"}
-        result = IssueManager.apply_filters(issues, {"d"}, {"a", "c", "d"}, {"a", "d"})
+        # Exclude "d", only allow epic children {"a", "c", "d"}, only_ids ["a", "d"]
+        result = IssueManager.apply_filters(issues, {"d"}, {"a", "c", "d"}, ["a", "d"])
         # "a" passes all, "b" is epic, "c" not in only_ids, "d" excluded
         assert [r["id"] for r in result] == ["a"]
 
     def test_empty_issues_returns_empty(self) -> None:
         """Should return empty list for empty input."""
-        result = IssueManager.apply_filters([], {"a"}, {"b"}, {"c"})
+        result = IssueManager.apply_filters([], {"a"}, {"b"}, ["c"])
         assert result == []
 
 
@@ -379,19 +379,19 @@ class TestFindMissingIds:
     def test_returns_missing_ids(self) -> None:
         """Should return IDs from only_ids not found in issues."""
         issues = [{"id": "a"}, {"id": "b"}]
-        result = IssueManager.find_missing_ids({"a", "c", "d"}, issues, set())
+        result = IssueManager.find_missing_ids(["a", "c", "d"], issues, set())
         assert result == {"c", "d"}
 
     def test_respects_suppress_ids(self) -> None:
         """Should not include suppressed IDs in result."""
         issues = [{"id": "a"}]
-        result = IssueManager.find_missing_ids({"a", "b", "c"}, issues, {"b"})
+        result = IssueManager.find_missing_ids(["a", "b", "c"], issues, {"b"})
         assert result == {"c"}
 
     def test_returns_empty_when_all_found(self) -> None:
         """Should return empty set when all IDs are found."""
         issues = [{"id": "a"}, {"id": "b"}]
-        result = IssueManager.find_missing_ids({"a", "b"}, issues, set())
+        result = IssueManager.find_missing_ids(["a", "b"], issues, set())
         assert result == set()
 
     def test_returns_empty_when_only_ids_none(self) -> None:
@@ -401,7 +401,7 @@ class TestFindMissingIds:
 
     def test_returns_empty_when_only_ids_empty(self) -> None:
         """Should return empty set when only_ids is empty."""
-        result = IssueManager.find_missing_ids(set(), [{"id": "a"}], set())
+        result = IssueManager.find_missing_ids([], [{"id": "a"}], set())
         assert result == set()
 
 

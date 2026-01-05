@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from ..orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
 
 if TYPE_CHECKING:
+    from src.core.models import OrderPreference
     from src.infra.io.config import MalaConfig, ResolvedConfig
 
 # Bootstrap state: tracks whether bootstrap() has been called
@@ -37,6 +38,7 @@ _LAZY_NAMES = frozenset(
         "BeadsClient",
         "MalaConfig",
         "MalaOrchestrator",
+        "OrderPreference",
         "OrchestratorConfig",
         "WatchConfig",
         "create_orchestrator",
@@ -237,10 +239,121 @@ VALID_DISABLE_VALUES = frozenset(
 
 
 @dataclass(frozen=True)
+class ScopeConfig:
+    """Parsed scope configuration from --scope option.
+
+    Attributes:
+        scope_type: The type of scope ('all', 'epic', 'orphans', 'ids').
+        ids: List of issue IDs to process (from 'ids:' prefix). Order-preserving.
+        epic_id: Epic ID to filter by (from 'epic:' prefix).
+    """
+
+    scope_type: str = "all"
+    ids: list[str] | None = None
+    epic_id: str | None = None
+
+
+def parse_scope(scope: str) -> ScopeConfig:
+    """Parse the --scope option value into a ScopeConfig.
+
+    Supported formats:
+        - 'all' (default): Process all issues
+        - 'epic:<id>': Filter to issues under the specified epic
+        - 'orphans': Process only orphan issues (no parent epic)
+        - 'ids:<id1>,<id2>,...': Process specific IDs in order (deduplicates with warning)
+
+    Args:
+        scope: The scope string (e.g., 'ids:T-1,T-2').
+
+    Returns:
+        ScopeConfig with parsed values.
+
+    Raises:
+        typer.Exit: If scope format is invalid.
+    """
+    import typer
+
+    scope = scope.strip()
+
+    # Handle 'all' scope
+    if scope == "all":
+        return ScopeConfig(scope_type="all")
+
+    # Handle 'orphans' scope
+    if scope == "orphans":
+        return ScopeConfig(scope_type="orphans")
+
+    # Handle 'epic:<id>' scope
+    if scope.startswith("epic:"):
+        epic_id = scope[5:].strip()
+        if not epic_id:
+            log(
+                "✗",
+                "Invalid --scope: 'epic:' requires an epic ID. "
+                "Valid formats: all, epic:<id>, orphans, ids:<id,...>",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+        return ScopeConfig(scope_type="epic", epic_id=epic_id)
+
+    # Handle 'ids:<id,...>' scope
+    if scope.startswith("ids:"):
+        ids_str = scope[4:].strip()
+        if not ids_str:
+            log(
+                "✗",
+                "Invalid --scope: 'ids:' requires at least one ID. "
+                "Valid formats: all, epic:<id>, orphans, ids:<id,...>",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+
+        # Parse comma-separated IDs, preserving order
+        raw_ids = [id_.strip() for id_ in ids_str.split(",") if id_.strip()]
+        if not raw_ids:
+            log(
+                "✗",
+                "Invalid --scope: 'ids:' requires at least one ID. "
+                "Valid formats: all, epic:<id>, orphans, ids:<id,...>",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+
+        # Deduplicate while preserving order, warn if duplicates found
+        seen: set[str] = set()
+        unique_ids: list[str] = []
+        duplicates: list[str] = []
+        for id_ in raw_ids:
+            if id_ in seen:
+                duplicates.append(id_)
+            else:
+                seen.add(id_)
+                unique_ids.append(id_)
+
+        if duplicates:
+            log(
+                "⚠",
+                f"Duplicate IDs removed from --scope: {', '.join(duplicates)}",
+                Colors.YELLOW,
+            )
+
+        return ScopeConfig(scope_type="ids", ids=unique_ids)
+
+    # Unknown scope format
+    log(
+        "✗",
+        f"Invalid --scope value: '{scope}'. "
+        "Valid formats: all, epic:<id>, orphans, ids:<id,...>",
+        Colors.RED,
+    )
+    raise typer.Exit(1)
+
+
+@dataclass(frozen=True)
 class ValidatedRunArgs:
     """Validated and parsed CLI arguments for the run command."""
 
-    only_ids: set[str] | None
+    only_ids: list[str] | None
     disable_set: set[str] | None
     epic_override_ids: set[str]
 
@@ -263,15 +376,106 @@ class ConfigOverrideResult:
         return self.error is not None
 
 
+def _warn_stderr(msg: str) -> None:
+    """Emit a warning message to stderr with yellow color and warning icon."""
+    print(f"{Colors.YELLOW}⚠ {msg}{Colors.RESET}", file=sys.stderr)
+
+
+def _emit_deprecation_warning(old_flag: str, new_flag: str) -> None:
+    """Emit a deprecation warning to stderr for a deprecated CLI flag.
+
+    Args:
+        old_flag: The deprecated flag name (e.g., '--wip').
+        new_flag: The recommended replacement flag (e.g., '--resume').
+    """
+    msg = f"Deprecation warning: '{old_flag}' is deprecated, use '{new_flag}' instead"
+    _warn_stderr(msg)
+
+
+def _emit_deprecation_warnings(
+    *,
+    wip: bool,
+    resume: bool,
+    epic: str | None,
+    only: str | None,
+    orphans_only: bool,
+    focus: bool,
+    scope: str | None,
+    order: str | None,
+) -> None:
+    """Emit deprecation warnings for old CLI flags.
+
+    Warnings go to stderr to avoid polluting stdout.
+    """
+    # --wip → --resume
+    if wip:
+        if resume:
+            # Both specified: redundancy warning
+            _warn_stderr(
+                "Redundant flags: '--wip' and '--resume' both specified. "
+                "'--wip' is deprecated, use '--resume' alone."
+            )
+        else:
+            _emit_deprecation_warning("--wip", "--resume")
+
+    # --epic → --scope epic:<id>
+    if epic is not None:
+        new_cmd = f"--scope epic:{epic}"
+        if scope is not None and scope.startswith("epic:"):
+            # Conflict: both --epic and --scope epic: specified
+            _warn_stderr(
+                f"Conflict: '--epic {epic}' and '--scope {scope}' both specified. "
+                f"'--epic' is deprecated, use '--scope' only."
+            )
+        else:
+            _emit_deprecation_warning("--epic", new_cmd)
+
+    # --only → --scope ids:<ids>
+    if only is not None:
+        new_cmd = f"--scope ids:{only}"
+        if scope is not None and scope.startswith("ids:"):
+            # Conflict: both --only and --scope ids: specified
+            _warn_stderr(
+                f"Conflict: '--only {only}' and '--scope {scope}' both specified. "
+                f"'--only' is deprecated, use '--scope' only."
+            )
+        else:
+            _emit_deprecation_warning("--only", new_cmd)
+
+    # --orphans-only → --scope orphans
+    if orphans_only:
+        if scope is not None and scope == "orphans":
+            # Conflict: both --orphans-only and --scope orphans specified
+            _warn_stderr(
+                "Conflict: '--orphans-only' and '--scope orphans' both specified. "
+                "'--orphans-only' is deprecated, use '--scope' only."
+            )
+        else:
+            _emit_deprecation_warning("--orphans-only", "--scope orphans")
+
+    # --no-focus → --order priority
+    # Note: focus defaults to True in typer, so we can only detect explicit --no-focus.
+    # Explicit --focus cannot be distinguished from the default value.
+    if not focus:
+        if order is not None:
+            # Conflict/redundancy: both --no-focus and --order specified
+            _warn_stderr(
+                f"Redundant flags: '--no-focus' and '--order {order}' both specified. "
+                "'--no-focus' is deprecated, use '--order' alone."
+            )
+        else:
+            _emit_deprecation_warning("--no-focus", "--order priority")
+
+
 def _build_cli_args_metadata(
     *,
-    disable_validations: str | None,
+    disable: list[str] | None,
     coverage_threshold: float | None,
     wip: bool,
     max_issues: int | None,
     max_gate_retries: int,
     max_review_retries: int,
-    epic_override: str | None,
+    epic_override: list[str] | None,
     resolved: ResolvedConfig,
     braintrust_enabled: bool,
     watch: bool,
@@ -280,13 +484,13 @@ def _build_cli_args_metadata(
     """Build the cli_args metadata dictionary for logging and OrchestratorConfig.
 
     Args:
-        disable_validations: Raw disable validations string from CLI.
+        disable: List of validation names to disable from CLI.
         coverage_threshold: Coverage threshold from CLI.
         wip: Whether WIP prioritization is enabled.
         max_issues: Maximum issues to process.
         max_gate_retries: Maximum gate retry attempts.
         max_review_retries: Maximum review retry attempts.
-        epic_override: Raw epic override string from CLI.
+        epic_override: List of epic IDs to override from CLI.
         resolved: Resolved config with effective values.
         braintrust_enabled: Whether braintrust actually initialized successfully.
         watch: Whether watch mode is enabled.
@@ -295,8 +499,12 @@ def _build_cli_args_metadata(
     Returns:
         Dictionary of CLI arguments for logging/metadata.
     """
+    # Normalize and deduplicate for consistent metadata (handles mixed formats like
+    # --disable coverage --disable "review,e2e" → ["coverage", "e2e", "review"])
+    normalized_disable = sorted(set(_normalize_repeatable_option(disable)))
+    normalized_epic = sorted(set(_normalize_repeatable_option(epic_override)))
     return {
-        "disable_validations": disable_validations,
+        "disable_validations": normalized_disable if normalized_disable else None,
         "coverage_threshold": coverage_threshold,
         "wip": wip,
         "max_issues": max_issues,
@@ -304,10 +512,10 @@ def _build_cli_args_metadata(
         "max_review_retries": max_review_retries,
         "braintrust": braintrust_enabled,
         "review_timeout": resolved.review_timeout,
-        "cerberus_spawn_args": list(resolved.cerberus_spawn_args),
-        "cerberus_wait_args": list(resolved.cerberus_wait_args),
-        "cerberus_env": dict(resolved.cerberus_env),
-        "epic_override": epic_override,
+        "review_spawn_args": list(resolved.cerberus_spawn_args),
+        "review_wait_args": list(resolved.cerberus_wait_args),
+        "review_env": dict(resolved.cerberus_env),
+        "epic_override": normalized_epic if normalized_epic else None,
         "max_epic_verification_retries": resolved.max_epic_verification_retries,
         "watch": watch,
         "validate_every": validate_every,
@@ -375,26 +583,30 @@ def _apply_config_overrides(
 def _handle_dry_run(
     repo_path: Path,
     epic: str | None,
-    only_ids: set[str] | None,
+    only_ids: list[str] | None,
     wip: bool,
     focus: bool,
     orphans_only: bool,
+    order_preference: OrderPreference,
+    fail_on_empty: bool = False,
 ) -> Never:
     """Execute dry-run mode: display task order and exit.
 
     Args:
         repo_path: Path to the repository.
         epic: Epic ID to filter by.
-        only_ids: Set of specific issue IDs to process.
+        only_ids: List of specific issue IDs to process.
         wip: Whether to prioritize WIP issues.
         focus: Whether focus mode is enabled.
         orphans_only: Whether to only process orphan issues.
+        order_preference: Issue ordering preference (OrderPreference enum).
+        fail_on_empty: If True, exit with code 1 when no issues found.
 
     Raises:
-        typer.Exit: Always exits with code 0 after displaying.
+        typer.Exit: Exits with code 0 (or 1 if fail_on_empty and no issues).
     """
 
-    async def _dry_run() -> None:
+    async def _dry_run() -> int:
         beads = _lazy("BeadsClient")(repo_path)
         issues = await beads.get_ready_issues_async(
             epic_id=epic,
@@ -402,31 +614,57 @@ def _handle_dry_run(
             prioritize_wip=wip,
             focus=focus,
             orphans_only=orphans_only,
+            order_preference=order_preference,
         )
         display_dry_run_tasks(issues, focus=focus)
+        return len(issues)
 
-    asyncio.run(_dry_run())
-    raise typer.Exit(0)
+    issue_count = asyncio.run(_dry_run())
+    exit_code = 1 if fail_on_empty and issue_count == 0 else 0
+    raise typer.Exit(exit_code)
+
+
+def _normalize_repeatable_option(values: list[str] | None) -> list[str]:
+    """Normalize a repeatable option that may contain comma-separated values.
+
+    Supports both:
+    - Repeated: --disable coverage --disable review
+    - Comma-separated: --disable "coverage,review"
+    - Mixed: --disable coverage --disable "review,e2e"
+
+    Returns:
+        Flattened list of stripped, non-empty values.
+    """
+    if not values:
+        return []
+    result: list[str] = []
+    for val in values:
+        # Split by comma for backward compat
+        for part in val.split(","):
+            stripped = part.strip()
+            if stripped:
+                result.append(stripped)
+    return result
 
 
 def _validate_run_args(
     only: str | None,
-    disable_validations: str | None,
+    disable: list[str] | None,
     coverage_threshold: float | None,
     epic: str | None,
     orphans_only: bool,
-    epic_override: str | None,
+    epic_override: list[str] | None,
     repo_path: Path,
 ) -> ValidatedRunArgs:
     """Validate and parse CLI arguments, raising typer.Exit(1) on errors.
 
     Args:
         only: Comma-separated issue IDs to process (--only flag)
-        disable_validations: Comma-separated validation names to disable
+        disable: List of validation names to disable (repeatable, comma-separated supported)
         coverage_threshold: Coverage threshold percentage (0-100)
         epic: Epic ID to filter by
         orphans_only: Whether to only process orphan issues
-        epic_override: Comma-separated epic IDs to override
+        epic_override: List of epic IDs to override (repeatable, comma-separated supported)
         repo_path: Path to the repository (must exist)
 
     Returns:
@@ -435,35 +673,45 @@ def _validate_run_args(
     Raises:
         typer.Exit: If any validation fails
     """
-    # Parse --only flag into a set of issue IDs
-    only_ids: set[str] | None = None
+    # Parse --only flag into a list of issue IDs (deduplicated, order-preserving)
+    only_ids: list[str] | None = None
     if only:
-        only_ids = {
-            issue_id.strip() for issue_id in only.split(",") if issue_id.strip()
-        }
-        if not only_ids:
+        raw_ids = [issue_id.strip() for issue_id in only.split(",") if issue_id.strip()]
+        if not raw_ids:
             log("✗", "Invalid --only value: no valid issue IDs found", Colors.RED)
             raise typer.Exit(1)
 
-    # Parse --disable-validations flag into a set
-    disable_set: set[str] | None = None
-    if disable_validations:
-        disable_set = {
-            val.strip() for val in disable_validations.split(",") if val.strip()
-        }
-        if not disable_set:
+        # Deduplicate while preserving order, warn if duplicates found
+        seen: set[str] = set()
+        unique_ids: list[str] = []
+        duplicates: list[str] = []
+        for id_ in raw_ids:
+            if id_ in seen:
+                duplicates.append(id_)
+            else:
+                seen.add(id_)
+                unique_ids.append(id_)
+
+        if duplicates:
             log(
-                "✗",
-                "Invalid --disable-validations value: no valid values found",
-                Colors.RED,
+                "⚠",
+                f"Duplicate IDs removed from --only: {', '.join(duplicates)}",
+                Colors.YELLOW,
             )
-            raise typer.Exit(1)
+
+        only_ids = unique_ids
+
+    # Parse --disable flag into a set (supports both repeatable and comma-separated)
+    disable_set: set[str] | None = None
+    normalized_disable = _normalize_repeatable_option(disable)
+    if normalized_disable:
+        disable_set = set(normalized_disable)
         # Validate against known values
         unknown = disable_set - VALID_DISABLE_VALUES
         if unknown:
             log(
                 "✗",
-                f"Unknown --disable-validations value(s): {', '.join(sorted(unknown))}. "
+                f"Unknown --disable value(s): {', '.join(sorted(unknown))}. "
                 f"Valid values: {', '.join(sorted(VALID_DISABLE_VALUES))}",
                 Colors.RED,
             )
@@ -488,19 +736,11 @@ def _validate_run_args(
         )
         raise typer.Exit(1)
 
-    # Parse --epic-override flag into a set of epic IDs
+    # Parse --epic-override flag into a set of epic IDs (supports both repeatable and comma-separated)
     epic_override_ids: set[str] = set()
-    if epic_override:
-        epic_override_ids = {
-            eid.strip() for eid in epic_override.split(",") if eid.strip()
-        }
-        if not epic_override_ids:
-            log(
-                "✗",
-                "Invalid --epic-override value: no valid epic IDs found",
-                Colors.RED,
-            )
-            raise typer.Exit(1)
+    normalized_epic_override = _normalize_repeatable_option(epic_override)
+    if normalized_epic_override:
+        epic_override_ids = set(normalized_epic_override)
 
     # Validate repo_path exists
     if not repo_path.exists():
@@ -532,25 +772,37 @@ def run(
     max_agents: Annotated[
         int | None,
         typer.Option(
-            "--max-agents", "-n", help="Maximum concurrent agents (default: unlimited)"
+            "--max-agents",
+            "-n",
+            help="Maximum concurrent agents (default: unlimited)",
+            rich_help_panel="Execution Limits",
         ),
     ] = None,
     timeout: Annotated[
         int | None,
         typer.Option(
-            "--timeout", "-t", help="Timeout per agent in minutes (default: 60)"
+            "--timeout",
+            "-t",
+            help="Timeout per agent in minutes (default: 60)",
+            rich_help_panel="Execution Limits",
         ),
     ] = None,
     max_issues: Annotated[
         int | None,
         typer.Option(
-            "--max-issues", "-i", help="Maximum issues to process (default: unlimited)"
+            "--max-issues",
+            "-i",
+            help="Maximum issues to process (default: unlimited)",
+            rich_help_panel="Execution Limits",
         ),
     ] = None,
     epic: Annotated[
         str | None,
         typer.Option(
-            "--epic", "-e", help="Only process tasks that are children of this epic"
+            "--epic",
+            "-e",
+            help="Only process tasks that are children of this epic",
+            rich_help_panel="Scope & Ordering",
         ),
     ] = None,
     only: Annotated[
@@ -559,6 +811,16 @@ def run(
             "--only",
             "-o",
             help="Comma-separated list of issue IDs to process exclusively",
+            rich_help_panel="Scope & Ordering",
+        ),
+    ] = None,
+    scope: Annotated[
+        str | None,
+        typer.Option(
+            "--scope",
+            "-s",
+            help="Scope filter (e.g., 'ids:T-1,T-2'). Replaces --only.",
+            rich_help_panel="Scope & Ordering",
         ),
     ] = None,
     max_gate_retries: Annotated[
@@ -566,6 +828,7 @@ def run(
         typer.Option(
             "--max-gate-retries",
             help="Maximum quality gate retry attempts per issue (default: 3)",
+            rich_help_panel="Quality Gates",
         ),
     ] = 3,
     max_review_retries: Annotated[
@@ -573,20 +836,23 @@ def run(
         typer.Option(
             "--max-review-retries",
             help="Maximum codex review retry attempts per issue (default: 3)",
+            rich_help_panel="Quality Gates",
         ),
     ] = 3,
-    disable_validations: Annotated[
-        str | None,
+    disable: Annotated[
+        list[str] | None,
         typer.Option(
+            "--disable",
             "--disable-validations",
             help=(
-                "Comma-separated validations to skip. Options: "
+                "Validations to skip (repeatable). Options: "
                 "post-validate (skip pytest/ruff/ty after commits), "
                 "integration-tests (exclude @pytest.mark.integration tests), "
                 "coverage (disable coverage threshold check), "
                 "e2e (skip end-to-end fixture tests), "
                 "review (skip LLM code review)"
             ),
+            rich_help_panel="Quality Gates",
         ),
     ] = None,
     coverage_threshold: Annotated[
@@ -594,13 +860,24 @@ def run(
         typer.Option(
             "--coverage-threshold",
             help="Minimum coverage percentage (0-100). If not set, uses 'no decrease' mode which requires coverage >= previous baseline.",
+            rich_help_panel="Quality Gates",
         ),
     ] = None,
+    resume: Annotated[
+        bool,
+        typer.Option(
+            "--resume/--no-resume",
+            "-r",
+            help="Prioritize in_progress issues before open issues",
+            rich_help_panel="Scope & Ordering",
+        ),
+    ] = False,
     wip: Annotated[
         bool,
         typer.Option(
             "--wip",
-            help="Prioritize in_progress issues before open issues",
+            help="Alias for --resume (deprecated)",
+            hidden=True,
         ),
     ] = False,
     focus: Annotated[
@@ -608,13 +885,24 @@ def run(
         typer.Option(
             "--focus/--no-focus",
             help="Group tasks by epic for focused work (default: on); --no-focus uses priority-only ordering",
+            rich_help_panel="Scope & Ordering",
         ),
     ] = True,
+    order: Annotated[
+        str | None,
+        typer.Option(
+            "--order",
+            help="Issue ordering: 'focus' (default, epic-grouped), 'priority' (global priority), 'input' (preserve --scope ids: order)",
+            rich_help_panel="Scope & Ordering",
+        ),
+    ] = None,
     dry_run: Annotated[
         bool,
         typer.Option(
             "--dry-run",
+            "-d",
             help="Preview task order without processing; shows what would be run",
+            rich_help_panel="Debugging",
         ),
     ] = False,
     verbose: Annotated[
@@ -623,6 +911,7 @@ def run(
             "--verbose",
             "-v",
             help="Enable verbose output; shows full tool arguments instead of single line per tool call",
+            rich_help_panel="Debugging",
         ),
     ] = False,
     review_timeout: Annotated[
@@ -630,6 +919,15 @@ def run(
         typer.Option(
             "--review-timeout",
             help="Timeout in seconds for review operations (default: 1200)",
+            rich_help_panel="Review Backend",
+        ),
+    ] = None,
+    review_spawn_args: Annotated[
+        str | None,
+        typer.Option(
+            "--review-spawn-args",
+            help="Extra args for `review-gate spawn-code-review` (shlex-style string)",
+            rich_help_panel="Review Backend",
         ),
     ] = None,
     cerberus_spawn_args: Annotated[
@@ -637,6 +935,15 @@ def run(
         typer.Option(
             "--cerberus-spawn-args",
             help="Extra args for `review-gate spawn-code-review` (shlex-style string)",
+            hidden=True,
+        ),
+    ] = None,
+    review_wait_args: Annotated[
+        str | None,
+        typer.Option(
+            "--review-wait-args",
+            help="Extra args for `review-gate wait` (shlex-style string)",
+            rich_help_panel="Review Backend",
         ),
     ] = None,
     cerberus_wait_args: Annotated[
@@ -644,6 +951,15 @@ def run(
         typer.Option(
             "--cerberus-wait-args",
             help="Extra args for `review-gate wait` (shlex-style string)",
+            hidden=True,
+        ),
+    ] = None,
+    review_env: Annotated[
+        str | None,
+        typer.Option(
+            "--review-env",
+            help="Extra env for review-gate (JSON object or comma KEY=VALUE list)",
+            rich_help_panel="Review Backend",
         ),
     ] = None,
     cerberus_env: Annotated[
@@ -651,13 +967,15 @@ def run(
         typer.Option(
             "--cerberus-env",
             help="Extra env for review-gate (JSON object or comma KEY=VALUE list)",
+            hidden=True,
         ),
     ] = None,
     epic_override: Annotated[
-        str | None,
+        list[str] | None,
         typer.Option(
             "--epic-override",
-            help="Comma-separated epic IDs to close without verification (explicit human bypass)",
+            help="Epic IDs to close without verification (repeatable)",
+            rich_help_panel="Epic Verification",
         ),
     ] = None,
     orphans_only: Annotated[
@@ -665,6 +983,7 @@ def run(
         typer.Option(
             "--orphans-only",
             help="Only process issues with no parent epic (standalone/orphan issues)",
+            rich_help_panel="Scope & Ordering",
         ),
     ] = False,
     max_epic_verification_retries: Annotated[
@@ -672,6 +991,7 @@ def run(
         typer.Option(
             "--max-epic-verification-retries",
             help="Maximum retries for epic verification loop (default: 3)",
+            rich_help_panel="Epic Verification",
         ),
     ] = None,
     deadlock_detection: Annotated[
@@ -679,6 +999,7 @@ def run(
         typer.Option(
             "--deadlock-detection/--no-deadlock-detection",
             help="Enable deadlock detection (default: on); --no-deadlock-detection disables it",
+            rich_help_panel="Debugging",
         ),
     ] = True,
     watch: Annotated[
@@ -696,10 +1017,33 @@ def run(
             help="Run validation after every N issues complete (default: 10, only in watch mode)",
         ),
     ] = 10,
+    fail_on_empty: Annotated[
+        bool,
+        typer.Option(
+            "--fail-on-empty",
+            help="Exit with code 1 if no issues to process (default: exit 0)",
+            rich_help_panel="Debugging",
+        ),
+    ] = False,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
     set_verbose(verbose)
+
+    # Emit deprecation warnings for old flags (before any processing)
+    _emit_deprecation_warnings(
+        wip=wip,
+        resume=resume,
+        epic=epic,
+        only=only,
+        orphans_only=orphans_only,
+        focus=focus,
+        scope=scope,
+        order=order,
+    )
+
+    # Combine --resume and --wip (hidden alias) into single prioritize_wip flag
+    prioritize_wip = resume or wip
 
     # Validate max_issues (Typer min= doesn't work well with Optional[int])
     if max_issues is not None and max_issues < 1:
@@ -708,10 +1052,56 @@ def run(
 
     repo_path = repo_path.resolve()
 
+    # Handle --scope option (new flag takes precedence over old flags)
+    # When --scope is specified, it fully overrides all deprecated scope flags
+    scope_config: ScopeConfig | None = None
+    if scope is not None:
+        scope_config = parse_scope(scope)
+        # Clear all old scope flags first, then set the one from --scope
+        epic = None
+        only = None
+        orphans_only = False
+        # Apply scope_config value
+        if scope_config.scope_type == "epic" and scope_config.epic_id is not None:
+            epic = scope_config.epic_id
+        elif scope_config.scope_type == "ids" and scope_config.ids is not None:
+            only = ",".join(scope_config.ids)
+        elif scope_config.scope_type == "orphans":
+            orphans_only = True
+
+    # Parse and validate --order option (new flag takes precedence over --focus/--no-focus)
+    order_preference = _lazy("OrderPreference").FOCUS  # default
+    if order is not None:
+        order_lower = order.lower()
+        if order_lower == "focus":
+            order_preference = _lazy("OrderPreference").FOCUS
+            focus = True  # --order focus overrides --no-focus
+        elif order_lower == "priority":
+            order_preference = _lazy("OrderPreference").PRIORITY
+            focus = False  # --order priority overrides --focus (default)
+        elif order_lower == "input":
+            order_preference = _lazy("OrderPreference").INPUT
+            focus = False  # --order input uses priority-like ordering
+            # --order input requires --scope ids:
+            if scope_config is None or scope_config.scope_type != "ids":
+                log(
+                    "✗",
+                    "--order input requires --scope ids:<id,...>",
+                    Colors.RED,
+                )
+                raise typer.Exit(1)
+        else:
+            log(
+                "✗",
+                f"Invalid --order value: '{order}'. Valid values: focus, priority, input",
+                Colors.RED,
+            )
+            raise typer.Exit(1)
+
     # Validate and parse CLI arguments
     validated = _validate_run_args(
         only=only,
-        disable_validations=disable_validations,
+        disable=disable,
         coverage_threshold=coverage_threshold,
         epic=epic,
         orphans_only=orphans_only,
@@ -731,21 +1121,29 @@ def run(
             repo_path=repo_path,
             epic=epic,
             only_ids=only_ids,
-            wip=wip,
+            wip=prioritize_wip,
             focus=focus,
             orphans_only=orphans_only,
+            order_preference=order_preference,
+            fail_on_empty=fail_on_empty,
         )
 
     # Build and configure MalaConfig from environment
     config = _lazy("MalaConfig").from_env(validate=False)
 
     # Apply CLI overrides to config
+    # Coalesce new --review-* options with old --cerberus-* aliases (new takes precedence)
+    # Use explicit None check so empty string "" overrides non-empty config value
     override_result = _apply_config_overrides(
         config=config,
         review_timeout=review_timeout,
-        cerberus_spawn_args=cerberus_spawn_args,
-        cerberus_wait_args=cerberus_wait_args,
-        cerberus_env=cerberus_env,
+        cerberus_spawn_args=(
+            review_spawn_args if review_spawn_args is not None else cerberus_spawn_args
+        ),
+        cerberus_wait_args=(
+            review_wait_args if review_wait_args is not None else cerberus_wait_args
+        ),
+        cerberus_env=review_env if review_env is not None else cerberus_env,
         max_epic_verification_retries=max_epic_verification_retries,
         braintrust_enabled=_braintrust_enabled,
         disable_review="review" in (disable_set or set()),
@@ -762,9 +1160,9 @@ def run(
 
     # Build cli_args metadata for logging
     cli_args = _build_cli_args_metadata(
-        disable_validations=disable_validations,
+        disable=disable,
         coverage_threshold=coverage_threshold,
-        wip=wip,
+        wip=prioritize_wip,
         max_issues=max_issues,
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
@@ -788,8 +1186,9 @@ def run(
         max_review_retries=max_review_retries,
         disable_validations=disable_set,
         coverage_threshold=coverage_threshold,
-        prioritize_wip=wip,
+        prioritize_wip=prioritize_wip,
         focus=focus,
+        order_preference=order_preference,
         cli_args=cli_args,
         epic_override_ids=epic_override_ids,
         orphans_only=orphans_only,
@@ -809,10 +1208,12 @@ def run(
     # Determine exit code:
     # - Use orchestrator.exit_code for interrupt (130), validation failure (1), abort (3)
     # - Otherwise: exit 0 if no issues to process or at least one succeeded
-    # - Exit 1 only if issues were processed but all failed
+    # - Exit 1 only if issues were processed but all failed, or --fail-on-empty and no issues
     orch_exit = orchestrator.exit_code
     if orch_exit != 0:
         raise typer.Exit(orch_exit)
+    if fail_on_empty and total == 0:
+        raise typer.Exit(1)
     raise typer.Exit(0 if success_count > 0 or total == 0 else 1)
 
 
@@ -1147,6 +1548,10 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from ..orchestration.orchestrator import MalaOrchestrator
 
         _lazy_modules[name] = MalaOrchestrator
+    elif name == "OrderPreference":
+        from ..core.models import OrderPreference
+
+        _lazy_modules[name] = OrderPreference
     elif name == "OrchestratorConfig":
         from ..orchestration.types import OrchestratorConfig
 

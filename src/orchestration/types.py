@@ -19,9 +19,13 @@ from dataclasses import dataclass, field
 from pathlib import Path  # noqa: TC003 - needed at runtime for dataclass field
 from typing import TYPE_CHECKING
 
+# Private import for runtime use in dataclass defaults (not re-exported)
+from src.core.models import OrderPreference as _OrderPreference
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from src.core.models import OrderPreference
     from src.core.protocols import (
         CodeReviewer,
         CommandRunnerPort,
@@ -55,7 +59,7 @@ class OrchestratorConfig:
         timeout_minutes: Timeout per agent in minutes (None = default 60).
         max_issues: Maximum issues to process (None = unlimited).
         epic_id: Only process tasks under this epic.
-        only_ids: Comma-separated list of issue IDs to process exclusively.
+        only_ids: List of issue IDs to process exclusively.
         braintrust_enabled: Enable Braintrust tracing.
         max_gate_retries: Maximum quality gate retry attempts per issue.
         max_review_retries: Maximum code review retry attempts per issue.
@@ -63,6 +67,7 @@ class OrchestratorConfig:
         coverage_threshold: Minimum coverage percentage (None = no-decrease mode).
         prioritize_wip: Prioritize in_progress issues before open issues.
         focus: Group tasks by epic for focused work.
+        order_preference: Issue ordering preference (focus, priority, or input).
         cli_args: CLI arguments for logging and metadata.
         epic_override_ids: Epic IDs to close without verification.
         orphans_only: Only process issues with no parent epic.
@@ -75,7 +80,7 @@ class OrchestratorConfig:
     timeout_minutes: int | None = None
     max_issues: int | None = None
     epic_id: str | None = None
-    only_ids: set[str] | None = None
+    only_ids: list[str] | None = None
     braintrust_enabled: bool | None = None
     max_gate_retries: int = 3
     max_review_retries: int = 3
@@ -83,6 +88,7 @@ class OrchestratorConfig:
     coverage_threshold: float | None = None
     prioritize_wip: bool = False
     focus: bool = True
+    order_preference: OrderPreference = _OrderPreference.FOCUS
     cli_args: dict[str, object] | None = None
     epic_override_ids: set[str] = field(default_factory=set)
     orphans_only: bool = False
@@ -206,18 +212,20 @@ class IssueFilterConfig:
         max_agents: Maximum concurrent agents (None = unlimited).
         max_issues: Maximum issues to process (None = unlimited).
         epic_id: Only process tasks under this epic.
-        only_ids: Set of issue IDs to process exclusively.
+        only_ids: List of issue IDs to process exclusively.
         prioritize_wip: Prioritize in_progress issues before open issues.
         focus: Group tasks by epic for focused work.
         orphans_only: Only process issues with no parent epic.
         epic_override_ids: Epic IDs to close without verification.
+        order_preference: Issue ordering preference (focus, priority, or input).
     """
 
     max_agents: int | None = None
     max_issues: int | None = None
     epic_id: str | None = None
-    only_ids: set[str] | None = None
+    only_ids: list[str] | None = None
     prioritize_wip: bool = False
     focus: bool = True
     orphans_only: bool = False
     epic_override_ids: set[str] = field(default_factory=set)
+    order_preference: OrderPreference = _OrderPreference.FOCUS

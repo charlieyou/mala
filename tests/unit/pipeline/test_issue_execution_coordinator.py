@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.core.models import OrderPreference
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
@@ -30,11 +31,12 @@ class MockIssueProvider:
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
     ) -> list[str]:
         """Return next sequence of ready issues."""
         exclude = exclude_ids or set()
@@ -90,14 +92,14 @@ class TestCoordinatorConfig:
             max_agents=4,
             max_issues=10,
             epic_id="epic-123",
-            only_ids={"issue-1", "issue-2"},
+            only_ids=["issue-1", "issue-2"],
             prioritize_wip=True,
             focus=False,
         )
         assert config.max_agents == 4
         assert config.max_issues == 10
         assert config.epic_id == "epic-123"
-        assert config.only_ids == {"issue-1", "issue-2"}
+        assert config.only_ids == ["issue-1", "issue-2"]
         assert config.prioritize_wip is True
         assert config.focus is False
 
@@ -404,11 +406,12 @@ class CapturingIssueProvider:
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
     ) -> list[str]:
         """Capture kwargs and return empty list."""
         self.captured_kwargs = {
@@ -419,6 +422,7 @@ class CapturingIssueProvider:
             "prioritize_wip": prioritize_wip,
             "focus": focus,
             "orphans_only": orphans_only,
+            "order_preference": order_preference,
         }
         return []
 
@@ -438,12 +442,12 @@ class TestOnlyIdsFiltering:
         coord = IssueExecutionCoordinator(
             beads=beads,  # type: ignore[arg-type]
             event_sink=event_sink,  # type: ignore[arg-type]
-            config=CoordinatorConfig(only_ids={"issue-1", "issue-2"}),
+            config=CoordinatorConfig(only_ids=["issue-1", "issue-2"]),
         )
 
         await coord.run_loop(AsyncMock(), AsyncMock(), AsyncMock())
 
-        assert beads.captured_kwargs["only_ids"] == {"issue-1", "issue-2"}
+        assert beads.captured_kwargs["only_ids"] == ["issue-1", "issue-2"]
 
 
 class TestEpicIdFiltering:
