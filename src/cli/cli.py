@@ -402,9 +402,10 @@ def _build_cli_args_metadata(
     Returns:
         Dictionary of CLI arguments for logging/metadata.
     """
-    # Normalize disable list for consistent metadata (handles mixed formats like
+    # Normalize and deduplicate for consistent metadata (handles mixed formats like
     # --disable coverage --disable "review,e2e" → ["coverage", "e2e", "review"])
-    normalized_disable = sorted(_normalize_repeatable_option(disable))
+    normalized_disable = sorted(set(_normalize_repeatable_option(disable)))
+    normalized_epic = sorted(set(_normalize_repeatable_option(epic_override)))
     return {
         "disable_validations": normalized_disable if normalized_disable else None,
         "coverage_threshold": coverage_threshold,
@@ -417,7 +418,7 @@ def _build_cli_args_metadata(
         "cerberus_spawn_args": list(resolved.cerberus_spawn_args),
         "cerberus_wait_args": list(resolved.cerberus_wait_args),
         "cerberus_env": dict(resolved.cerberus_env),
-        "epic_override": epic_override,
+        "epic_override": normalized_epic if normalized_epic else None,
         "max_epic_verification_retries": resolved.max_epic_verification_retries,
     }
 
