@@ -7,12 +7,11 @@ without actual SDK/API dependencies.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
-from src.core.protocols import SDKClientFactoryProtocol, SDKClientProtocol
 from src.pipeline.context_pressure_handler import (
     CheckpointResult,
     ContextPressureConfig,
@@ -20,10 +19,10 @@ from src.pipeline.context_pressure_handler import (
     DEFAULT_CHECKPOINT_TIMEOUT_SECONDS,
 )
 from src.pipeline.message_stream_processor import ContextPressureError
+from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
-    from types import TracebackType
 
 
 # --- Fake SDK Client and Factory ---
@@ -40,72 +39,6 @@ def make_result_message(session_id: str = "test-session") -> ResultMessage:
         session_id=session_id,
         result="Checkpoint complete",
     )
-
-
-class FakeSDKClient(SDKClientProtocol):
-    """Fake SDK client for testing checkpoint fetch."""
-
-    def __init__(
-        self,
-        messages: list[Any] | None = None,
-        result_message: ResultMessage | None = None,
-        query_error: Exception | None = None,
-    ):
-        self.messages = messages or []
-        self.result_message = result_message or make_result_message()
-        self.query_error = query_error
-        self.queries: list[tuple[str, str | None]] = []
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
-        pass
-
-    async def query(self, prompt: str, session_id: str | None = None) -> None:
-        self.queries.append((prompt, session_id))
-        if self.query_error:
-            raise self.query_error
-
-    async def receive_response(self) -> AsyncIterator[Any]:
-        for msg in self.messages:
-            yield msg
-        yield self.result_message
-
-    async def disconnect(self) -> None:
-        pass
-
-
-class FakeSDKClientFactory(SDKClientFactoryProtocol):
-    """Factory for creating fake SDK clients."""
-
-    def __init__(self, client: SDKClientProtocol | None = None):
-        self.client: SDKClientProtocol = client or FakeSDKClient()
-        self.create_calls: list[object] = []
-
-    def create(self, options: object) -> SDKClientProtocol:
-        self.create_calls.append(options)
-        return self.client
-
-    def create_options(
-        self,
-        *,
-        cwd: str,
-        permission_mode: str = "bypassPermissions",
-        model: str = "opus",
-        system_prompt: dict[str, str] | None = None,
-        setting_sources: list[str] | None = None,
-        mcp_servers: object | None = None,
-        disallowed_tools: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        hooks: dict[str, list[object]] | None = None,
-    ) -> object:
-        return {"cwd": cwd, "model": model}
 
 
 class DelayedSDKClient(FakeSDKClient):

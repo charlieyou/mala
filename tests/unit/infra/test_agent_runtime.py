@@ -5,7 +5,7 @@ Tests the centralized agent runtime configuration builder.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,57 +16,10 @@ from src.infra.hooks import (
     block_dangerous_commands,
     block_mala_disallowed_tools,
 )
+from tests.fakes.sdk_client import FakeSDKClientFactory
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    from src.core.protocols import SDKClientProtocol
-
-
-class FakeSDKClientFactory:
-    """Fake SDK client factory for testing."""
-
-    def __init__(self) -> None:
-        self.created_options: list[dict] = []
-        self.created_matchers: list[tuple] = []
-
-    def create(self, options: object) -> SDKClientProtocol:
-        """Create a mock client (not used in these tests)."""
-        return cast("SDKClientProtocol", MagicMock())
-
-    def create_options(
-        self,
-        *,
-        cwd: str,
-        permission_mode: str = "bypassPermissions",
-        model: str = "opus",
-        system_prompt: dict[str, str] | None = None,
-        setting_sources: list[str] | None = None,
-        mcp_servers: object | None = None,
-        disallowed_tools: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        hooks: dict[str, list[object]] | None = None,
-    ) -> object:
-        opts = {
-            "cwd": cwd,
-            "permission_mode": permission_mode,
-            "model": model,
-            "mcp_servers": mcp_servers,
-            "disallowed_tools": disallowed_tools,
-            "env": env,
-            "hooks": hooks,
-        }
-        self.created_options.append(opts)
-        return opts
-
-    def create_hook_matcher(
-        self,
-        matcher: object | None,
-        hooks: list[object],
-    ) -> object:
-        result = ("matcher", matcher, hooks)
-        self.created_matchers.append(result)
-        return result
 
 
 class TestAgentRuntimeBuilder:

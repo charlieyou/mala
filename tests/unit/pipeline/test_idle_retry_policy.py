@@ -7,12 +7,11 @@ stream processor, and lifecycle context.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.core.protocols import SDKClientFactoryProtocol, SDKClientProtocol
 from src.domain.lifecycle import LifecycleContext
 from src.infra.hooks import LintCache
 from src.pipeline.idle_retry_policy import (
@@ -24,103 +23,14 @@ from src.pipeline.message_stream_processor import (
     MessageIterationResult,
     MessageIterationState,
 )
+from tests.fakes.sdk_client import FakeSDKClientFactory
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-    from types import TracebackType
-
     from src.infra.telemetry import TelemetrySpan
     from src.pipeline.message_stream_processor import IdleTimeoutStream
 
 
 # --- Fake/Mock helpers ---
-
-
-class FakeSDKClient(SDKClientProtocol):
-    """Fake SDK client for testing."""
-
-    def __init__(
-        self,
-        query_calls: list[tuple[str, str | None]] | None = None,
-        response_messages: list[object] | None = None,
-        raise_on_receive: Exception | None = None,
-    ) -> None:
-        self._query_calls: list[tuple[str, str | None]] = query_calls or []
-        self._response_messages: list[object] = response_messages or []
-        self._disconnect_called: bool = False
-        self._raise_on_receive: Exception | None = raise_on_receive
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
-        pass
-
-    async def query(self, prompt: str, session_id: str | None = None) -> None:
-        self._query_calls.append((prompt, session_id))
-
-    def receive_response(self) -> AsyncIterator[object]:
-        return self._async_response()
-
-    async def _async_response(self) -> AsyncIterator[object]:
-        if self._raise_on_receive is not None:
-            raise self._raise_on_receive
-        for msg in self._response_messages:
-            yield msg
-
-    async def disconnect(self) -> None:
-        self._disconnect_called = True
-
-
-class FakeSDKClientFactory(SDKClientFactoryProtocol):
-    """Fake SDK client factory for testing."""
-
-    def __init__(self) -> None:
-        self.clients: list[FakeSDKClient] = []
-        self._next_responses: list[list[object]] = []
-        self._next_raise_on_receive: list[Exception | None] = []
-
-    def configure_next_client(
-        self,
-        responses: list[object] | None = None,
-        raise_on_receive: Exception | None = None,
-    ) -> None:
-        """Configure the next client that will be created."""
-        self._next_responses.append(responses or [])
-        self._next_raise_on_receive.append(raise_on_receive)
-
-    def create(self, options: object) -> SDKClientProtocol:
-        responses = self._next_responses.pop(0) if self._next_responses else []
-        raise_exc = (
-            self._next_raise_on_receive.pop(0) if self._next_raise_on_receive else None
-        )
-        client = FakeSDKClient(
-            query_calls=[],
-            response_messages=responses,
-            raise_on_receive=raise_exc,
-        )
-        self.clients.append(client)
-        return client
-
-    def create_options(
-        self,
-        *,
-        cwd: str,
-        permission_mode: str = "bypassPermissions",
-        model: str = "opus",
-        system_prompt: dict[str, str] | None = None,
-        setting_sources: list[str] | None = None,
-        mcp_servers: object | None = None,
-        disallowed_tools: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        hooks: dict[str, list[object]] | None = None,
-    ) -> object:
-        return {"cwd": cwd, "model": model}
 
 
 def _create_mock_lint_cache() -> MagicMock:

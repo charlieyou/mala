@@ -4,7 +4,6 @@ Tests the extracted gate checking logic using in-memory fakes,
 without SDK or subprocess dependencies.
 """
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
@@ -17,102 +16,14 @@ from src.pipeline.gate_runner import (
     PerIssueGateInput,
 )
 from src.core.protocols import GateChecker  # noqa: TC001 - needed at runtime for cast()
-from src.domain.quality_gate import CommitResult, GateResult, ValidationEvidence
+from src.domain.quality_gate import GateResult
 from src.domain.validation.spec import (
     CommandKind,
     ValidationCommand,
     ValidationScope,
     ValidationSpec,
 )
-
-
-@dataclass
-class FakeGateChecker:
-    """In-memory fake for GateChecker protocol.
-
-    Allows tests to configure gate behavior without filesystem or git.
-    """
-
-    # Pre-configured result to return from check_with_resolution
-    gate_result: GateResult = field(
-        default_factory=lambda: GateResult(passed=True, failure_reasons=[])
-    )
-    # Pre-configured result for check_no_progress
-    no_progress_result: bool = False
-    # Pre-configured log end offset
-    log_end_offset: int = 1000
-    # Pre-configured commit result
-    commit_result: CommitResult = field(
-        default_factory=lambda: CommitResult(exists=True, commit_hash="abc123")
-    )
-    # Pre-configured validation evidence
-    validation_evidence: ValidationEvidence = field(default_factory=ValidationEvidence)
-
-    # Track calls for verification
-    check_with_resolution_calls: list[dict] = field(default_factory=list)
-    check_no_progress_calls: list[dict] = field(default_factory=list)
-    get_log_end_offset_calls: list[dict] = field(default_factory=list)
-
-    def check_with_resolution(
-        self,
-        issue_id: str,
-        log_path: Path,
-        baseline_timestamp: int | None = None,
-        log_offset: int = 0,
-        spec: ValidationSpec | None = None,
-    ) -> GateResult:
-        """Return pre-configured gate result."""
-        self.check_with_resolution_calls.append(
-            {
-                "issue_id": issue_id,
-                "log_path": log_path,
-                "baseline_timestamp": baseline_timestamp,
-                "log_offset": log_offset,
-                "spec": spec,
-            }
-        )
-        return self.gate_result
-
-    def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
-        """Return pre-configured offset."""
-        self.get_log_end_offset_calls.append(
-            {"log_path": log_path, "start_offset": start_offset}
-        )
-        return self.log_end_offset
-
-    def check_no_progress(
-        self,
-        log_path: Path,
-        log_offset: int,
-        previous_commit_hash: str | None,
-        current_commit_hash: str | None,
-        spec: ValidationSpec | None = None,
-        check_validation_evidence: bool = True,
-    ) -> bool:
-        """Return pre-configured no_progress result."""
-        self.check_no_progress_calls.append(
-            {
-                "log_path": log_path,
-                "log_offset": log_offset,
-                "previous_commit_hash": previous_commit_hash,
-                "current_commit_hash": current_commit_hash,
-                "spec": spec,
-                "check_validation_evidence": check_validation_evidence,
-            }
-        )
-        return self.no_progress_result
-
-    def parse_validation_evidence_with_spec(
-        self, log_path: Path, spec: ValidationSpec, offset: int = 0
-    ) -> ValidationEvidence:
-        """Return pre-configured validation evidence."""
-        return self.validation_evidence
-
-    def check_commit_exists(
-        self, issue_id: str, baseline_timestamp: int | None = None
-    ) -> CommitResult:
-        """Return pre-configured commit result."""
-        return self.commit_result
+from tests.fakes.gate_checker import FakeGateChecker
 
 
 class TestPerIssueGate:

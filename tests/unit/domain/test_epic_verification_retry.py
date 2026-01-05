@@ -10,8 +10,9 @@ Tests the retry logic in EpicVerificationCoordinator.check_epic_closure which:
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -24,302 +25,531 @@ from src.pipeline.epic_verification_coordinator import (
     EpicVerificationCoordinator,
 )
 
-
-@pytest.fixture
-def mock_beads() -> MagicMock:
-    """Create a mock BeadsClient."""
-    beads = MagicMock()
-    beads.get_parent_epic_async = AsyncMock(return_value="epic-1")
-    beads.claim_async = AsyncMock(return_value=True)
-    beads.close_async = AsyncMock(return_value=True)
-    beads.close_eligible_epics_async = AsyncMock(return_value=True)
-    beads.get_issue_description_async = AsyncMock(return_value="Issue description")
-    return beads
+if TYPE_CHECKING:
+    from src.infra.io.log_output.run_metadata import RunMetadata
 
 
-@pytest.fixture
-def mock_event_sink() -> MagicMock:
-    """Create a mock event sink."""
-    sink = MagicMock()
-    sink.on_warning = MagicMock()
-    sink.on_epic_closed = MagicMock()
-    sink.on_agent_started = MagicMock()
-    return sink
+# ---------------------------------------------------------------------------
+# Test helpers: Fake verification result sequences
+# ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def mock_epic_verifier() -> MagicMock:
-    """Create a mock EpicVerifier."""
-    verifier = MagicMock()
-    verifier.verify_and_close_epic = AsyncMock(
-        return_value=EpicVerificationResult(
-            verified_count=1,
-            passed_count=1,
-            failed_count=0,
-            verdicts={
-                "epic-1": EpicVerdict(
-                    passed=True,
-                    unmet_criteria=[],
-                    confidence=0.9,
-                    reasoning="All criteria met",
-                )
-            },
-            remediation_issues_created=[],
+@dataclass
+class VerificationAttempt:
+    """Record of a verification attempt for observable assertions."""
+
+    epic_id: str
+    force: bool
+    result: EpicVerificationResult
+
+
+@dataclass
+class FakeVerificationResults:
+    """Returns EpicVerificationResult from a pre-configured sequence.
+
+    Each call to verify() returns the next result. If exhausted, returns
+    the last result (or a default passing result if sequence was empty).
+
+    Observable state:
+        attempts: list of VerificationAttempt recording all calls
+    """
+
+    results: list[EpicVerificationResult] = field(default_factory=list)
+    attempts: list[VerificationAttempt] = field(default_factory=list)
+    _call_index: int = field(default=0, repr=False)
+
+    async def verify(self, epic_id: str, force: bool) -> EpicVerificationResult:
+        """Return next result from sequence, recording the attempt."""
+        if self._call_index < len(self.results):
+            result = self.results[self._call_index]
+            self._call_index += 1
+        elif self.results:
+            # Return last result if exhausted
+            result = self.results[-1]
+        else:
+            # Default passing result
+            result = make_passing_result()
+
+        self.attempts.append(VerificationAttempt(epic_id, force, result))
+        return result
+
+
+def make_passing_result(epic_id: str = "epic-1") -> EpicVerificationResult:
+    """Create a passing EpicVerificationResult."""
+    return EpicVerificationResult(
+        verified_count=1,
+        passed_count=1,
+        failed_count=0,
+        verdicts={
+            epic_id: EpicVerdict(
+                passed=True,
+                unmet_criteria=[],
+                confidence=0.95,
+                reasoning="All criteria met",
+            )
+        },
+        remediation_issues_created=[],
+    )
+
+
+def make_failing_result(
+    epic_id: str = "epic-1",
+    remediation_issues: list[str] | None = None,
+) -> EpicVerificationResult:
+    """Create a failing EpicVerificationResult."""
+    return EpicVerificationResult(
+        verified_count=1,
+        passed_count=0,
+        failed_count=1,
+        verdicts={
+            epic_id: EpicVerdict(
+                passed=False,
+                unmet_criteria=[],
+                confidence=0.9,
+                reasoning="Criteria not met",
+            )
+        },
+        remediation_issues_created=remediation_issues or [],
+    )
+
+
+def make_not_eligible_result() -> EpicVerificationResult:
+    """Create a result indicating epic not eligible (children still open)."""
+    return EpicVerificationResult(
+        verified_count=0,
+        passed_count=0,
+        failed_count=0,
+        verdicts={},
+        remediation_issues_created=[],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test helpers: Fake callbacks
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeCallbacks:
+    """Collection of fake callbacks for EpicVerificationCoordinator.
+
+    Observable state:
+        spawned_issues: issues passed to spawn_remediation
+        finalized_results: (issue_id, result) pairs passed to finalize
+        completed_issues: issues passed to mark_completed
+        warnings: warning messages emitted
+        closed_epics: epic IDs emitted via on_epic_closed
+    """
+
+    parent_epic: str | None = "epic-1"
+    fake_verifier: FakeVerificationResults = field(
+        default_factory=FakeVerificationResults
+    )
+    has_epic_verifier: bool = True
+    spawn_returns_task: bool = True
+    spawn_raises: Exception | None = None
+    task_success: bool = True
+    task_error: Exception | None = None
+
+    # Observable state
+    spawned_issues: list[str] = field(default_factory=list)
+    finalized_results: list[tuple[str, IssueResult]] = field(default_factory=list)
+    completed_issues: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    closed_epics: list[str] = field(default_factory=list)
+    eligible_epics_closed: bool = field(default=False)
+
+    async def get_parent_epic(self, issue_id: str) -> str | None:
+        return self.parent_epic
+
+    async def verify_epic(self, epic_id: str, force: bool) -> EpicVerificationResult:
+        return await self.fake_verifier.verify(epic_id, force)
+
+    async def spawn_remediation(
+        self, issue_id: str
+    ) -> asyncio.Task[IssueResult] | None:
+        self.spawned_issues.append(issue_id)
+        if self.spawn_raises:
+            raise self.spawn_raises
+        if not self.spawn_returns_task:
+            return None
+
+        async def run_task() -> IssueResult:
+            if self.task_error:
+                raise self.task_error
+            return IssueResult(
+                issue_id=issue_id,
+                agent_id="test-agent",
+                success=self.task_success,
+                summary="done" if self.task_success else "failed",
+            )
+
+        return asyncio.create_task(run_task())
+
+    async def finalize_remediation(
+        self, issue_id: str, result: IssueResult, run_metadata: object
+    ) -> None:
+        self.finalized_results.append((issue_id, result))
+
+    def mark_completed(self, issue_id: str) -> None:
+        self.completed_issues.append(issue_id)
+
+    def is_issue_failed(self, issue_id: str) -> bool:
+        return False
+
+    async def close_eligible_epics(self) -> bool:
+        self.eligible_epics_closed = True
+        return True
+
+    def on_epic_closed(self, issue_id: str) -> None:
+        self.closed_epics.append(issue_id)
+
+    def on_warning(self, message: str) -> None:
+        self.warnings.append(message)
+
+    def get_agent_id(self, issue_id: str) -> str:
+        return "test-agent"
+
+    def to_callbacks(self) -> EpicVerificationCallbacks:
+        """Convert to EpicVerificationCallbacks for coordinator injection."""
+        return EpicVerificationCallbacks(
+            get_parent_epic=self.get_parent_epic,
+            verify_epic=self.verify_epic,
+            spawn_remediation=self.spawn_remediation,
+            finalize_remediation=self.finalize_remediation,
+            mark_completed=self.mark_completed,
+            is_issue_failed=self.is_issue_failed,
+            close_eligible_epics=self.close_eligible_epics,
+            on_epic_closed=self.on_epic_closed,
+            on_warning=self.on_warning,
+            has_epic_verifier=lambda: self.has_epic_verifier,
+            get_agent_id=self.get_agent_id,
         )
-    )
-    return verifier
 
 
-@pytest.fixture
-def mock_mala_config() -> MalaConfig:
-    """Create a MalaConfig with test values."""
-    return MalaConfig(
-        runs_dir=Path("/tmp/test-runs"),
-        lock_dir=Path("/tmp/test-locks"),
-        claude_config_dir=Path("/tmp/test-claude"),
-        max_epic_verification_retries=3,
-    )
+def stub_run_metadata() -> RunMetadata:
+    """Create a stub RunMetadata for tests.
+
+    The coordinator only passes run_metadata through to callbacks,
+    so we can use an object() cast to the expected type.
+    """
+    return cast("RunMetadata", object())
 
 
-@pytest.fixture
-def mock_run_metadata() -> MagicMock:
-    """Create a mock RunMetadata."""
-    return MagicMock()
-
-
-def create_coordinator(
-    mock_beads: MagicMock,
-    mock_event_sink: MagicMock,
-    mock_epic_verifier: MagicMock,
-    max_retries: int = 3,
-    epic_override_ids: set[str] | None = None,
-    has_epic_verifier: bool = True,
-    spawn_remediation: AsyncMock | None = None,
-    finalize_remediation: AsyncMock | None = None,
-    mark_completed: MagicMock | None = None,
-    is_issue_failed: MagicMock | None = None,
-    get_agent_id: MagicMock | None = None,
-) -> EpicVerificationCoordinator:
-    """Create a coordinator with mock callbacks."""
-    callbacks = EpicVerificationCallbacks(
-        get_parent_epic=mock_beads.get_parent_epic_async,
-        verify_epic=mock_epic_verifier.verify_and_close_epic,
-        spawn_remediation=spawn_remediation or AsyncMock(return_value=None),
-        finalize_remediation=finalize_remediation or AsyncMock(),
-        mark_completed=mark_completed or MagicMock(),
-        is_issue_failed=is_issue_failed or MagicMock(return_value=False),
-        close_eligible_epics=mock_beads.close_eligible_epics_async,
-        on_epic_closed=mock_event_sink.on_epic_closed,
-        on_warning=mock_event_sink.on_warning,
-        has_epic_verifier=lambda: has_epic_verifier,
-        get_agent_id=get_agent_id or MagicMock(return_value="unknown"),
-    )
-    config = EpicVerificationConfig(max_retries=max_retries)
-    return EpicVerificationCoordinator(
-        config=config,
-        callbacks=callbacks,
-        epic_override_ids=epic_override_ids or set(),
-    )
+# ---------------------------------------------------------------------------
+# Tests: Retry loop behavior
+# ---------------------------------------------------------------------------
 
 
 class TestEpicVerificationRetryLoop:
     """Tests for the epic verification retry loop."""
 
     @pytest.mark.asyncio
-    async def test_passes_on_first_attempt(
+    @pytest.mark.parametrize(
+        "verdict_sequence,expected_attempts,should_pass",
+        [
+            # Pass on first attempt
+            pytest.param(
+                [make_passing_result()],
+                1,
+                True,
+                id="pass_first_attempt",
+            ),
+            # Fail then pass (with remediation)
+            pytest.param(
+                [
+                    make_failing_result(remediation_issues=["rem-1"]),
+                    make_passing_result(),
+                ],
+                2,
+                True,
+                id="fail_then_pass",
+            ),
+            # Fail twice then pass
+            pytest.param(
+                [
+                    make_failing_result(remediation_issues=["rem-1"]),
+                    make_failing_result(remediation_issues=["rem-2"]),
+                    make_passing_result(),
+                ],
+                3,
+                True,
+                id="fail_twice_then_pass",
+            ),
+        ],
+    )
+    async def test_retry_scenarios(
         self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-        mock_run_metadata: MagicMock,
+        verdict_sequence: list[EpicVerificationResult],
+        expected_attempts: int,
+        should_pass: bool,
     ) -> None:
-        """Should close epic without retry when verification passes first time."""
-        coordinator = create_coordinator(
-            mock_beads, mock_event_sink, mock_epic_verifier
+        """Verify retry behavior with different verdict sequences."""
+        fake_verifier = FakeVerificationResults(results=verdict_sequence)
+        fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
         )
 
-        await coordinator.check_epic_closure("child-1", mock_run_metadata)
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
-        # Should have called verify_and_close_epic once
-        mock_epic_verifier.verify_and_close_epic.assert_called_once_with(
-            "epic-1", False
-        )
-        # Should have marked epic as verified
+        # Assert on observable attempts
+        assert len(fake_verifier.attempts) == expected_attempts
+        # Final attempt should match expected pass/fail
+        final_attempt = fake_verifier.attempts[-1]
+        assert final_attempt.result.passed_count == (1 if should_pass else 0)
+        # Epic should be marked as verified
         assert "epic-1" in coordinator.verified_epics
 
     @pytest.mark.asyncio
-    async def test_retries_when_remediation_issues_created(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-        mock_run_metadata: MagicMock,
-    ) -> None:
-        """Should retry verification after executing remediation issues."""
-        # First call fails with remediation issues, second call passes
-        mock_epic_verifier.verify_and_close_epic = AsyncMock(
-            side_effect=[
-                EpicVerificationResult(
-                    verified_count=1,
-                    passed_count=0,
-                    failed_count=1,
-                    verdicts={},
-                    remediation_issues_created=["rem-1", "rem-2"],
-                ),
-                EpicVerificationResult(
-                    verified_count=1,
-                    passed_count=1,
-                    failed_count=0,
-                    verdicts={},
-                    remediation_issues_created=[],
-                ),
-            ]
+    async def test_stops_at_max_retries(self) -> None:
+        """Should stop retrying after max_retries, even if still failing."""
+        # All attempts fail with remediation issues
+        fake_verifier = FakeVerificationResults(
+            results=[make_failing_result(remediation_issues=["rem-1"])] * 10
+        )
+        fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
         )
 
-        # Mock spawn_remediation to return tasks
-        async def mock_spawn(issue_id: str) -> asyncio.Task[IssueResult]:
-            async def dummy() -> IssueResult:
-                return IssueResult(
-                    issue_id=issue_id, agent_id="test", success=True, summary="done"
-                )
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
-            return asyncio.create_task(dummy())
-
-        spawn_mock = AsyncMock(side_effect=mock_spawn)
-        coordinator = create_coordinator(
-            mock_beads,
-            mock_event_sink,
-            mock_epic_verifier,
-            spawn_remediation=spawn_mock,
-        )
-
-        await coordinator.check_epic_closure("child-1", mock_run_metadata)
-
-        # Should have called verify_and_close_epic twice
-        assert mock_epic_verifier.verify_and_close_epic.call_count == 2
-        # Should have logged retry attempt
-        mock_event_sink.on_warning.assert_called()
-        # Should have marked epic as verified after passing
-        assert "epic-1" in coordinator.verified_epics
-
-    @pytest.mark.asyncio
-    async def test_stops_at_max_retries(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-        mock_run_metadata: MagicMock,
-    ) -> None:
-        """Should stop retrying after max_epic_verification_retries."""
-        # All calls fail with remediation issues
-        mock_epic_verifier.verify_and_close_epic = AsyncMock(
-            return_value=EpicVerificationResult(
-                verified_count=1,
-                passed_count=0,
-                failed_count=1,
-                verdicts={},
-                remediation_issues_created=["rem-1"],
-            )
-        )
-
-        # Mock spawn_remediation
-        async def mock_spawn(issue_id: str) -> asyncio.Task[IssueResult]:
-            async def dummy() -> IssueResult:
-                return IssueResult(
-                    issue_id=issue_id, agent_id="test", success=True, summary="done"
-                )
-
-            return asyncio.create_task(dummy())
-
-        spawn_mock = AsyncMock(side_effect=mock_spawn)
-        coordinator = create_coordinator(
-            mock_beads,
-            mock_event_sink,
-            mock_epic_verifier,
-            spawn_remediation=spawn_mock,
-        )
-
-        await coordinator.check_epic_closure("child-1", mock_run_metadata)
-
-        # Should have called verify exactly max_attempts times (1 + 3 retries = 4)
-        assert mock_epic_verifier.verify_and_close_epic.call_count == 4
-        # Should have logged max retries warning
-        assert any(
-            "failed after" in str(call)
-            for call in mock_event_sink.on_warning.call_args_list
-        )
+        # Should have attempted 1 initial + 3 retries = 4 times
+        assert len(fake_verifier.attempts) == 4
+        # All attempts should have failed
+        for attempt in fake_verifier.attempts:
+            assert attempt.result.passed_count == 0
         # Should still mark as verified (to prevent infinite loops)
         assert "epic-1" in coordinator.verified_epics
+        # Should have logged warning about max retries
+        assert any("failed after" in w for w in fake_callbacks.warnings)
 
     @pytest.mark.asyncio
-    async def test_stops_when_no_remediation_issues(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-        mock_run_metadata: MagicMock,
-    ) -> None:
+    async def test_stops_when_no_remediation_issues(self) -> None:
         """Should stop if verification fails but no remediation issues created."""
-        # Fail without creating remediation issues
-        mock_epic_verifier.verify_and_close_epic = AsyncMock(
-            return_value=EpicVerificationResult(
-                verified_count=1,
-                passed_count=0,
-                failed_count=1,
-                verdicts={},
-                remediation_issues_created=[],  # No remediation issues
-            )
+        # Fail without remediation issues - no retry possible
+        fake_verifier = FakeVerificationResults(
+            results=[make_failing_result(remediation_issues=[])]
+        )
+        fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
         )
 
-        coordinator = create_coordinator(
-            mock_beads, mock_event_sink, mock_epic_verifier
-        )
-
-        await coordinator.check_epic_closure("child-1", mock_run_metadata)
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
         # Should only call verify once (no retry since no remediation issues)
-        assert mock_epic_verifier.verify_and_close_epic.call_count == 1
-        # Should mark as verified
-        assert "epic-1" in coordinator.verified_epics
+        assert len(fake_verifier.attempts) == 1
+        # No remediation issues spawned
+        assert fake_callbacks.spawned_issues == []
+
+
+class TestEpicVerificationSkipConditions:
+    """Tests for conditions that skip verification entirely."""
 
     @pytest.mark.asyncio
-    async def test_skips_already_verified_epic(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-        mock_run_metadata: MagicMock,
-    ) -> None:
+    async def test_skips_already_verified_epic(self) -> None:
         """Should skip verification for already verified epics."""
-        coordinator = create_coordinator(
-            mock_beads, mock_event_sink, mock_epic_verifier
+        fake_verifier = FakeVerificationResults(results=[make_passing_result()])
+        fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
         )
         coordinator.verified_epics.add("epic-1")  # Already verified
 
-        await coordinator.check_epic_closure("child-1", mock_run_metadata)
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
-        # Should not call verify_and_close_epic
-        mock_epic_verifier.verify_and_close_epic.assert_not_called()
+        # Should not call verify
+        assert len(fake_verifier.attempts) == 0
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_parent_epic(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-        mock_run_metadata: MagicMock,
-    ) -> None:
+    async def test_skips_when_no_parent_epic(self) -> None:
         """Should skip verification when issue has no parent epic."""
-        mock_beads.get_parent_epic_async = AsyncMock(return_value=None)
+        fake_verifier = FakeVerificationResults(results=[make_passing_result()])
+        fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier, parent_epic=None)
 
-        coordinator = create_coordinator(
-            mock_beads, mock_event_sink, mock_epic_verifier
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
         )
 
-        await coordinator.check_epic_closure("child-1", mock_run_metadata)
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
 
-        # Should not call verify_and_close_epic
-        mock_epic_verifier.verify_and_close_epic.assert_not_called()
+        # Should not call verify
+        assert len(fake_verifier.attempts) == 0
+
+    @pytest.mark.asyncio
+    async def test_does_not_mark_verified_when_not_eligible(self) -> None:
+        """Should NOT mark epic as verified when not eligible (children still open)."""
+        fake_verifier = FakeVerificationResults(results=[make_not_eligible_result()])
+        fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
+        )
+
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
+
+        # Should have called verify once
+        assert len(fake_verifier.attempts) == 1
+        # Should NOT mark as verified (so it can be re-checked later)
+        assert "epic-1" not in coordinator.verified_epics
+
+
+class TestReentryGuard:
+    """Tests for re-entrant verification guard."""
+
+    @pytest.mark.asyncio
+    async def test_skips_epic_being_verified(self) -> None:
+        """Should skip verification for epics already being verified."""
+        fake_verifier = FakeVerificationResults(results=[make_passing_result()])
+        fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
+        )
+        coordinator.epics_being_verified.add("epic-1")  # Already being verified
+
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
+
+        # Should NOT call verify due to re-entry guard
+        assert len(fake_verifier.attempts) == 0
+
+    @pytest.mark.asyncio
+    async def test_removes_from_being_verified_on_completion(self) -> None:
+        """Should remove epic from epics_being_verified when done."""
+        fake_verifier = FakeVerificationResults(results=[make_passing_result()])
+        fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
+        )
+
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
+
+        # Should have removed from epics_being_verified
+        assert "epic-1" not in coordinator.epics_being_verified
+
+    @pytest.mark.asyncio
+    async def test_removes_from_being_verified_on_error(self) -> None:
+        """Should remove epic from epics_being_verified even on error."""
+        fake_verifier = FakeVerificationResults(results=[])
+        fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
+
+        # Make verify raise an exception
+        async def raise_error(epic_id: str, force: bool) -> EpicVerificationResult:
+            raise RuntimeError("Test error")
+
+        fake_callbacks.verify_epic = raise_error  # type: ignore[method-assign]
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
+        )
+
+        with pytest.raises(RuntimeError, match="Test error"):
+            await coordinator.check_epic_closure("child-1", stub_run_metadata())
+
+        # Should have removed from epics_being_verified even on error
+        assert "epic-1" not in coordinator.epics_being_verified
+
+
+class TestRemediationExecution:
+    """Tests for _execute_remediation_issues method."""
+
+    @pytest.mark.asyncio
+    async def test_spawns_and_finalizes_remediation_issues(self) -> None:
+        """Should spawn tasks and finalize results for remediation issues."""
+        fake_verifier = FakeVerificationResults(
+            results=[
+                make_failing_result(remediation_issues=["rem-1", "rem-2"]),
+                make_passing_result(),
+            ]
+        )
+        fake_callbacks = FakeCallbacks(fake_verifier=fake_verifier)
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
+        )
+
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
+
+        # Should have spawned both remediation issues
+        assert fake_callbacks.spawned_issues == ["rem-1", "rem-2"]
+        # Should have finalized both
+        assert len(fake_callbacks.finalized_results) == 2
+        finalized_ids = [r[0] for r in fake_callbacks.finalized_results]
+        assert "rem-1" in finalized_ids
+        assert "rem-2" in finalized_ids
+        # Should have marked both as completed
+        assert "rem-1" in fake_callbacks.completed_issues
+        assert "rem-2" in fake_callbacks.completed_issues
+
+    @pytest.mark.asyncio
+    async def test_handles_task_exceptions(self) -> None:
+        """Should handle task exceptions and still finalize with error result."""
+        fake_verifier = FakeVerificationResults(
+            results=[
+                make_failing_result(remediation_issues=["rem-1"]),
+                make_passing_result(),
+            ]
+        )
+        fake_callbacks = FakeCallbacks(
+            fake_verifier=fake_verifier, task_error=RuntimeError("Task failed!")
+        )
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
+        )
+
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
+
+        # Should have finalized with failure result
+        assert len(fake_callbacks.finalized_results) == 1
+        issue_id, result = fake_callbacks.finalized_results[0]
+        assert issue_id == "rem-1"
+        assert not result.success
+        assert "Task failed!" in result.summary
+
+
+class TestFallbackBehavior:
+    """Tests for fallback behavior when EpicVerifier is not available."""
+
+    @pytest.mark.asyncio
+    async def test_uses_fallback_when_no_epic_verifier(self) -> None:
+        """Should use close_eligible_epics fallback when no EpicVerifier."""
+        fake_verifier = FakeVerificationResults(results=[make_passing_result()])
+        fake_callbacks = FakeCallbacks(
+            fake_verifier=fake_verifier, has_epic_verifier=False
+        )
+
+        coordinator = EpicVerificationCoordinator(
+            config=EpicVerificationConfig(max_retries=3),
+            callbacks=fake_callbacks.to_callbacks(),
+        )
+
+        await coordinator.check_epic_closure("child-1", stub_run_metadata())
+
+        # Should NOT call verify
+        assert len(fake_verifier.attempts) == 0
+        # Should call close_eligible_epics fallback
+        assert fake_callbacks.eligible_epics_closed is True
+        # Should emit on_epic_closed
+        assert "child-1" in fake_callbacks.closed_epics
 
 
 class TestMalaConfigEpicVerificationRetries:
@@ -357,260 +587,3 @@ class TestMalaConfigEpicVerificationRetries:
         monkeypatch.setenv("MALA_MAX_EPIC_VERIFICATION_RETRIES", "not-a-number")
         config = MalaConfig.from_env(validate=False)
         assert config.max_epic_verification_retries == 3
-
-
-class TestExecuteRemediationIssues:
-    """Tests for _execute_remediation_issues method in coordinator."""
-
-    @pytest.mark.asyncio
-    async def test_uses_task_returned_by_spawn_agent(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-    ) -> None:
-        """Should use task returned by spawn_remediation directly."""
-        tasks_awaited: set[str] = set()
-
-        async def mock_spawn(issue_id: str) -> asyncio.Task[IssueResult]:
-            """Return a task directly."""
-
-            async def dummy_result() -> IssueResult:
-                tasks_awaited.add(issue_id)
-                return IssueResult(
-                    issue_id=issue_id, agent_id="test", success=True, summary="done"
-                )
-
-            return asyncio.create_task(dummy_result())
-
-        spawn_mock = AsyncMock(side_effect=mock_spawn)
-        mark_completed = MagicMock()
-
-        coordinator = create_coordinator(
-            mock_beads,
-            mock_event_sink,
-            mock_epic_verifier,
-            spawn_remediation=spawn_mock,
-            mark_completed=mark_completed,
-        )
-
-        mock_run_metadata = MagicMock()
-        await coordinator._execute_remediation_issues(
-            ["rem-1", "rem-2"], mock_run_metadata
-        )
-
-        # Verify all tasks were actually awaited
-        assert tasks_awaited == {
-            "rem-1",
-            "rem-2",
-        }, f"All tasks should be awaited, but only got: {tasks_awaited}"
-
-        # Verify mark_completed was called for each issue
-        assert mark_completed.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_finalizes_results_with_run_metadata(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-    ) -> None:
-        """Should finalize results when run_metadata is provided."""
-
-        async def mock_spawn(issue_id: str) -> asyncio.Task[IssueResult]:
-            async def dummy_result() -> IssueResult:
-                return IssueResult(
-                    issue_id=issue_id, agent_id="test", success=True, summary="done"
-                )
-
-            return asyncio.create_task(dummy_result())
-
-        spawn_mock = AsyncMock(side_effect=mock_spawn)
-        finalize_mock = AsyncMock()
-
-        coordinator = create_coordinator(
-            mock_beads,
-            mock_event_sink,
-            mock_epic_verifier,
-            spawn_remediation=spawn_mock,
-            finalize_remediation=finalize_mock,
-        )
-
-        mock_run_metadata = MagicMock()
-
-        await coordinator._execute_remediation_issues(
-            ["rem-1", "rem-2"], mock_run_metadata
-        )
-
-        # Verify finalize_remediation was called for each issue
-        assert finalize_mock.call_count == 2
-        # Verify run_metadata was passed
-        for call in finalize_mock.call_args_list:
-            assert call[0][2] == mock_run_metadata
-
-    @pytest.mark.asyncio
-    async def test_handles_task_exceptions(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-    ) -> None:
-        """Should handle task exceptions and still finalize with error result."""
-
-        async def mock_spawn(issue_id: str) -> asyncio.Task[IssueResult]:
-            async def failing_result() -> IssueResult:
-                raise RuntimeError("Task failed!")
-
-            return asyncio.create_task(failing_result())
-
-        spawn_mock = AsyncMock(side_effect=mock_spawn)
-        finalize_mock = AsyncMock()
-
-        coordinator = create_coordinator(
-            mock_beads,
-            mock_event_sink,
-            mock_epic_verifier,
-            spawn_remediation=spawn_mock,
-            finalize_remediation=finalize_mock,
-        )
-
-        mock_run_metadata = MagicMock()
-
-        await coordinator._execute_remediation_issues(["rem-1"], mock_run_metadata)
-
-        # Verify finalize_remediation was still called
-        assert finalize_mock.call_count == 1
-        # Verify the result indicates failure
-        call_args = finalize_mock.call_args[0]
-        result = call_args[1]
-        assert not result.success
-        assert "Task failed!" in result.summary
-
-
-class TestEpicNotEligible:
-    """Tests for handling epics that aren't eligible yet (children still open)."""
-
-    @pytest.mark.asyncio
-    async def test_does_not_mark_verified_when_not_eligible(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-        mock_run_metadata: MagicMock,
-    ) -> None:
-        """Should NOT mark epic as verified when it isn't eligible (verified_count=0)."""
-        # Return result indicating epic wasn't eligible (children still open)
-        mock_epic_verifier.verify_and_close_epic = AsyncMock(
-            return_value=EpicVerificationResult(
-                verified_count=0,  # Epic not eligible - children still open
-                passed_count=0,
-                failed_count=0,
-                verdicts={},
-                remediation_issues_created=[],
-            )
-        )
-
-        coordinator = create_coordinator(
-            mock_beads, mock_event_sink, mock_epic_verifier
-        )
-
-        await coordinator.check_epic_closure("child-1", mock_run_metadata)
-
-        # Should NOT mark epic as verified (so it can be re-checked later)
-        assert "epic-1" not in coordinator.verified_epics
-        # Should have called verify_and_close_epic exactly once
-        assert mock_epic_verifier.verify_and_close_epic.call_count == 1
-
-
-class TestReentryGuard:
-    """Tests for re-entrant verification guard."""
-
-    @pytest.mark.asyncio
-    async def test_skips_epic_being_verified(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-        mock_run_metadata: MagicMock,
-    ) -> None:
-        """Should skip verification for epics already being verified."""
-        coordinator = create_coordinator(
-            mock_beads, mock_event_sink, mock_epic_verifier
-        )
-        coordinator.epics_being_verified.add("epic-1")  # Already being verified
-
-        await coordinator.check_epic_closure("child-1", mock_run_metadata)
-
-        # Should NOT call verify_and_close_epic due to re-entry guard
-        mock_epic_verifier.verify_and_close_epic.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_removes_from_being_verified_on_completion(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-        mock_run_metadata: MagicMock,
-    ) -> None:
-        """Should remove epic from epics_being_verified when done."""
-        coordinator = create_coordinator(
-            mock_beads, mock_event_sink, mock_epic_verifier
-        )
-
-        await coordinator.check_epic_closure("child-1", mock_run_metadata)
-
-        # Should have removed from epics_being_verified
-        assert "epic-1" not in coordinator.epics_being_verified
-
-    @pytest.mark.asyncio
-    async def test_removes_from_being_verified_on_error(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-        mock_run_metadata: MagicMock,
-    ) -> None:
-        """Should remove epic from epics_being_verified even on error."""
-        # Make verify_and_close_epic raise an exception
-        mock_epic_verifier.verify_and_close_epic = AsyncMock(
-            side_effect=RuntimeError("Test error")
-        )
-
-        coordinator = create_coordinator(
-            mock_beads, mock_event_sink, mock_epic_verifier
-        )
-
-        with pytest.raises(RuntimeError, match="Test error"):
-            await coordinator.check_epic_closure("child-1", mock_run_metadata)
-
-        # Should have removed from epics_being_verified even on error
-        assert "epic-1" not in coordinator.epics_being_verified
-
-
-class TestFallbackForMockProviders:
-    """Tests for fallback behavior when EpicVerifier is not available."""
-
-    @pytest.mark.asyncio
-    async def test_uses_fallback_when_no_epic_verifier(
-        self,
-        mock_beads: MagicMock,
-        mock_event_sink: MagicMock,
-        mock_epic_verifier: MagicMock,
-        mock_run_metadata: MagicMock,
-    ) -> None:
-        """Should use close_eligible_epics fallback when no EpicVerifier."""
-        coordinator = create_coordinator(
-            mock_beads,
-            mock_event_sink,
-            mock_epic_verifier,
-            has_epic_verifier=False,
-        )
-
-        await coordinator.check_epic_closure("child-1", mock_run_metadata)
-
-        # Should NOT call verify_and_close_epic
-        mock_epic_verifier.verify_and_close_epic.assert_not_called()
-        # Should call close_eligible_epics fallback
-        mock_beads.close_eligible_epics_async.assert_called_once()
-        # Should emit on_epic_closed
-        mock_event_sink.on_epic_closed.assert_called_once_with("child-1")

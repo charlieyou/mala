@@ -19,16 +19,21 @@ from tests.fakes.epic_model import (
     make_passing_verdict,
 )
 from tests.fakes.event_sink import FakeEventSink, RecordedEvent
+from tests.fakes.gate_checker import FakeGateChecker
 from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 from tests.fakes.lock_manager import FakeLockManager, LockAcquireCall
+from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
 __all__ = [
     "FakeCommandRunner",
     "FakeEpicVerificationModel",
     "FakeEventSink",
+    "FakeGateChecker",
     "FakeIssue",
     "FakeIssueProvider",
     "FakeLockManager",
+    "FakeSDKClient",
+    "FakeSDKClientFactory",
     "LockAcquireCall",
     "RecordedEvent",
     "UnregisteredCommandError",

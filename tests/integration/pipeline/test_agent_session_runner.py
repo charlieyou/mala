@@ -10,7 +10,7 @@ isinstance checks work correctly in the runner.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,6 +31,7 @@ from src.pipeline.message_stream_processor import (
     MessageIterationState,
 )
 from src.domain.quality_gate import GateResult
+from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
 if TYPE_CHECKING:
     from src.core.protocols import SDKClientProtocol
@@ -72,52 +73,6 @@ def make_result_message(
     )
 
 
-class FakeSDKClient:
-    """Fake SDK client for testing.
-
-    Allows tests to configure what messages are returned from receive_response.
-    Uses actual SDK types so isinstance checks work correctly.
-    """
-
-    def __init__(
-        self,
-        messages: list[Any] | None = None,
-        result_message: ResultMessage | None = None,
-    ):
-        self.messages = messages or []
-        self.result_message = result_message or make_result_message()
-        self.queries: list[tuple[str, str | None]] = []
-        self._response_index = 0
-        self.disconnect_called = False
-        self.disconnect_delay: float = 0
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        pass
-
-    async def query(self, prompt: str, session_id: str | None = None) -> None:
-        self.queries.append((prompt, session_id))
-
-    async def receive_response(self) -> AsyncIterator[Any]:
-        """Yield messages then the result message."""
-        for msg in self.messages:
-            yield msg
-        yield self.result_message
-
-    async def disconnect(self) -> None:
-        """Disconnect the client."""
-        if self.disconnect_delay > 0:
-            await asyncio.sleep(self.disconnect_delay)
-        self.disconnect_called = True
-
-
 class HangingSDKClient(FakeSDKClient):
     """Fake SDK client that never yields a response (simulates hung stream)."""
 
@@ -153,7 +108,10 @@ class SlowSDKClient(FakeSDKClient):
         messages: list[Any] | None = None,
         result_message: ResultMessage | None = None,
     ):
-        super().__init__(messages=messages, result_message=result_message)
+        # Default to empty list and result message if not provided
+        msgs = messages if messages is not None else []
+        rm = result_message if result_message is not None else make_result_message()
+        super().__init__(messages=msgs, result_message=rm)
         self.delay = delay
 
     async def receive_response(self) -> AsyncIterator[Any]:
@@ -161,7 +119,8 @@ class SlowSDKClient(FakeSDKClient):
             await asyncio.sleep(self.delay)
             yield msg
         await asyncio.sleep(self.delay)
-        yield self.result_message
+        if self.result_message is not None:
+            yield self.result_message
 
 
 class FakeHookMatcher:
@@ -170,50 +129,6 @@ class FakeHookMatcher:
     def __init__(self, matcher: object, hooks: list[object]):
         self.matcher = matcher
         self.hooks = hooks
-
-
-class FakeSDKClientFactory:
-    """Factory for creating fake SDK clients in tests."""
-
-    def __init__(self, client: FakeSDKClient):
-        self.client = client
-        self.create_calls: list[Any] = []
-
-    def create(self, options: object) -> SDKClientProtocol:
-        self.create_calls.append(options)
-        return cast("SDKClientProtocol", self.client)
-
-    def create_options(
-        self,
-        *,
-        cwd: str,
-        permission_mode: str = "bypassPermissions",
-        model: str = "opus",
-        system_prompt: dict[str, str] | None = None,
-        setting_sources: list[str] | None = None,
-        mcp_servers: object | None = None,
-        disallowed_tools: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        hooks: dict[str, list[object]] | None = None,
-    ) -> object:
-        return {
-            "cwd": cwd,
-            "permission_mode": permission_mode,
-            "model": model,
-            "system_prompt": system_prompt,
-            "setting_sources": setting_sources,
-            "mcp_servers": mcp_servers,
-            "disallowed_tools": disallowed_tools,
-            "env": env,
-            "hooks": hooks,
-        }
-
-    def create_hook_matcher(
-        self,
-        matcher: object | None,
-        hooks: list[object],
-    ) -> object:
-        return FakeHookMatcher(matcher, hooks)
 
 
 class SequencedSDKClientFactory:
@@ -292,8 +207,8 @@ class TestAgentSessionRunnerBasics:
 
     @pytest.fixture
     def fake_client(self) -> FakeSDKClient:
-        """Create a fake SDK client."""
-        return FakeSDKClient()
+        """Create a fake SDK client with a default result message."""
+        return FakeSDKClient(result_message=make_result_message())
 
     @pytest.fixture
     def fake_factory(self, fake_client: FakeSDKClient) -> FakeSDKClientFactory:
@@ -545,7 +460,7 @@ class TestAgentSessionRunnerGateHandling:
         tmp_log_path: Path,
     ) -> None:
         """Runner should complete successfully when gate passes."""
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
 
         gate_check_calls: list[str] = []
@@ -600,7 +515,7 @@ class TestAgentSessionRunnerGateHandling:
             review_enabled=False,
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
 
         def get_log_path(session_id: str) -> Path:
@@ -669,7 +584,7 @@ class TestAgentSessionRunnerCallbacks:
         tmp_log_path: Path,
     ) -> None:
         """Runner should call get_log_path callback with session ID."""
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
 
         log_path_calls: list[str] = []
@@ -713,7 +628,7 @@ class TestAgentSessionRunnerCallbacks:
         session_config: AgentSessionConfig,
     ) -> None:
         """Runner should raise when required callback is missing."""
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
 
         # No callbacks configured
@@ -841,7 +756,9 @@ class TestAgentSessionRunnerStreamingCallbacks:
         tool_block = ToolUseBlock(id="tool-1", name="Read", input={"path": "test.py"})
         assistant_msg = AssistantMessage(content=[tool_block], model="test-model")
 
-        fake_client = FakeSDKClient(messages=[assistant_msg])
+        fake_client = FakeSDKClient(
+            messages=[assistant_msg], result_message=make_result_message()
+        )
         fake_factory = FakeSDKClientFactory(fake_client)
 
         tool_use_calls: list[tuple[str, str, dict[str, Any] | None]] = []
@@ -895,7 +812,9 @@ class TestAgentSessionRunnerStreamingCallbacks:
         text_block = TextBlock(text="Processing the request...")
         assistant_msg = AssistantMessage(content=[text_block], model="test-model")
 
-        fake_client = FakeSDKClient(messages=[assistant_msg])
+        fake_client = FakeSDKClient(
+            messages=[assistant_msg], result_message=make_result_message()
+        )
         fake_factory = FakeSDKClientFactory(fake_client)
 
         agent_text_calls: list[tuple[str, str]] = []
@@ -950,7 +869,9 @@ class TestAgentSessionRunnerStreamingCallbacks:
             content=[text_block, tool_block], model="test-model"
         )
 
-        fake_client = FakeSDKClient(messages=[assistant_msg])
+        fake_client = FakeSDKClient(
+            messages=[assistant_msg], result_message=make_result_message()
+        )
         fake_factory = FakeSDKClientFactory(fake_client)
 
         def get_log_path(session_id: str) -> Path:
@@ -1150,7 +1071,7 @@ class TestAgentSessionRunnerEventSink:
         tmp_log_path: Path,
     ) -> None:
         """Runner should emit on_gate_started and on_gate_passed when gate passes."""
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -1232,7 +1153,7 @@ class TestAgentSessionRunnerEventSink:
             review_enabled=False,
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -1315,7 +1236,7 @@ class TestAgentSessionRunnerEventSink:
             review_enabled=False,
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -1385,7 +1306,7 @@ class TestAgentSessionRunnerEventSink:
         tmp_log_path: Path,
     ) -> None:
         """Runner should work without event sink (sink is None)."""
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
 
         def get_log_path(session_id: str) -> Path:
@@ -1438,7 +1359,7 @@ class TestAgentSessionRunnerEventSink:
             review_enabled=True,  # Enable review
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -1536,7 +1457,7 @@ class TestAgentSessionRunnerEventSink:
             review_enabled=True,  # Enable review
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -1916,7 +1837,7 @@ class TestIdleTimeoutRetry:
         )
 
         # Second client: succeeds immediately
-        success_client = FakeSDKClient()
+        success_client = FakeSDKClient(result_message=make_result_message())
 
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
@@ -2066,7 +1987,7 @@ class TestIdleTimeoutRetry:
         hanging_client = HangingSDKClient()
 
         # Second client: succeeds
-        success_client = FakeSDKClient()
+        success_client = FakeSDKClient(result_message=make_result_message())
 
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
@@ -2182,7 +2103,7 @@ class TestIdleTimeoutRetry:
         no client is created and no query is sent.
         """
         # Setup a successful client
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         factory = FakeSDKClientFactory(fake_client)
 
         session_config = AgentSessionConfig(
@@ -2245,7 +2166,7 @@ class TestIdleTimeoutRetry:
         result_msg = make_result_message(session_id="session-123")
         hanging1 = HangingAfterMessagesSDKClient(messages=[result_msg])
         hanging2 = HangingAfterMessagesSDKClient(messages=[result_msg])
-        success_client = FakeSDKClient()
+        success_client = FakeSDKClient(result_message=make_result_message())
 
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
@@ -2471,7 +2392,7 @@ class TestInitializeSession:
     @pytest.fixture
     def runner(self, session_config: AgentSessionConfig) -> AgentSessionRunner:
         """Create a runner for testing initialization."""
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         return AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
@@ -2570,7 +2491,7 @@ class TestInitializeSession:
             prompts=make_test_prompts(),
             idle_timeout_seconds=None,  # Let it be computed
         )
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
@@ -2595,7 +2516,7 @@ class TestInitializeSession:
             prompts=make_test_prompts(),
             idle_timeout_seconds=None,
         )
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
@@ -2620,7 +2541,7 @@ class TestInitializeSession:
             prompts=make_test_prompts(),
             idle_timeout_seconds=None,
         )
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
@@ -2645,7 +2566,7 @@ class TestInitializeSession:
             prompts=make_test_prompts(),
             idle_timeout_seconds=0,  # Explicitly disabled
         )
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
@@ -2670,7 +2591,7 @@ class TestInitializeSession:
             prompts=make_test_prompts(),
             idle_timeout_seconds=42.5,  # Explicit value
         )
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
@@ -3411,7 +3332,7 @@ class TestRunLifecycleLoop:
             LifecycleState,
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -3547,7 +3468,7 @@ class TestRunLifecycleLoop:
             LifecycleContext,
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 

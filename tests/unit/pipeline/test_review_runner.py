@@ -22,11 +22,10 @@ from src.core.protocols import (
     ReviewIssueProtocol,
     ReviewResultProtocol,
 )
+from tests.fakes.gate_checker import FakeGateChecker
 
 if TYPE_CHECKING:
     from src.core.protocols import CodeReviewer, GateChecker
-from src.domain.quality_gate import CommitResult, GateResult, ValidationEvidence
-from src.domain.validation.spec import ValidationSpec
 
 
 @dataclass
@@ -85,74 +84,6 @@ class FakeCodeReviewer:
             }
         )
         return self.result
-
-
-@dataclass
-class FakeGateChecker:
-    """Fake gate checker for no-progress testing.
-
-    Implements the GateChecker protocol with stub methods except for
-    check_no_progress which is used by ReviewRunner.
-    """
-
-    no_progress_result: bool = False
-    no_progress_calls: list[dict] = field(default_factory=list)
-    _gate_result: GateResult = field(
-        default_factory=lambda: GateResult(passed=True, failure_reasons=[])
-    )
-    _commit_result: CommitResult = field(
-        default_factory=lambda: CommitResult(exists=True, commit_hash="abc123")
-    )
-    _validation_evidence: ValidationEvidence = field(default_factory=ValidationEvidence)
-
-    def check_with_resolution(
-        self,
-        issue_id: str,
-        log_path: Path,
-        baseline_timestamp: int | None = None,
-        log_offset: int = 0,
-        spec: ValidationSpec | None = None,
-    ) -> GateResult:
-        """Return pre-configured gate result."""
-        return self._gate_result
-
-    def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
-        """Stub - not used by ReviewRunner."""
-        return start_offset
-
-    def check_no_progress(
-        self,
-        log_path: Path,
-        log_offset: int,
-        previous_commit_hash: str | None,
-        current_commit_hash: str | None,
-        spec: ValidationSpec | None = None,
-        check_validation_evidence: bool = True,
-    ) -> bool:
-        """Record call and return configured result."""
-        self.no_progress_calls.append(
-            {
-                "log_path": log_path,
-                "log_offset": log_offset,
-                "previous_commit_hash": previous_commit_hash,
-                "current_commit_hash": current_commit_hash,
-                "spec": spec,
-                "check_validation_evidence": check_validation_evidence,
-            }
-        )
-        return self.no_progress_result
-
-    def parse_validation_evidence_with_spec(
-        self, log_path: Path, spec: ValidationSpec, offset: int = 0
-    ) -> ValidationEvidence:
-        """Return pre-configured validation evidence."""
-        return self._validation_evidence
-
-    def check_commit_exists(
-        self, issue_id: str, baseline_timestamp: int | None = None
-    ) -> CommitResult:
-        """Return pre-configured commit result."""
-        return self._commit_result
 
 
 class TestReviewRunnerBasics:
