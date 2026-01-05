@@ -1,8 +1,13 @@
 """Unit tests for --wip flag prioritization logic and focus mode.
 
-Tests verify IssueManager.sort_issues which is the production logic for
+Tests verify IssueManager methods which are the production logic for
 issue prioritization. FakeIssueProvider uses IssueManager internally,
 so testing IssueManager directly ensures production code is verified.
+
+This includes:
+- merge_wip_issues: Merging WIP issues fetched separately from bd list
+- filter_blocked_wip: Filtering out blocked in_progress issues
+- sort_issues: Sorting with prioritize_wip flag
 """
 
 from __future__ import annotations
@@ -16,6 +21,124 @@ if TYPE_CHECKING:
     from src.orchestration.orchestrator import MalaOrchestrator
 
 from src.infra.issue_manager import IssueManager
+
+
+class TestMergeWipIssues:
+    """Test IssueManager.merge_wip_issues - merging WIP into base issues.
+
+    This tests the logic used when BeadsClient fetches in_progress issues
+    separately via `bd list --status in_progress` and merges them with
+    ready issues from `bd ready`.
+    """
+
+    def test_merges_wip_issues_into_base(self) -> None:
+        """WIP issues should be appended to base list."""
+        base = [{"id": "open-1", "status": "open"}]
+        wip = [{"id": "wip-1", "status": "in_progress"}]
+
+        result = IssueManager.merge_wip_issues(base, wip)
+
+        assert len(result) == 2
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["open-1", "wip-1"]
+
+    def test_avoids_duplicate_wip_issues(self) -> None:
+        """WIP issues already in base should not be duplicated."""
+        base = [
+            {"id": "open-1", "status": "open"},
+            {"id": "wip-1", "status": "in_progress"},
+        ]
+        wip = [{"id": "wip-1", "status": "in_progress"}]
+
+        result = IssueManager.merge_wip_issues(base, wip)
+
+        assert len(result) == 2
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["open-1", "wip-1"]
+
+    def test_merges_multiple_wip_issues(self) -> None:
+        """Multiple WIP issues should all be merged."""
+        base = [{"id": "open-1", "status": "open"}]
+        wip = [
+            {"id": "wip-1", "status": "in_progress"},
+            {"id": "wip-2", "status": "in_progress"},
+        ]
+
+        result = IssueManager.merge_wip_issues(base, wip)
+
+        assert len(result) == 3
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["open-1", "wip-1", "wip-2"]
+
+    def test_handles_empty_base(self) -> None:
+        """WIP issues should work with empty base list."""
+        base: list[dict[str, object]] = []
+        wip = [{"id": "wip-1", "status": "in_progress"}]
+
+        result = IssueManager.merge_wip_issues(base, wip)
+
+        assert len(result) == 1
+        assert result[0]["id"] == "wip-1"
+
+    def test_handles_empty_wip(self) -> None:
+        """Empty WIP list should return base unchanged."""
+        base = [{"id": "open-1", "status": "open"}]
+        wip: list[dict[str, object]] = []
+
+        result = IssueManager.merge_wip_issues(base, wip)
+
+        assert len(result) == 1
+        assert result[0]["id"] == "open-1"
+
+
+class TestFilterBlockedWip:
+    """Test IssueManager.filter_blocked_wip - filtering blocked WIP issues.
+
+    This tests the logic used to exclude in_progress issues that are blocked.
+    Only in_progress issues with blocked_by are filtered; open issues are kept.
+    """
+
+    def test_filters_blocked_wip_issues(self) -> None:
+        """Blocked in_progress issues should be filtered out."""
+        issues = [
+            {"id": "open-1", "status": "open"},
+            {"id": "wip-blocked", "status": "in_progress", "blocked_by": "other-issue"},
+            {"id": "wip-ready", "status": "in_progress"},
+        ]
+
+        result = IssueManager.filter_blocked_wip(issues)
+
+        result_ids = [r["id"] for r in result]
+        assert "wip-blocked" not in result_ids
+        assert "wip-ready" in result_ids
+        assert "open-1" in result_ids
+
+    def test_keeps_open_issues_with_blocked_by(self) -> None:
+        """Open issues with blocked_by should NOT be filtered (only WIP)."""
+        issues = [
+            {"id": "open-blocked", "status": "open", "blocked_by": "other-issue"},
+            {"id": "wip-blocked", "status": "in_progress", "blocked_by": "other-issue"},
+        ]
+
+        result = IssueManager.filter_blocked_wip(issues)
+
+        result_ids = [r["id"] for r in result]
+        # Open issues are kept even if blocked (they're handled by bd ready)
+        assert "open-blocked" in result_ids
+        # But in_progress issues with blocked_by are filtered
+        assert "wip-blocked" not in result_ids
+
+    def test_handles_empty_blocked_by(self) -> None:
+        """Issues with empty blocked_by should not be filtered."""
+        issues = [
+            {"id": "wip-1", "status": "in_progress", "blocked_by": ""},
+            {"id": "wip-2", "status": "in_progress", "blocked_by": None},
+        ]
+
+        result = IssueManager.filter_blocked_wip(issues)
+
+        # Empty/None blocked_by is falsy, so issues are kept
+        assert len(result) == 2
 
 
 class TestPrioritizeWipFlag:

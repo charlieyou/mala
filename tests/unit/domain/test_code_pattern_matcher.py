@@ -1,5 +1,10 @@
 """Tests for code_pattern_matcher module."""
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pytest
+
 from src.domain.validation.code_pattern_matcher import (
     filter_matching_files,
     glob_to_regex,
@@ -72,22 +77,43 @@ class TestGlobToRegex:
         regex2 = glob_to_regex("src/**/bar.py")
         assert regex2.pattern == "^src/(?:.*/)?bar\\.py$"
 
-    def test_invalid_pattern_treated_as_literal(self) -> None:
+    def test_invalid_pattern_treated_as_literal(
+        self, monkeypatch: "pytest.MonkeyPatch", caplog: "pytest.LogCaptureFixture"
+    ) -> None:
         """Invalid regex patterns fall back to literal matching with warning.
 
-        When the generated regex would be invalid (e.g., unbalanced brackets
-        that escape our character escaping), glob_to_regex logs a warning and
-        returns a pattern that matches the input literally.
+        When the generated regex would be invalid, glob_to_regex logs a warning
+        and returns a pattern that matches the input literally.
         """
-        # Our implementation escapes [ and ] so this won't trigger the fallback.
-        # Instead, verify the fallback mechanism works by checking that a pattern
-        # containing backslash-escaped special chars still compiles and matches.
-        # The fallback path is tested via the except block in glob_to_regex.
-        pattern = "file[1].py"
-        regex = glob_to_regex(pattern)
-        # Escaped brackets should match literally
-        assert regex.match("file[1].py")
-        assert not regex.match("file1.py")
+        import re
+
+        from src.domain.validation import code_pattern_matcher
+
+        # Force re.compile to fail on first call only (the glob-generated pattern),
+        # then succeed on second call (the literal fallback pattern)
+        original_compile = re.compile
+        call_count = 0
+
+        def mock_compile(
+            pattern: str, *args: object, **kwargs: object
+        ) -> re.Pattern[str]:
+            nonlocal call_count
+            call_count += 1
+            # Only fail on first call (the glob pattern), not the fallback
+            if call_count == 1:
+                raise re.error("mock error")
+            return original_compile(pattern, *args, **kwargs)
+
+        monkeypatch.setattr(re, "compile", mock_compile)
+
+        # Pattern should trigger the fallback
+        regex = code_pattern_matcher.glob_to_regex("test*.py")
+
+        # Fallback should escape the pattern and match literally
+        assert regex.match("test*.py")
+        assert not regex.match("testfoo.py")
+        # Warning should be logged
+        assert "Invalid glob pattern" in caplog.text
 
 
 class TestMatchesPattern:

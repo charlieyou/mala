@@ -1075,37 +1075,25 @@ class TestLintCache:
 
 
 class TestMakeLintCacheHook:
-    """Tests for the make_lint_cache_hook factory function."""
+    """Tests for the make_lint_cache_hook factory function.
+
+    Note: These tests use monkeypatch to mock _get_git_state since unit tests
+    should not use real git subprocess calls.
+    """
+
+    @pytest.fixture
+    def mock_git_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Mock _get_git_state to return a fixed state hash."""
+        from src.infra.hooks import lint_cache
+
+        monkeypatch.setattr(lint_cache, "_get_git_state", lambda _: "abc123def456")
 
     @pytest.mark.asyncio
-    async def test_allows_first_lint(self, tmp_path: Path) -> None:
+    async def test_allows_first_lint(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """First lint through hook should be allowed."""
         from src.infra.hooks import LintCache, make_lint_cache_hook
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         hook = make_lint_cache_hook(cache)
@@ -1118,34 +1106,11 @@ class TestMakeLintCacheHook:
         assert result == {}  # Empty dict means allow
 
     @pytest.mark.asyncio
-    async def test_blocks_second_lint_unchanged(self, tmp_path: Path) -> None:
+    async def test_blocks_second_lint_unchanged(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Second lint through hook should be blocked if unchanged."""
         from src.infra.hooks import LintCache, make_lint_cache_hook
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         hook = make_lint_cache_hook(cache)
@@ -1197,7 +1162,9 @@ class TestMakeLintCacheHook:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_allows_compound_commands_with_lint(self, tmp_path: Path) -> None:
+    async def test_allows_compound_commands_with_lint(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Compound commands containing lint should not be blocked.
 
         When an agent runs 'ruff check . && pytest', the entire command should
@@ -1205,31 +1172,6 @@ class TestMakeLintCacheHook:
         test portion runs.
         """
         from src.infra.hooks import LintCache, make_lint_cache_hook
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         hook = make_lint_cache_hook(cache)
@@ -1267,34 +1209,11 @@ class TestMakeLintCacheHook:
         assert result == {}  # Allow compound commands
 
     @pytest.mark.asyncio
-    async def test_invalidates_cache_on_write(self, tmp_path: Path) -> None:
+    async def test_invalidates_cache_on_write(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Write tool should invalidate lint cache."""
         from src.infra.hooks import LintCache, make_lint_cache_hook
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         hook = make_lint_cache_hook(cache)
@@ -1313,34 +1232,11 @@ class TestMakeLintCacheHook:
         assert cache.cache_size == 0
 
     @pytest.mark.asyncio
-    async def test_invalidates_cache_on_notebook_edit(self, tmp_path: Path) -> None:
+    async def test_invalidates_cache_on_notebook_edit(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """NotebookEdit tool should invalidate lint cache."""
         from src.infra.hooks import LintCache, make_lint_cache_hook
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         hook = make_lint_cache_hook(cache)

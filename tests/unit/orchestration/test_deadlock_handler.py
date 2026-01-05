@@ -125,9 +125,10 @@ class FakeCallbacks:
             on_locks_cleaned=self.on_locks_cleaned,
             on_tasks_aborting=self.on_tasks_aborting,
             do_cleanup_agent_locks=self.do_cleanup_agent_locks,
-            unregister_agent=(
-                self.unregister_agent if self.unregister_agent_enabled else None
-            ),
+            # Pass the method when enabled, None when disabled (simulates missing callback)
+            unregister_agent=self.unregister_agent
+            if self.unregister_agent_enabled
+            else None,
             finalize_issue_result=self.finalize_issue_result,
             mark_completed=self.mark_completed,
         )

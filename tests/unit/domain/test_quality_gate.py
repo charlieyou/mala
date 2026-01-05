@@ -2942,7 +2942,8 @@ class TestAlreadyCompleteResolution:
         # not the current issue (test-123) - this ensures duplicate detection works
         run_calls = [call[0][0] for call in mock_runner.run.call_args_list]
         git_log_calls = [cmd for cmd in run_calls if "git" in cmd and "log" in cmd]
-        assert any("bd-mala-xyz" in cmd for cmd in git_log_calls), (
+        # Check if issue ID appears in any arg (handles both "bd-mala-xyz" and "--grep=bd-mala-xyz")
+        assert any(any("bd-mala-xyz" in arg for arg in cmd) for cmd in git_log_calls), (
             f"Expected git log to search for 'bd-mala-xyz' but got: {git_log_calls}"
         )
 
