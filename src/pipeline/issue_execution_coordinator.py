@@ -383,8 +383,14 @@ class IssueExecutionCoordinator:
                             exit_reason="success",
                         )
                 else:
-                    # Ready issues exist but no active tasks - clear idle state
+                    # Ready issues exist but spawn returned None for all
+                    # (e.g., already in-progress). Clear idle state and re-poll.
                     watch_state.was_idle = False
+                    continue
+
+            # Clear idle state when there's active work
+            if ready or self.active_tasks:
+                watch_state.was_idle = False
 
             # Wait for at least one task to complete
             self.event_sink.on_waiting_for_agents(len(self.active_tasks))

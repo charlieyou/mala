@@ -536,6 +536,8 @@ class TestWatchModeIdleBehavior:
         # Should not have slept while issue-1 was active
         # (sleep only happens when no ready AND no active)
         assert result.issues_spawned == 1
+        # Verify no sleep calls happened before task completion
+        assert sleep_calls == [], "Should not sleep while agents are active"
 
     @pytest.mark.asyncio
     async def test_sigint_during_idle_runs_final_validation_if_issues_completed(
@@ -600,34 +602,73 @@ class TestWatchModeIdleBehavior:
         self,
         event_sink: FakeEventSink,
     ) -> None:
-        """WatchState.next_validation_threshold should be initialized from config."""
-        provider = FakeIssueProvider()
+        """WatchState.next_validation_threshold should be initialized from config.
+
+        Verifies that validate_every config controls when validation triggers:
+        validation should NOT trigger until the threshold is crossed.
+        """
+        provider = FakeIssueProvider(
+            issues={
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                for i in range(3)
+            }
+        )
+        # Set validate_every=5, so validation should NOT trigger after only 3 completions
         watch_config = WatchConfig(
-            enabled=True, validate_every=25, poll_interval_seconds=10.0
+            enabled=True, validate_every=5, poll_interval_seconds=10.0
         )
         interrupt_event = asyncio.Event()
-        interrupt_event.set()  # Exit immediately
+        validation_callback = AsyncMock(return_value=True)
 
         coord = IssueExecutionCoordinator(
             beads=provider,
             event_sink=event_sink,
-            config=CoordinatorConfig(),
+            config=CoordinatorConfig(max_agents=3),  # Allow all 3 to spawn
         )
 
-        # The test verifies the config is used correctly by checking behavior.
-        # Since we can't directly inspect watch_state, we verify that
-        # the coordinator runs without error with the custom validate_every value.
-        result = await coord.run_loop(
-            spawn_callback=AsyncMock(return_value=None),
-            finalize_callback=AsyncMock(),
-            abort_callback=AsyncMock(),
-            watch_config=watch_config,
-            interrupt_event=interrupt_event,
+        completed_count = 0
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            # Return all issues on first poll, then empty
+            if not coord.completed_ids:
+                return ["issue-0", "issue-1", "issue-2"]
+            return []
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            nonlocal completed_count
+            coord.mark_completed(issue_id)
+            completed_count += 1
+            # After all 3 complete, interrupt on next idle
+            if completed_count >= 3:
+                interrupt_event.set()
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+                watch_config=watch_config,
+                interrupt_event=interrupt_event,
+                validation_callback=validation_callback,
+            ),
+            timeout=5.0,
         )
 
-        # Loop should exit cleanly (interrupted)
-        assert result.exit_code == 130
-        assert result.exit_reason == "interrupted"
+        assert result.issues_spawned == 3
+        # Validation should NOT have been called during the loop because
+        # only 3 issues completed, below the validate_every=5 threshold.
+        # Final validation on interrupt should still run (3 > 0 completed).
+        assert validation_callback.call_count == 1, (
+            "Should only have final validation on interrupt, not periodic"
+        )
 
     @pytest.mark.asyncio
     async def test_idle_logging_rate_limited_to_5_minutes(
