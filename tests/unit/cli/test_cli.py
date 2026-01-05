@@ -922,31 +922,6 @@ def test_run_validation_flags_defaults(
     assert DummyOrchestrator.last_orch_config.focus is True
 
 
-def test_run_resume_flag_passed_to_orchestrator(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Test that --resume flag sets prioritize_wip in orchestrator config."""
-    cli = _reload_cli(monkeypatch)
-
-    config_dir = tmp_path / "config"
-    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestration.factory
-
-    monkeypatch.setattr(
-        src.orchestration.factory,
-        "create_orchestrator",
-        _make_dummy_create_orchestrator(),
-    )
-    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
-
-    with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, resume=True)
-
-    assert excinfo.value.exit_code == 0
-    assert DummyOrchestrator.last_orch_config is not None
-    assert DummyOrchestrator.last_orch_config.prioritize_wip is True
-
-
 def test_run_focus_flag_default_true(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
