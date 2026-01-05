@@ -67,17 +67,17 @@ class TestSigintHandling:
                 await asyncio.sleep(0.01)
             pytest.fail("watch_idle event never observed before timeout")
 
-        # Run coordinator and interrupt task concurrently
+        # Run coordinator and interrupt task concurrently using gather
+        # so helper failure cancels run_loop immediately
         async with asyncio.timeout(2.0):
-            interrupt_task = asyncio.create_task(set_interrupt_after_idle())
-            result = await coord.run_loop(
+            run_loop_coro = coord.run_loop(
                 spawn_callback=AsyncMock(return_value=None),
                 finalize_callback=AsyncMock(),
                 abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 interrupt_event=interrupt_event,
             )
-            await interrupt_task
+            result, _ = await asyncio.gather(run_loop_coro, set_interrupt_after_idle())
 
         assert result.exit_code == 130, (
             f"Expected exit code 130, got {result.exit_code}"
@@ -201,16 +201,16 @@ class TestIssuePolling:
                 await asyncio.sleep(0.01)
             pytest.fail("watch_idle event never observed before timeout")
 
+        # Use gather so helper failure cancels run_loop immediately
         async with asyncio.timeout(2.0):
-            add_task = asyncio.create_task(add_issue_after_idle())
-            result = await coord.run_loop(
+            run_loop_coro = coord.run_loop(
                 spawn_callback=spawn_callback,
                 finalize_callback=finalize_callback,
                 abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
                 interrupt_event=interrupt_event,
             )
-            await add_task
+            result, _ = await asyncio.gather(run_loop_coro, add_issue_after_idle())
 
         assert "new-issue" in issues_processed, (
             f"Expected 'new-issue' to be processed, got {issues_processed}"
