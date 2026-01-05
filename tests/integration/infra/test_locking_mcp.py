@@ -641,14 +641,13 @@ def _create_mcp_server_factory() -> Callable[
         repo_path: Path,
         emit_lock_event: Callable[[LockEvent], object] | None,
     ) -> dict[str, Any]:
-        servers: dict[str, Any] = {}
-        if agent_id is not None:
-            servers["mala-locking"] = create_locking_mcp_server(
+        return {
+            "mala-locking": create_locking_mcp_server(
                 agent_id=agent_id,
                 repo_namespace=str(repo_path),
                 emit_lock_event=emit_lock_event if emit_lock_event else _noop,
             )
-        return servers
+        }
 
     return factory
 

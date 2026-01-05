@@ -111,7 +111,7 @@ class AgentRuntimeBuilder:
             agent_id: Unique agent identifier for lock management.
             sdk_client_factory: Factory for creating SDK options and matchers.
             mcp_server_factory: Optional factory for creating MCP server configs.
-                If None, MCP servers must be explicitly provided or will be empty.
+                Required unless MCP servers are explicitly provided via with_mcp().
         """
         self._repo_path = repo_path
         self._agent_id = agent_id
@@ -191,8 +191,9 @@ class AgentRuntimeBuilder:
             servers: MCP server configuration. If None, defers to build() for
                 late-binding with deadlock monitor (if configured).
             emit_lock_event: Callback for lock events. When _UNSET (default),
-                defers to build() for late-binding. Pass None explicitly to
-                disable locking, or a callback to enable it.
+                defers to build() for late-binding. Pass None to use a no-op
+                handler (locking tools work but events aren't tracked for
+                deadlock detection), or a callback to enable event tracking.
 
         Returns:
             Self for chaining.
@@ -254,8 +255,7 @@ class AgentRuntimeBuilder:
         if self._mcp_server_factory is None:
             msg = (
                 "MCP server factory is required. Either provide mcp_server_factory "
-                "or explicitly set mcp_servers={} via with_mcp_servers() to run "
-                "without locking tools."
+                "or explicitly provide servers via with_mcp(servers={...})."
             )
             raise ValueError(msg)
 
