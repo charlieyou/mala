@@ -173,3 +173,31 @@ class FakeCommandRunner:
             for cmd_tuple, kwargs in self.calls
             if cmd_tuple[: len(prefix_tuple)] == prefix_tuple
         ]
+
+    def has_call_containing(self, substring: str) -> bool:
+        """Check if any call contains the given substring (useful for shell commands).
+
+        Args:
+            substring: Text to search for within any command part.
+
+        Returns:
+            True if any recorded call contains the substring.
+        """
+        return any(
+            substring in part for cmd_tuple, _ in self.calls for part in cmd_tuple
+        )
+
+    def get_calls_containing(self, substring: str) -> list[tuple[str, ...]]:
+        """Get all calls that contain the given substring.
+
+        Args:
+            substring: Text to search for within any command part.
+
+        Returns:
+            List of cmd_tuples that contain the substring.
+        """
+        return [
+            cmd_tuple
+            for cmd_tuple, _ in self.calls
+            if any(substring in part for part in cmd_tuple)
+        ]

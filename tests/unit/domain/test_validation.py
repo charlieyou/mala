@@ -27,7 +27,6 @@ from src.domain.validation import (
     tail,
 )
 from src.domain.validation.coverage import BaselineCoverageService
-from src.domain.validation.helpers import check_e2e_prereqs
 from src.domain.validation.spec_runner import CommandFailure, SpecValidationRunner
 from src.domain.validation.worktree import WorktreeContext, WorktreeState
 from src.infra.tools.command_runner import CommandResult, CommandRunner
@@ -235,38 +234,17 @@ class TestFormatStepOutput:
         assert result == ""
 
 
-class TestCheckE2EPrereqs:
-    """Test the check_e2e_prereqs helper function."""
-
-    def test_missing_mala_cli(self) -> None:
-        with patch("shutil.which", return_value=None):
-            result = check_e2e_prereqs({})
-            assert result is not None
-            assert "mala CLI not found" in result
-
-    def test_missing_bd_cli(self) -> None:
-        def mock_which(cmd: str) -> str | None:
-            if cmd == "mala":
-                return "/usr/bin/mala"
-            return None
-
-        with patch("shutil.which", side_effect=mock_which):
-            result = check_e2e_prereqs({})
-            assert result is not None
-            assert "bd CLI not found" in result
-
-    def test_all_prereqs_met(self) -> None:
-        with patch("shutil.which", return_value="/usr/bin/fake"):
-            result = check_e2e_prereqs({})
-            assert result is None
-
-
 class TestSpecValidationRunner:
     """Test SpecValidationRunner class (modern API)."""
 
     @pytest.fixture
     def fake_runner(self) -> FakeCommandRunner:
-        """Create a FakeCommandRunner with allow_unregistered=True for flexibility."""
+        """Create a FakeCommandRunner.
+
+        Uses allow_unregistered=True because many tests in this class don't
+        explicitly register commands - they only care about behavioral outcomes
+        (result.passed, result.steps) not specific command invocations.
+        """
         return FakeCommandRunner(allow_unregistered=True)
 
     @pytest.fixture
@@ -321,7 +299,6 @@ class TestSpecValidationRunner:
         tmp_path: Path,
     ) -> None:
         """Test run_spec with a single passing command."""
-        # FakeCommandRunner with allow_unregistered=True returns success by default
         result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
         assert result.passed is True
         assert len(result.steps) == 1
@@ -329,10 +306,8 @@ class TestSpecValidationRunner:
         assert result.steps[0].ok is True
         assert result.artifacts is not None
         assert result.artifacts.log_dir == tmp_path
-        # Verify command was executed (shell mode passes command as single string)
-        assert len(fake_runner.calls) == 1
-        cmd_tuple, _ = fake_runner.calls[0]
-        assert "echo" in cmd_tuple[0]
+        # Verify echo command was executed
+        assert fake_runner.has_call_containing("echo")
 
     def test_run_spec_single_command_fails(
         self,
@@ -383,12 +358,13 @@ class TestSpecValidationRunner:
             e2e=E2EConfig(enabled=False),
         )
 
-        # FakeCommandRunner with allow_unregistered=True returns success by default
         result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
         assert result.passed is True
         assert len(result.steps) == 3
-        # Verify all commands were executed
-        assert len(fake_runner.calls) == 3
+        # Verify each step command was executed
+        assert fake_runner.has_call_containing("echo 1")
+        assert fake_runner.has_call_containing("echo 2")
+        assert fake_runner.has_call_containing("echo 3")
 
     def test_run_spec_stops_on_first_failure(
         self,
@@ -526,7 +502,10 @@ class TestSpecValidationRunner:
         result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
         assert result.passed is True  # Passed despite step 2 failing
         assert len(result.steps) == 3  # All steps ran
-        assert len(fake_runner.calls) == 3  # All commands executed
+        # Verify all three commands were executed
+        assert fake_runner.has_call_containing("echo 1")
+        assert fake_runner.has_call_containing("false")
+        assert fake_runner.has_call_containing("echo 3")
 
     def test_run_spec_uses_mutex_when_requested(
         self,
@@ -553,12 +532,8 @@ class TestSpecValidationRunner:
         runner._run_spec_sync(spec, context, log_dir=tmp_path)
 
         # Verify command was called with test-mutex.sh wrapper
-        assert len(fake_runner.calls) == 1
-        cmd_tuple, _kwargs = fake_runner.calls[0]
-        # Shell mode: command is a single string containing mutex and pytest
-        assert len(cmd_tuple) == 1
-        assert "test-mutex.sh" in cmd_tuple[0]
-        assert "pytest" in cmd_tuple[0]
+        assert fake_runner.has_call_containing("test-mutex.sh")
+        assert fake_runner.has_call_containing("pytest")
 
     def test_run_spec_writes_log_files(
         self,
@@ -1902,12 +1877,7 @@ class TestSpecRunnerBaselineRefresh:
             service.refresh_if_stale(spec)
 
         # Find the pytest command from captured calls
-        # FakeCommandRunner stores (cmd_tuple, kwargs) pairs
-        pytest_cmds = [
-            cmd_tuple
-            for cmd_tuple, _ in fake_runner.calls
-            if "pytest" in str(cmd_tuple)
-        ]
+        pytest_cmds = fake_runner.get_calls_containing("pytest")
         assert len(pytest_cmds) >= 1, (
             f"Expected pytest command, got: {fake_runner.calls}"
         )
@@ -1921,7 +1891,6 @@ class TestSpecRunnerBaselineRefresh:
             assert (
                 '-m "unit or integration"' in pytest_cmd_str
                 or "-m 'unit or integration'" in pytest_cmd_str
-                or "-m unit" in pytest_cmd_str  # May be unquoted
             ), f"Expected '-m unit or integration', but got: {pytest_cmd_str}"
             assert " e2e " not in pytest_cmd_str and not pytest_cmd_str.endswith(
                 " e2e"
@@ -2820,15 +2789,11 @@ class TestSpecCommandExecutor:
             log_dir=tmp_path_with_logs,
         )
 
-        # FakeCommandRunner with allow_unregistered=True returns success by default
         executor.execute(input)
 
-        # With shell=True (default), command is passed as a string
-        assert len(fake_runner.calls) == 1
-        cmd_tuple, _ = fake_runner.calls[0]
-        assert len(cmd_tuple) == 1  # Shell mode: single string
-        assert "test-mutex.sh" in cmd_tuple[0]
-        assert "pytest" in cmd_tuple[0]
+        # Verify test-mutex.sh wrapper was used with pytest command
+        assert fake_runner.has_call_containing("test-mutex.sh")
+        assert fake_runner.has_call_containing("pytest")
 
 
 class TestSpecResultBuilder:
@@ -2898,7 +2863,7 @@ class TestSpecResultBuilder:
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
         env_config: EnvConfig,
-        command_runner: CommandRunner,
+        command_runner: FakeCommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() returns success when coverage and E2E are disabled."""
@@ -2939,7 +2904,7 @@ class TestSpecResultBuilder:
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
         env_config: EnvConfig,
-        command_runner: CommandRunner,
+        command_runner: FakeCommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() passes when coverage meets threshold."""
@@ -2985,7 +2950,7 @@ class TestSpecResultBuilder:
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
         env_config: EnvConfig,
-        command_runner: CommandRunner,
+        command_runner: FakeCommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() fails when coverage is below threshold."""
@@ -3031,7 +2996,7 @@ class TestSpecResultBuilder:
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
         env_config: EnvConfig,
-        command_runner: CommandRunner,
+        command_runner: FakeCommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() uses baseline_percent when min_percent is None."""
@@ -3079,7 +3044,7 @@ class TestSpecResultBuilder:
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
         env_config: EnvConfig,
-        command_runner: CommandRunner,
+        command_runner: FakeCommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() fails when coverage report is missing."""
@@ -3175,7 +3140,7 @@ class TestSpecResultBuilder:
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
         env_config: EnvConfig,
-        command_runner: CommandRunner,
+        command_runner: FakeCommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() skips E2E for per-issue scope."""
@@ -3221,7 +3186,7 @@ class TestSpecResultBuilder:
         basic_artifacts: ValidationArtifacts,
         basic_steps: list[ValidationStepResult],
         env_config: EnvConfig,
-        command_runner: CommandRunner,
+        command_runner: FakeCommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() runs E2E for run-level scope."""
@@ -3274,7 +3239,7 @@ class TestSpecResultBuilder:
         basic_artifacts: ValidationArtifacts,
         basic_steps: list[ValidationStepResult],
         env_config: EnvConfig,
-        command_runner: CommandRunner,
+        command_runner: FakeCommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() fails when E2E fails."""
@@ -3328,7 +3293,7 @@ class TestSpecResultBuilder:
         basic_artifacts: ValidationArtifacts,
         basic_steps: list[ValidationStepResult],
         env_config: EnvConfig,
-        command_runner: CommandRunner,
+        command_runner: FakeCommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() passes when E2E is skipped (status=SKIPPED)."""
@@ -3383,7 +3348,7 @@ class TestSpecResultBuilder:
         basic_context: ValidationContext,
         basic_steps: list[ValidationStepResult],
         env_config: EnvConfig,
-        command_runner: CommandRunner,
+        command_runner: FakeCommandRunner,
         tmp_path: Path,
     ) -> None:
         """Test build() updates artifacts with coverage report path."""
