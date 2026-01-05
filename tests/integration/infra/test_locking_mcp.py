@@ -624,6 +624,34 @@ class TestEmptyFilepathsRejection:
         assert "non-empty" in content["error"]
 
 
+def _create_mcp_server_factory() -> object:
+    """Create the MCP server factory for tests.
+
+    This mirrors the factory created in orchestration_wiring.create_mcp_server_factory().
+    """
+    from src.infra.tools.locking_mcp import create_locking_mcp_server
+
+    def factory(
+        agent_id: str,
+        repo_path: Path,
+        emit_lock_event: object,
+    ) -> dict[str, object]:
+        servers: dict[str, object] = {}
+        if agent_id is not None:
+
+            def _noop(event: object) -> None:
+                pass
+
+            servers["mala-locking"] = create_locking_mcp_server(
+                agent_id=agent_id,
+                repo_namespace=str(repo_path),
+                emit_lock_event=emit_lock_event or _noop,
+            )
+        return servers
+
+    return factory
+
+
 class TestAgentRuntimeBuilderIntegration:
     """Test AgentRuntimeBuilder.build() includes locking MCP server."""
 
@@ -643,7 +671,12 @@ class TestAgentRuntimeBuilderIntegration:
         mock_monitor.handle_event = MagicMock(return_value=None)
 
         _ = (
-            AgentRuntimeBuilder(tmp_path, "test-agent", mock_factory)
+            AgentRuntimeBuilder(
+                tmp_path,
+                "test-agent",
+                mock_factory,
+                mcp_server_factory=_create_mcp_server_factory(),
+            )
             .with_hooks(deadlock_monitor=mock_monitor)
             .with_env()
             .build()
@@ -669,7 +702,16 @@ class TestAgentRuntimeBuilderIntegration:
         mock_factory.create_hook_matcher.return_value = MagicMock()
         mock_factory.create_options.return_value = {}
 
-        _ = AgentRuntimeBuilder(tmp_path, "test-agent", mock_factory).with_env().build()
+        _ = (
+            AgentRuntimeBuilder(
+                tmp_path,
+                "test-agent",
+                mock_factory,
+                mcp_server_factory=_create_mcp_server_factory(),
+            )
+            .with_env()
+            .build()
+        )
 
         call_kwargs = mock_factory.create_options.call_args.kwargs
         mcp_servers = call_kwargs.get("mcp_servers", {})
@@ -688,7 +730,12 @@ class TestAgentRuntimeBuilderIntegration:
         mock_monitor.handle_event = MagicMock(return_value=None)
 
         runtime = (
-            AgentRuntimeBuilder(tmp_path, "test-agent", mock_factory)
+            AgentRuntimeBuilder(
+                tmp_path,
+                "test-agent",
+                mock_factory,
+                mcp_server_factory=_create_mcp_server_factory(),
+            )
             .with_hooks(deadlock_monitor=mock_monitor)
             .with_env()
             .with_disallowed_tools()

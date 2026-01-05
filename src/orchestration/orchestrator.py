@@ -66,6 +66,7 @@ from src.orchestration.orchestration_wiring import (
     build_epic_callbacks,
     build_session_callback_factory,
     build_session_config,
+    create_mcp_server_factory,
 )
 from src.orchestration.types import (
     IssueFilterConfig,
@@ -249,7 +250,7 @@ class MalaOrchestrator:
         self.gate_runner, self.async_gate_runner = build_gate_runner(runtime, pipeline)
         self.review_runner = build_review_runner(runtime, pipeline)
         self.run_coordinator = build_run_coordinator(
-            runtime, pipeline, self._sdk_client_factory
+            runtime, pipeline, self._sdk_client_factory, create_mcp_server_factory()
         )
         self.issue_coordinator = build_issue_coordinator(filters, runtime)
 
@@ -269,7 +270,9 @@ class MalaOrchestrator:
             on_review_log_path=self._on_review_log_path,
         )
         self._session_config = build_session_config(
-            pipeline, review_enabled=self._is_review_enabled()
+            pipeline,
+            review_enabled=self._is_review_enabled(),
+            mcp_server_factory=create_mcp_server_factory(),
         )
 
         # Wire deadlock handler now that all dependencies are available

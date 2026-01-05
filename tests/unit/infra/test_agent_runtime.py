@@ -22,6 +22,34 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def _create_mcp_server_factory() -> object:
+    """Create a mock MCP server factory for tests.
+
+    Returns a factory that produces a dict with 'mala-locking' key.
+    """
+    from src.infra.tools.locking_mcp import create_locking_mcp_server
+
+    def factory(
+        agent_id: str,
+        repo_path: object,
+        emit_lock_event: object,
+    ) -> dict[str, object]:
+        servers: dict[str, object] = {}
+        if agent_id is not None:
+
+            def _noop(event: object) -> None:
+                pass
+
+            servers["mala-locking"] = create_locking_mcp_server(
+                agent_id=agent_id,
+                repo_namespace=str(repo_path),
+                emit_lock_event=emit_lock_event or _noop,
+            )
+        return servers
+
+    return factory
+
+
 class TestAgentRuntimeBuilder:
     """Tests for AgentRuntimeBuilder."""
 
@@ -239,9 +267,12 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """Locking MCP server is registered even without deadlock monitor."""
         # Build without deadlock monitor (the default)
-        AgentRuntimeBuilder(repo_path, "agent-no-monitor", factory).with_hooks(
-            deadlock_monitor=None
-        ).build()
+        AgentRuntimeBuilder(
+            repo_path,
+            "agent-no-monitor",
+            factory,
+            mcp_server_factory=_create_mcp_server_factory(),
+        ).with_hooks(deadlock_monitor=None).build()
 
         assert len(factory.created_options) == 1
         mcp_servers = factory.created_options[0]["mcp_servers"]
@@ -256,9 +287,12 @@ class TestAgentRuntimeBuilder:
         """Locking MCP server is registered with deadlock monitor."""
         mock_monitor = MagicMock()
 
-        AgentRuntimeBuilder(repo_path, "agent-with-monitor", factory).with_hooks(
-            deadlock_monitor=mock_monitor
-        ).build()
+        AgentRuntimeBuilder(
+            repo_path,
+            "agent-with-monitor",
+            factory,
+            mcp_server_factory=_create_mcp_server_factory(),
+        ).with_hooks(deadlock_monitor=mock_monitor).build()
 
         assert len(factory.created_options) == 1
         mcp_servers = factory.created_options[0]["mcp_servers"]

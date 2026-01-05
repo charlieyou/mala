@@ -17,13 +17,13 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from src.orchestration.types import RunResult, WatchState
+from src.core.models import RunResult, WatchState
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from src.core.models import WatchConfig
     from src.core.protocols import IssueProvider, MalaEventSink
-    from src.orchestration.types import WatchConfig
 
 logger = logging.getLogger(__name__)
 

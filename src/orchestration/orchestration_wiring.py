@@ -98,6 +98,7 @@ def build_run_coordinator(
     runtime: RuntimeDeps,
     pipeline: PipelineConfig,
     sdk_client_factory: SDKClientFactoryProtocol,
+    mcp_server_factory: Callable | None = None,
 ) -> RunCoordinator:
     """Build RunCoordinator."""
     config = RunCoordinatorConfig(
@@ -107,6 +108,7 @@ def build_run_coordinator(
         disable_validations=pipeline.disabled_validations,
         coverage_threshold=pipeline.coverage_threshold,
         fixer_prompt=pipeline.prompts.fixer_prompt,
+        mcp_server_factory=mcp_server_factory,
     )
     return RunCoordinator(
         config=config,
@@ -228,6 +230,7 @@ def build_session_callback_factory(
 def build_session_config(
     pipeline: PipelineConfig,
     review_enabled: bool,
+    mcp_server_factory: Callable | None = None,
 ) -> AgentSessionConfig:
     """Build AgentSessionConfig for agent sessions."""
     prompts = SessionPrompts(
@@ -249,4 +252,42 @@ def build_session_config(
         context_restart_threshold=pipeline.context_restart_threshold,
         context_limit=pipeline.context_limit,
         deadlock_monitor=pipeline.deadlock_monitor,
+        mcp_server_factory=mcp_server_factory,
     )
+
+
+def create_mcp_server_factory() -> Callable[
+    [str, Path, Callable | None], dict[str, object]
+]:
+    """Create a factory function for MCP server configuration.
+
+    This factory is injected into AgentRuntimeBuilder to avoid having
+    the builder import SDK-dependent code directly.
+
+    Returns:
+        A factory function that creates MCP server configurations.
+    """
+    from src.infra.tools.locking_mcp import create_locking_mcp_server
+
+    def factory(
+        agent_id: str,
+        repo_path: Path,
+        emit_lock_event: Callable | None,
+    ) -> dict[str, object]:
+        """Create MCP servers for an agent."""
+        servers: dict[str, object] = {}
+
+        if agent_id is not None:
+            # No-op handler if emit_lock_event is None
+            def _noop_handler(event: object) -> None:
+                pass
+
+            servers["mala-locking"] = create_locking_mcp_server(
+                agent_id=agent_id,
+                repo_namespace=str(repo_path),
+                emit_lock_event=emit_lock_event or _noop_handler,
+            )
+
+        return servers
+
+    return factory

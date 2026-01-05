@@ -19,6 +19,11 @@ from dataclasses import dataclass, field
 from pathlib import Path  # noqa: TC003 - needed at runtime for dataclass field
 from typing import TYPE_CHECKING
 
+# Re-export from core.models for backward compatibility within orchestration layer
+from src.core.models import RunResult as RunResult
+from src.core.models import WatchConfig as WatchConfig
+from src.core.models import WatchState as WatchState
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -221,56 +226,3 @@ class IssueFilterConfig:
     focus: bool = True
     orphans_only: bool = False
     epic_override_ids: set[str] = field(default_factory=set)
-
-
-@dataclass
-class WatchConfig:
-    """Configuration for watch mode behavior.
-
-    Attributes:
-        enabled: Whether watch mode is active.
-        validate_every: Run validation after this many issues complete.
-        poll_interval_seconds: Seconds between poll cycles (internal, not CLI-exposed).
-    """
-
-    enabled: bool = False
-    validate_every: int = 10
-    poll_interval_seconds: float = 60.0
-
-
-@dataclass
-class WatchState:
-    """Runtime state for watch mode (internal to Coordinator).
-
-    Attributes:
-        completed_count: Total issues completed in this watch session.
-        last_validation_at: Completed count at last validation.
-        next_validation_threshold: Run validation when completed_count reaches this.
-            Must be initialized from WatchConfig.validate_every to stay in sync.
-        consecutive_poll_failures: Count of consecutive poll failures.
-        last_idle_log_time: Timestamp of last idle log message.
-        was_idle: Whether the previous poll found no ready issues.
-    """
-
-    # No default - must be explicitly set from WatchConfig.validate_every
-    next_validation_threshold: int
-    completed_count: int = 0
-    last_validation_at: int = 0
-    consecutive_poll_failures: int = 0
-    last_idle_log_time: float = 0.0
-    was_idle: bool = False
-
-
-@dataclass
-class RunResult:
-    """Result of a coordinator run loop.
-
-    Attributes:
-        issues_spawned: Number of issues spawned during the run.
-        exit_code: Exit code (0=success, 1=validation_failed, 2=invalid_args, 3=abort, 130=interrupted).
-        exit_reason: Human-readable exit reason.
-    """
-
-    issues_spawned: int
-    exit_code: int
-    exit_reason: str

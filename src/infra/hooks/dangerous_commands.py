@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ..mcp import MALA_DISALLOWED_TOOLS
+from ..tool_config import MALA_DISALLOWED_TOOLS
 
 # Type alias for PreToolUse hooks (using Any to avoid SDK import)
 PreToolUseHook = Callable[

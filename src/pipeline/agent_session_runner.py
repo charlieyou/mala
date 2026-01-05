@@ -82,6 +82,9 @@ if TYPE_CHECKING:
         ToolUseCallback,
     )
 
+# Type alias for MCP server factory (outside TYPE_CHECKING since it's used in dataclass)
+McpServerFactory = Callable[[str, Path, Callable | None], dict[str, Any]]
+
 
 # Module-level logger for idle retry messages
 logger = logging.getLogger(__name__)
@@ -219,6 +222,7 @@ class AgentSessionConfig:
     context_restart_threshold: float = 0.90
     context_limit: int = 200_000
     deadlock_monitor: DeadlockMonitor | None = None
+    mcp_server_factory: McpServerFactory | None = None
 
 
 @dataclass
@@ -410,7 +414,10 @@ class AgentSessionRunner:
         # Build session components using AgentRuntimeBuilder
         runtime = (
             AgentRuntimeBuilder(
-                self.config.repo_path, agent_id, self.sdk_client_factory
+                self.config.repo_path,
+                agent_id,
+                self.sdk_client_factory,
+                mcp_server_factory=self.config.mcp_server_factory,
             )
             .with_hooks(deadlock_monitor=self.config.deadlock_monitor)
             .with_env()

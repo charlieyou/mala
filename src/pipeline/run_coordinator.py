@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from src.infra.agent_runtime import AgentRuntimeBuilder
 from src.infra.tools.locking import cleanup_agent_locks
@@ -47,7 +49,9 @@ if TYPE_CHECKING:
     )
     from src.domain.validation.result import ValidationResult
     from src.domain.validation.spec import ValidationSpec
-    from pathlib import Path
+
+# Type alias for MCP server factory (outside TYPE_CHECKING since it's used in dataclass)
+McpServerFactory = Callable[[str, Path, Callable | None], dict[str, Any]]
 
 
 class _FixerPromptNotSet:
@@ -85,6 +89,7 @@ class RunCoordinatorConfig:
     disable_validations: set[str] | None = None
     coverage_threshold: float | None = None
     fixer_prompt: str | _FixerPromptNotSet = _FIXER_PROMPT_NOT_SET
+    mcp_server_factory: McpServerFactory | None = None
 
 
 @dataclass
@@ -400,7 +405,12 @@ class RunCoordinator:
         # Note: include_mala_disallowed_tools_hook=False matches original fixer behavior
         lint_tools = extract_lint_tools_from_spec(spec)
         runtime = (
-            AgentRuntimeBuilder(fixer_cwd, agent_id, self.sdk_client_factory)
+            AgentRuntimeBuilder(
+                fixer_cwd,
+                agent_id,
+                self.sdk_client_factory,
+                mcp_server_factory=self.config.mcp_server_factory,
+            )
             .with_hooks(
                 deadlock_monitor=None,
                 include_stop_hook=True,

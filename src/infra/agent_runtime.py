@@ -34,10 +34,18 @@ _UNSET = _Unset.TOKEN
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+    from typing import Any
 
     from src.core.models import LockEvent
     from src.core.protocols import DeadlockMonitorProtocol, SDKClientFactoryProtocol
     from src.infra.hooks import FileReadCache, LintCache
+
+    # Type alias for MCP server factory function
+    # Takes (agent_id, repo_path, emit_lock_event) -> dict of MCP server configs
+    McpServerFactory = Callable[
+        [str, Path, Callable[[LockEvent], object] | None],
+        dict[str, Any],
+    ]
 
 
 @dataclass
@@ -98,6 +106,7 @@ class AgentRuntimeBuilder:
         repo_path: Path,
         agent_id: str,
         sdk_client_factory: SDKClientFactoryProtocol,
+        mcp_server_factory: McpServerFactory | None = None,
     ) -> None:
         """Initialize the builder.
 
@@ -105,10 +114,13 @@ class AgentRuntimeBuilder:
             repo_path: Path to the repository root.
             agent_id: Unique agent identifier for lock management.
             sdk_client_factory: Factory for creating SDK options and matchers.
+            mcp_server_factory: Optional factory for creating MCP server configs.
+                If None, MCP servers must be explicitly provided or will be empty.
         """
         self._repo_path = repo_path
         self._agent_id = agent_id
         self._sdk_client_factory = sdk_client_factory
+        self._mcp_server_factory = mcp_server_factory
 
         # Lint tools configuration
         self._lint_tools: set[str] | frozenset[str] | None = None
@@ -193,13 +205,7 @@ class AgentRuntimeBuilder:
             self._mcp_servers = servers
         elif emit_lock_event is not _UNSET:
             # Explicit emit_lock_event provided (including None) - configure now
-            from src.infra.mcp import get_mcp_servers
-
-            self._mcp_servers = get_mcp_servers(
-                self._repo_path,
-                agent_id=self._agent_id,
-                emit_lock_event=emit_lock_event,
-            )
+            self._mcp_servers = self._build_mcp_servers(emit_lock_event)
         # else: emit_lock_event is _UNSET, defer to build() for late-binding
         return self
 
@@ -217,9 +223,9 @@ class AgentRuntimeBuilder:
         if tools is not None:
             self._disallowed_tools = tools
         else:
-            from src.infra.mcp import get_disallowed_tools
+            from src.infra.tool_config import MALA_DISALLOWED_TOOLS
 
-            self._disallowed_tools = get_disallowed_tools()
+            self._disallowed_tools = list(MALA_DISALLOWED_TOOLS)
         return self
 
     def with_lint_tools(
@@ -235,6 +241,29 @@ class AgentRuntimeBuilder:
         """
         self._lint_tools = lint_tools
         return self
+
+    def _build_mcp_servers(
+        self, emit_lock_event: Callable[[LockEvent], object] | None
+    ) -> dict[str, object]:
+        """Build MCP servers configuration.
+
+        Args:
+            emit_lock_event: Optional callback to emit lock events. If None,
+                a no-op handler is used (locking tools work but events
+                aren't tracked for deadlock detection).
+
+        Returns:
+            Dictionary of MCP server configurations.
+        """
+        if self._mcp_server_factory is None:
+            # No factory provided - return empty servers (no locking)
+            return {}
+
+        return self._mcp_server_factory(
+            self._agent_id,
+            self._repo_path,
+            emit_lock_event,
+        )
 
     def build(self) -> AgentRuntime:
         """Build the agent runtime configuration.
