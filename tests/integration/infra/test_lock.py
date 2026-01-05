@@ -1158,6 +1158,7 @@ class TestWaitForLockAsync:
 
         assert result is True
 
+
 class TestGetLockHolder:
     """Tests for get_lock_holder function."""
 

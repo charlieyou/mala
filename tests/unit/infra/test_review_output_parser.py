@@ -17,9 +17,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from src.infra.clients.review_output_parser import (
-    ReviewIssue,
     ReviewOutputParser,
-    ReviewResult,
 )
 from src.infra.io.base_sink import BaseEventSink
 

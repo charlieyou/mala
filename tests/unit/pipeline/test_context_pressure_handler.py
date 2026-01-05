@@ -13,10 +13,8 @@ import pytest
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 from src.pipeline.context_pressure_handler import (
-    CheckpointResult,
     ContextPressureConfig,
     ContextPressureHandler,
-    DEFAULT_CHECKPOINT_TIMEOUT_SECONDS,
 )
 from src.pipeline.message_stream_processor import ContextPressureError
 from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory

@@ -28,7 +28,7 @@ from src.infra.epic_verifier import (
     _extract_json_from_code_blocks,
     extract_spec_paths,
 )
-from src.core.models import EpicVerdict, RetryConfig, UnmetCriterion
+from src.core.models import EpicVerdict, UnmetCriterion
 from src.infra.tools.command_runner import CommandResult
 
 
@@ -1341,4 +1341,3 @@ class TestVerifyWithSDK:
         assert verdict.passed is False
         assert verdict.confidence == 0.0
         assert "Failed to parse" in verdict.reasoning
-

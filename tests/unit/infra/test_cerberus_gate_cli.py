@@ -21,9 +21,6 @@ if TYPE_CHECKING:
 
 from src.infra.clients.cerberus_gate_cli import (
     CerberusGateCLI,
-    ResolveResult,
-    SpawnResult,
-    WaitResult,
 )
 
 

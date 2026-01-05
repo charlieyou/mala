@@ -18,13 +18,11 @@ import pytest
 
 from src.core.log_events import (
     AssistantLogEntry,
-    AssistantMessage,
     LogParseError,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
     UserLogEntry,
-    UserMessage,
     parse_log_entry,
     parse_log_entry_strict,
 )

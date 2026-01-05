@@ -533,9 +533,7 @@ def _handle_dry_run(
     """
     epic_id = scope_config.epic_id if scope_config else None
     only_ids = scope_config.ids if scope_config else None
-    orphans_only = (
-        scope_config.scope_type == "orphans" if scope_config else False
-    )
+    orphans_only = scope_config.scope_type == "orphans" if scope_config else False
     focus = order_preference == _lazy("OrderPreference").FOCUS
 
     async def _dry_run() -> int:

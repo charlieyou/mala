@@ -12,13 +12,7 @@ This includes:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-    from pathlib import Path
-
-    from src.orchestration.orchestrator import MalaOrchestrator
 
 from src.infra.issue_manager import IssueManager
 
