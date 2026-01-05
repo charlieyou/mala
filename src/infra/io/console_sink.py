@@ -517,7 +517,9 @@ class ConsoleEventSink(BaseEventSink):
         )
 
     def on_watch_idle(self, wait_seconds: float, issues_blocked: int | None) -> None:
-        poll_s = math.ceil(wait_seconds)
+        poll_s = (
+            math.ceil(wait_seconds) if math.isfinite(wait_seconds) else wait_seconds
+        )
         if issues_blocked is None or issues_blocked == 0:
             log(
                 "◦",
