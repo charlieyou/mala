@@ -76,6 +76,7 @@ from src.orchestration.review_tracking import create_review_tracking_issues
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from src.core.protocols import (
@@ -135,6 +136,8 @@ class MalaOrchestrator:
         _telemetry_provider: TelemetryProvider,
         _event_sink: MalaEventSink,
         _epic_verifier: EpicVerifier | None = None,
+        runs_dir: Path | None = None,
+        lock_releaser: Callable[[list[str]], int] | None = None,
     ):
         self._init_from_factory(
             _config,
@@ -147,6 +150,8 @@ class MalaOrchestrator:
             _telemetry_provider,
             _event_sink,
             _epic_verifier,
+            runs_dir=runs_dir,
+            lock_releaser=lock_releaser,
         )
 
     def _init_from_factory(
@@ -161,8 +166,14 @@ class MalaOrchestrator:
         telemetry_provider: TelemetryProvider,
         event_sink: MalaEventSink,
         epic_verifier: EpicVerifier | None,
+        *,
+        runs_dir: Path | None = None,
+        lock_releaser: Callable[[list[str]], int] | None = None,
     ) -> None:
         """Initialize from factory-provided config and dependencies."""
+        # Store optional DI parameters, defaulting to module functions when None
+        self._runs_dir = runs_dir
+        self._lock_releaser = lock_releaser
         self._mala_config = mala_config
         self.repo_path = orch_config.repo_path.resolve()
         self.max_agents = orch_config.max_agents
@@ -822,7 +833,8 @@ class MalaOrchestrator:
         self.event_sink.on_run_started(run_config)
 
         get_lock_dir().mkdir(parents=True, exist_ok=True)
-        get_runs_dir().mkdir(parents=True, exist_ok=True)
+        runs_dir = self._runs_dir if self._runs_dir is not None else get_runs_dir()
+        runs_dir.mkdir(parents=True, exist_ok=True)
 
         run_metadata = build_run_metadata(
             repo_path=self.repo_path,
@@ -857,7 +869,12 @@ class MalaOrchestrator:
             try:
                 await self._run_main_loop(run_metadata)
             finally:
-                released = release_run_locks(list(self._state.agent_ids.values()))
+                lock_releaser = (
+                    self._lock_releaser
+                    if self._lock_releaser is not None
+                    else release_run_locks
+                )
+                released = lock_releaser(list(self._state.agent_ids.values()))
                 # Only emit event if released is a positive integer
                 # (release_run_locks returns int, but tests may mock it)
                 if isinstance(released, int) and released > 0:
