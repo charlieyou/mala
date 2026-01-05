@@ -1,6 +1,9 @@
-"""Unit tests for PreToolUse hooks in src/hooks.py."""
+"""Unit tests for PreToolUse hooks in src/hooks.py.
 
-import subprocess
+Note: Integration tests that use real git subprocess calls are in
+tests/integration/infra/test_hooks.py.
+"""
+
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -22,7 +25,6 @@ from src.infra.hooks import (
     CachedFileInfo,
     make_file_read_cache_hook,
     make_stop_hook,
-    _get_git_state,
 )
 from src.infra.tools.locking import try_lock, get_lock_holder
 
@@ -1304,84 +1306,3 @@ class TestMakeStopHookWithCleanupAgentLocks:
         result = await hook(hook_input, None, context)
 
         assert result == {}
-
-
-class TestGetGitState:
-    """Tests for _get_git_state behavior."""
-
-    def test_returns_hash_for_git_repo(self, tmp_path: Path) -> None:
-        """_get_git_state returns a hash string for a valid git repo."""
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-
-        result = _get_git_state(tmp_path)
-
-        assert result is not None
-        assert len(result) == 16  # SHA-256 hash truncated to 16 chars
-
-    def test_returns_none_for_non_git_directory(self, tmp_path: Path) -> None:
-        """_get_git_state returns None for a non-git directory."""
-        result = _get_git_state(tmp_path)
-
-        assert result is None
-
-    def test_hash_changes_after_file_modification(self, tmp_path: Path) -> None:
-        """_get_git_state returns different hash after uncommitted changes."""
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        test_file = tmp_path / "file.py"
-        test_file.write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-
-        hash_before = _get_git_state(tmp_path)
-
-        # Modify file (uncommitted change)
-        test_file.write_text("print('world')")
-
-        hash_after = _get_git_state(tmp_path)
-
-        assert hash_before is not None
-        assert hash_after is not None
-        assert hash_before != hash_after
