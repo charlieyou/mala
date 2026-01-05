@@ -1,7 +1,7 @@
 """Unit tests for src/validation.py - post-commit validation runner.
 
-These tests mock subprocess and CommandRunner to test validation logic
-without actually running commands or creating git worktrees.
+These tests use FakeCommandRunner to test validation logic without actually
+running commands or creating git worktrees.
 """
 
 import subprocess
@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.infra.tools.command_runner import CommandResult
 from src.domain.validation import (
     CommandKind,
     CoverageConfig,
@@ -28,18 +27,78 @@ from src.domain.validation import (
     format_step_output,
     tail,
 )
+from src.domain.validation.coverage import BaselineCoverageService
 from src.domain.validation.helpers import check_e2e_prereqs
 from src.domain.validation.spec_runner import CommandFailure, SpecValidationRunner
-from src.domain.validation.coverage import BaselineCoverageService
 from src.domain.validation.worktree import WorktreeContext, WorktreeState
-from src.infra.tools.command_runner import CommandRunner
+from src.infra.tools.command_runner import CommandResult, CommandRunner
 from src.infra.tools.env import EnvConfig
+from tests.fakes import FakeCommandRunner
 
 if TYPE_CHECKING:
     from src.domain.validation.spec_executor import ExecutorConfig
     from src.domain.validation.spec_result_builder import SpecResultBuilder
 
 
+def make_passing_result(
+    cmd: list[str] | str = "echo hello",
+    stdout: str = "",
+    stderr: str = "",
+) -> CommandResult:
+    """Create a CommandResult representing a passing command."""
+    command = [cmd] if isinstance(cmd, str) else cmd
+    return CommandResult(
+        command=command,
+        returncode=0,
+        stdout=stdout,
+        stderr=stderr,
+        duration_seconds=0.1,
+        timed_out=False,
+    )
+
+
+def make_failing_result(
+    cmd: list[str] | str = "false",
+    returncode: int = 1,
+    stdout: str = "",
+    stderr: str = "error occurred",
+) -> CommandResult:
+    """Create a CommandResult representing a failing command."""
+    command = [cmd] if isinstance(cmd, str) else cmd
+    return CommandResult(
+        command=command,
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
+        duration_seconds=0.1,
+        timed_out=False,
+    )
+
+
+def make_timeout_result(cmd: list[str] | str = "sleep 1000") -> CommandResult:
+    """Create a CommandResult representing a timed-out command."""
+    command = [cmd] if isinstance(cmd, str) else cmd
+    return CommandResult(
+        command=command,
+        returncode=124,
+        stdout="partial",
+        stderr="timeout",
+        duration_seconds=1.0,
+        timed_out=True,
+    )
+
+
+def make_mock_lock_manager() -> MagicMock:
+    """Create a mock LockManagerPort."""
+    mock = MagicMock()
+    mock.lock_path.return_value = Path("/tmp/mock-lock")
+    mock.try_lock.return_value = True
+    mock.wait_for_lock.return_value = True
+    mock.release_lock.return_value = True
+    return mock
+
+
+# Legacy helpers for tests not yet migrated to FakeCommandRunner
 def mock_popen_success(
     stdout: str = "", stderr: str = "", returncode: int = 0
 ) -> MagicMock:
@@ -62,16 +121,6 @@ def mock_popen_timeout() -> MagicMock:
     mock_proc.pid = 12345
     mock_proc.returncode = None
     return mock_proc
-
-
-def make_mock_lock_manager() -> MagicMock:
-    """Create a mock LockManagerPort."""
-    mock = MagicMock()
-    mock.lock_path.return_value = Path("/tmp/mock-lock")
-    mock.try_lock.return_value = True
-    mock.wait_for_lock.return_value = True
-    mock.release_lock.return_value = True
-    return mock
 
 
 class TestValidationStepResult:
@@ -242,15 +291,21 @@ class TestSpecValidationRunner:
     """Test SpecValidationRunner class (modern API)."""
 
     @pytest.fixture
-    def runner(self, tmp_path: Path) -> SpecValidationRunner:
-        """Create a spec runner with lint caching disabled for tests."""
+    def fake_runner(self) -> FakeCommandRunner:
+        """Create a FakeCommandRunner with allow_unregistered=True for flexibility."""
+        return FakeCommandRunner(allow_unregistered=True)
+
+    @pytest.fixture
+    def runner(
+        self, tmp_path: Path, fake_runner: FakeCommandRunner
+    ) -> SpecValidationRunner:
+        """Create a spec runner with FakeCommandRunner and lint caching disabled."""
         env_config = EnvConfig()
-        command_runner = CommandRunner(cwd=tmp_path)
         lock_manager = make_mock_lock_manager()
         return SpecValidationRunner(
             tmp_path,
             env_config=env_config,
-            command_runner=command_runner,
+            command_runner=fake_runner,
             lock_manager=lock_manager,
             enable_lint_cache=False,
         )
@@ -286,39 +341,42 @@ class TestSpecValidationRunner:
     def test_run_spec_single_command_passes(
         self,
         runner: SpecValidationRunner,
+        fake_runner: FakeCommandRunner,
         basic_spec: ValidationSpec,
         context: ValidationContext,
         tmp_path: Path,
     ) -> None:
         """Test run_spec with a single passing command."""
-        mock_proc = mock_popen_success(stdout="hello\n", stderr="", returncode=0)
-        with patch(
-            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
-            result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
-            assert result.passed is True
-            assert len(result.steps) == 1
-            assert result.steps[0].name == "echo test"
-            assert result.steps[0].ok is True
-            assert result.artifacts is not None
-            assert result.artifacts.log_dir == tmp_path
+        # FakeCommandRunner with allow_unregistered=True returns success by default
+        result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
+        assert result.passed is True
+        assert len(result.steps) == 1
+        assert result.steps[0].name == "echo test"
+        assert result.steps[0].ok is True
+        assert result.artifacts is not None
+        assert result.artifacts.log_dir == tmp_path
+        # Verify command was executed (shell mode passes command as single string)
+        assert len(fake_runner.calls) == 1
+        cmd_tuple, _ = fake_runner.calls[0]
+        assert "echo" in cmd_tuple[0]
 
     def test_run_spec_single_command_fails(
         self,
         runner: SpecValidationRunner,
+        fake_runner: FakeCommandRunner,
         basic_spec: ValidationSpec,
         context: ValidationContext,
         tmp_path: Path,
     ) -> None:
         """Test run_spec with a single failing command."""
-        mock_proc = mock_popen_success(stdout="", stderr="error occurred", returncode=1)
-        with patch(
-            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
-            result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
-            assert result.passed is False
-            assert len(result.steps) == 1
-            assert "echo test failed" in result.failure_reasons[0]
+        # Register a failing response for echo command (shell mode - single string key)
+        fake_runner.responses[("echo hello",)] = make_failing_result(
+            ["echo hello"], stderr="error occurred"
+        )
+        result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
+        assert result.passed is False
+        assert len(result.steps) == 1
+        assert "echo test failed" in result.failure_reasons[0]
 
     def test_run_spec_multiple_commands_all_pass(
         self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
@@ -356,7 +414,11 @@ class TestSpecValidationRunner:
             assert len(result.steps) == 3
 
     def test_run_spec_stops_on_first_failure(
-        self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
+        self,
+        runner: SpecValidationRunner,
+        fake_runner: FakeCommandRunner,
+        context: ValidationContext,
+        tmp_path: Path,
     ) -> None:
         """Test that run_spec stops execution on first command failure."""
         spec = ValidationSpec(
@@ -382,29 +444,15 @@ class TestSpecValidationRunner:
             e2e=E2EConfig(enabled=False),
         )
 
-        call_count = 0
+        # Register failing response for the "false" command
+        fake_runner.responses[("false",)] = make_failing_result(
+            ["false"], stderr="lint error"
+        )
 
-        def mock_popen_calls(cmd: list[str], **kwargs: object) -> MagicMock:
-            nonlocal call_count
-            call_count += 1
-            mock_proc = MagicMock()
-            mock_proc.pid = 12345
-            if call_count == 2:
-                mock_proc.communicate.return_value = ("", "lint error")
-                mock_proc.returncode = 1
-            else:
-                mock_proc.communicate.return_value = ("ok", "")
-                mock_proc.returncode = 0
-            return mock_proc
-
-        with patch(
-            "src.infra.tools.command_runner.subprocess.Popen",
-            side_effect=mock_popen_calls,
-        ):
-            result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
-            assert result.passed is False
-            assert len(result.steps) == 2  # Stopped after fail2
-            assert "fail2 failed" in result.failure_reasons[0]
+        result = runner._run_spec_sync(spec, context, log_dir=tmp_path)
+        assert result.passed is False
+        assert len(result.steps) == 2  # Stopped after fail2
+        assert "fail2 failed" in result.failure_reasons[0]
 
     def test_run_commands_raises_command_failure_on_error(
         self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
@@ -523,7 +571,11 @@ class TestSpecValidationRunner:
             assert len(result.steps) == 3  # All steps ran
 
     def test_run_spec_uses_mutex_when_requested(
-        self, runner: SpecValidationRunner, context: ValidationContext, tmp_path: Path
+        self,
+        runner: SpecValidationRunner,
+        fake_runner: FakeCommandRunner,
+        context: ValidationContext,
+        tmp_path: Path,
     ) -> None:
         """Test that use_test_mutex wraps command with mutex script."""
         spec = ValidationSpec(
@@ -540,44 +592,31 @@ class TestSpecValidationRunner:
             e2e=E2EConfig(enabled=False),
         )
 
-        captured_cmd: list[str | list[str]] = []
+        runner._run_spec_sync(spec, context, log_dir=tmp_path)
 
-        def capture_popen(cmd: str | list[str], **kwargs: object) -> MagicMock:
-            captured_cmd.append(cmd)
-            mock_proc = MagicMock()
-            mock_proc.communicate.return_value = ("ok", "")
-            mock_proc.returncode = 0
-            mock_proc.pid = 12345
-            return mock_proc
-
-        with patch(
-            "src.infra.tools.command_runner.subprocess.Popen", side_effect=capture_popen
-        ):
-            runner._run_spec_sync(spec, context, log_dir=tmp_path)
-
-        # With shell=True (default), command is passed as a string
-        assert len(captured_cmd) == 1
-        cmd = captured_cmd[0]
-        assert isinstance(cmd, str)
-        assert "test-mutex.sh" in cmd
-        assert "pytest" in cmd
+        # Verify command was called with test-mutex.sh wrapper
+        assert len(fake_runner.calls) == 1
+        cmd_tuple, _kwargs = fake_runner.calls[0]
+        # Shell mode: command is a single string containing mutex and pytest
+        assert len(cmd_tuple) == 1
+        assert "test-mutex.sh" in cmd_tuple[0]
+        assert "pytest" in cmd_tuple[0]
 
     def test_run_spec_writes_log_files(
         self,
         runner: SpecValidationRunner,
+        fake_runner: FakeCommandRunner,
         basic_spec: ValidationSpec,
         context: ValidationContext,
         tmp_path: Path,
     ) -> None:
         """Test that stdout/stderr are written to log files."""
-        mock_proc = mock_popen_success(
-            stdout="stdout content\n", stderr="stderr content\n", returncode=0
+        # Register a response with specific stdout/stderr content
+        fake_runner.responses[("echo hello",)] = make_passing_result(
+            ["echo hello"], stdout="stdout content\n", stderr="stderr content\n"
         )
-        with patch(
-            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
-            result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
-            assert result.passed is True
+        result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
+        assert result.passed is True
 
         # Check log files were created
         stdout_log = tmp_path / "echo_test.stdout.log"
@@ -779,26 +818,19 @@ class TestSpecValidationRunner:
     def test_run_spec_timeout_handling(
         self,
         runner: SpecValidationRunner,
+        fake_runner: FakeCommandRunner,
         basic_spec: ValidationSpec,
         context: ValidationContext,
         tmp_path: Path,
     ) -> None:
         """Test that command timeout is handled correctly."""
-        mock_proc = MagicMock()
-        mock_proc.communicate.side_effect = [
-            subprocess.TimeoutExpired(cmd=["sleep"], timeout=1.0),
-            ("partial", "timeout"),  # Output after termination
-        ]
-        mock_proc.pid = 12345
-        mock_proc.returncode = None
+        # Register a timeout result for the command
+        fake_runner.responses[("echo hello",)] = make_timeout_result(["echo hello"])
 
-        with patch(
-            "src.infra.tools.command_runner.subprocess.Popen", return_value=mock_proc
-        ):
-            result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
-            assert result.passed is False
-            assert result.steps[0].returncode == 124
-            assert "partial" in result.steps[0].stdout_tail
+        result = runner._run_spec_sync(basic_spec, context, log_dir=tmp_path)
+        assert result.passed is False
+        assert result.steps[0].returncode == 124
+        assert "partial" in result.steps[0].stdout_tail
 
     def test_run_spec_with_worktree(self, tmp_path: Path) -> None:
         """Test run_spec creates worktree when commit_hash is provided."""
@@ -814,12 +846,12 @@ class TestSpecValidationRunner:
         mock_worktree_ctx.path.mkdir()
 
         env_config = EnvConfig()
-        command_runner = CommandRunner(cwd=repo_path)
+        fake_cmd_runner = FakeCommandRunner(allow_unregistered=True)
         lock_manager = make_mock_lock_manager()
         runner = SpecValidationRunner(
             repo_path,
             env_config=env_config,
-            command_runner=command_runner,
+            command_runner=fake_cmd_runner,
             lock_manager=lock_manager,
         )
 
