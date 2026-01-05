@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     from src.infra.telemetry import TelemetryProvider
     from src.orchestration.orchestrator import MalaOrchestrator
 
+    # Type alias for lock releaser function
+    LockReleaserFunc = Callable[[list[str]], int]
+
 # Ignore fixture templates under tests/fixtures
 collect_ignore_glob = ["fixtures/e2e-fixture/**"]
 
@@ -116,6 +119,8 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
         telemetry_provider: TelemetryProvider | None = None,
         event_sink: MalaEventSink | None = None,
         config: MalaConfig | None = None,
+        runs_dir: Path | None = None,
+        lock_releaser: LockReleaserFunc | None = None,
     ) -> MalaOrchestrator:
         """Create an orchestrator using the factory pattern."""
         from src.orchestration.factory import OrchestratorDependencies
@@ -148,6 +153,8 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
             log_provider=log_provider,
             telemetry_provider=telemetry_provider,
             event_sink=event_sink,
+            runs_dir=runs_dir,
+            lock_releaser=lock_releaser,
         )
 
         return create_orchestrator(orch_config, mala_config=config, deps=deps)

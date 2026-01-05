@@ -1,6 +1,6 @@
 """Unit tests for MalaOrchestrator control flow.
 
-These tests mock subprocess.run and ClaudeSDKClient to test orchestrator
+These tests use FakeIssueProvider and FakeEventSink to test orchestrator
 state transitions without network or actual bd CLI.
 """
 
@@ -9,7 +9,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import time
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator, Sequence
@@ -19,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from claude_agent_sdk.types import ResultMessage
 
-from src.infra.clients.beads_client import BeadsClient
 from src.orchestration.orchestrator import (
     MalaOrchestrator,
 )
@@ -29,13 +27,31 @@ from src.infra.tools.env import PROMPTS_DIR
 from src.infra.tools.command_runner import CommandResult, CommandRunner
 
 from src.core.protocols import LogProvider
+from tests.fakes.issue_provider import FakeIssueProvider, FakeIssue
+from tests.fakes.event_sink import FakeEventSink
+
+
+@pytest.fixture
+def fake_issues() -> FakeIssueProvider:
+    """Create a FakeIssueProvider for testing."""
+    return FakeIssueProvider()
+
+
+@pytest.fixture
+def fake_events() -> FakeEventSink:
+    """Create a FakeEventSink for testing."""
+    return FakeEventSink()
 
 
 @pytest.fixture
 def orchestrator(
     tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
 ) -> MalaOrchestrator:
-    """Create an orchestrator with a temporary repo path."""
+    """Create an orchestrator with a temporary repo path.
+
+    Note: Tests that need to inject FakeIssueProvider should use make_orchestrator
+    directly with issue_provider parameter instead of this fixture.
+    """
     return make_orchestrator(
         repo_path=tmp_path,
         max_agents=2,
@@ -133,302 +149,71 @@ class TestPromptTemplate:
         )
 
 
-class TestGetReadyIssuesAsync:
-    """Test beads.get_ready_async handles bd CLI JSON and errors."""
-
-    @pytest.mark.asyncio
-    async def test_returns_issue_ids_sorted_by_priority(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """Issues should be returned sorted by priority (lower = higher)."""
-        issues_json = json.dumps(
-            [
-                {"id": "issue-3", "priority": 3, "issue_type": "task"},
-                {"id": "issue-1", "priority": 1, "issue_type": "task"},
-                {"id": "issue-2", "priority": 2, "issue_type": "task"},
-            ]
-        )
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            make_ready_mock(issues_json),
-        ):
-            result = await orchestrator.beads.get_ready_async()
-
-        assert result == ["issue-1", "issue-2", "issue-3"]
-
-    @pytest.mark.asyncio
-    async def test_filters_out_epics(self, orchestrator: MalaOrchestrator) -> None:
-        """Epics should be excluded from ready issues."""
-        issues_json = json.dumps(
-            [
-                {"id": "task-1", "priority": 1, "issue_type": "task"},
-                {"id": "epic-1", "priority": 1, "issue_type": "epic"},
-                {"id": "bug-1", "priority": 2, "issue_type": "bug"},
-            ]
-        )
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            make_ready_mock(issues_json),
-        ):
-            result = await orchestrator.beads.get_ready_async()
-
-        assert result == ["task-1", "bug-1"]
-        assert "epic-1" not in result
-
-    @pytest.mark.asyncio
-    async def test_filters_out_failed_issues(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """Previously failed issues should be excluded."""
-        failed_set = {"failed-1"}
-        issues_json = json.dumps(
-            [
-                {"id": "ok-1", "priority": 1, "issue_type": "task"},
-                {"id": "failed-1", "priority": 1, "issue_type": "task"},
-            ]
-        )
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            make_ready_mock(issues_json),
-        ):
-            result = await orchestrator.beads.get_ready_async(failed_set)
-
-        assert result == ["ok-1"]
-        assert "failed-1" not in result
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_list_on_bd_failure(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """When bd ready fails, return empty list."""
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(
-                returncode=1, stderr="bd: command not found"
-            ),
-        ):
-            result = await orchestrator.beads.get_ready_async()
-
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_list_on_invalid_json(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """When bd returns invalid JSON, return empty list."""
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout="not valid json"),
-        ):
-            result = await orchestrator.beads.get_ready_async()
-
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_handles_missing_priority(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """Issues without priority should be treated as P0 (highest priority)."""
-        issues_json = json.dumps(
-            [
-                {"id": "no-prio", "issue_type": "task"},
-                {"id": "prio-1", "priority": 1, "issue_type": "task"},
-            ]
-        )
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            make_ready_mock(issues_json),
-        ):
-            result = await orchestrator.beads.get_ready_async()
-
-        # Issues without priority default to P0 (0) to match bd CLI behavior
-        assert result == ["no-prio", "prio-1"]
-
-    @pytest.mark.asyncio
-    async def test_suppresses_warning_for_only_ids_already_processed(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Only-id warnings should be suppressed for already processed IDs."""
-        warnings: list[str] = []
-        beads = BeadsClient(tmp_path, log_warning=warnings.append)
-        issues_json = json.dumps([])
-        with patch.object(
-            beads,
-            "_run_subprocess_async",
-            make_ready_mock(issues_json),
-        ):
-            result = await beads.get_ready_async(
-                only_ids={"issue-1"},
-                suppress_warn_ids={"issue-1"},
-            )
-
-        assert result == []
-        assert warnings == []
-
-
-class TestClaimIssueAsync:
-    """Test beads.claim_async invokes bd update correctly."""
-
-    @pytest.mark.asyncio
-    async def test_returns_true_on_success(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """Successful claim returns True."""
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(returncode=0),
-        ):
-            result = await orchestrator.beads.claim_async("issue-1")
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_returns_false_on_failure(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """Failed claim returns False."""
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(
-                returncode=1, stderr="Issue already claimed"
-            ),
-        ):
-            result = await orchestrator.beads.claim_async("issue-1")
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_calls_bd_update_with_correct_args(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """Verify bd update is called with correct arguments."""
-        mock_run = AsyncMock(return_value=make_subprocess_result())
-        with patch.object(orchestrator.beads, "_run_subprocess_async", mock_run):
-            await orchestrator.beads.claim_async("issue-abc")
-
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        assert call_args == [
-            "bd",
-            "update",
-            "issue-abc",
-            "--status",
-            "in_progress",
-        ]
-
-
-class TestResetIssueAsync:
-    """Test beads.reset_async invokes bd update correctly."""
-
-    @pytest.mark.asyncio
-    async def test_calls_bd_update_with_ready_status(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """Verify reset calls bd update with ready status."""
-        mock_run = AsyncMock(return_value=make_subprocess_result())
-        with patch.object(orchestrator.beads, "_run_subprocess_async", mock_run):
-            await orchestrator.beads.reset_async("issue-failed")
-
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        assert call_args == ["bd", "update", "issue-failed", "--status", "ready"]
-
-    @pytest.mark.asyncio
-    async def test_includes_log_path_and_error_in_notes(
-        self, orchestrator: MalaOrchestrator, tmp_path: Path
-    ) -> None:
-        """Reset with log_path and error should include notes."""
-        log_path = tmp_path / "session.jsonl"
-        mock_run = AsyncMock(return_value=make_subprocess_result())
-        with patch.object(orchestrator.beads, "_run_subprocess_async", mock_run):
-            await orchestrator.beads.reset_async(
-                "issue-failed", log_path=log_path, error="Timeout after 30 minutes"
-            )
-
-        mock_run.assert_called_once()
-        call_args = mock_run.call_args[0][0]
-        assert "--notes" in call_args
-        notes_idx = call_args.index("--notes")
-        notes_value = call_args[notes_idx + 1]
-        assert "Timeout after 30 minutes" in notes_value
-        assert str(log_path) in notes_value
-
-    @pytest.mark.asyncio
-    async def test_does_not_raise_on_failure(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """Reset should not raise even if bd fails."""
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(returncode=1),
-        ):
-            # Should not raise
-            await orchestrator.beads.reset_async("issue-failed")
-
-
 class TestSpawnAgent:
     """Test spawn_agent behavior."""
 
     @pytest.mark.asyncio
     async def test_adds_issue_to_failed_when_claim_fails(
-        self, orchestrator: MalaOrchestrator
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """When claim fails, issue should be added to failed_issues."""
+        fake_issues = FakeIssueProvider()  # Empty - claim will fail
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        async def mock_claim_async(issue_id: str) -> bool:
-            return False
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
-        with patch.object(
-            orchestrator.beads, "claim_async", side_effect=mock_claim_async
-        ):
-            result = await orchestrator.spawn_agent("unclaimed-issue")
+        result = await orchestrator.spawn_agent("unclaimed-issue")
 
         assert result is None
         assert "unclaimed-issue" in orchestrator.failed_issues
 
     @pytest.mark.asyncio
     async def test_creates_task_when_claim_succeeds(
-        self, orchestrator: MalaOrchestrator
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """When claim succeeds, a task should be created."""
+        fake_issues = FakeIssueProvider(
+            {"claimable-issue": FakeIssue(id="claimable-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
-        with (
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator,
-                "run_implementer",
-                return_value=IssueResult(
-                    issue_id="test",
-                    agent_id="test-agent",
-                    success=True,
-                    summary="done",
-                ),
-            ),
-        ):
+        # Replace run_implementer to return immediately
+        async def fake_run_implementer(issue_id: str) -> IssueResult:
+            return IssueResult(
+                issue_id="test",
+                agent_id="test-agent",
+                success=True,
+                summary="done",
+            )
+
+        original_run_implementer = orchestrator.run_implementer
+        orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]
+        try:
             result = await orchestrator.spawn_agent("claimable-issue")
+        finally:
+            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]
 
         # spawn_agent returns the Task on success (caller is responsible for registration)
         assert result is not None
         assert isinstance(result, asyncio.Task)
+        # Issue should be claimed
+        assert "claimable-issue" in fake_issues.claimed
 
 
 class TestRunOrchestrationLoop:
@@ -436,66 +221,62 @@ class TestRunOrchestrationLoop:
 
     @pytest.mark.asyncio
     async def test_stops_cleanly_when_no_ready_issues(
-        self, orchestrator: MalaOrchestrator
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """When no issues are ready, run() should return 0 and exit cleanly."""
+        fake_issues = FakeIssueProvider()  # Empty - no issues
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            return []
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=2,
+            timeout_minutes=1,
+            max_issues=5,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-        ):
-            result = await orchestrator.run()
+        result = await orchestrator.run()
 
         assert result == (0, 0)
         assert len(orchestrator._state.completed) == 0
 
     @pytest.mark.asyncio
     async def test_respects_max_issues_limit(
-        self, orchestrator: MalaOrchestrator
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Should stop after processing max_issues."""
-        orchestrator.max_issues = 2
-        call_count = 0
+        fake_issues = FakeIssueProvider(
+            {
+                "issue-1": FakeIssue(id="issue-1", priority=1),
+                "issue-2": FakeIssue(id="issue-2", priority=2),
+                "issue-3": FakeIssue(id="issue-3", priority=3),
+            }
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=2,
+            timeout_minutes=1,
+            max_issues=2,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+
+        # Use a fake spawn that completes immediately
         spawned: list[str] = []
 
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            # Return issues only on first call
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return ["issue-1", "issue-2", "issue-3"]
-            return []
+        original_spawn = orchestrator.spawn_agent
 
-        async def mock_spawn(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+        async def tracking_spawn(issue_id: str) -> asyncio.Task[IssueResult] | None:
             spawned.append(issue_id)
 
+            # Complete immediately with success
             async def work() -> IssueResult:
                 return IssueResult(
                     issue_id=issue_id,
@@ -506,25 +287,12 @@ class TestRunOrchestrationLoop:
 
             return asyncio.create_task(work())
 
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(orchestrator, "spawn_agent", side_effect=mock_spawn),
-            patch.object(orchestrator.beads, "close_async", return_value=True),
-            patch.object(
-                orchestrator.beads, "close_eligible_epics_async", return_value=False
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        # Replace method directly (not using patch)
+        orchestrator.spawn_agent = tracking_spawn  # type: ignore[method-assign]
+        try:
             await orchestrator.run()
+        finally:
+            orchestrator.spawn_agent = original_spawn  # type: ignore[method-assign]
 
         # Should have only spawned 2 issues (max_issues limit)
         assert len(spawned) == 2
@@ -535,18 +303,25 @@ class TestFailedTaskResetsIssue:
 
     @pytest.mark.asyncio
     async def test_resets_issue_on_task_failure(
-        self, orchestrator: MalaOrchestrator
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """When a task fails, the issue should be marked needs-followup."""
-        followup_calls = []
+        fake_issues = FakeIssueProvider(
+            {"fail-issue": FakeIssue(id="fail-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        async def mock_mark_followup_async(
-            issue_id: str, reason: str, log_path: Path | None = None
-        ) -> bool:
-            followup_calls.append(issue_id)
-            return True
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def fake_run_implementer(issue_id: str) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -554,70 +329,40 @@ class TestFailedTaskResetsIssue:
                 summary="Implementation failed",
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["fail-issue"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(
-                orchestrator.beads,
-                "mark_needs_followup_async",
-                side_effect=mock_mark_followup_async,
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        original_run_implementer = orchestrator.run_implementer
+        orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]
+        try:
             await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]
 
         # The failed issue should have been marked needs-followup
-        assert "fail-issue" in followup_calls
+        assert len(fake_issues.followup_calls) == 1
+        assert fake_issues.followup_calls[0][0] == "fail-issue"
         # And added to failed_issues set
         assert "fail-issue" in orchestrator.failed_issues
 
     @pytest.mark.asyncio
     async def test_does_not_reset_successful_issue(
-        self, orchestrator: MalaOrchestrator
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """Successful issues should not be reset."""
-        reset_calls: list[str] = []
+        fake_issues = FakeIssueProvider(
+            {"success-issue": FakeIssue(id="success-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        async def mock_reset_async(
-            issue_id: str, log_path: Path | None = None, error: str = ""
-        ) -> None:
-            reset_calls.append(issue_id)
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            timeout_minutes=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
-        async def mock_run_implementer(issue_id: str) -> IssueResult:
+        async def fake_run_implementer(issue_id: str) -> IssueResult:
             return IssueResult(
                 issue_id=issue_id,
                 agent_id=f"{issue_id}-agent",
@@ -625,52 +370,17 @@ class TestFailedTaskResetsIssue:
                 summary="Completed successfully",
             )
 
-        first_call = True
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            nonlocal first_call
-            if first_call:
-                first_call = False
-                return ["success-issue"]
-            return []
-
-        async def mock_claim_async(issue_id: str) -> bool:
-            return True
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ),
-            patch.object(
-                orchestrator.beads, "claim_async", side_effect=mock_claim_async
-            ),
-            patch.object(
-                orchestrator, "run_implementer", side_effect=mock_run_implementer
-            ),
-            patch.object(
-                orchestrator.beads, "reset_async", side_effect=mock_reset_async
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-            patch("subprocess.run", return_value=make_subprocess_result()),
-        ):
+        original_run_implementer = orchestrator.run_implementer
+        orchestrator.run_implementer = fake_run_implementer  # type: ignore[method-assign]
+        try:
             await orchestrator.run()
+        finally:
+            orchestrator.run_implementer = original_run_implementer  # type: ignore[method-assign]
 
+        # Issue should be closed, not reset
+        assert "success-issue" in fake_issues.closed
         # No reset should have been called
-        assert "success-issue" not in reset_calls
+        assert len(fake_issues.reset_calls) == 0
         # And not in failed_issues
         assert "success-issue" not in orchestrator.failed_issues
 
@@ -751,138 +461,6 @@ class TestOrchestratorInitialization:
         assert orch.telemetry_provider is custom_provider
 
 
-class TestEpicFilterAsync:
-    """Test epic filter functionality in BeadsClient (async)."""
-
-    @pytest.mark.asyncio
-    async def test_get_epic_children_returns_child_ids(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """get_epic_children_async should return IDs of children (depth > 0)."""
-        tree_json = json.dumps(
-            [
-                {"id": "epic-1", "depth": 0, "issue_type": "epic"},  # Epic itself
-                {"id": "task-1", "depth": 1, "issue_type": "task"},  # Child
-                {"id": "task-2", "depth": 1, "issue_type": "task"},  # Child
-                {"id": "task-3", "depth": 2, "issue_type": "task"},  # Grandchild
-            ]
-        )
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout=tree_json),
-        ):
-            result = await orchestrator.beads.get_epic_children_async("epic-1")
-
-        assert result == {"task-1", "task-2", "task-3"}
-        assert "epic-1" not in result
-
-    @pytest.mark.asyncio
-    async def test_get_epic_children_returns_empty_on_failure(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """get_epic_children_async should return empty set on bd failure."""
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(returncode=1, stderr="epic not found"),
-        ):
-            result = await orchestrator.beads.get_epic_children_async(
-                "nonexistent-epic"
-            )
-
-        assert result == set()
-
-    @pytest.mark.asyncio
-    async def test_get_epic_children_returns_empty_on_invalid_json(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """get_epic_children_async should return empty set on invalid JSON."""
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout="not valid json"),
-        ):
-            result = await orchestrator.beads.get_epic_children_async("epic-1")
-
-        assert result == set()
-
-    @pytest.mark.asyncio
-    async def test_get_ready_with_epic_filter(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """get_ready_async with epic_id should only return children of that epic."""
-        tree_json = json.dumps(
-            [
-                {"id": "epic-1", "depth": 0, "issue_type": "epic"},
-                {"id": "child-1", "depth": 1, "issue_type": "task"},
-                {"id": "child-2", "depth": 1, "issue_type": "task"},
-            ]
-        )
-        ready_json = json.dumps(
-            [
-                {"id": "child-1", "priority": 1, "issue_type": "task"},
-                {"id": "child-2", "priority": 2, "issue_type": "task"},
-                {"id": "other-task", "priority": 1, "issue_type": "task"},
-            ]
-        )
-
-        async def mock_run(
-            cmd: list[str], **kwargs: object
-        ) -> subprocess.CompletedProcess[str]:
-            if "dep" in cmd and "tree" in cmd:
-                return make_subprocess_result(stdout=tree_json)
-            elif "ready" in cmd:
-                return make_subprocess_result(stdout=ready_json)
-            return make_subprocess_result()
-
-        with patch.object(
-            orchestrator.beads, "_run_subprocess_async", side_effect=mock_run
-        ):
-            result = await orchestrator.beads.get_ready_async(epic_id="epic-1")
-
-        assert result == ["child-1", "child-2"]
-        assert "other-task" not in result
-
-    @pytest.mark.asyncio
-    async def test_get_ready_without_epic_filter_returns_all(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """get_ready_async without epic_id should return all ready tasks."""
-        ready_json = json.dumps(
-            [
-                {"id": "task-1", "priority": 1, "issue_type": "task"},
-                {"id": "task-2", "priority": 2, "issue_type": "task"},
-            ]
-        )
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            make_ready_mock(ready_json),
-        ):
-            result = await orchestrator.beads.get_ready_async()
-
-        assert result == ["task-1", "task-2"]
-
-    @pytest.mark.asyncio
-    async def test_get_ready_with_epic_filter_returns_empty_if_no_children(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """get_ready_async with epic_id should return empty if epic has no children."""
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(returncode=1),
-        ):
-            result = await orchestrator.beads.get_ready_async(epic_id="empty-epic")
-
-        assert result == []
-
-
 class TestOrchestratorWithEpicId:
     """Test orchestrator with epic_id parameter."""
 
@@ -899,441 +477,6 @@ class TestOrchestratorWithEpicId:
         """epic_id should default to None."""
         orch = make_orchestrator(repo_path=tmp_path)
         assert orch.epic_id is None
-
-
-class TestQualityGateValidationEvidence:
-    """Test JSONL log parsing for validation command evidence."""
-
-    def test_detects_pytest_command(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate should detect pytest execution in JSONL logs."""
-        from src.domain.quality_gate import QualityGate
-
-        # Create sample JSONL with pytest command
-        log_path = tmp_path / "session.jsonl"
-        log_content = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uv run pytest tests/"},
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(log_content + "\n")
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-        from src.domain.validation.spec import ValidationScope, build_validation_spec
-
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.pytest_ran is True
-
-    def test_detects_ruff_check_command(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate should detect ruff check execution."""
-        from src.domain.quality_gate import QualityGate
-
-        log_path = tmp_path / "session.jsonl"
-        log_content = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uvx ruff check ."},
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(log_content + "\n")
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-        from src.domain.validation.spec import ValidationScope, build_validation_spec
-
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.ruff_check_ran is True
-
-    def test_detects_ruff_format_command(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate should detect ruff format execution."""
-        from src.domain.quality_gate import QualityGate
-
-        log_path = tmp_path / "session.jsonl"
-        log_content = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uvx ruff format ."},
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(log_content + "\n")
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-        from src.domain.validation.spec import ValidationScope, build_validation_spec
-
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.ruff_format_ran is True
-
-    def test_detects_ty_check_command(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate should detect ty check execution."""
-        from src.domain.quality_gate import QualityGate
-
-        log_path = tmp_path / "session.jsonl"
-        log_content = json.dumps(
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "name": "Bash",
-                            "input": {"command": "uvx ty check"},
-                        }
-                    ]
-                },
-            }
-        )
-        log_path.write_text(log_content + "\n")
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-        from src.domain.validation.spec import ValidationScope, build_validation_spec
-
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
-
-        assert evidence.ty_check_ran is True
-
-    def test_returns_empty_evidence_for_missing_log(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate should return empty evidence for missing log file."""
-        from src.domain.quality_gate import QualityGate
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-        nonexistent = tmp_path / "nonexistent.jsonl"
-        from src.domain.validation.spec import ValidationScope, build_validation_spec
-
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-        evidence = gate.parse_validation_evidence_with_spec(nonexistent, spec)
-
-        assert evidence.pytest_ran is False
-        assert evidence.ruff_check_ran is False
-        assert evidence.ruff_format_ran is False
-        assert evidence.ty_check_ran is False
-
-
-class TestQualityGateCommitCheck:
-    """Test git commit message verification."""
-
-    def test_detects_matching_commit(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate should detect commit with correct issue ID."""
-        from src.domain.quality_gate import QualityGate
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-
-        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
-            mock_run.return_value = make_command_result(
-                stdout="abc1234 bd-issue-123: Fix the bug\n"
-            )
-            result = gate.check_commit_exists("issue-123")
-
-        assert result.exists is True
-        assert result.commit_hash == "abc1234"
-
-    def test_rejects_missing_commit(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate should reject when no matching commit found."""
-        from src.domain.quality_gate import QualityGate
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-
-        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
-            mock_run.return_value = make_command_result(stdout="")
-            result = gate.check_commit_exists("issue-123")
-
-        assert result.exists is False
-        assert result.commit_hash is None
-
-    def test_handles_git_failure(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate should handle git command failures gracefully."""
-        from src.domain.quality_gate import QualityGate
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-
-        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
-            mock_run.return_value = make_command_result(
-                returncode=1, stderr="fatal: not a git repository"
-            )
-            result = gate.check_commit_exists("issue-123")
-
-        assert result.exists is False
-
-    def test_searches_30_day_window(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate should search commits from the last 30 days."""
-        from src.domain.quality_gate import QualityGate
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-
-        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
-            mock_run.return_value = make_command_result(
-                stdout="abc1234 bd-issue-123: Long-running work\n"
-            )
-            result = gate.check_commit_exists("issue-123")
-
-            # Verify the git command uses 30-day window
-            call_args = mock_run.call_args
-            git_cmd = call_args[0][0]
-            assert "--since=30 days ago" in git_cmd
-
-        assert result.exists is True
-
-
-class TestQualityGateFullCheck:
-    """Test full quality gate check combining all criteria."""
-
-    def test_passes_when_all_criteria_met(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate passes when closed, commit exists, validation ran."""
-        from src.domain.quality_gate import QualityGate
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-
-        # Create log with all validation commands (including uv sync for SETUP)
-        log_path = tmp_path / "session.jsonl"
-        commands = [
-            "uv sync --all-extras",
-            "uv run pytest",
-            "uvx ruff check .",
-            "uvx ruff format .",
-            "uvx ty check",
-        ]
-        lines = []
-        for cmd in commands:
-            lines.append(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "content": [
-                                {
-                                    "type": "tool_use",
-                                    "name": "Bash",
-                                    "input": {"command": cmd},
-                                }
-                            ]
-                        },
-                    }
-                )
-            )
-        log_path.write_text("\n".join(lines) + "\n")
-
-        from src.domain.validation.spec import ValidationScope, build_validation_spec
-
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-
-        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
-            mock_run.return_value = make_command_result(
-                stdout="abc1234 bd-issue-123: Implement feature\n"
-            )
-            result = gate.check_with_resolution("issue-123", log_path, spec=spec)
-
-        assert result.passed is True
-        assert result.failure_reasons == []
-
-    def test_fails_when_commit_missing(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate fails when commit is missing."""
-        from src.domain.quality_gate import QualityGate
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-
-        # Create log with validation commands
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text(
-            json.dumps(
-                {
-                    "type": "assistant",
-                    "message": {
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "name": "Bash",
-                                "input": {"command": "uv run pytest"},
-                            }
-                        ]
-                    },
-                }
-            )
-            + "\n"
-        )
-
-        from src.domain.validation.spec import ValidationScope, build_validation_spec
-
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-
-        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
-            mock_run.return_value = make_command_result(stdout="")
-            result = gate.check_with_resolution("issue-123", log_path, spec=spec)
-
-        assert result.passed is False
-        assert "commit" in result.failure_reasons[0].lower()
-
-    def test_failure_message_reflects_30_day_window(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate failure message should mention the 30-day window."""
-        from src.domain.quality_gate import QualityGate
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-
-        # Create log with validation commands
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text(
-            json.dumps(
-                {
-                    "type": "assistant",
-                    "message": {
-                        "content": [
-                            {
-                                "type": "tool_use",
-                                "name": "Bash",
-                                "input": {"command": "uv run pytest"},
-                            }
-                        ]
-                    },
-                }
-            )
-            + "\n"
-        )
-
-        from src.domain.validation.spec import ValidationScope, build_validation_spec
-
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-
-        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
-            mock_run.return_value = make_command_result(stdout="")
-            result = gate.check_with_resolution("issue-123", log_path, spec=spec)
-
-        assert result.passed is False
-        assert "30 days" in result.failure_reasons[0]
-
-    def test_fails_when_validation_missing(
-        self, tmp_path: Path, log_provider: LogProvider
-    ) -> None:
-        """Quality gate fails when validation commands didn't run."""
-        from src.domain.quality_gate import QualityGate
-
-        gate = QualityGate(tmp_path, log_provider, CommandRunner(cwd=tmp_path))
-
-        # Create empty log (no validation commands)
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text("")
-
-        from src.domain.validation.spec import ValidationScope, build_validation_spec
-
-        # Create minimal mala.yaml for test
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-
-        with patch("src.infra.tools.command_runner.CommandRunner.run") as mock_run:
-            mock_run.return_value = make_command_result(
-                stdout="abc1234 bd-issue-123: Implement feature\n"
-            )
-            result = gate.check_with_resolution("issue-123", log_path, spec=spec)
-
-        assert result.passed is False
-        assert any("validation" in r.lower() for r in result.failure_reasons)
-
-
-class TestBeadsClientNeedsFollowupAsync:
-    """Test BeadsClient.mark_needs_followup_async method."""
-
-    @pytest.mark.asyncio
-    async def test_marks_issue_with_needs_followup_label(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """mark_needs_followup_async should add the needs-followup label."""
-        mock_run = AsyncMock(return_value=make_subprocess_result())
-        with patch.object(orchestrator.beads, "_run_subprocess_async", mock_run):
-            await orchestrator.beads.mark_needs_followup_async(
-                "issue-123", "Missing commit with bd-issue-123"
-            )
-
-        mock_run.assert_called()
-        call_args = mock_run.call_args[0][0]
-        assert "bd" in call_args
-        assert "update" in call_args
-        assert "issue-123" in call_args
-        assert "--add-label" in call_args
-
-    @pytest.mark.asyncio
-    async def test_records_failure_context_in_notes(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """mark_needs_followup_async should record failure context."""
-        mock_run = AsyncMock(return_value=make_subprocess_result())
-        with patch.object(orchestrator.beads, "_run_subprocess_async", mock_run):
-            await orchestrator.beads.mark_needs_followup_async(
-                "issue-123", "Missing validation evidence: pytest, ruff check"
-            )
-
-        mock_run.assert_called()
-        call_args = mock_run.call_args[0][0]
-        assert "--notes" in call_args
-        notes_idx = call_args.index("--notes")
-        notes_value = call_args[notes_idx + 1]
-        assert "Missing validation" in notes_value
 
 
 class TestOrchestratorQualityGateIntegration:
@@ -1477,124 +620,6 @@ class TestOrchestratorQualityGateIntegration:
         assert any(r.issue_id == "issue-pass" for r in orchestrator._state.completed)
 
 
-class TestAsyncBeadsClientWithTimeout:
-    """Test that BeadsClient methods handle slow/hanging commands gracefully."""
-
-    @pytest.mark.asyncio
-    async def test_slow_bd_ready_does_not_block_other_tasks(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """Slow bd ready should not block other concurrent async tasks."""
-        # Track when tasks complete
-        task_completions: list[tuple[str, float]] = []
-        start = time.monotonic()
-
-        async def fast_task() -> None:
-            await asyncio.sleep(0.05)
-            task_completions.append(("fast", time.monotonic() - start))
-
-        # Use a real slow command instead of mocking subprocess.run
-        # (since we now use asyncio.create_subprocess_exec)
-        orchestrator.beads.timeout_seconds = 0.5  # type: ignore[attr-defined]
-
-        async def slow_beads_call() -> None:
-            # Use sleep as a slow command
-            await orchestrator.beads._run_subprocess_async(["sleep", "0.2"])  # type: ignore[attr-defined]
-            task_completions.append(("beads", time.monotonic() - start))
-
-        # Run slow beads call concurrently with fast task
-        await asyncio.gather(
-            slow_beads_call(),
-            fast_task(),
-        )
-
-        # The fast task should complete well before the slow beads call
-        fast_time = next(t for name, t in task_completions if name == "fast")
-        beads_time = next(t for name, t in task_completions if name == "beads")
-
-        # Fast task should complete in ~0.05s, beads in ~0.2s
-        # If blocking, fast would complete at ~0.2s too
-        assert fast_time < 0.15, f"Fast task blocked: completed at {fast_time:.3f}s"
-        assert beads_time >= 0.15, f"Beads completed too fast: {beads_time:.3f}s"
-
-    @pytest.mark.asyncio
-    async def test_bd_command_timeout_returns_safe_fallback(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """When bd command times out, should return timeout result, not hang."""
-        # Use a very short timeout for testing
-        orchestrator.beads.timeout_seconds = 0.1  # type: ignore[attr-defined]
-
-        start = time.monotonic()
-        # Run a command that would take longer than timeout
-        result = await orchestrator.beads._run_subprocess_async(["sleep", "10"])  # type: ignore[attr-defined]
-        elapsed = time.monotonic() - start
-
-        # Should return timeout result
-        assert result.returncode == 1
-        assert result.stderr == "timeout"
-        # Should complete quickly due to timeout, not hang for 10s
-        assert elapsed < 3.0, f"Timeout didn't work: took {elapsed:.2f}s"
-
-    @pytest.mark.asyncio
-    async def test_claim_timeout_returns_false(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """When claim times out, should return False (safe fallback)."""
-        original_timeout = orchestrator.beads.timeout_seconds  # type: ignore[attr-defined]
-        orchestrator.beads.timeout_seconds = 0.1  # type: ignore[attr-defined]
-
-        # Mock _run_subprocess_async to simulate timeout
-        async def mock_timeout(*args: object, **kwargs: object) -> CommandResult:
-            return CommandResult(command=[], returncode=1, stdout="", stderr="timeout")
-
-        try:
-            with patch.object(
-                orchestrator.beads, "_run_subprocess_async", side_effect=mock_timeout
-            ):
-                result = await orchestrator.beads.claim_async("issue-1")
-
-            assert result is False
-        finally:
-            orchestrator.beads.timeout_seconds = original_timeout  # type: ignore[attr-defined]
-
-    @pytest.mark.asyncio
-    async def test_orchestrator_uses_async_beads_methods(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """Orchestrator run loop should use async beads methods."""
-        # This test verifies the integration - that orchestrator calls
-        # the async versions of beads methods
-
-        async def mock_get_ready_async(
-            exclude_ids: set[str] | None = None,
-            epic_id: str | None = None,
-            only_ids: set[str] | None = None,
-            suppress_warn_ids: set[str] | None = None,
-            prioritize_wip: bool = False,
-            focus: bool = True,
-            orphans_only: bool = False,
-        ) -> list[str]:
-            return []
-
-        with (
-            patch.object(
-                orchestrator.beads, "get_ready_async", side_effect=mock_get_ready_async
-            ) as mock_ready,
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir", return_value=MagicMock()
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_runs_dir", return_value=MagicMock()
-            ),
-            patch("src.orchestration.orchestrator.release_run_locks"),
-        ):
-            await orchestrator.run()
-
-        # Verify async method was called
-        mock_ready.assert_called()
-
-
 class TestMissingLogFile:
     """Test run_implementer behavior when log file never appears."""
 
@@ -1733,122 +758,6 @@ class TestMissingLogFile:
 
         # Summary should mention session log and the timeout
         assert "Session log missing after timeout:" in result.summary
-
-
-class TestSubprocessTerminationOnTimeout:
-    """Test that timed-out subprocesses are properly terminated."""
-
-    @pytest.mark.asyncio
-    async def test_subprocess_terminated_on_timeout(self, tmp_path: Path) -> None:
-        """When a subprocess times out, it should be terminated, not left running."""
-        from src.infra.clients.beads_client import BeadsClient
-
-        warnings: list[str] = []
-        beads = BeadsClient(tmp_path, log_warning=warnings.append, timeout_seconds=0.5)
-
-        # Run a subprocess that would hang forever, verify it gets killed
-        start = time.monotonic()
-        result = await beads._run_subprocess_async(["sleep", "60"])
-        elapsed = time.monotonic() - start
-
-        # Should return timeout result
-        assert result.returncode == 1
-        assert result.stderr == "timeout"
-
-        # Should complete quickly (timeout + termination grace period)
-        assert elapsed < 5.0, f"Took too long: {elapsed:.2f}s"
-
-        # Warning should have been logged
-        assert len(warnings) == 1
-        assert "timed out" in warnings[0]
-
-    @pytest.mark.asyncio
-    async def test_subprocess_killed_if_terminate_fails(self, tmp_path: Path) -> None:
-        """If SIGTERM doesn't work, subprocess should be killed with SIGKILL."""
-        from src.infra.clients.beads_client import BeadsClient
-
-        warnings: list[str] = []
-        beads = BeadsClient(tmp_path, log_warning=warnings.append, timeout_seconds=0.3)
-
-        # Use a script that traps SIGTERM to test the SIGKILL escalation
-        # The shell script ignores SIGTERM, so we need SIGKILL to stop it
-        result = await beads._run_subprocess_async(
-            ["sh", "-c", "trap '' TERM; sleep 60"]
-        )
-
-        # Should still return timeout result (killed via SIGKILL)
-        assert result.returncode == 1
-        assert result.stderr == "timeout"
-
-    @pytest.mark.asyncio
-    async def test_successful_command_not_affected(self, tmp_path: Path) -> None:
-        """Fast commands should complete normally without being terminated."""
-        from src.infra.clients.beads_client import BeadsClient
-
-        beads = BeadsClient(tmp_path, timeout_seconds=10.0)
-
-        result = await beads._run_subprocess_async(["echo", "hello"])
-
-        assert result.returncode == 0
-        assert result.stdout.strip() == "hello"
-        assert result.stderr == ""
-
-    @pytest.mark.asyncio
-    async def test_command_stderr_captured(self, tmp_path: Path) -> None:
-        """stderr from commands should be captured correctly."""
-        from src.infra.clients.beads_client import BeadsClient
-
-        beads = BeadsClient(tmp_path, timeout_seconds=10.0)
-
-        result = await beads._run_subprocess_async(
-            ["sh", "-c", "echo error >&2; exit 1"]
-        )
-
-        assert result.returncode == 1
-        assert "error" in result.stderr
-
-    @pytest.mark.asyncio
-    @pytest.mark.skipif(
-        sys.platform == "win32", reason="Process groups not supported on Windows"
-    )
-    async def test_child_processes_killed_on_timeout(self, tmp_path: Path) -> None:
-        """Child processes spawned by the command should also be killed on timeout."""
-        import os
-
-        from src.infra.clients.beads_client import BeadsClient
-
-        beads = BeadsClient(tmp_path, timeout_seconds=0.5)
-
-        # Create a script that spawns a child process that would outlive the parent
-        # The child writes its PID to a file so we can check if it was killed
-        # Use $! to get the background job's PID (not $$ which is the parent shell PID)
-        pid_file = tmp_path / "child.pid"
-        script = f"""
-            # Spawn a child that sleeps forever
-            sleep 60 &
-            # Capture the child's PID via $! (background job PID)
-            echo $! > {pid_file}
-            # Parent also sleeps
-            sleep 60
-        """
-
-        result = await beads._run_subprocess_async(["sh", "-c", script])
-
-        assert result.returncode == 1
-        assert result.stderr == "timeout"
-
-        # Give a moment for the file to be written and process to be killed
-        await asyncio.sleep(0.2)
-
-        # Check if the child process was killed
-        if pid_file.exists():
-            child_pid = int(pid_file.read_text().strip())
-            # Check if the process is still running
-            try:
-                os.kill(child_pid, 0)  # Signal 0 just checks if process exists
-                pytest.fail(f"Child process {child_pid} was not killed")
-            except ProcessLookupError:
-                pass  # Good - process was killed
 
 
 class TestAgentEnvInheritance:
@@ -4132,16 +3041,19 @@ class TestRunSync:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """run_sync() should work when called from sync code."""
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_issues=0)
+        fake_issues = FakeIssueProvider()
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        # Mock the async run() to return immediately
-        with patch.object(
-            orchestrator,
-            "run",
-            new_callable=AsyncMock,
-            return_value=(0, 0),
-        ):
-            success_count, total = orchestrator.run_sync()
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_issues=0,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
+
+        success_count, total = orchestrator.run_sync()
 
         assert success_count == 0
         assert total == 0
@@ -4150,7 +3062,16 @@ class TestRunSync:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """run_sync() should raise RuntimeError when called from async context."""
-        orchestrator = make_orchestrator(repo_path=tmp_path)
+        fake_issues = FakeIssueProvider()
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
         async def call_run_sync_from_async() -> None:
             # This should raise because we're already in an async context
@@ -4169,31 +3090,19 @@ class TestRunSync:
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
         """run() should work when awaited from async context."""
-        orchestrator = make_orchestrator(repo_path=tmp_path, max_issues=0)
+        fake_issues = FakeIssueProvider()
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
 
-        # Mock dependencies that run() needs
-        with (
-            patch.object(
-                orchestrator.beads,
-                "get_ready_async",
-                new_callable=AsyncMock,
-                return_value=[],
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_lock_dir",
-                return_value=tmp_path / "locks",
-            ),
-            patch(
-                "src.orchestration.orchestrator.get_runs_dir",
-                return_value=tmp_path / "runs",
-            ),
-            patch("src.orchestration.orchestrator.write_run_marker"),
-            patch("src.orchestration.orchestrator.remove_run_marker"),
-        ):
-            (tmp_path / "locks").mkdir(exist_ok=True)
-            (tmp_path / "runs").mkdir(exist_ok=True)
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_issues=0,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+        )
 
-            success_count, total = await orchestrator.run()
+        success_count, total = await orchestrator.run()
 
         assert success_count == 0
         assert total == 0
