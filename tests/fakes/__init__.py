@@ -1,6 +1,6 @@
 """In-memory fake implementations for testing.
 
-This module will provide fake implementations of mala protocols and interfaces
+This module provides fake implementations of mala protocols and interfaces
 for use in unit and integration tests. Fakes are preferred over mocks because
 they:
 
@@ -12,8 +12,11 @@ See CLAUDE.md "Testing Philosophy" and "Fakes over mocks" for guidelines.
 
 Planned fakes (to be implemented):
 - FakeIssueProvider: In-memory issue storage implementing IssueProvider
-- FakeCommandRunner: Deterministic command execution implementing CommandRunnerPort
 - FakeLockManager: In-memory lock coordination implementing LockManagerPort
 - FakeEventSink: Event capture implementing MalaEventSink
 - FakeEpicVerificationModel: Controlled epic verification implementing EpicVerificationModel
 """
+
+from tests.fakes.command_runner import FakeCommandRunner, UnregisteredCommandError
+
+__all__ = ["FakeCommandRunner", "UnregisteredCommandError"]
