@@ -1607,7 +1607,7 @@ class TestHandleDryRun:
             cli._handle_dry_run(
                 repo_path=tmp_path,
                 epic="my-epic",
-                only_ids={"id-1", "id-2"},
+                only_ids=["id-1", "id-2"],
                 wip=True,
                 focus=True,
                 orphans_only=True,
