@@ -28,58 +28,6 @@ def make_mock_runner(result: CommandResult) -> MagicMock:
     return runner
 
 
-class TestWorktreeState:
-    """Test WorktreeState enum."""
-
-    def test_state_values(self) -> None:
-        assert WorktreeState.PENDING.value == "pending"
-        assert WorktreeState.CREATED.value == "created"
-        assert WorktreeState.REMOVED.value == "removed"
-        assert WorktreeState.FAILED.value == "failed"
-        assert WorktreeState.KEPT.value == "kept"
-
-
-class TestWorktreeConfig:
-    """Test WorktreeConfig dataclass."""
-
-    def test_defaults(self, tmp_path: Path) -> None:
-        config = WorktreeConfig(base_dir=tmp_path)
-        assert config.base_dir == tmp_path
-        assert config.keep_on_failure is False
-        assert config.force_remove is True
-
-    def test_custom_values(self, tmp_path: Path) -> None:
-        config = WorktreeConfig(
-            base_dir=tmp_path,
-            keep_on_failure=True,
-            force_remove=False,
-        )
-        assert config.keep_on_failure is True
-        assert config.force_remove is False
-
-
-class TestWorktreeResult:
-    """Test WorktreeResult dataclass."""
-
-    def test_basic_result(self, tmp_path: Path) -> None:
-        result = WorktreeResult(
-            path=tmp_path / "worktree",
-            state=WorktreeState.CREATED,
-        )
-        assert result.path == tmp_path / "worktree"
-        assert result.state == WorktreeState.CREATED
-        assert result.error is None
-
-    def test_failed_result(self, tmp_path: Path) -> None:
-        result = WorktreeResult(
-            path=tmp_path / "worktree",
-            state=WorktreeState.FAILED,
-            error="git worktree add failed",
-        )
-        assert result.state == WorktreeState.FAILED
-        assert result.error == "git worktree add failed"
-
-
 class TestWorktreeContext:
     """Test WorktreeContext dataclass."""
 

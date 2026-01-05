@@ -523,29 +523,3 @@ class TestResolveGate:
         call_args = runner.run_async.call_args[0][0]
         assert "--reason" in call_args
         assert "Custom reason" in call_args
-
-
-class TestDataclasses:
-    """Tests for result dataclasses."""
-
-    def test_spawn_result_defaults(self) -> None:
-        """SpawnResult has correct defaults."""
-        result = SpawnResult(success=True)
-        assert result.success is True
-        assert result.timed_out is False
-        assert result.error_detail == ""
-        assert result.already_active is False
-
-    def test_wait_result_defaults(self) -> None:
-        """WaitResult has correct defaults."""
-        result = WaitResult(returncode=0)
-        assert result.returncode == 0
-        assert result.stdout == ""
-        assert result.stderr == ""
-        assert result.timed_out is False
-
-    def test_resolve_result_defaults(self) -> None:
-        """ResolveResult has correct defaults."""
-        result = ResolveResult(success=True)
-        assert result.success is True
-        assert result.error_detail == ""

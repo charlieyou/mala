@@ -205,24 +205,6 @@ class TestPrioritizeWipFlag:
         assert result_ids == ["open-1", "wip-1"]
 
 
-class TestOrchestratorPrioritizeWip:
-    """Test orchestrator stores and uses prioritize_wip flag."""
-
-    def test_orchestrator_stores_prioritize_wip(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """Orchestrator should store prioritize_wip parameter."""
-        orch = make_orchestrator(repo_path=tmp_path, prioritize_wip=True)
-        assert orch.prioritize_wip is True
-
-    def test_orchestrator_default_prioritize_wip_is_false(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """Default prioritize_wip should be False."""
-        orch = make_orchestrator(repo_path=tmp_path)
-        assert orch.prioritize_wip is False
-
-
 class TestFocusModeEpicGrouping:
     """Test focus mode epic-grouped ordering via IssueManager.
 

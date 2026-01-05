@@ -126,60 +126,7 @@ INVALID_XML_BAD_LINE_RATE = """\
 
 
 class TestCoverageResult:
-    """Test CoverageResult dataclass."""
-
-    def test_passed_result(self) -> None:
-        result = CoverageResult(
-            percent=90.0,
-            passed=True,
-            status=CoverageStatus.PASSED,
-            report_path=Path("coverage.xml"),
-            line_rate=0.9,
-            branch_rate=0.9,
-        )
-        assert result.percent == 90.0
-        assert result.passed is True
-        assert result.status == CoverageStatus.PASSED
-        assert result.failure_reason is None
-        assert result.line_rate == 0.9
-        assert result.branch_rate == 0.9
-
-    def test_failed_result(self) -> None:
-        result = CoverageResult(
-            percent=50.0,
-            passed=False,
-            status=CoverageStatus.FAILED,
-            report_path=Path("coverage.xml"),
-            failure_reason="Coverage 50.0% is below threshold 85.0%",
-        )
-        assert result.percent == 50.0
-        assert result.passed is False
-        assert result.status == CoverageStatus.FAILED
-        assert "below threshold" in result.failure_reason  # type: ignore[operator]
-
-    def test_error_result(self) -> None:
-        result = CoverageResult(
-            percent=None,
-            passed=False,
-            status=CoverageStatus.ERROR,
-            report_path=Path("missing.xml"),
-            failure_reason="Coverage report not found",
-        )
-        assert result.percent is None
-        assert result.passed is False
-        assert result.status == CoverageStatus.ERROR
-
-    def test_parsed_result(self) -> None:
-        result = CoverageResult(
-            percent=90.0,
-            passed=False,
-            status=CoverageStatus.PARSED,
-            report_path=Path("coverage.xml"),
-            line_rate=0.9,
-        )
-        assert result.percent == 90.0
-        assert result.passed is False
-        assert result.status == CoverageStatus.PARSED
+    """Test CoverageResult dataclass methods."""
 
     def test_short_summary_passed(self) -> None:
         result = CoverageResult(

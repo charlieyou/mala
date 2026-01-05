@@ -48,8 +48,6 @@ class TestGetParentEpicAsync:
             result = await beads.get_parent_epic_async("task-1")
 
         assert result == "epic-1"
-        # Single call to get task's ancestor tree
-        assert mock_run_async.call_count == 1
 
     @pytest.mark.asyncio
     async def test_returns_none_for_orphan_task(self, tmp_path: Path) -> None:

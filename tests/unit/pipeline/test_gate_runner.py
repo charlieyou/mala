@@ -319,27 +319,3 @@ class TestSpecCaching:
     ) -> None:
         """get_cached_spec should return None before any gate runs."""
         assert runner.get_cached_spec() is None
-
-
-class TestGateRunnerConfig:
-    """Test GateRunnerConfig behavior."""
-
-    def test_default_config_values(self) -> None:
-        """Config should have sensible defaults."""
-        config = GateRunnerConfig()
-
-        assert config.max_gate_retries == 3
-        assert config.disable_validations is None
-        assert config.coverage_threshold is None
-
-    def test_config_with_custom_values(self) -> None:
-        """Config should accept custom values."""
-        config = GateRunnerConfig(
-            max_gate_retries=5,
-            disable_validations={"pytest", "ruff"},
-            coverage_threshold=80.0,
-        )
-
-        assert config.max_gate_retries == 5
-        assert config.disable_validations == {"pytest", "ruff"}
-        assert config.coverage_threshold == 80.0

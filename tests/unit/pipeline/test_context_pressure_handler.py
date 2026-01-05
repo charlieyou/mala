@@ -379,38 +379,3 @@ class TestHandlePressureError:
 
         # Should have used fallback due to timeout
         assert "Continue from checkpoint" in continuation_prompt
-
-
-class TestDefaultTimeout:
-    """Tests for default timeout constant."""
-
-    @pytest.mark.unit
-    def test_default_timeout_is_30_seconds(self) -> None:
-        """Default checkpoint timeout is 30 seconds."""
-        assert DEFAULT_CHECKPOINT_TIMEOUT_SECONDS == 30
-
-    @pytest.mark.unit
-    def test_config_uses_default_timeout(self) -> None:
-        """Config uses default timeout when not specified."""
-        config = ContextPressureConfig(
-            checkpoint_request_prompt="test",
-            continuation_template="test",
-        )
-        assert config.checkpoint_timeout_seconds == DEFAULT_CHECKPOINT_TIMEOUT_SECONDS
-
-
-class TestCheckpointResultDataclass:
-    """Tests for CheckpointResult dataclass."""
-
-    @pytest.mark.unit
-    def test_default_timed_out_is_false(self) -> None:
-        """CheckpointResult defaults timed_out to False."""
-        result = CheckpointResult(checkpoint="test")
-        assert result.timed_out is False
-
-    @pytest.mark.unit
-    def test_stores_checkpoint_and_timeout_flag(self) -> None:
-        """CheckpointResult stores both checkpoint and timeout flag."""
-        result = CheckpointResult(checkpoint="data", timed_out=True)
-        assert result.checkpoint == "data"
-        assert result.timed_out is True

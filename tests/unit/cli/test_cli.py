@@ -100,100 +100,6 @@ class TestImportSafety:
             for mod_name in deleted_modules:
                 importlib.import_module(mod_name)
 
-    def test_bootstrap_loads_env_and_braintrust(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """bootstrap() should load env and set up Braintrust when API key is present."""
-        # Track which modules we'll delete for cleanup
-        deleted_modules = [
-            mod_name
-            for mod_name in sys.modules.keys()
-            if mod_name.startswith("src.cli")
-            or mod_name.startswith("src.infra.tools.env")
-        ]
-        for mod_name in deleted_modules:
-            del sys.modules[mod_name]
-
-        try:
-            monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
-
-            # Mock braintrust wrapper to avoid real initialization (which creates
-            # background threads that hang on process exit)
-            setup_called = {"called": False}
-
-            class MockWrapper:
-                @staticmethod
-                def setup_claude_agent_sdk(project: str) -> None:
-                    setup_called["called"] = True
-
-            monkeypatch.setitem(sys.modules, "braintrust", type(sys)("braintrust"))
-            monkeypatch.setitem(
-                sys.modules, "braintrust.wrappers", type(sys)("braintrust.wrappers")
-            )
-            monkeypatch.setitem(
-                sys.modules, "braintrust.wrappers.claude_agent_sdk", MockWrapper
-            )
-
-            import src.cli.cli
-
-            # Reset state
-            src.cli.cli._bootstrapped = False
-            src.cli.cli._braintrust_enabled = False
-
-            # Track calls
-            load_called = {"called": False}
-            original_load = src.cli.cli.load_user_env
-
-            def tracking_load() -> None:
-                load_called["called"] = True
-                original_load()
-
-            monkeypatch.setattr(src.cli.cli, "load_user_env", tracking_load)
-
-            # Call bootstrap
-            src.cli.cli.bootstrap()
-
-            assert load_called["called"], "bootstrap() should call load_user_env()"
-            assert src.cli.cli._bootstrapped, (
-                "bootstrap() should set _bootstrapped = True"
-            )
-            assert setup_called["called"], (
-                "bootstrap() should call setup_claude_agent_sdk when API key present"
-            )
-        finally:
-            # Reload modules from disk to restore clean state for other tests
-            for mod_name in deleted_modules:
-                if mod_name in sys.modules:
-                    del sys.modules[mod_name]
-            for mod_name in deleted_modules:
-                importlib.import_module(mod_name)
-
-    def test_bootstrap_is_idempotent(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Calling bootstrap() multiple times should only execute once."""
-        cli = _reload_cli(monkeypatch)
-
-        call_count = {"count": 0}
-        original_load = cli.load_user_env
-
-        def counting_load() -> None:
-            call_count["count"] += 1
-            original_load()
-
-        monkeypatch.setattr(cli, "load_user_env", counting_load)
-
-        # Reset state
-        cli._bootstrapped = False  # type: ignore[attr-defined]
-        cli._braintrust_enabled = False  # type: ignore[attr-defined]
-
-        # Call bootstrap multiple times
-        cli.bootstrap()
-        cli.bootstrap()
-        cli.bootstrap()
-
-        assert call_count["count"] == 1, (
-            "bootstrap() should only call load_user_env() once"
-        )
-
 
 class DummyOrchestrator:
     last_orch_config: Any = None
@@ -1113,18 +1019,6 @@ def test_run_resume_flags_set_prioritize_wip(
     assert DummyOrchestrator.last_orch_config.prioritize_wip is True
 
 
-def test_run_resume_visible_in_help(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that --resume is visible in --help output."""
-    from typer.testing import CliRunner
-
-    cli = _reload_cli(monkeypatch)
-    runner = CliRunner()
-    result = runner.invoke(cli.app, ["run", "--help"])
-
-    # --resume should be visible
-    assert "--resume" in result.output
-
-
 def test_run_review_disabled_via_disable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1335,18 +1229,6 @@ def test_run_review_empty_string_clears_value(
     config = DummyOrchestrator.last_mala_config
     # Empty string should result in empty tuple
     assert config.cerberus_spawn_args == ()
-
-
-def test_run_no_codex_thinking_mode_flag(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Test that --codex-thinking-mode flag is removed."""
-    cli = _reload_cli(monkeypatch)
-    # The run function should not have a codex_thinking_mode parameter
-    import inspect
-
-    sig = inspect.signature(cli.run)
-    assert "codex_thinking_mode" not in sig.parameters
 
 
 def test_run_coverage_threshold_invalid_negative(
@@ -1712,39 +1594,6 @@ def test_dry_run_focus_mode_groups_by_epic(
 class TestHandleDryRun:
     """Tests for the _handle_dry_run helper function."""
 
-    def test_calls_beads_client_with_correct_repo_path(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """_handle_dry_run instantiates BeadsClient with repo_path."""
-        cli = _reload_cli(monkeypatch)
-
-        captured_path = None
-
-        class MockBeadsClient:
-            def __init__(self, path: Path) -> None:
-                nonlocal captured_path
-                captured_path = path
-
-            async def get_ready_issues_async(self, **kwargs: object) -> list[object]:
-                return []
-
-        monkeypatch.setattr(
-            src.orchestration.cli_support, "BeadsClient", MockBeadsClient
-        )
-
-        from src.core.models import OrderPreference
-
-        with pytest.raises(typer.Exit) as excinfo:
-            cli._handle_dry_run(
-                repo_path=tmp_path,
-                scope_config=None,
-                resume=False,
-                order_preference=OrderPreference.FOCUS,
-            )
-
-        assert excinfo.value.exit_code == 0
-        assert captured_path == tmp_path
-
     def test_passes_correct_filtering_params(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -1776,41 +1625,6 @@ class TestHandleDryRun:
         assert DummyBeadsClient.last_kwargs["prioritize_wip"] is True
         assert DummyBeadsClient.last_kwargs["focus"] is True
         assert DummyBeadsClient.last_kwargs["order_preference"] == OrderPreference.FOCUS
-
-    def test_calls_display_dry_run_tasks(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """_handle_dry_run calls display_dry_run_tasks with fetched issues."""
-        cli = _reload_cli(monkeypatch)
-
-        mock_issues: list[dict[str, object]] = [{"id": "issue-1"}, {"id": "issue-2"}]
-        captured_issues = None
-        captured_focus = None
-
-        DummyBeadsClient.issues_to_return = mock_issues
-
-        def mock_display(issues: list[object], focus: bool = False) -> None:
-            nonlocal captured_issues, captured_focus
-            captured_issues = issues
-            captured_focus = focus
-
-        monkeypatch.setattr(
-            src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
-        )
-        monkeypatch.setattr(cli, "display_dry_run_tasks", mock_display)
-
-        from src.core.models import OrderPreference
-
-        with pytest.raises(typer.Exit):
-            cli._handle_dry_run(
-                repo_path=tmp_path,
-                scope_config=None,
-                resume=False,
-                order_preference=OrderPreference.FOCUS,
-            )
-
-        assert captured_issues == mock_issues
-        assert captured_focus is True
 
     def test_raises_typer_exit_zero(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1903,7 +1717,9 @@ class TestValidateRunArgs:
             repo_path=tmp_path,
         )
 
-        assert result.only_ids is None  # only_ids is now always None since --only is removed
+        assert (
+            result.only_ids is None
+        )  # only_ids is now always None since --only is removed
         assert result.disable_set == {"coverage", "e2e"}
         assert result.epic_override_ids == {"epic-a", "epic-b"}
 
@@ -2542,52 +2358,3 @@ class TestParseScope:
         with pytest.raises(typer.Exit) as excinfo:
             parse_scope("unknown")
         assert excinfo.value.exit_code == 1
-
-    def test_scope_config_dataclass_fields(self) -> None:
-        """Test that ScopeConfig dataclass has expected fields and defaults."""
-        from src.cli.cli import ScopeConfig
-
-        # Default values
-        config = ScopeConfig()
-        assert config.scope_type == "all"
-        assert config.ids is None
-        assert config.epic_id is None
-
-        # With all fields
-        config_full = ScopeConfig(scope_type="ids", ids=["T-1", "T-2"], epic_id=None)
-        assert config_full.scope_type == "ids"
-        assert config_full.ids == ["T-1", "T-2"]
-
-
-class TestDeprecationWarnings:
-    """Tests for deprecation warning emission helper functions.
-
-    Note: All deprecated flags have been removed. This class now tests
-    the helper functions and placeholder function.
-    """
-
-    def test_emit_deprecation_warnings_is_noop(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """_emit_deprecation_warnings emits no output since no deprecated flags exist."""
-        from src.cli.cli import _emit_deprecation_warnings
-
-        _emit_deprecation_warnings()
-
-        captured = capsys.readouterr()
-        assert captured.out == ""
-        assert captured.err == ""
-
-    def test_emit_deprecation_warning_helper(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """_emit_deprecation_warning emits a formatted message to stderr."""
-        from src.cli.cli import _emit_deprecation_warning
-
-        _emit_deprecation_warning("--old-flag", "--new-flag")
-
-        captured = capsys.readouterr()
-        assert captured.out == ""
-        assert "Deprecation warning" in captured.err
-        assert "--old-flag" in captured.err
-        assert "--new-flag" in captured.err

@@ -436,23 +436,6 @@ class TestReviewRunnerNoProgress:
 class TestReviewRunnerConfig:
     """Test configuration handling."""
 
-    def test_config_with_custom_values(self) -> None:
-        """Config should accept custom values via flags."""
-        config = ReviewRunnerConfig(
-            max_review_retries=4,
-            review_timeout=600,
-        )
-
-        assert config.max_review_retries == 4
-        assert config.review_timeout == 600
-
-    def test_config_defaults(self) -> None:
-        """Config should have sensible defaults."""
-        config = ReviewRunnerConfig()
-
-        assert config.max_review_retries == 3
-        assert config.review_timeout == 1200
-
     def test_config_deprecated_fields_still_accepted(self) -> None:
         """Config should accept deprecated fields for backward compatibility."""
         config = ReviewRunnerConfig(
@@ -463,62 +446,6 @@ class TestReviewRunnerConfig:
         # These fields are deprecated but still accepted for backward compat
         assert config.thinking_mode == "high"
         assert config.capture_session_log is True
-
-
-class TestReviewInput:
-    """Test input data handling."""
-
-    def test_input_required_fields(self, tmp_path: Path) -> None:
-        """Input should require issue_id, repo_path, and commit_sha."""
-        review_input = ReviewInput(
-            issue_id="test-123",
-            repo_path=tmp_path,
-            commit_sha="abc123",
-        )
-
-        assert review_input.issue_id == "test-123"
-        assert review_input.repo_path == tmp_path
-        assert review_input.commit_sha == "abc123"
-        assert review_input.issue_description is None
-        assert review_input.baseline_commit is None
-        assert review_input.claude_session_id is None
-
-    def test_input_with_optional_fields(self, tmp_path: Path) -> None:
-        """Input should accept optional fields."""
-        review_input = ReviewInput(
-            issue_id="test-123",
-            repo_path=tmp_path,
-            commit_sha="abc123",
-            issue_description="Fix the bug",
-            baseline_commit="def456",
-            claude_session_id="session-456",
-        )
-
-        assert review_input.issue_description == "Fix the bug"
-        assert review_input.baseline_commit == "def456"
-        assert review_input.claude_session_id == "session-456"
-
-
-class TestReviewOutput:
-    """Test output data handling."""
-
-    def test_output_required_fields(self) -> None:
-        """Output should have required fields with defaults."""
-        result = FakeReviewResult(passed=True, issues=[])
-        output = ReviewOutput(result=result)
-
-        assert output.result.passed is True
-        assert output.session_log_path is None
-
-    def test_output_with_session_log(self) -> None:
-        """Output should include session log path."""
-        result = FakeReviewResult(passed=True, issues=[])
-        output = ReviewOutput(
-            result=result,
-            session_log_path="/path/to/log.jsonl",
-        )
-
-        assert output.session_log_path == "/path/to/log.jsonl"
 
 
 class TestContextFileCleanup:

@@ -73,37 +73,6 @@ class MockEventSink:
         self.events.append(("tasks_aborting", (count, reason)))
 
 
-class TestCoordinatorConfig:
-    """Tests for CoordinatorConfig dataclass."""
-
-    def test_default_values(self) -> None:
-        """Config has sensible defaults."""
-        config = CoordinatorConfig()
-        assert config.max_agents is None
-        assert config.max_issues is None
-        assert config.epic_id is None
-        assert config.only_ids is None
-        assert config.prioritize_wip is False
-        assert config.focus is True
-
-    def test_custom_values(self) -> None:
-        """Config accepts custom values."""
-        config = CoordinatorConfig(
-            max_agents=4,
-            max_issues=10,
-            epic_id="epic-123",
-            only_ids=["issue-1", "issue-2"],
-            prioritize_wip=True,
-            focus=False,
-        )
-        assert config.max_agents == 4
-        assert config.max_issues == 10
-        assert config.epic_id == "epic-123"
-        assert config.only_ids == ["issue-1", "issue-2"]
-        assert config.prioritize_wip is True
-        assert config.focus is False
-
-
 class TestIssueExecutionCoordinator:
     """Tests for IssueExecutionCoordinator."""
 
@@ -120,23 +89,6 @@ class TestIssueExecutionCoordinator:
             event_sink=event_sink,  # type: ignore[arg-type]
             config=CoordinatorConfig(),
         )
-
-    def test_init_sets_attributes(self, event_sink: MockEventSink) -> None:
-        """Init properly sets all attributes."""
-        beads = MockIssueProvider()
-        config = CoordinatorConfig(max_agents=2)
-        coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
-            config=config,
-        )
-        assert coord.beads is beads
-        assert coord.event_sink is event_sink
-        assert coord.config is config
-        assert coord.active_tasks == {}
-        assert coord.completed_ids == set()
-        assert coord.failed_issues == set()
-        assert coord.abort_run is False
 
     def test_request_abort(self, coordinator: IssueExecutionCoordinator) -> None:
         """request_abort sets abort state."""

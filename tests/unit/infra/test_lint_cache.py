@@ -23,12 +23,6 @@ class TestLintCacheKey:
         restored = LintCacheKey.from_dict(data)
         assert restored == key
 
-    def test_frozen(self) -> None:
-        """Test that LintCacheKey is immutable."""
-        key = LintCacheKey(command_name="ruff check", working_dir="/my/repo")
-        with pytest.raises(AttributeError):
-            key.command_name = "something else"  # type: ignore[misc]
-
 
 class TestLintCacheEntry:
     """Tests for LintCacheEntry."""

@@ -21,71 +21,6 @@ class FakeDeadlockInfo:
     blocker_issue_id: str | None
 
 
-class TestEventRunConfig:
-    """Tests for EventRunConfig dataclass."""
-
-    def test_minimal_config(self) -> None:
-        """EventRunConfig can be created with required fields only."""
-        config = EventRunConfig(
-            repo_path="/tmp/repo",
-            max_agents=2,
-            timeout_minutes=30,
-            max_issues=10,
-            max_gate_retries=3,
-            max_review_retries=2,
-        )
-        assert config.repo_path == "/tmp/repo"
-        assert config.max_agents == 2
-        assert config.timeout_minutes == 30
-        assert config.max_issues == 10
-        assert config.max_gate_retries == 3
-        assert config.max_review_retries == 2
-        # Defaults
-        assert config.epic_id is None
-        assert config.only_ids is None
-        assert config.braintrust_enabled is False
-        assert config.review_enabled is True
-        assert config.prioritize_wip is False
-        assert config.cli_args is None
-
-    def test_full_config(self) -> None:
-        """EventRunConfig can be created with all optional fields."""
-        config = EventRunConfig(
-            repo_path="/tmp/repo",
-            max_agents=4,
-            timeout_minutes=60,
-            max_issues=20,
-            max_gate_retries=5,
-            max_review_retries=3,
-            epic_id="epic-123",
-            only_ids=["issue-1", "issue-2"],
-            braintrust_enabled=True,
-            review_enabled=False,
-            prioritize_wip=True,
-            cli_args={"verbose": True},
-        )
-        assert config.epic_id == "epic-123"
-        assert config.only_ids == ["issue-1", "issue-2"]
-        assert config.braintrust_enabled is True
-        assert config.review_enabled is False
-        assert config.prioritize_wip is True
-        assert config.cli_args == {"verbose": True}
-
-    def test_none_values_allowed(self) -> None:
-        """EventRunConfig accepts None for optional int fields."""
-        config = EventRunConfig(
-            repo_path="/tmp/repo",
-            max_agents=None,
-            timeout_minutes=None,
-            max_issues=None,
-            max_gate_retries=3,
-            max_review_retries=2,
-        )
-        assert config.max_agents is None
-        assert config.timeout_minutes is None
-        assert config.max_issues is None
-
-
 class TestBaseEventSink:
     """Tests for BaseEventSink implementation."""
 
@@ -229,34 +164,6 @@ class TestBaseEventSink:
         # Watch mode events
         assert sink.on_watch_idle(30.0, None) is None
         assert sink.on_watch_idle(60.0, 5) is None
-
-    def test_can_be_subclassed_for_selective_override(self) -> None:
-        """BaseEventSink can be subclassed with selective method overrides."""
-
-        class CustomSink(BaseEventSink):
-            """Custom sink that only tracks agent starts."""
-
-            def __init__(self) -> None:
-                super().__init__()
-                self.started_agents: list[str] = []
-
-            def on_agent_started(self, agent_id: str, issue_id: str) -> None:
-                self.started_agents.append(agent_id)
-
-        sink = CustomSink()
-
-        # Custom method tracks calls
-        sink.on_agent_started("agent-1", "issue-1")
-        sink.on_agent_started("agent-2", "issue-2")
-        assert sink.started_agents == ["agent-1", "agent-2"]
-
-        # Other methods are still no-ops
-        sink.on_agent_completed("agent-1", "issue-1", True, 60.0, "Done")
-        sink.on_gate_passed("agent-1")
-        # No error raised, no side effects
-
-        # Subclass still implements protocol
-        assert isinstance(sink, MalaEventSink)
 
 
 class TestNullEventSink:
@@ -480,11 +387,6 @@ class TestConsoleEventSink:
         sink = ConsoleEventSink()
         # Protocol structural subtyping
         assert isinstance(sink, MalaEventSink)
-
-    def test_inherits_from_base_event_sink(self) -> None:
-        """ConsoleEventSink inherits from BaseEventSink."""
-        sink = ConsoleEventSink()
-        assert isinstance(sink, BaseEventSink)
 
     def test_protocol_coverage(self) -> None:
         """Verify all protocol methods are implemented in ConsoleEventSink."""

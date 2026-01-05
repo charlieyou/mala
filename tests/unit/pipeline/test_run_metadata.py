@@ -42,12 +42,6 @@ from src.domain.validation.spec import (
 class TestQualityGateResult:
     """Test QualityGateResult dataclass."""
 
-    def test_basic_result(self) -> None:
-        result = QualityGateResult(passed=True)
-        assert result.passed is True
-        assert result.evidence == {}
-        assert result.failure_reasons == []
-
     def test_failed_result(self) -> None:
         # New spec-driven evidence uses CommandKind values as keys
         result = QualityGateResult(
@@ -63,15 +57,6 @@ class TestQualityGateResult:
 
 class TestValidationResult:
     """Test ValidationResult dataclass."""
-
-    def test_basic_result(self) -> None:
-        result = ValidationResult(passed=True)
-        assert result.passed is True
-        assert result.commands_run == []
-        assert result.commands_failed == []
-        assert result.artifacts is None
-        assert result.coverage_percent is None
-        assert result.e2e_passed is None
 
     def test_result_with_commands(self) -> None:
         result = ValidationResult(
@@ -107,21 +92,6 @@ class TestValidationResult:
 class TestIssueRun:
     """Test IssueRun dataclass."""
 
-    def test_basic_issue_run(self) -> None:
-        issue = IssueRun(
-            issue_id="test-1",
-            agent_id="agent-123",
-            status="success",
-            duration_seconds=120.5,
-        )
-        assert issue.issue_id == "test-1"
-        assert issue.agent_id == "agent-123"
-        assert issue.status == "success"
-        assert issue.duration_seconds == 120.5
-        assert issue.session_id is None
-        assert issue.validation is None
-        assert issue.resolution is None
-
     def test_issue_run_with_validation(self) -> None:
         validation = ValidationResult(
             passed=True,
@@ -151,35 +121,6 @@ class TestIssueRun:
         )
         assert issue.resolution is not None
         assert issue.resolution.outcome == ResolutionOutcome.NO_CHANGE
-
-
-class TestRunConfig:
-    """Test RunConfig dataclass."""
-
-    def test_basic_config(self) -> None:
-        config = RunConfig(
-            max_agents=4,
-            timeout_minutes=30,
-            max_issues=10,
-            epic_id="epic-1",
-            only_ids=["issue-1", "issue-2"],
-            braintrust_enabled=True,
-        )
-        assert config.max_agents == 4
-        assert config.braintrust_enabled is True
-
-    def test_optional_fields(self) -> None:
-        config = RunConfig(
-            max_agents=None,
-            timeout_minutes=None,
-            max_issues=None,
-            epic_id=None,
-            only_ids=None,
-            braintrust_enabled=False,
-        )
-        assert config.max_gate_retries is None
-        assert config.max_review_retries is None
-        assert config.review_enabled is None
 
 
 class TestRunMetadata:

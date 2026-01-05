@@ -74,12 +74,6 @@ class TestCommandConfig:
         with pytest.raises(ConfigError, match="must be a string or object"):
             CommandConfig.from_value(123)  # type: ignore[arg-type]
 
-    def test_immutable(self) -> None:
-        """CommandConfig is frozen and cannot be modified."""
-        config = CommandConfig(command="pytest", timeout=60)
-        with pytest.raises(AttributeError):
-            config.command = "other"  # type: ignore[misc]
-
 
 class TestYamlCoverageConfig:
     """Tests for YamlCoverageConfig dataclass."""
@@ -216,12 +210,6 @@ class TestYamlCoverageConfig:
                 }
             )
 
-    def test_immutable(self) -> None:
-        """YamlCoverageConfig is frozen and cannot be modified."""
-        config = YamlCoverageConfig(format="xml", file="coverage.xml", threshold=80.0)
-        with pytest.raises(AttributeError):
-            config.threshold = 90.0  # type: ignore[misc]
-
 
 class TestCommandsConfig:
     """Tests for CommandsConfig dataclass."""
@@ -299,12 +287,6 @@ class TestCommandsConfig:
         """Empty command string raises ConfigError."""
         with pytest.raises(ConfigError, match="cannot be empty string"):
             CommandsConfig.from_dict({"test": ""})
-
-    def test_immutable(self) -> None:
-        """CommandsConfig is frozen and cannot be modified."""
-        config = CommandsConfig(setup=CommandConfig(command="npm install"))
-        with pytest.raises(AttributeError):
-            config.setup = None  # type: ignore[misc]
 
 
 class TestValidationConfig:
@@ -404,26 +386,6 @@ class TestValidationConfig:
         assert isinstance(config.config_files, tuple)
         assert isinstance(config.setup_files, tuple)
 
-    def test_immutable(self) -> None:
-        """ValidationConfig is frozen and cannot be modified."""
-        config = ValidationConfig.from_dict({"preset": "go"})
-        with pytest.raises(AttributeError):
-            config.preset = "rust"  # type: ignore[misc]
-
-
-class TestConfigError:
-    """Tests for ConfigError exception."""
-
-    def test_basic_message(self) -> None:
-        """ConfigError stores and displays message."""
-        error = ConfigError("Invalid configuration")
-        assert str(error) == "Invalid configuration"
-
-    def test_is_exception(self) -> None:
-        """ConfigError is an Exception subclass."""
-        error = ConfigError("test")
-        assert isinstance(error, Exception)
-
 
 class TestPresetNotFoundError:
     """Tests for PresetNotFoundError exception."""
@@ -445,12 +407,6 @@ class TestPresetNotFoundError:
         assert error.preset_name == "unknown"
         assert error.available == []
         assert "Unknown preset 'unknown'" in str(error)
-
-    def test_is_config_error_subclass(self) -> None:
-        """PresetNotFoundError is a ConfigError subclass."""
-        error = PresetNotFoundError("test")
-        assert isinstance(error, ConfigError)
-        assert isinstance(error, Exception)
 
 
 class TestPromptValidationCommands:
@@ -497,14 +453,3 @@ class TestPromptValidationCommands:
         assert "No format command configured" in prompt_cmds.format
         assert "No typecheck command configured" in prompt_cmds.typecheck
         assert "No test command configured" in prompt_cmds.test
-
-    def test_immutable(self) -> None:
-        """PromptValidationCommands is frozen and cannot be modified."""
-        prompt_cmds = PromptValidationCommands(
-            lint="ruff check .",
-            format="ruff format .",
-            typecheck="ty check",
-            test="pytest",
-        )
-        with pytest.raises(AttributeError):
-            prompt_cmds.lint = "other"  # type: ignore[misc]

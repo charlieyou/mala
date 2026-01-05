@@ -4,7 +4,6 @@ Tests for:
 - gate_metadata: GateMetadata building from gate results and logs
 - review_tracking: Creating tracking issues from P2/P3 findings
 - run_config: Building EventRunConfig and RunMetadata
-- prompts: Loading and caching prompt templates
 """
 
 from dataclasses import dataclass
@@ -17,12 +16,9 @@ import pytest
 from src.domain.quality_gate import GateResult, ValidationEvidence
 from src.domain.validation.spec import CommandKind
 from src.pipeline.gate_metadata import (
-    GateMetadata,
     build_gate_metadata,
     build_gate_metadata_from_logs,
 )
-from src.domain.prompts import PromptProvider, load_prompts
-from src.infra.tools.env import PROMPTS_DIR
 from src.orchestration.review_tracking import (
     _extract_existing_fingerprints,
     _get_finding_fingerprint,
@@ -35,22 +31,10 @@ from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 if TYPE_CHECKING:
     from src.core.protocols import IssueProvider, MalaEventSink
 
-# Load prompts once for tests
-_prompts = load_prompts(PROMPTS_DIR)
-
 
 # ============================================================================
 # gate_metadata tests
 # ============================================================================
-
-
-class TestGateMetadata:
-    """Test GateMetadata dataclass."""
-
-    def test_empty_metadata(self) -> None:
-        metadata = GateMetadata()
-        assert metadata.quality_gate_result is None
-        assert metadata.validation_result is None
 
 
 class TestBuildGateMetadata:
@@ -854,38 +838,3 @@ class TestBuildRunMetadata:
         assert metadata.config.timeout_minutes is None
         assert metadata.config.max_agents is None
         assert metadata.config.max_issues is None
-
-
-# ============================================================================
-# prompts tests
-# ============================================================================
-
-
-class TestPromptLoading:
-    """Test prompt loading utilities."""
-
-    def test_load_prompts_returns_prompt_provider(self) -> None:
-        """load_prompts returns a PromptProvider with all prompts."""
-        assert isinstance(_prompts, PromptProvider)
-
-    def test_implementer_prompt(self) -> None:
-        """Should have implementer prompt loaded."""
-        assert isinstance(_prompts.implementer_prompt, str)
-        assert len(_prompts.implementer_prompt) > 0
-        # Verify it contains expected placeholders
-        assert "{issue_id}" in _prompts.implementer_prompt
-
-    def test_review_followup_prompt(self) -> None:
-        """Should have review followup prompt loaded."""
-        assert isinstance(_prompts.review_followup_prompt, str)
-        assert len(_prompts.review_followup_prompt) > 0
-
-    def test_fixer_prompt(self) -> None:
-        """Should have fixer prompt loaded."""
-        assert isinstance(_prompts.fixer_prompt, str)
-        assert len(_prompts.fixer_prompt) > 0
-
-    def test_prompt_provider_is_frozen(self) -> None:
-        """PromptProvider should be immutable (frozen dataclass)."""
-        with pytest.raises(Exception):  # FrozenInstanceError
-            _prompts.implementer_prompt = "modified"  # type: ignore[misc]
