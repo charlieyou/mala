@@ -401,3 +401,30 @@ class TestFakeIssueProviderObservableState:
         assert "a" in provider.claimed
         await provider.reset_async("a")
         assert "a" not in provider.claimed
+
+    @pytest.mark.unit
+    async def test_get_blocked_count_only_counts_blocked_tasks(self) -> None:
+        """get_blocked_count_async counts only tasks with status='blocked'.
+
+        Mirrors BeadsClient semantics: bd list --status blocked -t task
+        - Only status="blocked" is counted (not open, ready, in_progress, closed)
+        - Only issue_type="task" is counted (not epic)
+        """
+        issues = {
+            "blocked-task": FakeIssue(
+                "blocked-task", status="blocked", issue_type="task"
+            ),
+            "open-task": FakeIssue("open-task", status="open", issue_type="task"),
+            "ready-task": FakeIssue("ready-task", status="ready", issue_type="task"),
+            "in_progress-task": FakeIssue(
+                "in_progress-task", status="in_progress", issue_type="task"
+            ),
+            "closed-task": FakeIssue("closed-task", status="closed", issue_type="task"),
+            "blocked-epic": FakeIssue(
+                "blocked-epic", status="blocked", issue_type="epic"
+            ),
+        }
+        provider = FakeIssueProvider(issues)
+        count = await provider.get_blocked_count_async()
+        # Only blocked-task should be counted
+        assert count == 1

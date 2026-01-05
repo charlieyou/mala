@@ -288,15 +288,14 @@ class FakeIssueProvider:
         return True
 
     async def get_blocked_count_async(self) -> int | None:
-        """Get count of issues that exist but aren't ready.
+        """Get count of blocked task issues.
 
-        Returns the count of issues that are not in 'ready' status
-        and not closed/in_progress (i.e., blocked on dependencies).
+        Returns the count of task issues with status="blocked".
+        Mirrors BeadsClient which runs: bd list --status blocked -t task
         """
         blocked = 0
         for issue in self.issues.values():
-            # Count issues that exist but aren't ready to be worked on
-            if issue.status not in ("ready", "closed", "in_progress"):
+            if issue.issue_type == "task" and issue.status == "blocked":
                 blocked += 1
         return blocked
 
