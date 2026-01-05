@@ -938,3 +938,24 @@ class BeadsClient:
             for epic_id, is_blocked in zip(epic_ids_list, results, strict=True)
             if is_blocked
         }
+
+    async def get_blocked_count_async(self) -> int | None:
+        """Get count of issues that exist but aren't ready.
+
+        Used by watch mode to report how many issues are blocked on
+        dependencies or other conditions. Returns None if the count
+        cannot be determined (e.g., bd CLI failure).
+
+        Returns:
+            Count of blocked issues, or None on error.
+        """
+        result = await self._run_subprocess_async(
+            ["bd", "list", "--status", "blocked", "--json", "-t", "task"]
+        )
+        if result.returncode != 0:
+            return None
+        try:
+            data = json.loads(result.stdout)
+            return len(data) if isinstance(data, list) else None
+        except json.JSONDecodeError:
+            return None

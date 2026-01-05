@@ -1683,3 +1683,105 @@ class TestOrphansOnlyIntegration:
         assert "empty-parent" in result
         assert "real-parent" not in result
         assert len(result) == 1
+
+
+class TestGetBlockedCountAsync:
+    """Test get_blocked_count_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_count_of_blocked_issues(self, tmp_path: Path) -> None:
+        """Should return the count of blocked issues."""
+        beads = BeadsClient(tmp_path)
+        blocked_response = json.dumps(
+            [
+                {"id": "blocked-1", "status": "blocked"},
+                {"id": "blocked-2", "status": "blocked"},
+                {"id": "blocked-3", "status": "blocked"},
+            ]
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=blocked_response)),
+            )
+            result = await beads.get_blocked_count_async()
+
+        assert result == 3
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_no_blocked_issues(self, tmp_path: Path) -> None:
+        """Should return 0 when no issues are blocked."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout="[]")),
+            )
+            result = await beads.get_blocked_count_async()
+
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_bd_failure(self, tmp_path: Path) -> None:
+        """Should return None when bd list fails."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(
+                    return_value=make_command_result(returncode=1, stderr="bd error")
+                ),
+            )
+            result = await beads.get_blocked_count_async()
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_invalid_json(self, tmp_path: Path) -> None:
+        """Should return None when bd returns invalid JSON."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout="not valid json")),
+            )
+            result = await beads.get_blocked_count_async()
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_non_list_response(self, tmp_path: Path) -> None:
+        """Should return None when bd returns non-list JSON."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout='{"error": "bad"}')),
+            )
+            result = await beads.get_blocked_count_async()
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_calls_bd_list_with_correct_args(self, tmp_path: Path) -> None:
+        """Should call bd list with --status blocked --json -t task."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mock_run = AsyncMock(return_value=make_command_result(stdout="[]"))
+            mp.setattr(beads, "_run_subprocess_async", mock_run)
+            await beads.get_blocked_count_async()
+
+        mock_run.assert_called_once_with(
+            ["bd", "list", "--status", "blocked", "--json", "-t", "task"]
+        )
