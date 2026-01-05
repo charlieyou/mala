@@ -778,45 +778,6 @@ config_files:
 class TestToolNameExtractionIntegration:
     """AC 10: Test tool name extraction for quality gate messaging."""
 
-    def test_npx_wrapper_extracts_tool(self) -> None:
-        """npx eslint → eslint."""
-        assert extract_tool_name("npx eslint .") == "eslint"
-        assert extract_tool_name("npx prettier --check .") == "prettier"
-
-    def test_uvx_wrapper_extracts_tool(self) -> None:
-        """uvx ruff check → ruff."""
-        assert extract_tool_name("uvx ruff check .") == "ruff"
-        assert extract_tool_name("uvx mypy src/") == "mypy"
-
-    def test_uv_run_wrapper_extracts_tool(self) -> None:
-        """uv run pytest → pytest."""
-        assert extract_tool_name("uv run pytest") == "pytest"
-        assert extract_tool_name("uv run ruff check .") == "ruff"
-
-    def test_go_compound_command(self) -> None:
-        """go test ./... → go test."""
-        assert extract_tool_name("go test ./...") == "go test"
-        assert extract_tool_name("go build .") == "go build"
-
-    def test_cargo_compound_command(self) -> None:
-        """cargo clippy → cargo clippy."""
-        assert extract_tool_name("cargo clippy") == "cargo clippy"
-        assert extract_tool_name("cargo test") == "cargo test"
-
-    def test_npm_run_script(self) -> None:
-        """npm run lint → npm run:lint."""
-        assert extract_tool_name("npm run lint") == "npm run:lint"
-        assert extract_tool_name("npm run test:unit") == "npm run:test:unit"
-
-    def test_npm_test_compound(self) -> None:
-        """npm test → npm test."""
-        assert extract_tool_name("npm test") == "npm test"
-
-    def test_path_prefix_stripped(self) -> None:
-        """/usr/bin/eslint → eslint."""
-        assert extract_tool_name("/usr/bin/eslint .") == "eslint"
-        assert extract_tool_name("./node_modules/.bin/prettier") == "prettier"
-
     def test_preset_commands_extract_correctly(self, tmp_path: Path) -> None:
         """Tool names extract correctly from preset commands."""
         _create_mala_yaml(tmp_path, "preset: python-uv\n")

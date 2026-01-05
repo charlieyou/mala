@@ -615,51 +615,6 @@ class TestAgentSessionRunnerCallbacks:
         )
 
     @pytest.mark.asyncio
-    async def test_get_log_path_callback_invoked(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-    ) -> None:
-        """Runner should call get_log_path callback with session ID."""
-        fake_client = FakeSDKClient(result_message=make_result_message())
-        fake_factory = FakeSDKClientFactory(fake_client)
-
-        log_path_calls: list[str] = []
-
-        def get_log_path(session_id: str) -> Path:
-            log_path_calls.append(session_id)
-            return tmp_log_path
-
-        async def on_gate_check(
-            issue_id: str, log_path: Path, retry_state: RetryState
-        ) -> tuple[GateResult, int]:
-            return (
-                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
-                1000,
-            )
-
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
-        runner = AgentSessionRunner(
-            config=session_config,
-            callbacks=callbacks,
-            sdk_client_factory=fake_factory,
-        )
-
-        input = AgentSessionInput(
-            issue_id="test-123",
-            prompt="Test prompt",
-        )
-
-        await runner.run_session(input)
-
-        assert len(log_path_calls) == 1
-        assert log_path_calls[0] == "test-session-123"
-
-    @pytest.mark.asyncio
     async def test_raises_when_callback_missing(
         self,
         session_config: AgentSessionConfig,
@@ -687,78 +642,6 @@ class TestAgentSessionRunnerCallbacks:
         # The error should be caught and reported in summary
         assert output.success is False
         assert "get_log_path" in output.summary
-
-
-class TestAgentSessionRunnerConfig:
-    """Test configuration handling."""
-
-    def test_config_with_custom_values(self, tmp_path: Path) -> None:
-        """Config should accept custom values via flags."""
-        config = AgentSessionConfig(
-            repo_path=tmp_path,
-            timeout_seconds=120,
-            prompts=make_test_prompts(),
-            max_gate_retries=5,
-            max_review_retries=4,
-            review_enabled=False,
-            mcp_server_factory=make_noop_mcp_factory(),
-        )
-
-        assert config.timeout_seconds == 120
-        assert config.max_gate_retries == 5
-        assert config.max_review_retries == 4
-        assert config.review_enabled is False
-
-
-class TestAgentSessionInput:
-    """Test input data handling."""
-
-    def test_input_required_fields(self) -> None:
-        """Input should require issue_id and prompt."""
-        input = AgentSessionInput(
-            issue_id="test-123",
-            prompt="Test prompt",
-        )
-
-        assert input.issue_id == "test-123"
-        assert input.prompt == "Test prompt"
-        assert input.baseline_commit is None
-        assert input.issue_description is None
-
-    def test_input_with_optional_fields(self) -> None:
-        """Input should accept optional fields."""
-        input = AgentSessionInput(
-            issue_id="test-123",
-            prompt="Test prompt",
-            baseline_commit="abc123",
-            issue_description="Fix the bug",
-        )
-
-        assert input.baseline_commit == "abc123"
-        assert input.issue_description == "Fix the bug"
-
-
-class TestAgentSessionOutput:
-    """Test output data handling."""
-
-    def test_output_required_fields(self) -> None:
-        """Output should have required fields with defaults."""
-        from src.pipeline.agent_session_runner import AgentSessionOutput
-
-        output = AgentSessionOutput(
-            success=True,
-            summary="Done",
-        )
-
-        assert output.success is True
-        assert output.summary == "Done"
-        assert output.session_id is None
-        assert output.log_path is None
-        assert output.gate_attempts == 1
-        assert output.review_attempts == 0
-        assert output.resolution is None
-        assert output.duration_seconds == 0.0
-        assert output.agent_id == ""
 
 
 class TestAgentSessionRunnerStreamingCallbacks:

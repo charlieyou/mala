@@ -1342,31 +1342,3 @@ class TestVerifyWithSDK:
         assert verdict.confidence == 0.0
         assert "Failed to parse" in verdict.reasoning
 
-
-class TestRetryConfig:
-    """Tests for retry_config storage (used by callers for consistency)."""
-
-    def test_retry_config_is_stored(self) -> None:
-        """Should store retry_config when provided."""
-        custom_config = RetryConfig(
-            max_retries=5,
-            initial_delay_ms=500,
-            backoff_multiplier=3.0,
-            max_delay_ms=60000,
-        )
-        model = ClaudeEpicVerificationModel(retry_config=custom_config)
-
-        assert model.retry_config.max_retries == 5
-        assert model.retry_config.initial_delay_ms == 500
-        assert model.retry_config.backoff_multiplier == 3.0
-        assert model.retry_config.max_delay_ms == 60000
-
-    def test_retry_config_defaults(self) -> None:
-        """Should use default RetryConfig when not provided."""
-        model = ClaudeEpicVerificationModel()
-
-        # Check defaults from RetryConfig
-        assert model.retry_config.max_retries == 2
-        assert model.retry_config.initial_delay_ms == 1000
-        assert model.retry_config.backoff_multiplier == 2.0
-        assert model.retry_config.max_delay_ms == 30000

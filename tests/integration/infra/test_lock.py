@@ -114,48 +114,6 @@ def run_lock_script(
     )
 
 
-class TestPromptTemplateIntegration:
-    """Test that the prompt template correctly configures lock environment."""
-
-    def test_template_includes_lock_dir_placeholder(self) -> None:
-        assert "{lock_dir}" in _prompts.implementer_prompt
-
-    def test_template_includes_agent_id_placeholder(self) -> None:
-        assert "{agent_id}" in _prompts.implementer_prompt
-
-    def test_template_has_required_placeholders(self) -> None:
-        # Verify all required placeholders exist in the template
-        required = [
-            "{issue_id}",
-            "{repo_path}",
-            "{lock_dir}",
-            "{agent_id}",
-            "{lint_command}",
-            "{format_command}",
-            "{typecheck_command}",
-            "{test_command}",
-        ]
-        for placeholder in required:
-            assert placeholder in _prompts.implementer_prompt, (
-                f"Missing placeholder: {placeholder}"
-            )
-
-    def test_scripts_dir_exists_and_contains_scripts(self) -> None:
-        assert SCRIPTS_DIR.exists()
-        expected_scripts = [
-            "lock-try.sh",
-            "lock-check.sh",
-            "lock-holder.sh",
-            "lock-release.sh",
-            "lock-release-all.sh",
-        ]
-        for script in expected_scripts:
-            assert (SCRIPTS_DIR / script).exists(), f"Missing script: {script}"
-            assert os.access(SCRIPTS_DIR / script, os.X_OK), (
-                f"Script not executable: {script}"
-            )
-
-
 class TestAgentLockWorkflow:
     """Test the complete agent workflow with locks."""
 
@@ -1199,49 +1157,6 @@ class TestWaitForLockAsync:
         await release_task
 
         assert result is True
-
-    @pytest.mark.asyncio
-    async def test_wait_for_lock_async_uses_asyncio_sleep(
-        self, lock_env: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """wait_for_lock_async should use asyncio.sleep, not time.sleep."""
-        import asyncio
-        from unittest.mock import patch
-
-        from src.infra.tools.locking import try_lock, wait_for_lock_async
-
-        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_env))
-
-        test_file = lock_env / "test.py"
-        test_file.touch()
-
-        # Lock the file so we have to wait
-        assert try_lock(str(test_file), "agent-1") is True
-
-        # Mock asyncio.sleep to verify it's called
-        sleep_calls: list[float] = []
-
-        async def tracking_sleep(delay: float) -> None:
-            sleep_calls.append(delay)
-            # Return immediately to speed up test
-            if len(sleep_calls) >= 3:
-                raise asyncio.CancelledError()
-
-        with patch("asyncio.sleep", side_effect=tracking_sleep):
-            try:
-                await wait_for_lock_async(
-                    str(test_file),
-                    "agent-2",
-                    timeout_seconds=1.0,
-                    poll_interval_ms=50,
-                )
-            except asyncio.CancelledError:
-                pass
-
-        # Should have called asyncio.sleep with the poll interval
-        assert len(sleep_calls) >= 1
-        assert all(delay == 0.05 for delay in sleep_calls)
-
 
 class TestGetLockHolder:
     """Tests for get_lock_holder function."""

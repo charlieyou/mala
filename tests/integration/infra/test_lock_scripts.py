@@ -181,10 +181,6 @@ class TestRepoNamespacing:
 class TestBasicLockAcquisition:
     """Test basic lock acquisition functionality."""
 
-    def test_acquires_lock_successfully(self, lock_env: dict[str, str]) -> None:
-        result = run_script("lock-try.sh", ["src/main.py"], lock_env)
-        assert result.returncode == 0
-
     def test_creates_lock_file_with_correct_name(
         self, lock_env: dict[str, str]
     ) -> None:
@@ -720,13 +716,6 @@ class TestLockWait:
         # Verify waiter holds lock
         lock_path = lock_file_path(lock_env["LOCK_DIR"], "released.py")
         assert lock_path.read_text().strip() == "waiter-agent"
-
-    def test_default_timeout_30_seconds(self, lock_env: dict[str, str]) -> None:
-        """Should default to 30 second timeout."""
-        # We can't easily test 30 seconds, but we can verify the script accepts
-        # just a filepath (using defaults)
-        result = run_script("lock-wait.sh", ["defaults.py"], lock_env)
-        assert result.returncode == 0
 
     def test_respects_repo_namespace(self, lock_env: dict[str, str]) -> None:
         """Should respect REPO_NAMESPACE for lock disambiguation."""

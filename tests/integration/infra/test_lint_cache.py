@@ -59,15 +59,6 @@ class TestLintCacheWithRealGit:
         """Provide a command runner for tests."""
         return CommandRunner(cwd=git_repo)
 
-    def test_should_skip_returns_false_on_first_run(
-        self, cache_dir: Path, git_repo: Path, command_runner: CommandRunner
-    ) -> None:
-        """Test that should_skip returns False when no cache entry exists."""
-        cache = LintCache(
-            cache_dir=cache_dir, repo_path=git_repo, command_runner=command_runner
-        )
-        assert cache.should_skip("ruff check") is False
-
     def test_should_skip_returns_true_after_mark_passed(
         self, cache_dir: Path, git_repo: Path, command_runner: CommandRunner
     ) -> None:

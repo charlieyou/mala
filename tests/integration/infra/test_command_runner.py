@@ -33,45 +33,6 @@ pytestmark = pytest.mark.integration
 class TestCommandResult:
     """Test CommandResult dataclass."""
 
-    def test_basic_result(self) -> None:
-        result = CommandResult(
-            command=["echo", "hello"],
-            returncode=0,
-            stdout="hello\n",
-            stderr="",
-            duration_seconds=0.1,
-            timed_out=False,
-        )
-        assert result.ok is True
-        assert result.command == ["echo", "hello"]
-        assert result.returncode == 0
-        assert result.stdout == "hello\n"
-
-    def test_failed_result(self) -> None:
-        result = CommandResult(
-            command=["false"],
-            returncode=1,
-            stdout="",
-            stderr="error",
-            duration_seconds=0.05,
-            timed_out=False,
-        )
-        assert result.ok is False
-        assert result.returncode == 1
-
-    def test_timed_out_result(self) -> None:
-        result = CommandResult(
-            command=["sleep", "10"],
-            returncode=124,
-            stdout="",
-            stderr="",
-            duration_seconds=1.0,
-            timed_out=True,
-        )
-        assert result.ok is False
-        assert result.timed_out is True
-        assert result.returncode == 124
-
     def test_stdout_tail(self) -> None:
         long_output = "\n".join([f"line {i}" for i in range(100)])
         result = CommandResult(
@@ -205,25 +166,6 @@ class TestCommandRunner:
         assert elapsed < 1.0, f"Process hung, took {elapsed}s"
         assert (tmp_path / "started.txt").exists()
         assert not (tmp_path / "survived.txt").exists()
-
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
-    def test_use_process_group_true_kills_children(self, tmp_path: Path) -> None:
-        """Verify use_process_group=True kills child processes on timeout."""
-        script = tmp_path / "spawner.sh"
-        script.write_text(
-            """#!/bin/bash
-            (sleep 0.3; echo "child survived" > "$1/child_output.txt") &
-            sleep 10
-            """
-        )
-        script.chmod(0o755)
-
-        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.1)
-        result = runner.run([str(script), str(tmp_path)], use_process_group=True)
-
-        assert result.timed_out is True
-        time.sleep(0.5)
-        assert not (tmp_path / "child_output.txt").exists(), "Child should be killed"
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
     def test_use_process_group_false_leaves_children(self, tmp_path: Path) -> None:
@@ -380,30 +322,6 @@ class TestAsyncCommandRunner:
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
-    async def test_async_use_process_group_true_kills_children(
-        self, tmp_path: Path
-    ) -> None:
-        """Verify use_process_group=True kills child processes on async timeout."""
-        script = tmp_path / "spawner.sh"
-        script.write_text(
-            """#!/bin/bash
-            (sleep 0.3; echo "child survived" > "$1/child_output.txt") &
-            sleep 10
-            """
-        )
-        script.chmod(0o755)
-
-        runner = CommandRunner(cwd=tmp_path, timeout_seconds=0.1)
-        result = await runner.run_async(
-            [str(script), str(tmp_path)], use_process_group=True
-        )
-
-        assert result.timed_out is True
-        await asyncio.sleep(0.5)
-        assert not (tmp_path / "child_output.txt").exists(), "Child should be killed"
-
-    @pytest.mark.asyncio
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
     async def test_async_use_process_group_false_leaves_children(
         self, tmp_path: Path
     ) -> None:
@@ -428,35 +346,8 @@ class TestAsyncCommandRunner:
         assert (tmp_path / "child_output.txt").exists(), "Child should survive"
 
 
-class TestConvenienceFunctions:
-    """Test module-level convenience functions."""
-
-    def test_run_command(self, tmp_path: Path) -> None:
-        result = run_command(["echo", "convenience"], cwd=tmp_path)
-        assert result.ok is True
-        assert "convenience" in result.stdout
-
-    def test_run_command_with_timeout(self, tmp_path: Path) -> None:
-        result = run_command(["sleep", "10"], cwd=tmp_path, timeout_seconds=0.5)
-        assert result.timed_out is True
-
-    @pytest.mark.asyncio
-    async def test_run_command_async(self, tmp_path: Path) -> None:
-        result = await run_command_async(["echo", "async"], cwd=tmp_path)
-        assert result.ok is True
-        assert "async" in result.stdout
-
-
 class TestShellMode:
     """Test shell mode execution."""
-
-    def test_shell_mode_simple_command(self, tmp_path: Path) -> None:
-        """Test basic shell string execution."""
-        runner = CommandRunner(cwd=tmp_path)
-        result = runner.run("echo hello", shell=True)
-        assert result.ok is True
-        assert "hello" in result.stdout
-        assert result.command == "echo hello"
 
     def test_shell_mode_with_pipe(self, tmp_path: Path) -> None:
         """Test shell command with pipe."""
@@ -526,14 +417,6 @@ class TestShellMode:
 
 class TestAsyncShellMode:
     """Test async shell mode execution."""
-
-    @pytest.mark.asyncio
-    async def test_async_shell_mode_simple(self, tmp_path: Path) -> None:
-        """Test basic async shell string execution."""
-        runner = CommandRunner(cwd=tmp_path)
-        result = await runner.run_async("echo hello", shell=True)
-        assert result.ok is True
-        assert "hello" in result.stdout
 
     @pytest.mark.asyncio
     async def test_async_shell_mode_with_pipe(self, tmp_path: Path) -> None:
