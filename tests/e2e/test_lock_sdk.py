@@ -26,7 +26,7 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     AssistantMessage,
 )
-from claude_agent_sdk.types import HookMatcher
+from claude_agent_sdk.types import HookMatcher, McpSdkServerConfig  # noqa: TC002
 
 from src.infra.hooks import make_stop_hook
 from src.infra.tools.env import SCRIPTS_DIR
@@ -650,3 +650,52 @@ Report "WORKFLOW COMPLETE" when done.
             text=True,
         )
         assert "hello" in log.stdout.lower() or "Add" in log.stdout
+
+
+class TestMCPLockingToolsSchemaValidation:
+    """Test MCP locking tools are accepted by Claude API.
+
+    These tests verify that the tool schemas are valid and accepted
+    by the Claude API. This catches schema validation errors like
+    using oneOf/allOf/anyOf at the top level, which would cause
+    400 errors at runtime.
+    """
+
+    @pytest.mark.asyncio
+    async def test_mcp_locking_tools_schema_accepted(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """MCP locking tool schemas are accepted by Claude API.
+
+        This test creates an agent with the MCP locking server and
+        sends a simple query. If the schema is invalid, Claude API
+        returns a 400 error before any response is generated.
+        """
+        from src.infra.tools.locking_mcp import create_locking_mcp_server
+
+        # Create MCP server config
+        result = create_locking_mcp_server(
+            agent_id="schema-test-agent",
+            repo_namespace=str(tmp_path),
+            emit_lock_event=lambda e: None,
+        )
+        # create_locking_mcp_server returns McpSdkServerConfig when _return_handlers=False
+        mcp_config: McpSdkServerConfig = result  # type: ignore[assignment]
+
+        # Create agent options with MCP server
+        options = ClaudeAgentOptions(
+            cwd=str(tmp_path),
+            permission_mode="bypassPermissions",
+            model="haiku",
+            max_turns=1,
+            mcp_servers={"mala-locking": mcp_config},
+        )
+
+        # Simple query - just needs to reach the API without schema error
+        # If schema is invalid, this will raise an API error
+        async with ClaudeSDKClient(options=options) as client:
+            await client.query("Say 'hello' - do not use any tools.")
+            async for message in client.receive_response():
+                # Just consume messages - test passes if no API error
+                pass
