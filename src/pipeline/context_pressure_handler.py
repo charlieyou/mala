@@ -135,14 +135,15 @@ class ContextPressureHandler:
             )
             return CheckpointResult(checkpoint="", timed_out=False)
 
-        # Create client to query for checkpoint
-        client = self.sdk_client_factory.create(options)
+        # Create client with resume to load prior context for checkpoint extraction
+        resumed_options = self.sdk_client_factory.with_resume(options, session_id)
+        client = self.sdk_client_factory.create(resumed_options)
 
         response_text = ""
         try:
             async with asyncio.timeout(effective_timeout):
                 async with client:
-                    await client.query(checkpoint_prompt, session_id=session_id)
+                    await client.query(checkpoint_prompt)
                     async for message in client.receive_response():
                         # Extract text from AssistantMessage
                         content = getattr(message, "content", None)

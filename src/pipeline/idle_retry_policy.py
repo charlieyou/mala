@@ -172,8 +172,15 @@ class IdleTimeoutRetryPolicy:
             if state.idle_retry_count > 0:
                 await self._apply_retry_backoff(state.idle_retry_count)
 
+            # Create options with resume if we have a session to resume
+            effective_options = options
+            if state.pending_session_id is not None:
+                effective_options = self._sdk_client_factory.with_resume(
+                    options, state.pending_session_id
+                )
+
             # Create client for this attempt
-            client = self._sdk_client_factory.create(options)
+            client = self._sdk_client_factory.create(effective_options)
 
             try:
                 async with client:
@@ -181,19 +188,16 @@ class IdleTimeoutRetryPolicy:
                     query_start = time.time()
                     if state.pending_session_id is not None:
                         logger.debug(
-                            "Session %s: sending query with session_id=%s...",
+                            "Session %s: sending query with resume=%s...",
                             issue_id,
                             state.pending_session_id[:8],
-                        )
-                        await client.query(
-                            pending_query, session_id=state.pending_session_id
                         )
                     else:
                         logger.debug(
                             "Session %s: sending query (new session)",
                             issue_id,
                         )
-                        await client.query(pending_query)
+                    await client.query(pending_query)
 
                     # Wrap stream with idle timeout handling
                     stream = IdleTimeoutStream(

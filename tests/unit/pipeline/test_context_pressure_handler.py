@@ -118,8 +118,10 @@ class TestCheckpointFetch:
         assert len(client.queries) == 1
         assert client.queries[0] == (
             "Please provide a checkpoint summary.",
-            "test-session-123",
+            None,
         )
+        assert len(factory.with_resume_calls) == 1
+        assert factory.with_resume_calls[0][1] == "test-session-123"
 
     @pytest.mark.asyncio
     @pytest.mark.unit

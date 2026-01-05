@@ -137,6 +137,7 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         create_calls: List of options passed to create().
         created_options: List of options dicts returned by create_options().
         created_matchers: List of (name, matcher, hooks) tuples from create_hook_matcher().
+        with_resume_calls: List of (options, resume) tuples passed to with_resume().
         _client_queue: Internal queue of clients to return.
     """
 
@@ -152,6 +153,7 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         self.create_calls: list[object] = []
         self.created_options: list[dict[str, Any]] = []
         self.created_matchers: list[tuple[str, object | None, list[object]]] = []
+        self.with_resume_calls: list[tuple[object, str | None]] = []
         self._client_queue: list[FakeSDKClient] = []
 
     def configure_next_client(
@@ -214,6 +216,7 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
         disallowed_tools: list[str] | None = None,
         env: dict[str, str] | None = None,
         hooks: dict[str, list[object]] | None = None,
+        resume: str | None = None,
     ) -> dict[str, Any]:
         """Return a dict of options and track the call."""
         opts: dict[str, Any] = {
@@ -226,9 +229,24 @@ class FakeSDKClientFactory(SDKClientFactoryProtocol):
             "disallowed_tools": disallowed_tools,
             "env": env,
             "hooks": hooks,
+            "resume": resume,
         }
         self.created_options.append(opts)
         return opts
+
+    def with_resume(self, options: object, resume: str | None) -> dict[str, Any]:
+        """Create a copy of options with a different resume session ID.
+
+        For testing, this simply copies the dict and updates the resume field.
+        Tracks the call in with_resume_calls for test verification.
+        """
+        self.with_resume_calls.append((options, resume))
+        if isinstance(options, dict):
+            new_opts = dict(options)
+        else:
+            new_opts = {}
+        new_opts["resume"] = resume
+        return new_opts
 
     def create_hook_matcher(
         self,

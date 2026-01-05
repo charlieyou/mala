@@ -284,10 +284,13 @@ class TestExecuteIterationTimeout:
         assert sdk_factory.clients[0]._query_calls[0] == ("Initial query", None)
         assert sdk_factory.clients[1]._query_calls[0] == (
             "Continue TEST-2",
-            "existing-session",
+            None,
         )
         assert sdk_factory.clients[0]._disconnect_called is True
         assert state.idle_retry_count == 1
+        assert len(sdk_factory.with_resume_calls) == 1
+        assert sdk_factory.with_resume_calls[0][1] == "existing-session"
+        assert sdk_factory.create_calls[1].get("resume") == "existing-session"
 
     @pytest.mark.asyncio
     async def test_execute_iteration_max_retries_exceeded(

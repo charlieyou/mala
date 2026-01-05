@@ -994,6 +994,7 @@ class SDKClientFactoryProtocol(Protocol):
         disallowed_tools: list[str] | None = None,
         env: dict[str, str] | None = None,
         hooks: dict[str, list[object]] | None = None,
+        resume: str | None = None,
     ) -> object:
         """Create SDK options without requiring SDK import in caller.
 
@@ -1007,6 +1008,8 @@ class SDKClientFactoryProtocol(Protocol):
             disallowed_tools: List of tools to disallow.
             env: Environment variables for the agent.
             hooks: Hook configurations keyed by event type.
+            resume: Session ID to resume from. When set, the SDK loads
+                the prior conversation context before processing the query.
 
         Returns:
             ClaudeAgentOptions instance.
@@ -1026,6 +1029,22 @@ class SDKClientFactoryProtocol(Protocol):
 
         Returns:
             HookMatcher instance.
+        """
+        ...
+
+    def with_resume(self, options: object, resume: str | None) -> object:
+        """Create a copy of options with a different resume session ID.
+
+        This is used to resume a prior session when retrying after idle timeout
+        or review failures. The SDK's resume feature loads the prior conversation
+        context before processing the next query.
+
+        Args:
+            options: Existing ClaudeAgentOptions to clone.
+            resume: Session ID to resume from, or None to start fresh.
+
+        Returns:
+            New ClaudeAgentOptions with the resume field set.
         """
         ...
 
