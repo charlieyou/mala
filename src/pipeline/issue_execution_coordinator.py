@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -282,12 +283,60 @@ class IssueExecutionCoordinator:
                         exit_reason="limit_reached",
                     )
                 elif not ready:
-                    self.event_sink.on_no_more_issues("none_ready")
-                    return RunResult(
-                        issues_spawned=issues_spawned,
-                        exit_code=0,
-                        exit_reason="success",
-                    )
+                    # Idle: no ready issues AND no active agents
+                    if watch_config and watch_config.enabled:
+                        # Detect transition to idle and rate-limit logging
+                        now = time.time()
+                        if not watch_state.was_idle:
+                            watch_state.was_idle = True
+                            watch_state.last_idle_log_time = now
+                            blocked_count = await self.beads.get_blocked_count_async()
+                            self.event_sink.on_watch_idle(
+                                watch_config.poll_interval_seconds, blocked_count
+                            )
+                        elif now - watch_state.last_idle_log_time >= 300:
+                            watch_state.last_idle_log_time = now
+                            blocked_count = await self.beads.get_blocked_count_async()
+                            self.event_sink.on_watch_idle(
+                                watch_config.poll_interval_seconds, blocked_count
+                            )
+
+                        # Interruptible sleep - respond to SIGINT immediately
+                        if interrupt_event:
+                            try:
+                                await asyncio.wait_for(
+                                    interrupt_event.wait(),
+                                    timeout=watch_config.poll_interval_seconds,
+                                )
+                                # Event was set - SIGINT received during idle
+                                # Run final validation if any issues completed
+                                if (
+                                    watch_state.completed_count
+                                    > watch_state.last_validation_at
+                                ):
+                                    if validation_callback:
+                                        await validation_callback()
+                                return RunResult(
+                                    issues_spawned,
+                                    exit_code=130,
+                                    exit_reason="interrupted",
+                                )
+                            except TimeoutError:
+                                pass  # Normal timeout, continue loop
+                        else:
+                            await sleep_fn(watch_config.poll_interval_seconds)
+                        continue  # Re-poll
+                    else:
+                        # Watch mode not enabled: exit immediately
+                        self.event_sink.on_no_more_issues("none_ready")
+                        return RunResult(
+                            issues_spawned=issues_spawned,
+                            exit_code=0,
+                            exit_reason="success",
+                        )
+                else:
+                    # Ready issues exist but no active tasks - clear idle state
+                    watch_state.was_idle = False
 
             # Wait for at least one task to complete
             self.event_sink.on_waiting_for_agents(len(self.active_tasks))

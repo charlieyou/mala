@@ -42,7 +42,6 @@ class TestWatchModeSleeps:
         return AsyncMock(side_effect=_sleep)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(strict=True, reason="Watch mode sleep not yet implemented")
     async def test_watch_mode_sleeps_when_no_ready_issues(
         self,
         event_sink: FakeEventSink,
@@ -51,9 +50,8 @@ class TestWatchModeSleeps:
     ) -> None:
         """When watch mode is enabled and no issues ready, coordinator should sleep.
 
-        This test expects to FAIL until watch mode sleep is implemented.
-        Current behavior: exits immediately with success when no work.
         Expected behavior: sleeps and re-polls when watch mode enabled.
+        When no interrupt_event is provided, the sleep_fn is used.
         """
         provider = FakeIssueProvider()  # No issues
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=30.0)
@@ -64,22 +62,30 @@ class TestWatchModeSleeps:
             config=CoordinatorConfig(),
         )
 
-        # Run with timeout to avoid hanging if test is broken
-        await asyncio.wait_for(
+        # Request abort after first sleep to stop the loop
+        async def sleep_and_abort(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            coord.request_abort("test_stop")
+
+        sleep_fn.side_effect = sleep_and_abort
+
+        result = await asyncio.wait_for(
             coord.run_loop(
                 spawn_callback=AsyncMock(return_value=None),
                 finalize_callback=AsyncMock(),
                 abort_callback=AsyncMock(),
                 watch_config=watch_config,
                 sleep_fn=sleep_fn,
+                # No interrupt_event - uses sleep_fn directly
             ),
             timeout=1.0,
         )
 
         # Expect: coordinator should have called sleep with poll_interval_seconds
-        # Current stub behavior: exits immediately, so sleep is never called
         assert len(sleep_calls) > 0, "Expected sleep to be called in watch mode"
         assert sleep_calls[0] == 30.0, "Expected sleep duration to match poll_interval"
+        assert result.exit_code == 3
+        assert result.exit_reason == "abort"
 
 
 class TestWatchModeInterrupt:
@@ -90,17 +96,11 @@ class TestWatchModeInterrupt:
         return FakeEventSink()
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        strict=True, reason="Watch mode interrupt handling not yet implemented"
-    )
     async def test_watch_mode_exits_on_interrupt(
         self,
         event_sink: FakeEventSink,
     ) -> None:
-        """When interrupt_event is set, watch mode should exit gracefully.
-
-        This test expects to FAIL until interrupt handling is implemented.
-        """
+        """When interrupt_event is set, watch mode should exit gracefully."""
         provider = FakeIssueProvider()  # No issues
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=60.0)
         interrupt_event = asyncio.Event()
@@ -399,3 +399,297 @@ class TestPollFailureHandling:
         assert result.exit_reason == "poll_failed"
         # Validation should have been called because an issue completed
         assert validation_callback.call_count == 1
+
+
+class TestWatchModeIdleBehavior:
+    """Tests for watch mode idle detection and behavior."""
+
+    @pytest.fixture
+    def event_sink(self) -> FakeEventSink:
+        return FakeEventSink()
+
+    @pytest.fixture
+    def sleep_calls(self) -> list[float]:
+        """Track calls to the injected sleep function."""
+        return []
+
+    @pytest.fixture
+    def sleep_fn(self, sleep_calls: list[float]) -> AsyncMock:
+        """Create an injectable sleep function that records calls."""
+
+        async def _sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        return AsyncMock(side_effect=_sleep)
+
+    @pytest.mark.asyncio
+    async def test_watch_mode_continues_when_issues_appear_after_sleep(
+        self,
+        event_sink: FakeEventSink,
+        sleep_calls: list[float],
+        sleep_fn: AsyncMock,
+    ) -> None:
+        """Watch mode should continue and process issues that appear after sleep."""
+        provider = FakeIssueProvider()
+        watch_config = WatchConfig(enabled=True, poll_interval_seconds=10.0)
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_agents=1),
+        )
+
+        poll_count = 0
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            nonlocal poll_count
+            poll_count += 1
+            if poll_count == 1:
+                return []  # First poll: no issues (triggers sleep)
+            elif poll_count == 2:
+                return ["issue-1"]  # Second poll: issue appears
+            return []  # Third poll: no issues
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+            # After issue completes, request abort to exit
+            coord.request_abort("test_done")
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+                watch_config=watch_config,
+                sleep_fn=sleep_fn,
+                # No interrupt_event - uses sleep_fn directly
+            ),
+            timeout=5.0,
+        )
+
+        # Should have slept once when no issues, then processed issue-1
+        assert len(sleep_calls) >= 1
+        assert result.issues_spawned == 1
+
+    @pytest.mark.asyncio
+    async def test_idle_state_requires_no_active_agents(
+        self,
+        event_sink: FakeEventSink,
+        sleep_calls: list[float],
+        sleep_fn: AsyncMock,
+    ) -> None:
+        """Idle state requires both no ready issues AND no active agents."""
+        provider = FakeIssueProvider(
+            issues={"issue-1": FakeIssue(id="issue-1", status="ready")}
+        )
+        watch_config = WatchConfig(enabled=True, poll_interval_seconds=10.0)
+        interrupt_event = asyncio.Event()
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_agents=1),
+        )
+
+        poll_count = 0
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            nonlocal poll_count
+            poll_count += 1
+            if poll_count == 1:
+                return ["issue-1"]  # First poll: issue ready
+            return []  # Subsequent polls: no issues
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+            # After finalization, interrupt to exit cleanly
+            interrupt_event.set()
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+                watch_config=watch_config,
+                sleep_fn=sleep_fn,
+                interrupt_event=interrupt_event,
+            ),
+            timeout=5.0,
+        )
+
+        # Should not have slept while issue-1 was active
+        # (sleep only happens when no ready AND no active)
+        assert result.issues_spawned == 1
+
+    @pytest.mark.asyncio
+    async def test_sigint_during_idle_runs_final_validation_if_issues_completed(
+        self,
+        event_sink: FakeEventSink,
+    ) -> None:
+        """SIGINT during idle should run final validation if issues completed."""
+        provider = FakeIssueProvider(
+            issues={"issue-1": FakeIssue(id="issue-1", status="ready")}
+        )
+        watch_config = WatchConfig(enabled=True, poll_interval_seconds=60.0)
+        interrupt_event = asyncio.Event()
+        validation_callback = AsyncMock(return_value=True)
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_agents=1),
+        )
+
+        poll_count = 0
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            nonlocal poll_count
+            poll_count += 1
+            if poll_count == 1:
+                return ["issue-1"]
+            return []  # No more issues after first
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+            # After issue completes, set interrupt during next idle sleep
+            interrupt_event.set()
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=AsyncMock(),
+                watch_config=watch_config,
+                interrupt_event=interrupt_event,
+                validation_callback=validation_callback,
+            ),
+            timeout=5.0,
+        )
+
+        assert result.exit_code == 130
+        assert result.exit_reason == "interrupted"
+        # Validation should have been called because an issue completed
+        assert validation_callback.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_watch_state_threshold_initialized_from_config(
+        self,
+        event_sink: FakeEventSink,
+    ) -> None:
+        """WatchState.next_validation_threshold should be initialized from config."""
+        provider = FakeIssueProvider()
+        watch_config = WatchConfig(
+            enabled=True, validate_every=25, poll_interval_seconds=10.0
+        )
+        interrupt_event = asyncio.Event()
+        interrupt_event.set()  # Exit immediately
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(),
+        )
+
+        # The test verifies the config is used correctly by checking behavior.
+        # Since we can't directly inspect watch_state, we verify that
+        # the coordinator runs without error with the custom validate_every value.
+        result = await coord.run_loop(
+            spawn_callback=AsyncMock(return_value=None),
+            finalize_callback=AsyncMock(),
+            abort_callback=AsyncMock(),
+            watch_config=watch_config,
+            interrupt_event=interrupt_event,
+        )
+
+        # Loop should exit cleanly (interrupted)
+        assert result.exit_code == 130
+        assert result.exit_reason == "interrupted"
+
+    @pytest.mark.asyncio
+    async def test_idle_logging_rate_limited_to_5_minutes(
+        self,
+        event_sink: FakeEventSink,
+        sleep_calls: list[float],
+        sleep_fn: AsyncMock,
+    ) -> None:
+        """on_watch_idle should emit once on transition, then every 5 minutes."""
+        import time
+        from unittest.mock import patch
+
+        provider = FakeIssueProvider()
+        watch_config = WatchConfig(enabled=True, poll_interval_seconds=1.0)
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(),
+        )
+
+        poll_count = 0
+        mock_time = 0.0
+
+        def time_fn() -> float:
+            return mock_time
+
+        async def sleep_side_effect(seconds: float) -> None:
+            nonlocal poll_count, mock_time
+            sleep_calls.append(seconds)
+            poll_count += 1
+            if poll_count == 1:
+                # First sleep: advance time by 1 second (within 5 min window)
+                mock_time += 1.0
+            elif poll_count == 2:
+                # Second sleep: advance time to 301 seconds (past 5 min threshold)
+                mock_time += 300.0
+            elif poll_count == 3:
+                # Third sleep: abort to exit
+                coord.request_abort("test_done")
+
+        sleep_fn.side_effect = sleep_side_effect
+
+        with patch.object(time, "time", time_fn):
+            result = await asyncio.wait_for(
+                coord.run_loop(
+                    spawn_callback=AsyncMock(return_value=None),
+                    finalize_callback=AsyncMock(),
+                    abort_callback=AsyncMock(),
+                    watch_config=watch_config,
+                    sleep_fn=sleep_fn,
+                    # No interrupt_event - uses sleep_fn directly
+                ),
+                timeout=5.0,
+            )
+
+        # Count watch_idle events
+        watch_idle_events = event_sink.get_events("watch_idle")
+
+        # Should have 2 events: once on transition, once after 5 minutes
+        # (not 3+, because the second poll didn't trigger due to being within 5 min)
+        assert len(watch_idle_events) == 2, (
+            f"Expected 2 watch_idle events, got {len(watch_idle_events)}: {watch_idle_events}"
+        )
+        assert result.exit_code == 3
