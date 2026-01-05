@@ -96,8 +96,9 @@ The following mock and patch usages are intentional exceptions to the "fakes ove
 
 ### MagicMock/AsyncMock Usage
 
-| Pattern | Rationale |
-|---------|-----------|
+| File/Pattern | Rationale |
+|--------------|-----------|
+| `tests/unit/domain/test_quality_gate.py` | Uses `MagicMock` for `CommandRunnerPort` to satisfy constructor. Tests focus on log parsing, not command execution. Migration to `FakeCommandRunner` tracked separately. |
 | `MagicMock(spec=LintCache)` | `LintCache` satisfies `LintCacheProtocol`. Mock with spec ensures interface compliance. |
 | `AsyncMock` for callbacks | Callback functions are simple callables. AsyncMock tracks invocation without needing a full fake. |
 | `MagicMock` for SDK internals | Claude SDK types have complex initialization. Mocking with spec validates interface usage. |
