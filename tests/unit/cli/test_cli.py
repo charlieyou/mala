@@ -987,6 +987,58 @@ def test_run_focus_composes_with_wip(
     assert DummyOrchestrator.last_orch_config.prioritize_wip is True
 
 
+def test_run_resume_flag_passed_to_orchestrator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --resume flag is correctly passed to orchestrator (alias for --wip)."""
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    # --resume maps to the wip parameter
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path, wip=True)
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_orch_config is not None
+    assert DummyOrchestrator.last_orch_config.prioritize_wip is True
+
+
+def test_run_resume_and_wip_together_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --resume and --wip together work without error (both map to same param)."""
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    # Both flags map to the same parameter, so using either should work
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(repo_path=tmp_path, wip=True)
+
+    assert excinfo.value.exit_code == 0
+    assert DummyOrchestrator.last_orch_config is not None
+    assert DummyOrchestrator.last_orch_config.prioritize_wip is True
+
+
 def test_run_review_disabled_via_disable_validations(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

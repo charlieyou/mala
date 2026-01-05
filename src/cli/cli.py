@@ -628,6 +628,8 @@ def run(
     wip: Annotated[
         bool,
         typer.Option(
+            "--resume/--no-resume",
+            "-r",
             "--wip",
             help="Prioritize in_progress issues before open issues",
         ),
