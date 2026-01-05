@@ -47,18 +47,20 @@ Fakes implement real protocol contracts, which means:
 
 ```python
 # Example usage pattern (FakeIssueProvider not yet available)
+import pytest
 from tests.fakes import FakeIssueProvider
 
-def test_issue_processing():
+@pytest.mark.asyncio
+async def test_issue_processing():
     provider = FakeIssueProvider()
     provider.add_issue(id="test-1", title="Test")  # Add issue to fake
 
-    # Test code that uses provider
-    issues = provider.list_issues()
+    # Test code that uses provider (IssueProvider is an async protocol)
+    issue_ids = await provider.get_ready_async()
 
     # Assert on outcomes, not calls
-    assert len(issues) == 1
-    assert issues[0].id == "test-1"
+    assert len(issue_ids) == 1
+    assert issue_ids[0] == "test-1"
 ```
 
 ## Running Tests
@@ -76,8 +78,8 @@ Current mock/patch usage to be reduced through fakes migration:
 
 | Metric | Count | Command |
 |--------|-------|---------|
-| `MagicMock`/`AsyncMock` | 854 | `rg -c 'MagicMock\|AsyncMock' tests/ --type py \| awk -F: '{s+=$2}END{print s}'` |
-| `with patch`/`@patch` | 196 | `rg -c 'with patch\|@patch' tests/ --type py \| awk -F: '{s+=$2}END{print s}'` |
+| `MagicMock`/`AsyncMock` | 854 | `rg -c -e MagicMock -e AsyncMock tests/ --type py \| awk -F: '{s+=$2}END{print s}'` |
+| `with patch`/`@patch` | 196 | `rg -c -e 'with patch' -e '@patch' tests/ --type py \| awk -F: '{s+=$2}END{print s}'` |
 | `.assert_called*` | 64 | `rg -c '\.assert_called' tests/ --type py \| awk -F: '{s+=$2}END{print s}'` |
 
 Goal: Reduce these counts by migrating tests to use fakes from `tests/fakes/`.
