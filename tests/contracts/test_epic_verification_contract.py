@@ -2,7 +2,14 @@
 
 Ensures FakeEpicVerificationModel implements all methods of EpicVerificationModel
 protocol and exhibits correct behavioral parity.
+
+Note: Protocol type compliance test is intentionally omitted because
+FakeEpicVerificationModel returns EpicVerdict while the protocol expects
+EpicVerdictProtocol. This is due to return type variance in Python's Protocol
+system. See tests/fakes/epic_model.py:150-153 for details.
 """
+
+from typing import _get_protocol_attrs  # type: ignore[attr-defined]
 
 import pytest
 
@@ -17,17 +24,9 @@ from tests.fakes.epic_model import (
 @pytest.mark.unit
 def test_fake_epic_verification_model_implements_all_protocol_methods() -> None:
     """FakeEpicVerificationModel must implement all public methods of EpicVerificationModel."""
-    protocol_methods = {
-        name
-        for name in dir(EpicVerificationModel)
-        if not name.startswith("_")
-        and callable(getattr(EpicVerificationModel, name, None))
-    }
+    protocol_methods = _get_protocol_attrs(EpicVerificationModel)
     fake_methods = {
-        name
-        for name in dir(FakeEpicVerificationModel)
-        if not name.startswith("_")
-        and callable(getattr(FakeEpicVerificationModel, name, None))
+        name for name in dir(FakeEpicVerificationModel) if not name.startswith("_")
     }
 
     missing = protocol_methods - fake_methods

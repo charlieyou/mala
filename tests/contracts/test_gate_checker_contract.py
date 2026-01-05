@@ -5,6 +5,7 @@ and exhibits correct behavioral parity.
 """
 
 from pathlib import Path
+from typing import _get_protocol_attrs  # type: ignore[attr-defined]
 
 import pytest
 
@@ -16,16 +17,8 @@ from tests.fakes.gate_checker import FakeGateChecker
 @pytest.mark.unit
 def test_fake_gate_checker_implements_all_protocol_methods() -> None:
     """FakeGateChecker must implement all public methods of GateChecker."""
-    protocol_methods = {
-        name
-        for name in dir(GateChecker)
-        if not name.startswith("_") and callable(getattr(GateChecker, name, None))
-    }
-    fake_methods = {
-        name
-        for name in dir(FakeGateChecker)
-        if not name.startswith("_") and callable(getattr(FakeGateChecker, name, None))
-    }
+    protocol_methods = _get_protocol_attrs(GateChecker)
+    fake_methods = {name for name in dir(FakeGateChecker) if not name.startswith("_")}
 
     missing = protocol_methods - fake_methods
     assert not missing, f"FakeGateChecker missing protocol methods: {sorted(missing)}"
@@ -112,6 +105,8 @@ class TestFakeGateCheckerBehavior:
         )
         assert len(checker.check_no_progress_calls) == 1
         call = checker.check_no_progress_calls[0]
+        assert call["log_path"] == Path("/tmp/log.jsonl")
+        assert call["log_offset"] == 100
         assert call["previous_commit_hash"] == "abc123"
         assert call["current_commit_hash"] == "def456"
         assert call["check_validation_evidence"] is False
@@ -144,8 +139,11 @@ class TestFakeGateCheckerBehavior:
             spec=None,  # type: ignore[arg-type]
             offset=0,
         )
-        assert result.pytest_ran is True
-        assert result.ruff_check_ran is True
+        # Test via protocol-compliant methods
+        assert result.has_any_evidence() is True
+        evidence_dict = result.to_evidence_dict()
+        assert evidence_dict.get("test") is True
+        assert evidence_dict.get("lint") is True
 
     @pytest.mark.unit
     def test_check_commit_exists_returns_configured_result(self) -> None:

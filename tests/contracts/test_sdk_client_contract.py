@@ -4,6 +4,8 @@ Ensures FakeSDKClient and FakeSDKClientFactory implement all methods of their
 respective protocols and exhibit correct behavioral parity.
 """
 
+from typing import _get_protocol_attrs  # type: ignore[attr-defined]
+
 import pytest
 
 from src.core.protocols import SDKClientFactoryProtocol, SDKClientProtocol
@@ -13,19 +15,25 @@ from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 @pytest.mark.unit
 def test_fake_sdk_client_implements_all_protocol_methods() -> None:
     """FakeSDKClient must implement all public methods of SDKClientProtocol."""
-    protocol_methods = {
-        name
-        for name in dir(SDKClientProtocol)
-        if not name.startswith("_") and callable(getattr(SDKClientProtocol, name, None))
-    }
-    fake_methods = {
-        name
-        for name in dir(FakeSDKClient)
-        if not name.startswith("_") and callable(getattr(FakeSDKClient, name, None))
-    }
+    protocol_methods = _get_protocol_attrs(SDKClientProtocol)
+    fake_methods = {name for name in dir(FakeSDKClient) if not name.startswith("_")}
 
-    missing = protocol_methods - fake_methods
-    assert not missing, f"FakeSDKClient missing protocol methods: {sorted(missing)}"
+    # Filter out dunder methods from protocol (like __aenter__, __aexit__)
+    # that appear with underscores in dir() but are in protocol_methods without
+    public_protocol = {m for m in protocol_methods if not m.startswith("_")}
+    dunder_protocol = protocol_methods - public_protocol
+
+    # Check public methods
+    missing_public = public_protocol - fake_methods
+    assert not missing_public, (
+        f"FakeSDKClient missing protocol methods: {sorted(missing_public)}"
+    )
+
+    # Check dunder methods exist
+    for dunder in dunder_protocol:
+        assert hasattr(FakeSDKClient, dunder), (
+            f"FakeSDKClient missing protocol method: {dunder}"
+        )
 
 
 @pytest.mark.unit
@@ -38,17 +46,9 @@ def test_fake_sdk_client_protocol_compliance() -> None:
 @pytest.mark.unit
 def test_fake_sdk_client_factory_implements_all_protocol_methods() -> None:
     """FakeSDKClientFactory must implement all public methods of SDKClientFactoryProtocol."""
-    protocol_methods = {
-        name
-        for name in dir(SDKClientFactoryProtocol)
-        if not name.startswith("_")
-        and callable(getattr(SDKClientFactoryProtocol, name, None))
-    }
+    protocol_methods = _get_protocol_attrs(SDKClientFactoryProtocol)
     fake_methods = {
-        name
-        for name in dir(FakeSDKClientFactory)
-        if not name.startswith("_")
-        and callable(getattr(FakeSDKClientFactory, name, None))
+        name for name in dir(FakeSDKClientFactory) if not name.startswith("_")
     }
 
     missing = protocol_methods - fake_methods
@@ -106,9 +106,12 @@ class TestFakeSDKClientBehavior:
         assert messages[0] == msg1
         assert messages[1] == msg2
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     async def test_receive_response_yields_default_result_message(self) -> None:
-        """receive_response() yields default ResultMessage when not configured."""
+        """receive_response() yields default ResultMessage when not configured.
+
+        Note: Marked as integration test because it requires claude_agent_sdk import.
+        """
         client = FakeSDKClient(messages=[])
 
         messages = []
