@@ -18,7 +18,12 @@ from src.pipeline.review_runner import (
     ReviewRunner,
     ReviewRunnerConfig,
 )
-from src.core.protocols import CodeReviewer, GateChecker  # noqa: TC001 - needed at runtime for cast()
+from src.core.protocols import (
+    CodeReviewer,
+    GateChecker,
+    ReviewIssueProtocol,
+    ReviewResultProtocol,
+)  # noqa: TC001 - needed at runtime for cast()
 from src.domain.quality_gate import CommitResult, GateResult, ValidationEvidence
 from src.domain.validation.spec import ValidationSpec
 
@@ -37,11 +42,11 @@ class FakeReviewIssue:
 
 
 @dataclass
-class FakeReviewResult:
+class FakeReviewResult(ReviewResultProtocol):
     """Fake review result for testing that satisfies ReviewResultProtocol."""
 
     passed: bool
-    issues: list[FakeReviewIssue] = field(default_factory=list)
+    issues: Sequence[ReviewIssueProtocol] = field(default_factory=list)
     parse_error: str | None = None
     fatal_error: bool = False
     review_log_path: Path | None = None
