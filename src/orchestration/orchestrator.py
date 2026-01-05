@@ -195,6 +195,7 @@ class MalaOrchestrator:
         self.prioritize_wip = orch_config.prioritize_wip
         self.focus = orch_config.focus
         self.orphans_only = orch_config.orphans_only
+        self.order_preference = orch_config.order_preference
         self.cli_args = orch_config.cli_args
         self.epic_override_ids = orch_config.epic_override_ids
         self.context_restart_threshold = orch_config.context_restart_threshold
@@ -329,6 +330,7 @@ class MalaOrchestrator:
             focus=self.focus,
             orphans_only=self.orphans_only,
             epic_override_ids=self.epic_override_ids,
+            order_preference=self.order_preference,
         )
 
     def _build_issue_finalizer(self) -> IssueFinalizer:

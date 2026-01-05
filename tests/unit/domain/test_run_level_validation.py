@@ -16,9 +16,9 @@ if TYPE_CHECKING:
 
     from src.orchestration.orchestrator import MalaOrchestrator
 
+from src.core.models import OrderPreference
 from src.infra.io.log_output.run_metadata import RunConfig, RunMetadata
 from src.orchestration.orchestrator import IssueResult
-from src.orchestration.types import OrderPreference
 from src.pipeline.run_coordinator import (
     RunCoordinator,
     RunCoordinatorConfig,

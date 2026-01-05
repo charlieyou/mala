@@ -1678,6 +1678,8 @@ class TestHandleDryRun:
             src.orchestration.cli_support, "BeadsClient", MockBeadsClient
         )
 
+        from src.core.models import OrderPreference
+
         with pytest.raises(typer.Exit) as excinfo:
             cli._handle_dry_run(
                 repo_path=tmp_path,
@@ -1686,6 +1688,7 @@ class TestHandleDryRun:
                 wip=False,
                 focus=False,
                 orphans_only=False,
+                order_preference=OrderPreference.FOCUS,
             )
 
         assert excinfo.value.exit_code == 0
@@ -1704,6 +1707,8 @@ class TestHandleDryRun:
             src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
         )
 
+        from src.core.models import OrderPreference
+
         with pytest.raises(typer.Exit):
             cli._handle_dry_run(
                 repo_path=tmp_path,
@@ -1712,6 +1717,7 @@ class TestHandleDryRun:
                 wip=True,
                 focus=True,
                 orphans_only=True,
+                order_preference=OrderPreference.FOCUS,
             )
 
         assert DummyBeadsClient.last_kwargs is not None
@@ -1720,6 +1726,7 @@ class TestHandleDryRun:
         assert DummyBeadsClient.last_kwargs["prioritize_wip"] is True
         assert DummyBeadsClient.last_kwargs["focus"] is True
         assert DummyBeadsClient.last_kwargs["orphans_only"] is True
+        assert DummyBeadsClient.last_kwargs["order_preference"] == OrderPreference.FOCUS
 
     def test_calls_display_dry_run_tasks(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1743,6 +1750,8 @@ class TestHandleDryRun:
         )
         monkeypatch.setattr(cli, "display_dry_run_tasks", mock_display)
 
+        from src.core.models import OrderPreference
+
         with pytest.raises(typer.Exit):
             cli._handle_dry_run(
                 repo_path=tmp_path,
@@ -1751,6 +1760,7 @@ class TestHandleDryRun:
                 wip=False,
                 focus=True,
                 orphans_only=False,
+                order_preference=OrderPreference.FOCUS,
             )
 
         assert captured_issues == mock_issues
@@ -1767,6 +1777,8 @@ class TestHandleDryRun:
             src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
         )
 
+        from src.core.models import OrderPreference
+
         with pytest.raises(typer.Exit) as excinfo:
             cli._handle_dry_run(
                 repo_path=tmp_path,
@@ -1775,6 +1787,7 @@ class TestHandleDryRun:
                 wip=False,
                 focus=False,
                 orphans_only=False,
+                order_preference=OrderPreference.FOCUS,
             )
 
         assert excinfo.value.exit_code == 0
@@ -1790,6 +1803,8 @@ class TestHandleDryRun:
             src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
         )
 
+        from src.core.models import OrderPreference
+
         with pytest.raises(typer.Exit) as excinfo:
             cli._handle_dry_run(
                 repo_path=tmp_path,
@@ -1798,6 +1813,7 @@ class TestHandleDryRun:
                 wip=False,
                 focus=False,
                 orphans_only=False,
+                order_preference=OrderPreference.FOCUS,
                 fail_on_empty=True,
             )
 
@@ -1814,6 +1830,8 @@ class TestHandleDryRun:
             src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
         )
 
+        from src.core.models import OrderPreference
+
         with pytest.raises(typer.Exit) as excinfo:
             cli._handle_dry_run(
                 repo_path=tmp_path,
@@ -1822,6 +1840,7 @@ class TestHandleDryRun:
                 wip=False,
                 focus=False,
                 orphans_only=False,
+                order_preference=OrderPreference.FOCUS,
                 fail_on_empty=True,
             )
 

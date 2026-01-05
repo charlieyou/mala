@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from ..orchestration.cli_support import USER_CONFIG_DIR, get_runs_dir, load_user_env
 
 if TYPE_CHECKING:
+    from src.core.models import OrderPreference
     from src.infra.io.config import MalaConfig, ResolvedConfig
 
 # Bootstrap state: tracks whether bootstrap() has been called
@@ -579,6 +580,7 @@ def _handle_dry_run(
     wip: bool,
     focus: bool,
     orphans_only: bool,
+    order_preference: OrderPreference,
     fail_on_empty: bool = False,
 ) -> Never:
     """Execute dry-run mode: display task order and exit.
@@ -590,6 +592,7 @@ def _handle_dry_run(
         wip: Whether to prioritize WIP issues.
         focus: Whether focus mode is enabled.
         orphans_only: Whether to only process orphan issues.
+        order_preference: Issue ordering preference (OrderPreference enum).
         fail_on_empty: If True, exit with code 1 when no issues found.
 
     Raises:
@@ -604,6 +607,7 @@ def _handle_dry_run(
             prioritize_wip=wip,
             focus=focus,
             orphans_only=orphans_only,
+            order_preference=order_preference,
         )
         display_dry_run_tasks(issues, focus=focus)
         return len(issues)
@@ -883,7 +887,6 @@ def run(
             "--order",
             help="Issue ordering: 'focus' (default, epic-grouped), 'priority' (global priority), 'input' (preserve --scope ids: order)",
             rich_help_panel="Scope & Ordering",
-            hidden=True,  # Hidden until order_preference is actually consumed by orchestrator
         ),
     ] = None,
     dry_run: Annotated[
@@ -1094,6 +1097,7 @@ def run(
             wip=prioritize_wip,
             focus=focus,
             orphans_only=orphans_only,
+            order_preference=order_preference,
             fail_on_empty=fail_on_empty,
         )
 
@@ -1505,7 +1509,7 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
 
         _lazy_modules[name] = MalaOrchestrator
     elif name == "OrderPreference":
-        from ..orchestration.types import OrderPreference
+        from ..core.models import OrderPreference
 
         _lazy_modules[name] = OrderPreference
     elif name == "OrchestratorConfig":

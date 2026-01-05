@@ -28,6 +28,20 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+class OrderPreference(Enum):
+    """Issue ordering preference for orchestrator.
+
+    Attributes:
+        FOCUS: Group tasks by epic for focused work (default).
+        PRIORITY: Use global priority ordering across all epics.
+        INPUT: Preserve user-specified input order (only valid with --scope ids:).
+    """
+
+    FOCUS = "focus"
+    PRIORITY = "priority"
+    INPUT = "input"
+
+
 class LockEventType(Enum):
     """Types of lock events emitted by agents."""
 

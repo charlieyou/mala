@@ -16,28 +16,16 @@ Design principles:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path  # noqa: TC003 - needed at runtime for dataclass field
 from typing import TYPE_CHECKING
 
-
-class OrderPreference(Enum):
-    """Issue ordering preference for orchestrator.
-
-    Attributes:
-        FOCUS: Group tasks by epic for focused work (default).
-        PRIORITY: Use global priority ordering across all epics.
-        INPUT: Preserve user-specified input order (only valid with --scope ids:).
-    """
-
-    FOCUS = "focus"
-    PRIORITY = "priority"
-    INPUT = "input"
-
+# Private import for runtime use in dataclass defaults (not re-exported)
+from src.core.models import OrderPreference as _OrderPreference
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from src.core.models import OrderPreference
     from src.core.protocols import (
         CodeReviewer,
         CommandRunnerPort,
@@ -100,7 +88,7 @@ class OrchestratorConfig:
     coverage_threshold: float | None = None
     prioritize_wip: bool = False
     focus: bool = True
-    order_preference: OrderPreference = OrderPreference.FOCUS
+    order_preference: OrderPreference = _OrderPreference.FOCUS
     cli_args: dict[str, object] | None = None
     epic_override_ids: set[str] = field(default_factory=set)
     orphans_only: bool = False
@@ -229,6 +217,7 @@ class IssueFilterConfig:
         focus: Group tasks by epic for focused work.
         orphans_only: Only process issues with no parent epic.
         epic_override_ids: Epic IDs to close without verification.
+        order_preference: Issue ordering preference (focus, priority, or input).
     """
 
     max_agents: int | None = None
@@ -239,3 +228,4 @@ class IssueFilterConfig:
     focus: bool = True
     orphans_only: bool = False
     epic_override_ids: set[str] = field(default_factory=set)
+    order_preference: OrderPreference = _OrderPreference.FOCUS

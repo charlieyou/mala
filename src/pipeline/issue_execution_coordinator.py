@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from src.core.models import RunResult, WatchState
+from src.core.models import OrderPreference, RunResult, WatchState
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -78,6 +78,7 @@ class CoordinatorConfig:
         prioritize_wip: Prioritize in_progress issues before open issues.
         focus: Group tasks by epic for focused work.
         orphans_only: Only process issues with no parent epic.
+        order_preference: Issue ordering preference (focus, priority, or input).
     """
 
     max_agents: int | None = None
@@ -87,6 +88,7 @@ class CoordinatorConfig:
     prioritize_wip: bool = False
     focus: bool = True
     orphans_only: bool = False
+    order_preference: OrderPreference = OrderPreference.FOCUS
 
 
 class IssueExecutionCoordinator:
@@ -268,6 +270,7 @@ class IssueExecutionCoordinator:
                         prioritize_wip=self.config.prioritize_wip,
                         focus=self.config.focus,
                         orphans_only=self.config.orphans_only,
+                        order_preference=self.config.order_preference,
                     )
                     watch_state.consecutive_poll_failures = 0  # Reset on success
                 except Exception:

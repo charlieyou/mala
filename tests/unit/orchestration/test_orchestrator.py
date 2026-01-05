@@ -26,8 +26,8 @@ from src.domain.prompts import load_prompts
 from src.infra.tools.env import PROMPTS_DIR
 from src.infra.tools.command_runner import CommandRunner
 
+from src.core.models import OrderPreference
 from src.core.protocols import LogProvider
-from src.orchestration.types import OrderPreference
 from tests.fakes.issue_provider import FakeIssueProvider, FakeIssue
 
 

@@ -36,18 +36,15 @@ from src.infra.tools.env import USER_CONFIG_DIR
 # Import shared types from types module (breaks circular import)
 from .types import (
     DEFAULT_AGENT_TIMEOUT_MINUTES,
-    OrderPreference,
     OrchestratorConfig,
     OrchestratorDependencies,
     _DerivedConfig,
 )
 
-# Re-export for backwards compatibility
 __all__ = [
     "DEFAULT_AGENT_TIMEOUT_MINUTES",
     "OrchestratorConfig",
     "OrchestratorDependencies",
-    "OrderPreference",
     "create_orchestrator",
 ]
 

@@ -18,6 +18,8 @@ Observable state:
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from src.core.models import OrderPreference
+
 
 @dataclass
 class FakeIssue:
@@ -79,6 +81,7 @@ class FakeIssueProvider:
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
     ) -> list[str]:
         """Get list of ready issue IDs, sorted by priority.
 
@@ -119,7 +122,9 @@ class FakeIssueProvider:
             )
 
         # Delegate sorting to IssueManager for behavioral parity
-        sorted_issues = IssueManager.sort_issues(candidates, focus, prioritize_wip)
+        sorted_issues = IssueManager.sort_issues(
+            candidates, focus, prioritize_wip, only_ids, order_preference
+        )
         return [str(i["id"]) for i in sorted_issues]
 
     async def claim_async(self, issue_id: str) -> bool:

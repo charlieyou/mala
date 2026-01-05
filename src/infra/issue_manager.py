@@ -11,6 +11,8 @@ without mutating inputs.
 
 from __future__ import annotations
 
+from src.core.models import OrderPreference
+
 
 class IssueManager:
     """Pure domain logic for issue sorting and filtering.
@@ -199,14 +201,21 @@ class IssueManager:
 
     @staticmethod
     def sort_issues(
-        issues: list[dict[str, object]], focus: bool, prioritize_wip: bool
+        issues: list[dict[str, object]],
+        focus: bool,
+        prioritize_wip: bool,
+        only_ids: list[str] | None = None,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
     ) -> list[dict[str, object]]:
-        """Sort issues by focus mode vs priority.
+        """Sort issues by order_preference (authoritative over focus flag).
 
         Args:
             issues: List of issue dicts to sort.
-            focus: If True, group by parent epic and sort by epic groups.
-            prioritize_wip: If True, put in_progress issues first.
+            focus: Legacy flag (ignored when order_preference is set explicitly).
+            prioritize_wip: If True, put in_progress issues first (ignored for INPUT order).
+            only_ids: Optional list of issue IDs for input order preservation.
+            order_preference: Issue ordering preference (focus, priority, or input).
+                This is the authoritative source of truth for ordering.
 
         Returns:
             Sorted list of issue dicts.
@@ -214,11 +223,22 @@ class IssueManager:
         if not issues:
             return issues
 
-        result = (
-            IssueManager.sort_by_epic_groups(list(issues))
-            if focus
-            else sorted(issues, key=lambda i: i.get("priority") or 0)
-        )
+        # INPUT order: preserve user-specified order from only_ids
+        # Note: prioritize_wip is ignored for INPUT order to preserve exact user order
+        if order_preference == OrderPreference.INPUT and only_ids:
+            # Create index map for O(1) lookup
+            id_order = {id_: idx for idx, id_ in enumerate(only_ids)}
+            return sorted(
+                issues,
+                key=lambda i: id_order.get(str(i["id"]), len(only_ids)),
+            )
+
+        # order_preference is authoritative - PRIORITY uses priority sort, FOCUS uses epic groups
+        if order_preference == OrderPreference.PRIORITY:
+            result = sorted(issues, key=lambda i: i.get("priority") or 0)
+        else:
+            # FOCUS order (default): group by epic
+            result = IssueManager.sort_by_epic_groups(list(issues))
 
         if prioritize_wip:
             return sorted(
