@@ -419,6 +419,7 @@ class MalaOrchestrator:
                     issue_id, summary, log_path=log_path
                 )
             ),
+            reopen_issue=self.beads.reopen_issue_async,
             on_deadlock_detected=self.event_sink.on_deadlock_detected,
             on_locks_cleaned=self.event_sink.on_locks_cleaned,
             on_tasks_aborting=self.event_sink.on_tasks_aborting,

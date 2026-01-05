@@ -259,6 +259,26 @@ class TestFakeIssueProviderContract:
         assert "issue-1" not in ready
 
     @pytest.mark.integration
+    async def test_reopen_issue(self, fake_provider: FakeIssueProvider) -> None:
+        """reopen_issue_async sets status to open."""
+        # First claim and mark needs-followup
+        await fake_provider.claim_async("issue-1")
+        await fake_provider.mark_needs_followup_async("issue-1", "Deadlock victim")
+        # Now reopen
+        result = await fake_provider.reopen_issue_async("issue-1")
+        assert result is True
+        # Issue should have status "open" now (tracked in reopened set)
+        assert "issue-1" in fake_provider.reopened
+
+    @pytest.mark.integration
+    async def test_reopen_issue_nonexistent(
+        self, fake_provider: FakeIssueProvider
+    ) -> None:
+        """reopen_issue_async returns False for nonexistent issue."""
+        result = await fake_provider.reopen_issue_async("nonexistent")
+        assert result is False
+
+    @pytest.mark.integration
     async def test_add_dependency(self, fake_provider: FakeIssueProvider) -> None:
         """add_dependency_async records dependency."""
         result = await fake_provider.add_dependency_async("issue-1", "issue-2")

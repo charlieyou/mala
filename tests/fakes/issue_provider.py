@@ -9,6 +9,7 @@ Observable state:
 - reset_calls: List of (issue_id, log_path, error) tuples for reset_async calls
 - created_issues: List of created issue dicts
 - followup_calls: List of (issue_id, reason, log_path) tuples
+- reopened: Set of issue IDs that have been reopened
 - dependency_calls: List of (issue_id, depends_on_id) tuples
 - updated_descriptions: List of (issue_id, description) tuples
 - updated_issues: List of (issue_id, title, priority) tuples
@@ -52,6 +53,7 @@ class FakeIssueProvider:
         self.reset_calls: list[tuple[str, Path | None, str | None]] = []
         self.created_issues: list[dict[str, object]] = []
         self.followup_calls: list[tuple[str, str, Path | None]] = []
+        self.reopened: set[str] = set()
         self.dependency_calls: list[tuple[str, str]] = []
         self.updated_descriptions: list[tuple[str, str]] = []
         self.updated_issues: list[tuple[str, str | None, str | None]] = []
@@ -124,6 +126,14 @@ class FakeIssueProvider:
             return False
         self.issues[issue_id].status = "needs_followup"
         self.followup_calls.append((issue_id, reason, log_path))
+        return True
+
+    async def reopen_issue_async(self, issue_id: str) -> bool:
+        """Reopen an issue by setting status to open."""
+        if issue_id not in self.issues:
+            return False
+        self.issues[issue_id].status = "open"
+        self.reopened.add(issue_id)
         return True
 
     async def add_dependency_async(self, issue_id: str, depends_on_id: str) -> bool:

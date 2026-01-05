@@ -34,6 +34,7 @@ class DeadlockHandlerCallbacks:
     Attributes:
         add_dependency: Add dependency between issues. Args: (dependent_id, dependency_id).
         mark_needs_followup: Mark issue as needing followup. Args: (issue_id, summary, log_path).
+        reopen_issue: Reopen issue by setting status to open. Args: (issue_id).
         on_deadlock_detected: Event callback when deadlock is detected. Args: (info).
         on_locks_cleaned: Event callback when locks are cleaned. Args: (agent_id, count).
         on_tasks_aborting: Event callback when tasks are being aborted. Args: (count, reason).
@@ -47,6 +48,7 @@ class DeadlockHandlerCallbacks:
 
     add_dependency: Callable[[str, str], Awaitable[bool]]
     mark_needs_followup: Callable[[str, str, Path | None], Awaitable[bool]]
+    reopen_issue: Callable[[str], Awaitable[bool]]
     on_deadlock_detected: Callable[[DeadlockInfo], None]
     on_locks_cleaned: Callable[[str, int], None]
     on_tasks_aborting: Callable[[int, str], None]
@@ -183,6 +185,12 @@ class DeadlockHandler:
             log_path = state.active_session_log_paths.get(victim_issue_id)
             await self._callbacks.mark_needs_followup(victim_issue_id, reason, log_path)
             logger.info("Marked issue %s as needs-followup", victim_issue_id)
+
+            # Reset status to open so issue can be picked up again after blocker finishes
+            await self._callbacks.reopen_issue(victim_issue_id)
+            logger.info(
+                "Reopened issue %s for retry after blocker completes", victim_issue_id
+            )
 
     async def abort_active_tasks(
         self,

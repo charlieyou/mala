@@ -583,6 +583,23 @@ class BeadsClient:
         result = await self._run_subprocess_async(["bd", "close", issue_id])
         return result.returncode == 0
 
+    async def reopen_issue_async(self, issue_id: str) -> bool:
+        """Reopen an issue by setting status to open.
+
+        Used by deadlock resolution to reset victim issues so they can be
+        picked up again after the blocker completes.
+
+        Args:
+            issue_id: The issue ID to reopen.
+
+        Returns:
+            True if successfully reopened, False otherwise.
+        """
+        result = await self._run_subprocess_async(
+            ["bd", "update", issue_id, "--status", "open"]
+        )
+        return result.returncode == 0
+
     async def add_dependency_async(self, issue_id: str, depends_on_id: str) -> bool:
         """Add a dependency between two issues.
 

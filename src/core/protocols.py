@@ -494,6 +494,20 @@ class IssueProvider(Protocol):
         """
         ...
 
+    async def reopen_issue_async(self, issue_id: str) -> bool:
+        """Reopen an issue by setting status to open.
+
+        Used by deadlock resolution to reset victim issues so they can be
+        picked up again after the blocker completes.
+
+        Args:
+            issue_id: The issue ID to reopen.
+
+        Returns:
+            True if successfully reopened, False otherwise.
+        """
+        ...
+
     async def mark_needs_followup_async(
         self, issue_id: str, reason: str, log_path: Path | None = None
     ) -> bool:

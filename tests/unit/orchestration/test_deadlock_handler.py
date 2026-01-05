@@ -24,6 +24,7 @@ class MockCallbacks:
     def __init__(self) -> None:
         self.add_dependency: Any = AsyncMock(return_value=True)
         self.mark_needs_followup: Any = AsyncMock(return_value=True)
+        self.reopen_issue: Any = AsyncMock(return_value=True)
         self.on_deadlock_detected: Any = MagicMock()
         self.on_locks_cleaned: Any = MagicMock()
         self.on_tasks_aborting: Any = MagicMock()
@@ -39,6 +40,7 @@ class MockCallbacks:
         return DeadlockHandlerCallbacks(
             add_dependency=self.add_dependency,
             mark_needs_followup=self.mark_needs_followup,
+            reopen_issue=self.reopen_issue,
             on_deadlock_detected=self.on_deadlock_detected,
             on_locks_cleaned=self.on_locks_cleaned,
             on_tasks_aborting=self.on_tasks_aborting,
@@ -119,8 +121,13 @@ class TestHandleDeadlock:
             call_order.append("mark_needs_followup")
             return True
 
+        async def track_reopen_issue(*args: object, **kwargs: object) -> bool:
+            call_order.append("reopen_issue")
+            return True
+
         mock_callbacks.add_dependency.side_effect = track_add_dependency
         mock_callbacks.mark_needs_followup.side_effect = track_mark_needs_followup
+        mock_callbacks.reopen_issue.side_effect = track_reopen_issue
         # Recreate handler with updated callbacks
         handler = DeadlockHandler(callbacks=mock_callbacks.as_callbacks())
 
@@ -135,6 +142,7 @@ class TestHandleDeadlock:
             "on_locks_cleaned",
             "add_dependency",
             "mark_needs_followup",
+            "reopen_issue",
         ]
 
         # Verify key callbacks were called with correct arguments
@@ -372,6 +380,8 @@ class TestHandleDeadlock:
         mock_callbacks.add_dependency.assert_not_awaited()
         # mark_needs_followup should not be called with None victim_issue_id
         mock_callbacks.mark_needs_followup.assert_not_awaited()
+        # reopen_issue should not be called with None victim_issue_id
+        mock_callbacks.reopen_issue.assert_not_awaited()
 
 
 class TestAbortActiveTasks:
