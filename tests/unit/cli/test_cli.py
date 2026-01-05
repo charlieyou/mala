@@ -1158,10 +1158,8 @@ def test_run_review_timeout_custom(
     assert config.review_timeout == 600
 
 
-def test_run_cerberus_overrides(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Test that Cerberus CLI overrides apply to config and cli_args."""
+def test_run_review_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that --review-* CLI options apply to config and cli_args."""
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"
@@ -1178,9 +1176,9 @@ def test_run_cerberus_overrides(
     with pytest.raises(typer.Exit) as excinfo:
         cli.run(
             repo_path=tmp_path,
-            cerberus_spawn_args="--foo bar --flag",
-            cerberus_wait_args="--baz qux",
-            cerberus_env="FOO=bar,BAZ=qux",
+            review_spawn_args="--foo bar --flag",
+            review_wait_args="--baz qux",
+            review_env="FOO=bar,BAZ=qux",
         )
 
     assert excinfo.value.exit_code == 0
@@ -1192,9 +1190,101 @@ def test_run_cerberus_overrides(
     assert dict(config.cerberus_env) == {"FOO": "bar", "BAZ": "qux"}
 
     cli_args = DummyOrchestrator.last_orch_config.cli_args
-    assert cli_args["cerberus_spawn_args"] == ["--foo", "bar", "--flag"]
-    assert cli_args["cerberus_wait_args"] == ["--baz", "qux"]
-    assert cli_args["cerberus_env"] == {"FOO": "bar", "BAZ": "qux"}
+    assert cli_args["review_spawn_args"] == ["--foo", "bar", "--flag"]
+    assert cli_args["review_wait_args"] == ["--baz", "qux"]
+    assert cli_args["review_env"] == {"FOO": "bar", "BAZ": "qux"}
+
+
+def test_run_cerberus_aliases_backward_compatible(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that hidden --cerberus-* aliases still work for backward compatibility."""
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            cerberus_spawn_args="--model opus",
+            cerberus_wait_args="--poll 5",
+            cerberus_env="KEY=value",
+        )
+
+    assert excinfo.value.exit_code == 0
+    config = DummyOrchestrator.last_mala_config
+    assert config.cerberus_spawn_args == ("--model", "opus")
+    assert config.cerberus_wait_args == ("--poll", "5")
+    assert dict(config.cerberus_env) == {"KEY": "value"}
+
+
+def test_run_review_options_take_precedence_over_cerberus(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --review-* options take precedence when both are specified."""
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            review_spawn_args="--new-flag",
+            cerberus_spawn_args="--old-flag",
+        )
+
+    assert excinfo.value.exit_code == 0
+    config = DummyOrchestrator.last_mala_config
+    # --review-* should win
+    assert config.cerberus_spawn_args == ("--new-flag",)
+
+
+def test_run_review_empty_string_takes_precedence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --review-spawn-args="" clears the value even if cerberus alias has value."""
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.run(
+            repo_path=tmp_path,
+            review_spawn_args="",  # Explicit empty string to clear
+            cerberus_spawn_args="--should-be-ignored",
+        )
+
+    assert excinfo.value.exit_code == 0
+    config = DummyOrchestrator.last_mala_config
+    # Empty string should take precedence, resulting in empty tuple
+    assert config.cerberus_spawn_args == ()
 
 
 def test_run_no_codex_thinking_mode_flag(

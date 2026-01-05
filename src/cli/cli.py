@@ -415,9 +415,9 @@ def _build_cli_args_metadata(
         "max_review_retries": max_review_retries,
         "braintrust": braintrust_enabled,
         "review_timeout": resolved.review_timeout,
-        "cerberus_spawn_args": list(resolved.cerberus_spawn_args),
-        "cerberus_wait_args": list(resolved.cerberus_wait_args),
-        "cerberus_env": dict(resolved.cerberus_env),
+        "review_spawn_args": list(resolved.cerberus_spawn_args),
+        "review_wait_args": list(resolved.cerberus_wait_args),
+        "review_env": dict(resolved.cerberus_env),
         "epic_override": normalized_epic if normalized_epic else None,
         "max_epic_verification_retries": resolved.max_epic_verification_retries,
     }
@@ -970,12 +970,17 @@ def run(
 
     # Apply CLI overrides to config
     # Coalesce new --review-* options with old --cerberus-* aliases (new takes precedence)
+    # Use explicit None check so empty string "" overrides non-empty config value
     override_result = _apply_config_overrides(
         config=config,
         review_timeout=review_timeout,
-        cerberus_spawn_args=review_spawn_args or cerberus_spawn_args,
-        cerberus_wait_args=review_wait_args or cerberus_wait_args,
-        cerberus_env=review_env or cerberus_env,
+        cerberus_spawn_args=(
+            review_spawn_args if review_spawn_args is not None else cerberus_spawn_args
+        ),
+        cerberus_wait_args=(
+            review_wait_args if review_wait_args is not None else cerberus_wait_args
+        ),
+        cerberus_env=review_env if review_env is not None else cerberus_env,
         max_epic_verification_retries=max_epic_verification_retries,
         braintrust_enabled=_braintrust_enabled,
         disable_review="review" in (disable_set or set()),
