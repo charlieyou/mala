@@ -685,6 +685,17 @@ class IssueProvider(Protocol):
         """
         ...
 
+    async def get_blocked_count_async(self) -> int | None:
+        """Get count of issues that exist but aren't ready.
+
+        Used by watch mode to report how many issues are blocked on
+        dependencies or other conditions.
+
+        Returns:
+            Count of blocked issues, or None if unknown/unsupported.
+        """
+        ...
+
 
 @runtime_checkable
 class CodeReviewer(Protocol):
@@ -1930,5 +1941,14 @@ class MalaEventSink(Protocol):
             info: Information about the detected deadlock, including the cycle
                 of agents, the victim selected for cancellation, and the
                 blocker holding the needed resource.
+        """
+        ...
+
+    def on_watch_idle(self, wait_seconds: float, issues_blocked: int | None) -> None:
+        """Called when watch mode enters idle sleep.
+
+        Args:
+            wait_seconds: Duration of the upcoming sleep.
+            issues_blocked: Count of blocked issues, or None if unknown.
         """
         ...

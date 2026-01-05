@@ -286,6 +286,19 @@ class FakeIssueProvider:
         self.updated_issues.append((issue_id, title, priority))
         return True
 
+    async def get_blocked_count_async(self) -> int | None:
+        """Get count of issues that exist but aren't ready.
+
+        Returns the count of issues that are not in 'ready' status
+        and not closed/in_progress (i.e., blocked on dependencies).
+        """
+        blocked = 0
+        for issue in self.issues.values():
+            # Count issues that exist but aren't ready to be worked on
+            if issue.status not in ("ready", "closed", "in_progress"):
+                blocked += 1
+        return blocked
+
 
 def _priority_to_int(priority: str) -> int:
     """Convert priority string like 'P1' to integer."""
