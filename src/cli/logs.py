@@ -9,8 +9,8 @@ import typer
 logs_app = typer.Typer(name="logs", help="Search and inspect mala run logs")
 
 
-@logs_app.command()
-def list(
+@logs_app.command(name="list")
+def list_runs(
     json_output: Annotated[
         bool,
         typer.Option(

@@ -614,9 +614,6 @@ app = typer.Typer(
     add_completion=False,
 )
 
-# Register subcommand apps
-app.add_typer(logs_app, name="logs")
-
 
 @app.command()
 def run(
@@ -1281,6 +1278,10 @@ def _display_instance(instance: object, indent: bool = False) -> None:
             print(f"{prefix}{Colors.MUTED}pid: {pid}{Colors.RESET}")
         else:
             log("◐", f"pid: {pid}", Colors.MUTED)
+
+
+# Register subcommand apps (after main commands for better --help ordering)
+app.add_typer(logs_app, name="logs")
 
 
 def __getattr__(name: str) -> Any:  # noqa: ANN401
