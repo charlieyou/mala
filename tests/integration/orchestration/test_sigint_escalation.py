@@ -706,6 +706,7 @@ class TestMalaOrchestratorSigint:
 import asyncio
 import signal
 import sys
+import time
 
 from pathlib import Path
 
@@ -746,7 +747,16 @@ async def main():
     run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
 
     # Wait for SIGINT handler to be installed (not default handler)
+    # Use timeout and check run_task for early failure detection
+    deadline = time.monotonic() + 5.0
     while signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+        if run_task.done():
+            if run_task.exception():
+                print(f"STARTUP_ERROR: {run_task.exception()}", file=sys.stderr, flush=True)
+            sys.exit(1)
+        if time.monotonic() > deadline:
+            print("TIMEOUT: SIGINT handler not installed", file=sys.stderr, flush=True)
+            sys.exit(1)
         await asyncio.sleep(0.01)
 
     # Now safe to signal READY
@@ -865,6 +875,7 @@ if __name__ == "__main__":
 import asyncio
 import signal
 import sys
+import time
 
 from pathlib import Path
 
@@ -882,7 +893,9 @@ async def main():
     runs_dir = tmp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create orchestrator with empty provider - watch mode keeps it alive
+    # Create orchestrator with empty provider - watch mode with slow poll keeps it alive
+    # The slow poll_interval_seconds ensures the orchestrator stays in its main loop
+    # waiting for issues, rather than immediately exiting after drain completes
     provider = FakeIssueProvider()
     event_sink = FakeEventSink()
 
@@ -899,13 +912,23 @@ async def main():
     _orchestrator = create_orchestrator(config, deps=deps)
 
     # Use slow poll interval so orchestrator stays alive waiting for issues
+    # This keeps the process alive long enough to receive multiple SIGINTs
     watch_config = WatchConfig(enabled=True, poll_interval_seconds=10.0)
 
     # Start orchestrator as task, wait for SIGINT handler to be installed
     run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
 
     # Wait for SIGINT handler to be installed
+    # Use timeout and check run_task for early failure detection
+    deadline = time.monotonic() + 5.0
     while signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+        if run_task.done():
+            if run_task.exception():
+                print(f"STARTUP_ERROR: {run_task.exception()}", file=sys.stderr, flush=True)
+            sys.exit(1)
+        if time.monotonic() > deadline:
+            print("TIMEOUT: SIGINT handler not installed", file=sys.stderr, flush=True)
+            sys.exit(1)
         await asyncio.sleep(0.01)
 
     print("READY", flush=True)
@@ -1072,13 +1095,23 @@ async def main():
     _orchestrator = create_orchestrator(config, deps=deps)
 
     # Slow poll interval keeps orchestrator alive in watch mode
+    # This keeps the process alive long enough to receive multiple SIGINTs
     watch_config = WatchConfig(enabled=True, poll_interval_seconds=10.0)
 
     # Start orchestrator as task, wait for SIGINT handler to be installed
     run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
 
     # Wait for SIGINT handler to be installed
+    # Use timeout and check run_task for early failure detection
+    deadline = time.monotonic() + 5.0
     while signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+        if run_task.done():
+            if run_task.exception():
+                print(f"STARTUP_ERROR: {run_task.exception()}", file=sys.stderr, flush=True)
+            sys.exit(1)
+        if time.monotonic() > deadline:
+            print("TIMEOUT: SIGINT handler not installed", file=sys.stderr, flush=True)
+            sys.exit(1)
         await asyncio.sleep(0.01)
 
     print("READY", flush=True)
