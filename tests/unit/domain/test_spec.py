@@ -11,7 +11,11 @@ import shutil
 from pathlib import Path
 
 
-from src.domain.validation.config import CustomCommandConfig
+from src.domain.validation.config import (
+    CommandsConfig,
+    CustomCommandConfig,
+    CustomOverrideMode,
+)
 from src.domain.validation.spec import (
     DEFAULT_COMMAND_TIMEOUT,
     CommandKind,
@@ -797,28 +801,30 @@ coverage:
 class TestBuildValidationSpecCustomCommands:
     """Test custom commands in build_validation_spec."""
 
-    def test_build_validation_spec_custom_commands_pipeline_order(
-        self, tmp_path: Path
-    ) -> None:
+    def test_build_validation_spec_custom_commands_pipeline_order(self) -> None:
         """Custom commands appear after typecheck, before test in pipeline order."""
-        config_content = """
-commands:
-  format: "uvx ruff format --check ."
-  lint: "uvx ruff check ."
-  typecheck: "uvx ty check"
-  test: "uv run pytest"
-custom_commands:
-  security_scan:
-    command: "bandit -r src/"
-  docs_check:
-    command: "mkdocs build --strict"
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
+        from src.domain.validation.config import (
+            CommandConfig,
+            CommandsConfig,
+            CustomCommandConfig,
+        )
+        from src.domain.validation.spec import _build_commands_from_config
 
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        commands_config = CommandsConfig(
+            format=CommandConfig(command="uvx ruff format --check ."),
+            lint=CommandConfig(command="uvx ruff check ."),
+            typecheck=CommandConfig(command="uvx ty check"),
+            test=CommandConfig(command="uv run pytest"),
+        )
+        custom_commands = {
+            "security_scan": CustomCommandConfig(command="bandit -r src/"),
+            "docs_check": CustomCommandConfig(command="mkdocs build --strict"),
+        }
+
+        commands = _build_commands_from_config(commands_config, custom_commands)
 
         # Get command names in order
-        cmd_names = [cmd.name for cmd in spec.commands]
+        cmd_names = [cmd.name for cmd in commands]
 
         # Verify pipeline order: format → lint → typecheck → custom → test
         format_idx = cmd_names.index("format")
@@ -832,51 +838,53 @@ custom_commands:
         assert typecheck_idx < security_idx < test_idx
         assert typecheck_idx < docs_idx < test_idx
 
-    def test_build_validation_spec_custom_commands_insertion_order(
-        self, tmp_path: Path
-    ) -> None:
-        """Custom commands preserve dict insertion order (YAML order)."""
-        config_content = """
-commands:
-  test: "pytest"
-custom_commands:
-  cmd_a: "echo a"
-  cmd_b: "echo b"
-  cmd_c: "echo c"
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
+    def test_build_validation_spec_custom_commands_insertion_order(self) -> None:
+        """Custom commands preserve dict insertion order."""
+        from src.domain.validation.config import (
+            CommandConfig,
+            CommandsConfig,
+            CustomCommandConfig,
+        )
+        from src.domain.validation.spec import _build_commands_from_config
 
-        spec = build_validation_spec(tmp_path)
+        commands_config = CommandsConfig(test=CommandConfig(command="pytest"))
+        custom_commands = {
+            "cmd_a": CustomCommandConfig(command="echo a"),
+            "cmd_b": CustomCommandConfig(command="echo b"),
+            "cmd_c": CustomCommandConfig(command="echo c"),
+        }
+
+        commands = _build_commands_from_config(commands_config, custom_commands)
 
         # Find custom commands in order
-        custom_cmds = [cmd for cmd in spec.commands if cmd.kind == CommandKind.CUSTOM]
+        custom_cmds = [cmd for cmd in commands if cmd.kind == CommandKind.CUSTOM]
 
         assert len(custom_cmds) == 3
         assert custom_cmds[0].name == "cmd_a"
         assert custom_cmds[1].name == "cmd_b"
         assert custom_cmds[2].name == "cmd_c"
 
-    def test_build_validation_spec_custom_commands_attributes(
-        self, tmp_path: Path
-    ) -> None:
+    def test_build_validation_spec_custom_commands_attributes(self) -> None:
         """Custom commands have correct attributes (kind, allow_fail, timeout)."""
-        config_content = """
-commands:
-  test: "pytest"
-custom_commands:
-  security_scan:
-    command: "bandit -r src/"
-    allow_fail: true
-    timeout: 300
-  docs_check:
-    command: "mkdocs build --strict"
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
+        from src.domain.validation.config import (
+            CommandConfig,
+            CommandsConfig,
+            CustomCommandConfig,
+        )
+        from src.domain.validation.spec import _build_commands_from_config
 
-        spec = build_validation_spec(tmp_path)
+        commands_config = CommandsConfig(test=CommandConfig(command="pytest"))
+        custom_commands = {
+            "security_scan": CustomCommandConfig(
+                command="bandit -r src/", allow_fail=True, timeout=300
+            ),
+            "docs_check": CustomCommandConfig(command="mkdocs build --strict"),
+        }
+
+        commands = _build_commands_from_config(commands_config, custom_commands)
 
         custom_cmds = {
-            cmd.name: cmd for cmd in spec.commands if cmd.kind == CommandKind.CUSTOM
+            cmd.name: cmd for cmd in commands if cmd.kind == CommandKind.CUSTOM
         }
 
         assert len(custom_cmds) == 2
@@ -895,242 +903,207 @@ custom_commands:
 
 
 class TestApplyCommandOverridesCustomCommands:
-    """Test run-level custom_commands override with full-replace semantics."""
+    """Test run-level custom_commands override with mode-based semantics."""
 
-    def test_apply_command_overrides_custom_commands_full_replace(
-        self, tmp_path: Path
-    ) -> None:
-        """Run-level custom_commands fully replaces repo-level (no inheritance)."""
-        config_content = """
-commands:
-  test: "pytest"
-custom_commands:
-  cmd_a: "echo a"
-  cmd_b: "echo b"
-run_level_custom_commands:
-  cmd_a: "echo new_a"
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
-
-        # PER_ISSUE should have both cmd_a and cmd_b
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
-        )
-        per_issue_custom = [
-            cmd for cmd in per_issue_spec.commands if cmd.kind == CommandKind.CUSTOM
-        ]
-        assert len(per_issue_custom) == 2
-        assert {c.name for c in per_issue_custom} == {"cmd_a", "cmd_b"}
-
-        # RUN_LEVEL should have ONLY cmd_a (cmd_b not inherited)
-        run_level_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.RUN_LEVEL
-        )
-        run_level_custom = [
-            cmd for cmd in run_level_spec.commands if cmd.kind == CommandKind.CUSTOM
-        ]
-        assert len(run_level_custom) == 1
-        assert run_level_custom[0].name == "cmd_a"
-        assert run_level_custom[0].command == "echo new_a"
-
-    def test_apply_command_overrides_custom_commands_empty_dict_disables(
-        self, tmp_path: Path
-    ) -> None:
-        """Run-level custom_commands: {} disables all custom commands."""
-        config_content = """
-commands:
-  test: "pytest"
-custom_commands:
-  cmd_a: "echo a"
-  cmd_b: "echo b"
-run_level_custom_commands: {}
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
-
-        # PER_ISSUE should have both cmd_a and cmd_b
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
-        )
-        per_issue_custom = [
-            cmd for cmd in per_issue_spec.commands if cmd.kind == CommandKind.CUSTOM
-        ]
-        assert len(per_issue_custom) == 2
-
-        # RUN_LEVEL should have NO custom commands
-        run_level_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.RUN_LEVEL
-        )
-        run_level_custom = [
-            cmd for cmd in run_level_spec.commands if cmd.kind == CommandKind.CUSTOM
-        ]
-        assert len(run_level_custom) == 0
-
-    def test_apply_command_overrides_custom_commands_null_uses_repo_level(
-        self, tmp_path: Path
-    ) -> None:
-        """Run-level custom_commands: null uses repo-level commands."""
-        config_content = """
-commands:
-  test: "pytest"
-custom_commands:
-  cmd_a: "echo a"
-  cmd_b: "echo b"
-run_level_custom_commands: null
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
-
-        # Both scopes should have cmd_a and cmd_b (null = use repo-level)
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
-        )
-        run_level_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.RUN_LEVEL
+    def test_run_level_replace_mode_fully_replaces_repo_customs(self) -> None:
+        """RUN_LEVEL + REPLACE mode returns only run-level customs."""
+        repo_customs = {
+            "cmd_a": CustomCommandConfig(command="echo a"),
+            "cmd_b": CustomCommandConfig(command="echo b"),
+        }
+        run_level_commands = CommandsConfig(
+            custom_commands={"cmd_a": CustomCommandConfig(command="echo new_a")},
+            custom_override_mode=CustomOverrideMode.REPLACE,
         )
 
-        per_issue_custom = [
-            cmd for cmd in per_issue_spec.commands if cmd.kind == CommandKind.CUSTOM
-        ]
-        run_level_custom = [
-            cmd for cmd in run_level_spec.commands if cmd.kind == CommandKind.CUSTOM
-        ]
-
-        assert len(per_issue_custom) == 2
-        assert len(run_level_custom) == 2
-        assert {c.name for c in per_issue_custom} == {"cmd_a", "cmd_b"}
-        assert {c.name for c in run_level_custom} == {"cmd_a", "cmd_b"}
-
-    def test_apply_command_overrides_custom_commands_omitted_uses_repo_level(
-        self, tmp_path: Path
-    ) -> None:
-        """Omitted run_level_custom_commands uses repo-level commands."""
-        config_content = """
-commands:
-  test: "pytest"
-custom_commands:
-  cmd_a: "echo a"
-  cmd_b: "echo b"
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
-
-        # Both scopes should have cmd_a and cmd_b
-        per_issue_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.PER_ISSUE
+        # PER_ISSUE ignores run-level mode, returns repo customs
+        per_issue_result = _apply_custom_commands_override(
+            repo_customs, run_level_commands, ValidationScope.PER_ISSUE
         )
-        run_level_spec = build_validation_spec(
-            tmp_path, scope=ValidationScope.RUN_LEVEL
+        assert len(per_issue_result) == 2
+        assert set(per_issue_result.keys()) == {"cmd_a", "cmd_b"}
+
+        # RUN_LEVEL with REPLACE returns only run-level customs
+        run_level_result = _apply_custom_commands_override(
+            repo_customs, run_level_commands, ValidationScope.RUN_LEVEL
+        )
+        assert len(run_level_result) == 1
+        assert "cmd_a" in run_level_result
+        assert run_level_result["cmd_a"].command == "echo new_a"
+
+    def test_run_level_clear_mode_returns_empty_dict(self) -> None:
+        """RUN_LEVEL + CLEAR mode returns empty dict (no customs)."""
+        repo_customs = {
+            "cmd_a": CustomCommandConfig(command="echo a"),
+            "cmd_b": CustomCommandConfig(command="echo b"),
+        }
+        run_level_commands = CommandsConfig(
+            custom_override_mode=CustomOverrideMode.CLEAR,
         )
 
-        per_issue_custom = [
-            cmd for cmd in per_issue_spec.commands if cmd.kind == CommandKind.CUSTOM
-        ]
-        run_level_custom = [
-            cmd for cmd in run_level_spec.commands if cmd.kind == CommandKind.CUSTOM
-        ]
+        # PER_ISSUE ignores run-level mode, returns repo customs
+        per_issue_result = _apply_custom_commands_override(
+            repo_customs, run_level_commands, ValidationScope.PER_ISSUE
+        )
+        assert len(per_issue_result) == 2
 
-        assert len(per_issue_custom) == 2
-        assert len(run_level_custom) == 2
+        # RUN_LEVEL with CLEAR returns empty dict
+        run_level_result = _apply_custom_commands_override(
+            repo_customs, run_level_commands, ValidationScope.RUN_LEVEL
+        )
+        assert len(run_level_result) == 0
+
+    def test_run_level_inherit_mode_returns_repo_customs(self) -> None:
+        """RUN_LEVEL + INHERIT mode returns repo-level customs unchanged."""
+        repo_customs = {
+            "cmd_a": CustomCommandConfig(command="echo a"),
+            "cmd_b": CustomCommandConfig(command="echo b"),
+        }
+        run_level_commands = CommandsConfig(
+            custom_override_mode=CustomOverrideMode.INHERIT,
+        )
+
+        # Both scopes return repo customs with INHERIT
+        per_issue_result = _apply_custom_commands_override(
+            repo_customs, run_level_commands, ValidationScope.PER_ISSUE
+        )
+        run_level_result = _apply_custom_commands_override(
+            repo_customs, run_level_commands, ValidationScope.RUN_LEVEL
+        )
+
+        assert len(per_issue_result) == 2
+        assert len(run_level_result) == 2
+        assert set(per_issue_result.keys()) == {"cmd_a", "cmd_b"}
+        assert set(run_level_result.keys()) == {"cmd_a", "cmd_b"}
+
+    def test_no_run_level_commands_uses_repo_customs(self) -> None:
+        """When run_level_commands is None, use repo-level customs."""
+        repo_customs = {
+            "cmd_a": CustomCommandConfig(command="echo a"),
+            "cmd_b": CustomCommandConfig(command="echo b"),
+        }
+
+        # Both scopes return repo customs when run_level_commands is None
+        per_issue_result = _apply_custom_commands_override(
+            repo_customs, None, ValidationScope.PER_ISSUE
+        )
+        run_level_result = _apply_custom_commands_override(
+            repo_customs, None, ValidationScope.RUN_LEVEL
+        )
+
+        assert len(per_issue_result) == 2
+        assert len(run_level_result) == 2
 
 
 class TestApplyCustomCommandsOverride:
-    """Tests for _apply_custom_commands_override with programmatic configs."""
+    """Tests for _apply_custom_commands_override with mode-based API."""
 
-    def test_programmatic_override_with_empty_fields_set(self) -> None:
-        """Programmatic override should work even when _fields_set is empty.
+    def test_additive_mode_merges_customs(self) -> None:
+        """RUN_LEVEL + ADDITIVE mode merges run-level into repo-level."""
+        repo_customs = {"cmd_a": CustomCommandConfig(command="echo a")}
+        run_level_commands = CommandsConfig(
+            custom_commands={"cmd_b": CustomCommandConfig(command="echo b")},
+            custom_override_mode=CustomOverrideMode.ADDITIVE,
+        )
 
-        When ValidationConfig is created programmatically (not via from_dict),
-        _fields_set is empty. The override should still apply if the value
-        is non-None, consistent with _apply_command_overrides behavior.
-        """
-        base = {"cmd_a": CustomCommandConfig(command="echo a")}
-        override = {"cmd_b": CustomCommandConfig(command="echo b")}
-
-        # With empty fields_set but non-None override, should use override
+        # ADDITIVE merges: repo + run
         result = _apply_custom_commands_override(
-            base=base,
-            override=override,
-            fields_set=frozenset(),  # Empty - simulates programmatic creation
+            repo_customs=repo_customs,
+            run_level_commands=run_level_commands,
             scope=ValidationScope.RUN_LEVEL,
         )
 
-        assert result == override
+        assert len(result) == 2
+        assert "cmd_a" in result
         assert "cmd_b" in result
-        assert "cmd_a" not in result
+        assert result["cmd_a"].command == "echo a"
+        assert result["cmd_b"].command == "echo b"
 
-    def test_explicit_fields_set_takes_precedence(self) -> None:
-        """When fields_set contains run_level_custom_commands, use it."""
-        base = {"cmd_a": CustomCommandConfig(command="echo a")}
-        override = {"cmd_b": CustomCommandConfig(command="echo b")}
+    def test_additive_mode_run_level_overrides_same_key(self) -> None:
+        """ADDITIVE mode: run-level value overrides repo-level for same key."""
+        repo_customs = {"cmd_a": CustomCommandConfig(command="echo old")}
+        run_level_commands = CommandsConfig(
+            custom_commands={"cmd_a": CustomCommandConfig(command="echo new")},
+            custom_override_mode=CustomOverrideMode.ADDITIVE,
+        )
 
         result = _apply_custom_commands_override(
-            base=base,
-            override=override,
-            fields_set=frozenset(["run_level_custom_commands"]),
+            repo_customs=repo_customs,
+            run_level_commands=run_level_commands,
             scope=ValidationScope.RUN_LEVEL,
         )
 
-        assert result == override
+        assert len(result) == 1
+        assert result["cmd_a"].command == "echo new"
 
-    def test_empty_fields_set_with_none_override_uses_base(self) -> None:
-        """When override is None and fields_set is empty, use base."""
-        base = {"cmd_a": CustomCommandConfig(command="echo a")}
+    def test_per_issue_scope_ignores_all_run_level_modes(self) -> None:
+        """PER_ISSUE scope always uses repo customs regardless of mode."""
+        repo_customs = {"cmd_a": CustomCommandConfig(command="echo a")}
+
+        # Test all modes - PER_ISSUE should always return repo_customs
+        for mode in CustomOverrideMode:
+            run_level_commands = CommandsConfig(
+                custom_commands={"cmd_b": CustomCommandConfig(command="echo b")},
+                custom_override_mode=mode,
+            )
+            result = _apply_custom_commands_override(
+                repo_customs=repo_customs,
+                run_level_commands=run_level_commands,
+                scope=ValidationScope.PER_ISSUE,
+            )
+            assert result == repo_customs, f"PER_ISSUE should ignore {mode}"
+
+    def test_replace_mode_replaces_with_empty_customs(self) -> None:
+        """REPLACE mode with empty custom_commands returns empty dict."""
+        repo_customs = {"cmd_a": CustomCommandConfig(command="echo a")}
+        run_level_commands = CommandsConfig(
+            custom_commands={},  # Empty
+            custom_override_mode=CustomOverrideMode.REPLACE,
+        )
 
         result = _apply_custom_commands_override(
-            base=base,
-            override=None,
-            fields_set=frozenset(),
+            repo_customs=repo_customs,
+            run_level_commands=run_level_commands,
             scope=ValidationScope.RUN_LEVEL,
         )
 
-        assert result == base
-
-    def test_per_issue_scope_always_uses_base(self) -> None:
-        """PER_ISSUE scope should always use base regardless of override."""
-        base = {"cmd_a": CustomCommandConfig(command="echo a")}
-        override = {"cmd_b": CustomCommandConfig(command="echo b")}
-
-        # Even with override set, PER_ISSUE should use base
-        result = _apply_custom_commands_override(
-            base=base,
-            override=override,
-            fields_set=frozenset(["run_level_custom_commands"]),
-            scope=ValidationScope.PER_ISSUE,
-        )
-
-        assert result == base
+        assert result == {}
 
 
 class TestCustomCommandsYamlOrderPreservation:
-    """Regression tests for YAML key order preservation in custom_commands.
+    """Regression tests for dict order preservation in custom_commands.
 
-    Python 3.7+ guarantees dict insertion order, and PyYAML preserves mapping order.
-    These tests ensure custom_commands: {a: ..., b: ..., c: ...} results in
-    execution order a, b, c.
+    Python 3.7+ guarantees dict insertion order. These tests ensure
+    custom_commands dict order is preserved through spec building.
     """
 
-    def test_custom_commands_yaml_order_preserved(self, tmp_path: Path) -> None:
-        """Custom commands preserve YAML key order through ValidationSpec.
+    def test_custom_commands_order_preserved(self) -> None:
+        """Custom commands preserve dict insertion order through spec building.
 
         This is a regression test to ensure that:
-        1. YAML key order is preserved when parsing custom_commands
-        2. ValidationConfig preserves dict insertion order
-        3. build_validation_spec() maintains that order in spec.commands
+        1. Dict insertion order is preserved in custom_commands
+        2. _build_commands_from_config maintains that order in output
         """
-        # Create YAML with custom commands in specific order
-        config_content = """
-commands:
-  test: "pytest"
-custom_commands:
-  cmd_alpha: "echo alpha"
-  cmd_beta: "echo beta"
-  cmd_gamma: "echo gamma"
-"""
-        (tmp_path / "mala.yaml").write_text(config_content)
+        from src.domain.validation.config import (
+            CommandConfig,
+            CommandsConfig,
+            CustomCommandConfig,
+        )
+        from src.domain.validation.spec import _build_commands_from_config
 
-        # Build spec and extract custom commands
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-        custom_cmds = [cmd for cmd in spec.commands if cmd.kind == CommandKind.CUSTOM]
+        commands_config = CommandsConfig(test=CommandConfig(command="pytest"))
+        # Dict with specific insertion order
+        custom_commands = {
+            "cmd_alpha": CustomCommandConfig(command="echo alpha"),
+            "cmd_beta": CustomCommandConfig(command="echo beta"),
+            "cmd_gamma": CustomCommandConfig(command="echo gamma"),
+        }
 
-        # Verify order matches YAML key order
+        # Build commands and extract custom commands
+        commands = _build_commands_from_config(commands_config, custom_commands)
+        custom_cmds = [cmd for cmd in commands if cmd.kind == CommandKind.CUSTOM]
+
+        # Verify order matches insertion order
         assert len(custom_cmds) == 3, "Expected exactly 3 custom commands"
         assert custom_cmds[0].name == "cmd_alpha"
         assert custom_cmds[1].name == "cmd_beta"

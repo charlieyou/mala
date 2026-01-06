@@ -341,11 +341,10 @@ def build_validation_spec(
             merged_config.commands, merged_config.run_level_commands
         )
 
-    # Resolve custom_commands for scope (run-level full-replace semantics)
+    # Resolve custom_commands for scope (mode-based override semantics)
     custom_commands = _apply_custom_commands_override(
-        merged_config.custom_commands,
-        merged_config.run_level_custom_commands,
-        merged_config._fields_set,
+        merged_config.commands.custom_commands,
+        merged_config.run_level_commands,
         scope,
     )
 
@@ -462,59 +461,53 @@ def _apply_command_overrides(
 
 
 def _apply_custom_commands_override(
-    base: dict[str, CustomCommandConfig],
-    override: dict[str, CustomCommandConfig] | None,
-    fields_set: frozenset[str],
+    repo_customs: dict[str, CustomCommandConfig],
+    run_level_commands: CommandsConfig | None,
     scope: ValidationScope,
 ) -> dict[str, CustomCommandConfig]:
-    """Apply run-level custom_commands override with full-replace semantics.
-
-    Run-level override behavior:
-    - If run_level_custom_commands not in fields_set: use base (repo-level)
-    - If run_level_custom_commands is explicitly set to {} (empty dict): no custom commands
-    - If run_level_custom_commands is explicitly set to {cmd_a: ...}: only run cmd_a
-      (does NOT inherit cmd_b from base - full replace, not merge)
-    - If run_level_custom_commands is explicitly set to null: same as not set (use base)
-
-    For PER_ISSUE scope, always use base (run-level override only applies to RUN_LEVEL).
-
-    For programmatic ValidationConfig instances where _fields_set is empty,
-    a non-None override value is treated as explicit (consistent with
-    _apply_command_overrides behavior).
+    """Apply run-level custom_commands override based on CustomOverrideMode.
 
     Args:
-        base: Repo-level custom_commands dict.
-        override: Run-level custom_commands dict (None if not set or explicitly null).
-        fields_set: Set of field names explicitly set in config.
+        repo_customs: Repo-level custom_commands dict (from commands.custom_commands).
+        run_level_commands: Run-level CommandsConfig (contains custom_override_mode
+            and custom_commands). May be None if not configured.
         scope: The validation scope.
 
     Returns:
         The effective custom_commands dict for this scope.
+
+    Mode behavior (only applies to RUN_LEVEL scope):
+    - INHERIT: Use repo-level customs unchanged (default, no run-level customs)
+    - CLEAR: Return empty dict (disable all customs)
+    - REPLACE: Return only run-level customs (full replace)
+    - ADDITIVE: Merge run-level into repo-level ({**repo, **run})
     """
+    from src.domain.validation.config import CustomOverrideMode
+
     # For PER_ISSUE scope, always use repo-level custom_commands
     if scope == ValidationScope.PER_ISSUE:
-        return base
+        return repo_customs
 
-    # For RUN_LEVEL scope, check if run_level_custom_commands was explicitly set.
-    # When fields_set is non-empty (from_dict), check membership.
-    # When fields_set is empty (programmatic), fall back to checking if override is not None.
-    if fields_set:
-        is_explicit = "run_level_custom_commands" in fields_set
+    # For RUN_LEVEL scope, apply mode-based logic
+    if run_level_commands is None:
+        # No run-level commands configured - use repo-level
+        return repo_customs
+
+    mode = run_level_commands.custom_override_mode
+    run_customs = run_level_commands.custom_commands
+
+    if mode == CustomOverrideMode.INHERIT:
+        return repo_customs
+    elif mode == CustomOverrideMode.CLEAR:
+        return {}
+    elif mode == CustomOverrideMode.REPLACE:
+        return run_customs
+    elif mode == CustomOverrideMode.ADDITIVE:
+        # Merge: repo order preserved, run-level updates/appends
+        return {**repo_customs, **run_customs}
     else:
-        is_explicit = override is not None
-
-    if not is_explicit:
-        # Not set - use repo-level
-        return base
-
-    # Explicitly set - could be {} (empty), null, or {cmd_a: ...}
-    # If override is None, it means explicitly null - treat as "use base"
-    # If override is {} (empty dict), it means disable all custom commands
-    # If override is {cmd_a: ...}, use only those commands (full replace)
-    if override is None:
-        return base
-
-    return override
+        # Should never happen with enum, but be defensive
+        return repo_customs
 
 
 def _build_commands_from_config(
