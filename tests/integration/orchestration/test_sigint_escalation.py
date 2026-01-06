@@ -997,6 +997,24 @@ async def main():
             sys.exit(1)
         await asyncio.sleep(0.01)
 
+    # Wait for agent task to be spawned (active_tasks non-empty)
+    # This ensures drain mode won't exit immediately due to zero active tasks
+    while not _orchestrator.issue_coordinator.active_tasks:
+        if run_task.done():
+            try:
+                exc = run_task.exception()
+            except asyncio.CancelledError:
+                exc = None
+            if exc:
+                print(f"AGENT_SPAWN_ERROR: {exc}", file=sys.stderr, flush=True)
+            else:
+                print("AGENT_SPAWN_EXITED", file=sys.stderr, flush=True)
+            sys.exit(1)
+        if time.monotonic() > deadline:
+            print("TIMEOUT: Agent task not spawned", file=sys.stderr, flush=True)
+            sys.exit(1)
+        await asyncio.sleep(0.01)
+
     print("READY", flush=True)
 
     try:
@@ -1053,8 +1071,7 @@ if __name__ == "__main__":
                 stderr = _get_stderr(proc)
                 pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
 
-            # Wait for orchestrator to start its main loop
-            time.sleep(0.5)
+            # READY now means agent task is spawned - no additional sleep needed
 
             # Send two SIGINTs for abort mode
             # First triggers drain, second triggers abort
@@ -1220,6 +1237,24 @@ async def main():
             sys.exit(1)
         await asyncio.sleep(0.01)
 
+    # Wait for agent task to be spawned (active_tasks non-empty)
+    # This ensures drain mode won't exit immediately due to zero active tasks
+    while not _orchestrator.issue_coordinator.active_tasks:
+        if run_task.done():
+            try:
+                exc = run_task.exception()
+            except asyncio.CancelledError:
+                exc = None
+            if exc:
+                print(f"AGENT_SPAWN_ERROR: {exc}", file=sys.stderr, flush=True)
+            else:
+                print("AGENT_SPAWN_EXITED", file=sys.stderr, flush=True)
+            sys.exit(1)
+        if time.monotonic() > deadline:
+            print("TIMEOUT: Agent task not spawned", file=sys.stderr, flush=True)
+            sys.exit(1)
+        await asyncio.sleep(0.01)
+
     print("READY", flush=True)
 
     try:
@@ -1278,7 +1313,7 @@ if __name__ == "__main__":
                 stderr = _get_stderr(proc)
                 pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
 
-            time.sleep(0.5)
+            # READY now means agent task is spawned - no additional sleep needed
 
             # Send three SIGINTs for force abort
             # First two trigger drain and abort; third triggers force abort
