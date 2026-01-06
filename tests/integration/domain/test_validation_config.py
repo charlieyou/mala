@@ -921,14 +921,13 @@ config_files:
 class TestCustomCommandsIntegration:
     """Integration test for custom_commands config → spec path."""
 
+    @pytest.mark.xfail(reason="T002-T003 not yet implemented")
     def test_custom_commands_config_to_spec_integration(self, tmp_path: Path) -> None:
         """Custom commands from mala.yaml appear in ValidationSpec.
 
         This test exercises the full path:
         mala.yaml → ConfigLoader → ValidationConfig.custom_commands
         → build_validation_spec() → ValidationCommand(kind=CUSTOM)
-
-        Expected to FAIL until T002-T003 implement the actual parsing.
         """
         from src.domain.validation.spec import (
             CommandKind,
