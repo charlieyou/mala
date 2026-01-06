@@ -679,7 +679,7 @@ class QualityGate:
                 message=message,
             )
 
-    def get_commit_files(self, commit_hash: str) -> list[str]:
+    def get_commit_files(self, commit_hash: str) -> list[str] | None:
         """Get list of files changed in a commit.
 
         Args:
@@ -687,7 +687,8 @@ class QualityGate:
 
         Returns:
             List of file paths changed in the commit (relative to repo root).
-            Empty list if commit not found or git command fails.
+            None if git command fails (callers should treat as error).
+            Empty list if commit has no file changes.
         """
         result = self._command_runner.run(
             [
@@ -701,7 +702,7 @@ class QualityGate:
         )
 
         if not result.ok:
-            return []
+            return None
 
         output = result.stdout.strip()
         if not output:
@@ -738,7 +739,10 @@ class QualityGate:
         For docs_only resolutions:
         - Gate 2 (commit check) runs normally
         - Gate 3 (validation evidence) is skipped
-        - Requires rationale and commit must not contain code files (per code_patterns)
+        - Requires rationale and commit must not contain validation-triggering files
+          (code_patterns + config_files + setup_files)
+        - Requires at least one pattern category to be configured (fails closed)
+        - Fails if git diff-tree cannot determine changed files (fails closed)
 
         When a ValidationSpec is provided, evidence requirements are derived
         from the spec rather than using hardcoded defaults. This ensures:
@@ -869,18 +873,60 @@ class QualityGate:
                         resolution=resolution,
                     )
 
-                # Verify commit does not contain code files
-                # Only check if code_patterns is configured (non-empty)
-                if spec.code_patterns and commit_result.commit_hash:
+                # Verify commit does not contain code/config/setup files
+                # Use the same union of patterns used for validation gating
+                # (should_trigger_validation checks code_patterns + config_files + setup_files)
+                validation_patterns = [
+                    *spec.code_patterns,
+                    *spec.config_files,
+                    *spec.setup_files,
+                ]
+
+                if commit_result.commit_hash:
                     commit_files = self.get_commit_files(commit_result.commit_hash)
-                    code_files = filter_matching_files(commit_files, spec.code_patterns)
-                    if code_files:
+
+                    # Fail closed: if we can't determine changed files, reject DOCS_ONLY
+                    if commit_files is None:
                         failure_reasons.append(
-                            f"DOCS_ONLY resolution but commit contains code files: "
-                            f"{', '.join(code_files[:5])}"
+                            "DOCS_ONLY resolution failed: could not determine "
+                            "files changed in commit (git diff-tree failed)"
+                        )
+                        return GateResult(
+                            passed=False,
+                            failure_reasons=failure_reasons,
+                            commit_hash=commit_result.commit_hash,
+                            resolution=resolution,
+                        )
+
+                    # Check against validation-triggering patterns
+                    # Note: empty validation_patterns means no explicit patterns configured,
+                    # which differs from validation gating (where empty = match all).
+                    # For DOCS_ONLY, we require explicit patterns to enforce the check;
+                    # without patterns, we can't verify the commit is truly docs-only,
+                    # so we reject to fail closed.
+                    if not validation_patterns:
+                        failure_reasons.append(
+                            "DOCS_ONLY resolution requires code_patterns, config_files, "
+                            "or setup_files to be configured in mala.yaml to verify "
+                            "the commit contains only documentation"
+                        )
+                        return GateResult(
+                            passed=False,
+                            failure_reasons=failure_reasons,
+                            commit_hash=commit_result.commit_hash,
+                            resolution=resolution,
+                        )
+
+                    triggering_files = filter_matching_files(
+                        commit_files, validation_patterns
+                    )
+                    if triggering_files:
+                        failure_reasons.append(
+                            f"DOCS_ONLY resolution but commit contains "
+                            f"code/config/setup files: {', '.join(triggering_files[:5])}"
                             + (
-                                f" (and {len(code_files) - 5} more)"
-                                if len(code_files) > 5
+                                f" (and {len(triggering_files) - 5} more)"
+                                if len(triggering_files) > 5
                                 else ""
                             )
                         )
@@ -891,7 +937,7 @@ class QualityGate:
                             resolution=resolution,
                         )
 
-                # Docs-only with rationale and no code files passes
+                # Docs-only with rationale and no triggering files passes
                 # (skip validation evidence - only documentation changes)
                 return GateResult(
                     passed=True,

@@ -202,11 +202,11 @@ For commits that only modify documentation (no code changes), use:
 
 **Requirements:**
 - Commit MUST be created first (unlike no-change markers)
-- Commit must NOT contain any code files (as defined by project's code_patterns)
+- Commit must NOT contain any code, config, or setup files (as defined by project's code_patterns, config_files, and setup_files in mala.yaml)
 - Quality checks (lint, format, typecheck, test) are skipped
 - Code review is also skipped
 
-Use this when modifying README, docs/, CHANGELOG, comments-only changes, etc.
+Use this when modifying README.md, docs/, CHANGELOG.md, or other non-code files.
 
 ### 7. Commit
 
@@ -219,6 +219,7 @@ git add <files> && git commit -m "bd-{issue_id}: <summary>"
 **CRITICAL GIT RULES:**
 - **ONLY commit files YOU touched**: List each file explicitly in `git add`. NEVER use `git add .`, `git add -A`, or `git commit -a`. Committing another agent's staged changes will corrupt the repository.
 - **Atomic add+commit is MANDATORY**: ALWAYS chain `git add <files> && git commit` in a single command. Separate commands allow other agents to interleave their staging, causing you to commit their files.
+- Multiple commits per issue are allowed; every commit must use the `bd-{issue_id}:` prefix.
 - Do NOT push - only commit locally
 - Do NOT close the issue - orchestrator handles that
 - Only release locks AFTER successful commit

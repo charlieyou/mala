@@ -3368,9 +3368,11 @@ class TestDocsOnlyResolution:
             spec=spec,
         )
 
-        # Should fail because commit contains code files
+        # Should fail because commit contains code/config/setup files
         assert result.passed is False
-        assert any("code files" in r.lower() for r in result.failure_reasons)
+        assert any(
+            "code/config/setup files" in r.lower() for r in result.failure_reasons
+        )
         assert any("src/main.py" in r for r in result.failure_reasons)
 
     def test_docs_only_fails_without_rationale(
@@ -3475,15 +3477,13 @@ class TestDocsOnlyResolution:
         assert resolution.outcome == ResolutionOutcome.DOCS_ONLY
         assert "CHANGELOG" in resolution.rationale
 
-    def test_docs_only_with_empty_code_patterns_always_passes(
+    def test_docs_only_fails_with_empty_patterns_fail_closed(
         self,
         tmp_path: Path,
         log_provider: LogProvider,
         mock_command_runner: FakeCommandRunner,
     ) -> None:
-        """DOCS_ONLY should pass even with code files if code_patterns is empty."""
-        from src.domain.validation.spec import ResolutionOutcome
-
+        """DOCS_ONLY should fail if no patterns configured (fail closed)."""
         log_path = tmp_path / "session.jsonl"
         log_content = json.dumps(
             {
@@ -3511,6 +3511,14 @@ class TestDocsOnlyResolution:
             "1",
             "--since=30 days ago",
         )
+        git_diff_tree_cmd = (
+            "git",
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "abc123",
+        )
         fake_runner = FakeCommandRunner(
             responses={
                 git_log_cmd: CommandResult(
@@ -3519,14 +3527,24 @@ class TestDocsOnlyResolution:
                     stdout="abc123 1704067200 bd-test-123: Update docs\n",
                     stderr="",
                 ),
+                git_diff_tree_cmd: CommandResult(
+                    command=[],
+                    returncode=0,
+                    stdout="README.md\n",
+                    stderr="",
+                ),
             }
         )
         gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
-        # Create mala.yaml with empty code_patterns
-        (tmp_path / "mala.yaml").write_text("preset: python-uv\ncode_patterns: []\n")
+        # Create mala.yaml with preset but override all patterns to empty (fail closed scenario)
+        (tmp_path / "mala.yaml").write_text(
+            "preset: python-uv\ncode_patterns: []\nconfig_files: []\nsetup_files: []\n"
+        )
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
-        # Verify code_patterns is empty
+        # Verify all patterns are empty
         assert spec.code_patterns == []
+        assert spec.config_files == []
+        assert spec.setup_files == []
 
         result = gate.check_with_resolution(
             issue_id="test-123",
@@ -3535,10 +3553,159 @@ class TestDocsOnlyResolution:
             spec=spec,
         )
 
-        # Should pass because code_patterns is empty (no check performed)
-        assert result.passed is True
-        assert result.resolution is not None
-        assert result.resolution.outcome == ResolutionOutcome.DOCS_ONLY
+        # Should fail because no patterns are configured (fail closed)
+        assert result.passed is False
+        assert any("requires code_patterns" in r for r in result.failure_reasons)
+
+    def test_docs_only_fails_when_git_diff_tree_fails(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """DOCS_ONLY should fail if git diff-tree fails (fail closed)."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_DOCS_ONLY: Updated README.",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        # Create gate with fake command runner - commit found but diff-tree fails
+        git_log_cmd = (
+            "git",
+            "log",
+            "--format=%h %ct %s",
+            "--grep",
+            "bd-test-123",
+            "-n",
+            "1",
+            "--since=30 days ago",
+        )
+        git_diff_tree_cmd = (
+            "git",
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "abc123",
+        )
+        fake_runner = FakeCommandRunner(
+            responses={
+                git_log_cmd: CommandResult(
+                    command=[],
+                    returncode=0,
+                    stdout="abc123 1704067200 bd-test-123: Update docs\n",
+                    stderr="",
+                ),
+                git_diff_tree_cmd: CommandResult(
+                    command=[],
+                    returncode=128,  # git failure
+                    stdout="",
+                    stderr="fatal: bad object abc123",
+                ),
+            }
+        )
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+
+        result = gate.check_with_resolution(
+            issue_id="test-123",
+            log_path=log_path,
+            baseline_timestamp=1704067100,
+            spec=spec,
+        )
+
+        # Should fail because git diff-tree failed (fail closed)
+        assert result.passed is False
+        assert any("git diff-tree failed" in r for r in result.failure_reasons)
+
+    def test_docs_only_fails_with_setup_files(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """DOCS_ONLY should fail if commit contains setup_files (e.g., lockfiles)."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_DOCS_ONLY: Updated lockfile.",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        # Create gate with fake command runner - commit contains only lockfile
+        git_log_cmd = (
+            "git",
+            "log",
+            "--format=%h %ct %s",
+            "--grep",
+            "bd-test-123",
+            "-n",
+            "1",
+            "--since=30 days ago",
+        )
+        git_diff_tree_cmd = (
+            "git",
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "abc123",
+        )
+        fake_runner = FakeCommandRunner(
+            responses={
+                git_log_cmd: CommandResult(
+                    command=[],
+                    returncode=0,
+                    stdout="abc123 1704067200 bd-test-123: Update lockfile\n",
+                    stderr="",
+                ),
+                git_diff_tree_cmd: CommandResult(
+                    command=[],
+                    returncode=0,
+                    stdout="uv.lock\n",
+                    stderr="",
+                ),
+            }
+        )
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
+        # Create mala.yaml with setup_files pattern
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        # Verify uv.lock is in setup_files
+        assert "uv.lock" in spec.setup_files
+
+        result = gate.check_with_resolution(
+            issue_id="test-123",
+            log_path=log_path,
+            baseline_timestamp=1704067100,
+            spec=spec,
+        )
+
+        # Should fail because uv.lock is in setup_files
+        assert result.passed is False
+        assert any("uv.lock" in r for r in result.failure_reasons)
 
 
 class TestExtractIssueFromRationale:
