@@ -40,8 +40,8 @@ def _wait_for_ready(
 
     for _ in range(iterations):
         if proc.poll() is not None:
-            # Process exited early
-            remaining = proc.stdout.read() if proc.stdout else ""
+            # Process exited early - use communicate to safely drain pipes
+            remaining, _ = proc.communicate(timeout=5.0)
             output_lines.append(remaining)
             return False, "".join(output_lines)
 
@@ -651,26 +651,22 @@ asyncio.run(main())
             # Send SIGINT to trigger interrupt handling
             _send_sigint_and_wait(proc, wait_after=0.5)
 
-            # Wait for exit
+            # Wait for exit and drain stdout/stderr safely
             try:
-                proc.wait(timeout=5.0)
+                remaining_stdout, stderr = proc.communicate(timeout=5.0)
             except subprocess.TimeoutExpired:
-                stderr = _get_stderr(proc)
                 proc.kill()
-                proc.wait()
+                remaining_stdout, stderr = proc.communicate()
                 pytest.fail(f"Process did not exit after SIGINT. Stderr: {stderr}")
+
+            all_stdout = output + remaining_stdout
 
             # Coordinator interrupt always exits 130 (orchestrator overrides for Stage 2)
             if proc.returncode != 130:
-                stderr = _get_stderr(proc)
                 pytest.fail(
                     f"Expected exit code 130 (interrupt), "
                     f"got {proc.returncode}. Stderr: {stderr}"
                 )
-
-            # Verify validation was NOT called during interrupt
-            remaining_stdout = proc.stdout.read() if proc.stdout else ""
-            all_stdout = output + remaining_stdout
             assert "UNEXPECTED_VALIDATION_CALL" not in all_stdout, (
                 f"validation_callback should NOT be called during interrupt. "
                 f"Stdout: {all_stdout}"
@@ -796,8 +792,8 @@ if __name__ == "__main__":
 
             # Check process is still running (watch mode should keep it alive)
             if proc.poll() is not None:
-                remaining = proc.stdout.read() if proc.stdout else ""
-                stderr = proc.stderr.read() if proc.stderr else ""
+                # Process already exited - use communicate to safely drain pipes
+                remaining, stderr = proc.communicate(timeout=5.0)
                 pytest.fail(
                     f"Process exited before SIGINT could be sent. "
                     f"Exit code: {proc.returncode}\n"
@@ -807,23 +803,20 @@ if __name__ == "__main__":
             # Send single SIGINT - should trigger drain mode via _handle_sigint
             _send_sigint_and_wait(proc, wait_after=0.5)
 
-            # Wait for exit
+            # Wait for exit and drain stdout/stderr safely
             try:
-                proc.wait(timeout=10.0)
+                remaining_stdout, stderr = proc.communicate(timeout=10.0)
             except subprocess.TimeoutExpired:
-                stderr = _get_stderr(proc)
                 proc.kill()
-                proc.wait()
+                remaining_stdout, stderr = proc.communicate()
                 pytest.fail(
                     f"Process did not exit after single SIGINT. Stderr: {stderr}"
                 )
 
-            # Drain mode with no tasks should exit cleanly (0)
-            remaining_stdout = proc.stdout.read() if proc.stdout else ""
             all_stdout = output + remaining_stdout
 
+            # Drain mode with no tasks should exit cleanly (0)
             if proc.returncode != 0:
-                stderr = _get_stderr(proc)
                 pytest.fail(
                     f"Expected exit code 0 (drain complete), got {proc.returncode}. "
                     f"Stdout: {all_stdout}\nStderr: {stderr}"
@@ -938,23 +931,20 @@ if __name__ == "__main__":
             _send_sigint_and_wait(proc, wait_after=0.3)
             _send_sigint_and_wait(proc, wait_after=0.3)
 
-            # Wait for exit
+            # Wait for exit and drain stdout/stderr safely
             try:
-                proc.wait(timeout=10.0)
+                remaining_stdout, stderr = proc.communicate(timeout=10.0)
             except subprocess.TimeoutExpired:
-                stderr = _get_stderr(proc)
                 proc.kill()
-                proc.wait()
+                remaining_stdout, stderr = proc.communicate()
                 pytest.fail(
                     f"Process did not exit after double SIGINT. Stderr: {stderr}"
                 )
 
-            remaining_stdout = proc.stdout.read() if proc.stdout else ""
             all_stdout = output + remaining_stdout
 
             # Abort mode should exit with 130
             if proc.returncode != 130:
-                stderr = _get_stderr(proc)
                 pytest.fail(
                     f"Expected exit code 130 (abort), got {proc.returncode}. "
                     f"Stdout: {all_stdout}\nStderr: {stderr}"
@@ -1103,23 +1093,20 @@ if __name__ == "__main__":
             time.sleep(0.5)
             _send_sigint_and_wait(proc, wait_after=0.3)
 
-            # Wait for exit
+            # Wait for exit and drain stdout/stderr safely
             try:
-                proc.wait(timeout=10.0)
+                remaining_stdout, stderr = proc.communicate(timeout=10.0)
             except subprocess.TimeoutExpired:
-                stderr = _get_stderr(proc)
                 proc.kill()
-                proc.wait()
+                remaining_stdout, stderr = proc.communicate()
                 pytest.fail(
                     f"Process did not exit after triple SIGINT. Stderr: {stderr}"
                 )
 
-            remaining_stdout = proc.stdout.read() if proc.stdout else ""
             all_stdout = output + remaining_stdout
 
             # Force abort should exit with 130
             if proc.returncode != 130:
-                stderr = _get_stderr(proc)
                 pytest.fail(
                     f"Expected exit code 130 (force abort), got {proc.returncode}. "
                     f"Stdout: {all_stdout}\nStderr: {stderr}"
