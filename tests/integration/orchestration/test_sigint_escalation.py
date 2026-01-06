@@ -680,3 +680,458 @@ asyncio.run(main())
             if proc.poll() is None:
                 proc.kill()
                 proc.wait()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only")
+class TestMalaOrchestratorSigint:
+    """Integration tests for MalaOrchestrator SIGINT handler.
+
+    These tests exercise the real MalaOrchestrator._handle_sigint method
+    via subprocess signal delivery, verifying the orchestrator's signal
+    handling wiring works correctly in practice.
+    """
+
+    def test_orchestrator_single_sigint_drain_mode(self, tmp_path: Path) -> None:
+        """MalaOrchestrator: single SIGINT triggers drain mode via _handle_sigint.
+
+        Verifies that the real MalaOrchestrator._handle_sigint method is wired
+        correctly and sets drain_event on first SIGINT (Stage 1). With no active
+        tasks, drain mode completes immediately with exit code 0.
+        """
+        script = tmp_path / "orchestrator_drain_test.py"
+        script.write_text(
+            """
+import asyncio
+import sys
+
+from pathlib import Path
+
+from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
+from src.core.models import WatchConfig
+from tests.fakes.event_sink import FakeEventSink
+from tests.fakes.issue_provider import FakeIssueProvider
+
+
+async def main():
+    tmp_dir = Path(sys.argv[1])
+    runs_dir = tmp_dir / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create orchestrator with empty provider (will exit on drain)
+    provider = FakeIssueProvider()
+    event_sink = FakeEventSink()
+
+    config = OrchestratorConfig(
+        repo_path=tmp_dir,
+        max_agents=1,
+        max_issues=1,
+    )
+    deps = OrchestratorDependencies(
+        issue_provider=provider,
+        event_sink=event_sink,
+        runs_dir=runs_dir,
+    )
+    orchestrator = create_orchestrator(config, deps=deps)
+
+    print("READY", flush=True)
+
+    # Run with watch mode so it waits for SIGINT
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
+    try:
+        success_count, total = await orchestrator.run(watch_config=watch_config)
+    except asyncio.CancelledError:
+        # CancelledError can propagate from Stage 2/3 handling
+        pass
+
+    # Check internal state to verify drain mode was triggered
+    # This is more reliable than checking event_sink since events are async
+    if orchestrator._drain_mode_active:
+        print("DRAIN_MODE_ACTIVE", flush=True)
+    else:
+        print(f"drain_mode_active={orchestrator._drain_mode_active}", flush=True)
+        print(f"sigint_count={orchestrator._sigint_count}", flush=True)
+
+    # Force flush and exit
+    sys.stdout.flush()
+    sys.stderr.flush()
+    sys.exit(orchestrator.exit_code)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        # SIGINT during asyncio.run cleanup - exit with default 130
+        # This happens when the signal handler is not fully installed yet
+        # or when asyncio.run is shutting down after CancelledError
+        sys.exit(130)
+"""
+        )
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(REPO_ROOT)
+
+        proc = subprocess.Popen(
+            [sys.executable, str(script), str(tmp_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+        try:
+            ready, output = _wait_for_ready(proc, timeout=10.0)
+            if not ready:
+                stderr = _get_stderr(proc)
+                if proc.poll() is not None:
+                    pytest.fail(
+                        f"Subprocess exited early with code {proc.returncode}. "
+                        f"Output: {output}\nStderr: {stderr}"
+                    )
+                pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
+
+            # Wait for orchestrator to enter its run loop before sending SIGINT
+            time.sleep(0.3)
+
+            # Check process is still running (watch mode should keep it alive)
+            if proc.poll() is not None:
+                remaining = proc.stdout.read() if proc.stdout else ""
+                stderr = proc.stderr.read() if proc.stderr else ""
+                pytest.fail(
+                    f"Process exited before SIGINT could be sent. "
+                    f"Exit code: {proc.returncode}\n"
+                    f"Stdout: {output + remaining}\nStderr: {stderr}"
+                )
+
+            # Send single SIGINT - should trigger drain mode via _handle_sigint
+            _send_sigint_and_wait(proc, wait_after=0.5)
+
+            # Wait for exit
+            try:
+                proc.wait(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                stderr = _get_stderr(proc)
+                proc.kill()
+                proc.wait()
+                pytest.fail(
+                    f"Process did not exit after single SIGINT. Stderr: {stderr}"
+                )
+
+            # Drain mode with no tasks should exit cleanly (0)
+            remaining_stdout = proc.stdout.read() if proc.stdout else ""
+            all_stdout = output + remaining_stdout
+
+            if proc.returncode != 0:
+                stderr = _get_stderr(proc)
+                pytest.fail(
+                    f"Expected exit code 0 (drain complete), got {proc.returncode}. "
+                    f"Stdout: {all_stdout}\nStderr: {stderr}"
+                )
+
+            # Verify drain mode was activated in the orchestrator
+            assert "DRAIN_MODE_ACTIVE" in all_stdout, (
+                f"_drain_mode_active not set by _handle_sigint. Stdout: {all_stdout}"
+            )
+
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+    def test_orchestrator_double_sigint_abort_mode(self, tmp_path: Path) -> None:
+        """MalaOrchestrator: double SIGINT triggers abort mode via _handle_sigint.
+
+        Verifies Stage 2 behavior: two SIGINTs cause the orchestrator to
+        set interrupt_event and exit with code 130.
+        """
+        script = tmp_path / "orchestrator_abort_test.py"
+        script.write_text(
+            """
+import asyncio
+import sys
+
+from pathlib import Path
+
+from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
+from src.core.models import WatchConfig
+from tests.fakes.event_sink import FakeEventSink
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+
+
+async def main():
+    tmp_dir = Path(sys.argv[1])
+    runs_dir = tmp_dir / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create orchestrator with one issue so it has work to do
+    provider = FakeIssueProvider(
+        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
+    )
+    event_sink = FakeEventSink()
+
+    config = OrchestratorConfig(
+        repo_path=tmp_dir,
+        max_agents=1,
+        max_issues=1,
+    )
+    deps = OrchestratorDependencies(
+        issue_provider=provider,
+        event_sink=event_sink,
+        runs_dir=runs_dir,
+    )
+    orchestrator = create_orchestrator(config, deps=deps)
+
+    print("READY", flush=True)
+
+    # Run with watch mode
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
+    try:
+        await orchestrator.run(watch_config=watch_config)
+    except asyncio.CancelledError:
+        # Stage 2/3 may cancel the run task
+        pass
+
+    # Check events
+    if event_sink.has_event("drain_started"):
+        print("DRAIN_EVENT_RECORDED", flush=True)
+    if event_sink.has_event("abort_started"):
+        print("ABORT_EVENT_RECORDED", flush=True)
+
+    sys.exit(orchestrator.exit_code)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        sys.exit(130)
+"""
+        )
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(REPO_ROOT)
+
+        proc = subprocess.Popen(
+            [sys.executable, str(script), str(tmp_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+        try:
+            ready, output = _wait_for_ready(proc, timeout=10.0)
+            if not ready:
+                stderr = _get_stderr(proc)
+                if proc.poll() is not None:
+                    pytest.fail(
+                        f"Subprocess exited early with code {proc.returncode}. "
+                        f"Output: {output}\nStderr: {stderr}"
+                    )
+                pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
+
+            # Wait for orchestrator to start its main loop
+            time.sleep(0.5)
+
+            # Send two SIGINTs for abort mode
+            _send_sigint_and_wait(proc, wait_after=0.3)
+            _send_sigint_and_wait(proc, wait_after=0.3)
+
+            # Wait for exit
+            try:
+                proc.wait(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                stderr = _get_stderr(proc)
+                proc.kill()
+                proc.wait()
+                pytest.fail(
+                    f"Process did not exit after double SIGINT. Stderr: {stderr}"
+                )
+
+            remaining_stdout = proc.stdout.read() if proc.stdout else ""
+            all_stdout = output + remaining_stdout
+
+            # Abort mode should exit with 130
+            if proc.returncode != 130:
+                stderr = _get_stderr(proc)
+                pytest.fail(
+                    f"Expected exit code 130 (abort), got {proc.returncode}. "
+                    f"Stdout: {all_stdout}\nStderr: {stderr}"
+                )
+
+            # Verify abort event was recorded
+            assert "ABORT_EVENT_RECORDED" in all_stdout, (
+                f"on_abort_started event not recorded. Stdout: {all_stdout}"
+            )
+
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+    def test_orchestrator_triple_sigint_force_abort(self, tmp_path: Path) -> None:
+        """MalaOrchestrator: triple SIGINT triggers force abort via _handle_sigint.
+
+        Verifies Stage 3 behavior: three SIGINTs within the escalation window
+        cause _shutdown_requested to be set and immediate exit with 130.
+
+        Note: If Stage 2 abort completes quickly, the process may exit with
+        sigint_count=2 before the third SIGINT arrives. This test uses a slow
+        abort to ensure Stage 3 is reached.
+        """
+        script = tmp_path / "orchestrator_force_abort_test.py"
+        script.write_text(
+            """
+import asyncio
+import sys
+
+from pathlib import Path
+
+from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
+from src.core.models import WatchConfig
+from tests.fakes.event_sink import FakeEventSink
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+from src.pipeline.issue_execution_coordinator import IssueExecutionCoordinator
+
+# Globals to check state after signal handling
+_orchestrator = None
+
+# Monkey-patch the coordinator to have a slow interrupt handler
+_original_handle_interrupt = IssueExecutionCoordinator._handle_interrupt
+
+
+async def _slow_handle_interrupt(self, abort_callback, watch_state, issues_spawned):
+    # Sleep long enough for Stage 3 SIGINT to arrive
+    await asyncio.sleep(2.0)
+    return await _original_handle_interrupt(self, abort_callback, watch_state, issues_spawned)
+
+
+IssueExecutionCoordinator._handle_interrupt = _slow_handle_interrupt
+
+
+async def main():
+    global _orchestrator
+    tmp_dir = Path(sys.argv[1])
+    runs_dir = tmp_dir / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create orchestrator with one issue
+    provider = FakeIssueProvider(
+        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
+    )
+    event_sink = FakeEventSink()
+
+    config = OrchestratorConfig(
+        repo_path=tmp_dir,
+        max_agents=1,
+        max_issues=1,
+    )
+    deps = OrchestratorDependencies(
+        issue_provider=provider,
+        event_sink=event_sink,
+        runs_dir=runs_dir,
+    )
+    _orchestrator = create_orchestrator(config, deps=deps)
+
+    print("READY", flush=True)
+
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
+    try:
+        await _orchestrator.run(watch_config=watch_config)
+    except asyncio.CancelledError:
+        # Stage 3 cancels the run task
+        pass
+
+    # Check internal state for Stage 3 indicators
+    if _orchestrator._shutdown_requested:
+        print("SHUTDOWN_REQUESTED", flush=True)
+    else:
+        print(f"shutdown_requested={_orchestrator._shutdown_requested}", flush=True)
+    print(f"sigint_count={_orchestrator._sigint_count}", flush=True)
+
+    sys.stdout.flush()
+    sys.stderr.flush()
+    sys.exit(_orchestrator.exit_code)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        # Check state even after KeyboardInterrupt
+        if _orchestrator is not None:
+            if _orchestrator._shutdown_requested:
+                print("SHUTDOWN_REQUESTED", flush=True)
+            else:
+                print(f"shutdown_requested={_orchestrator._shutdown_requested}", flush=True)
+            print(f"sigint_count={_orchestrator._sigint_count}", flush=True)
+            sys.stdout.flush()
+        sys.exit(130)
+"""
+        )
+
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(REPO_ROOT)
+
+        proc = subprocess.Popen(
+            [sys.executable, str(script), str(tmp_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+        try:
+            ready, output = _wait_for_ready(proc, timeout=10.0)
+            if not ready:
+                stderr = _get_stderr(proc)
+                if proc.poll() is not None:
+                    pytest.fail(
+                        f"Subprocess exited early with code {proc.returncode}. "
+                        f"Output: {output}\nStderr: {stderr}"
+                    )
+                pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
+
+            time.sleep(0.5)
+
+            # Send three SIGINTs for force abort
+            # First two trigger drain and abort; third triggers force abort
+            _send_sigint_and_wait(proc, wait_after=0.3)
+            _send_sigint_and_wait(proc, wait_after=0.3)
+            # Wait a bit for abort to start (which is slow due to monkey-patch)
+            time.sleep(0.5)
+            _send_sigint_and_wait(proc, wait_after=0.3)
+
+            # Wait for exit
+            try:
+                proc.wait(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                stderr = _get_stderr(proc)
+                proc.kill()
+                proc.wait()
+                pytest.fail(
+                    f"Process did not exit after triple SIGINT. Stderr: {stderr}"
+                )
+
+            remaining_stdout = proc.stdout.read() if proc.stdout else ""
+            all_stdout = output + remaining_stdout
+
+            # Force abort should exit with 130
+            if proc.returncode != 130:
+                stderr = _get_stderr(proc)
+                pytest.fail(
+                    f"Expected exit code 130 (force abort), got {proc.returncode}. "
+                    f"Stdout: {all_stdout}\nStderr: {stderr}"
+                )
+
+            # Verify Stage 3 was triggered (shutdown_requested set by _handle_sigint)
+            assert "SHUTDOWN_REQUESTED" in all_stdout, (
+                f"_shutdown_requested not set by Stage 3 _handle_sigint. "
+                f"Stdout: {all_stdout}"
+            )
+
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
