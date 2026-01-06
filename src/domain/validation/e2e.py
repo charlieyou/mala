@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import sys
 import tempfile
 import time
 import uuid
@@ -300,8 +299,15 @@ class E2ERunner:
                 f"{repo_root}{os.pathsep}{pythonpath}" if pythonpath else str(repo_root)
             )
 
+        # Use 'uv run' to ensure dependencies are available in the worktree
+        # context. Using sys.executable directly would fail in worktrees where
+        # the virtual environment hasn't been synced.
         cmd = [
-            sys.executable,
+            "uv",
+            "run",
+            "--directory",
+            str(repo_root),
+            "python",
             "-m",
             "src.cli.main",
             "run",
