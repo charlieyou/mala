@@ -63,6 +63,9 @@ def _validate_run_metadata(
         return False
     if not _REQUIRED_KEYS.issubset(data.keys()):
         return False
+    # Validate run_id is a non-null string
+    if not isinstance(data.get("run_id"), str):
+        return False
     # Validate started_at is a non-null string
     if not isinstance(data.get("started_at"), str):
         return False
@@ -144,16 +147,15 @@ def _parse_timestamp(ts: str) -> float:
         return 0.0
 
 
-def _collect_runs(files: list[Path], limit: int) -> list[dict[str, Any]]:
-    """Collect all valid run metadata, sort by started_at, and return top N.
+def _collect_runs(files: list[Path]) -> list[dict[str, Any]]:
+    """Collect all valid run metadata from files.
 
     Args:
         files: List of JSON file paths.
-        limit: Maximum runs to return after sorting.
 
     Returns:
-        List of run metadata dicts with 'metadata_path' added, sorted by
-        started_at desc then run_id asc, limited to `limit` entries.
+        List of run metadata dicts with 'metadata_path' added.
+        Caller is responsible for sorting and limiting.
     """
     runs: list[dict[str, Any]] = []
     for path in files:
@@ -170,17 +172,19 @@ def _format_null(value: str | float | None) -> str:
     return "-" if value is None else str(value)
 
 
-def _extract_repo_from_path(metadata_path: str) -> str | None:
-    """Extract repo path from metadata file's parent directory name.
+def _get_repo_path(run: dict[str, Any]) -> str | None:
+    """Get repo path from run metadata, preferring stored value.
 
-    The parent directory is encoded as '-home-user-repo' format.
-    Decodes back to '/home/user/repo'.
+    Falls back to the encoded directory name if repo_path is not in metadata.
+    Note: The directory name encoding is lossy, so the fallback may not be exact.
     """
-    parent_name = Path(metadata_path).parent.name
-    if parent_name.startswith("-"):
-        # Decode: -home-user-repo -> /home/user/repo
-        return "/" + parent_name[1:].replace("-", "/")
-    return None
+    # Prefer exact repo_path from metadata if available
+    stored_path = run.get("repo_path")
+    if isinstance(stored_path, str):
+        return stored_path
+    # Fallback: return encoded directory name (not decoded, since encoding is lossy)
+    parent_name = Path(run["metadata_path"]).parent.name
+    return parent_name if parent_name else None
 
 
 @logs_app.command(name="list")
@@ -205,12 +209,13 @@ def list_runs(
             "--limit",
             "-n",
             help="Maximum number of runs to display",
+            min=1,
         ),
     ] = _DEFAULT_LIMIT,
 ) -> None:
     """List recent mala runs."""
     files = _discover_run_files(all_runs)
-    runs = _collect_runs(files, limit=limit)
+    runs = _collect_runs(files)
 
     # Sort by started_at desc, run_id asc for determinism, then take top N
     runs = _sort_runs(runs)[:limit]
@@ -238,8 +243,7 @@ def list_runs(
                 "metadata_path": run["metadata_path"],
             }
             if all_runs:
-                # Extract repo_path from parent directory name
-                entry["repo_path"] = _extract_repo_from_path(run["metadata_path"])
+                entry["repo_path"] = _get_repo_path(run)
             output.append(entry)
         print(json.dumps(output, indent=2))
     else:
@@ -270,8 +274,7 @@ def list_runs(
                 run["metadata_path"],
             ]
             if all_runs:
-                repo_path = _extract_repo_from_path(run["metadata_path"])
-                row.insert(1, _format_null(repo_path))
+                row.insert(1, _format_null(_get_repo_path(run)))
             rows.append(row)
 
         print(tabulate(rows, headers=headers, tablefmt="simple"))

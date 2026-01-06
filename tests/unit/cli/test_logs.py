@@ -184,6 +184,24 @@ class TestValidateRunMetadataKeys:
         }
         assert _validate_run_metadata(data) is False
 
+    def test_validate_rejects_null_run_id(self) -> None:
+        """Verify null run_id is rejected."""
+        data = {
+            "run_id": None,
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        assert _validate_run_metadata(data) is False
+
+    def test_validate_rejects_non_string_run_id(self) -> None:
+        """Verify non-string run_id is rejected."""
+        data = {
+            "run_id": 12345,
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        assert _validate_run_metadata(data) is False
+
 
 class TestNullValueHandling:
     """Tests for null value handling in output."""
@@ -246,7 +264,7 @@ class TestCollectRuns:
     """Tests for _collect_runs function."""
 
     def test_collect_all_valid_runs(self, tmp_path: Path) -> None:
-        """Verify all valid runs are collected (limit applied after sort)."""
+        """Verify all valid runs are collected (limit applied by caller)."""
         # Create 25 valid run files
         files = []
         for i in range(25):
@@ -259,8 +277,8 @@ class TestCollectRuns:
             run_file.write_text(json.dumps(data))
             files.append(run_file)
 
-        # _collect_runs now collects all, limit is applied after sorting
-        runs = _collect_runs(files, limit=20)
+        # _collect_runs collects all valid runs; caller sorts and limits
+        runs = _collect_runs(files)
         assert len(runs) == 25  # All valid runs collected
 
         # Verify limit works when applied to sorted runs
@@ -290,7 +308,7 @@ class TestCollectRuns:
         corrupt_file.write_text("not json")
 
         with patch("sys.stderr", new_callable=StringIO):
-            runs = _collect_runs([valid_file, invalid_file, corrupt_file], limit=20)
+            runs = _collect_runs([valid_file, invalid_file, corrupt_file])
 
         assert len(runs) == 1
         assert runs[0]["run_id"] == "valid-run"
@@ -308,7 +326,7 @@ class TestCollectRuns:
             )
         )
 
-        runs = _collect_runs([run_file], limit=20)
+        runs = _collect_runs([run_file])
         assert len(runs) == 1
         assert runs[0]["metadata_path"] == str(run_file)
 
