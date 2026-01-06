@@ -323,6 +323,60 @@ def test_epic_verify_invokes_verifier(
     }
 
 
+def test_epic_verify_shows_ineligibility_reason(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that epic-verify shows reason when epic is not eligible."""
+    cli = _reload_cli(monkeypatch)
+
+    class IneligibleVerifier:
+        async def verify_epic_with_options(
+            self,
+            epic_id: str,
+            **kwargs: object,
+        ) -> EpicVerificationResult:
+            return EpicVerificationResult(
+                verified_count=0,
+                passed_count=0,
+                failed_count=0,
+                verdicts={},
+                remediation_issues_created=[],
+                ineligibility_reason="3 of 5 child issues still open",
+            )
+
+    class OrchestratorWithIneligibleVerifier:
+        def __init__(self, verifier: IneligibleVerifier) -> None:
+            self.epic_verifier = verifier
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    logs: list[tuple[object, ...]] = []
+
+    def mock_log(*args: object, **kwargs: object) -> None:
+        logs.append(args)
+
+    monkeypatch.setattr(cli, "log", mock_log)
+
+    import src.orchestration.factory
+
+    def make_orch(
+        config: object, **kwargs: object
+    ) -> OrchestratorWithIneligibleVerifier:
+        return OrchestratorWithIneligibleVerifier(IneligibleVerifier())
+
+    monkeypatch.setattr(src.orchestration.factory, "create_orchestrator", make_orch)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.epic_verify(epic_id="epic-1", repo_path=tmp_path)
+
+    assert excinfo.value.exit_code == 1
+    # Check that ineligibility reason was logged
+    log_messages = [str(args) for args in logs]
+    assert any("3 of 5 child issues still open" in msg for msg in log_messages)
+
+
 def test_clean_removes_locks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Test that clean removes lock files but not run metadata."""
     cli = _reload_cli(monkeypatch)

@@ -1018,6 +1018,8 @@ def epic_verify(
 
     if result.verified_count == 0:
         log("○", f"No verification run for epic {epic_id}", Colors.GRAY)
+        if result.ineligibility_reason:
+            log("◐", f"Reason: {result.ineligibility_reason}", Colors.MUTED)
         if not force:
             log("◐", "Use --force to bypass eligibility checks", Colors.MUTED)
         raise typer.Exit(1)

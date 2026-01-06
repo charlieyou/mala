@@ -117,7 +117,9 @@ def make_failing_verification_result(
     )
 
 
-def make_not_eligible_verification_result() -> EpicVerificationResult:
+def make_not_eligible_verification_result(
+    reason: str | None = "2 of 5 child issues still open",
+) -> EpicVerificationResult:
     """Create a result indicating epic not eligible (children still open)."""
     return EpicVerificationResult(
         verified_count=0,
@@ -125,4 +127,5 @@ def make_not_eligible_verification_result() -> EpicVerificationResult:
         failed_count=0,
         verdicts={},
         remediation_issues_created=[],
+        ineligibility_reason=reason,
     )

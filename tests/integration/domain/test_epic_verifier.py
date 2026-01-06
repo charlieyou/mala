@@ -658,6 +658,38 @@ class TestVerifyAndCloseEpic:
         mock_beads.close_async.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_ineligibility_reason_shows_open_children(
+        self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
+    ) -> None:
+        """Should return reason with open children count when epic not eligible."""
+
+        async def mock_run_async(cmd: list[str], **kwargs: object) -> CommandResult:
+            if "epic" in cmd and "status" in cmd:
+                # Return epic with 3 open children out of 5
+                return CommandResult(
+                    command=cmd,
+                    returncode=0,
+                    stdout=json.dumps(
+                        [
+                            {
+                                "epic": {"id": "epic-1"},
+                                "eligible_for_close": False,
+                                "total_children": 5,
+                                "closed_children": 2,
+                            }
+                        ]
+                    ),
+                )
+            return CommandResult(command=cmd, returncode=0, stdout="")
+
+        verifier._runner.run_async = mock_run_async  # type: ignore[method-assign]
+
+        result = await verifier.verify_and_close_epic("epic-1")
+
+        assert result.verified_count == 0
+        assert result.ineligibility_reason == "3 of 5 child issues still open"
+
+    @pytest.mark.asyncio
     async def test_human_override_bypasses_verification(
         self, verifier: EpicVerifier, mock_beads: MagicMock, mock_model: MagicMock
     ) -> None:

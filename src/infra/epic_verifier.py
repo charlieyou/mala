@@ -611,6 +611,41 @@ class EpicVerifier:
         eligible_epics = await self._get_eligible_epics()
         return epic_id in eligible_epics
 
+    async def _get_ineligibility_reason(self, epic_id: str) -> str | None:
+        """Get reason why an epic is not eligible for closure.
+
+        Args:
+            epic_id: The epic ID to check.
+
+        Returns:
+            Human-readable reason if ineligible, None if eligible or status unavailable.
+        """
+        result = await self._runner.run_async(["bd", "epic", "status", "--json"])
+        if not result.ok:
+            return None
+        try:
+            rows = json.loads(result.stdout)
+            if not isinstance(rows, list):
+                return None
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                epic = row.get("epic") or {}
+                if isinstance(epic, dict) and epic.get("id") == epic_id:
+                    if row.get("eligible_for_close"):
+                        return None  # Actually eligible
+                    total = row.get("total_children", 0)
+                    closed = row.get("closed_children", 0)
+                    open_count = total - closed
+                    if open_count > 0:
+                        return f"{open_count} of {total} child issues still open"
+                    # Epic found but not eligible for unknown reason
+                    return "Epic is not eligible for closure"
+            # Epic not found in status output
+            return f"Epic {epic_id} not found"
+        except json.JSONDecodeError:
+            return None
+
     async def verify_and_close_epic(
         self,
         epic_id: str,
@@ -661,12 +696,14 @@ class EpicVerifier:
         verified_count = 0
 
         if require_eligible and not await self._is_epic_eligible(epic_id):
+            reason = await self._get_ineligibility_reason(epic_id)
             return EpicVerificationResult(
                 verified_count=0,
                 passed_count=0,
                 failed_count=0,
                 verdicts={},
                 remediation_issues_created=[],
+                ineligibility_reason=reason,
             )
 
         if human_override:
