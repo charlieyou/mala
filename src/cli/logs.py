@@ -189,6 +189,10 @@ def _collect_runs(files: list[Path], limit: int | None = None) -> list[dict[str,
         List of run metadata dicts with 'metadata_path' added.
         Caller must apply final sort and slice to limit for correctness.
     """
+    # Guard against invalid limit values
+    if limit is not None and limit <= 0:
+        return []
+
     runs: list[dict[str, Any]] = []
     boundary_prefix: str | None = None
 
@@ -196,9 +200,7 @@ def _collect_runs(files: list[Path], limit: int | None = None) -> list[dict[str,
         # If we've reached limit, only continue for files with same timestamp prefix
         if limit is not None and len(runs) >= limit:
             if boundary_prefix is None:
-                # Record the timestamp prefix of the last-collected file
-                boundary_prefix = _extract_timestamp_prefix(runs[-1]["metadata_path"])
-                # Use the filename from metadata_path (which is full path)
+                # Extract timestamp prefix from filename (metadata_path is full path)
                 boundary_prefix = _extract_timestamp_prefix(
                     Path(runs[-1]["metadata_path"]).name
                 )

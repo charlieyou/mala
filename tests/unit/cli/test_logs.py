@@ -305,11 +305,12 @@ class TestCollectRuns:
         files = []
         for i in range(25):
             # Use different timestamps so we can stop at limit
-            timestamp = f"2024-01-{(i % 28) + 1:02d}T{i:02d}-00-00"
+            # Use minutes instead of hours to avoid invalid T24:00:00
+            timestamp = f"2024-01-{(i % 28) + 1:02d}T10-{i:02d}-00"
             run_file = tmp_path / f"{timestamp}_{i:08d}.json"
             data = {
                 "run_id": f"run-{i:02d}",
-                "started_at": f"2024-01-{(i % 28) + 1:02d}T{i:02d}:00:00+00:00",
+                "started_at": f"2024-01-{(i % 28) + 1:02d}T10:{i:02d}:00+00:00",
                 "issues": {},
             }
             run_file.write_text(json.dumps(data))
