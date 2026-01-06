@@ -457,7 +457,8 @@ class ValidationConfig:
         commands: Command definitions. May be partially filled if extending preset.
         run_level_commands: Optional overrides for run-level validation commands.
         coverage: Coverage configuration. None means coverage is disabled.
-        custom_commands: User-defined custom validation commands.
+        custom_commands: User-defined custom validation commands. Execution order
+            follows YAML key order (Python 3.7+ dict insertion order is preserved).
         run_level_custom_commands: Optional run-level override for custom commands.
             None means use repo-level custom_commands. Empty dict {} disables all
             custom commands. Non-empty dict fully replaces (not merges) repo-level.

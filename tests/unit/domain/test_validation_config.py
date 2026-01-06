@@ -8,6 +8,8 @@ Tests the configuration schema for mala.yaml including:
 - ConfigError and PresetNotFoundError exceptions
 """
 
+from pathlib import Path
+
 import pytest
 
 from src.domain.validation.config import (
@@ -649,3 +651,47 @@ class TestCustomCommandConfig:
         """Non-string, non-dict value raises ConfigError."""
         with pytest.raises(ConfigError, match="must be a string or object"):
             CustomCommandConfig.from_value("my_cmd", 123)  # type: ignore[arg-type]
+
+
+class TestCustomCommandsYamlOrderPreservation:
+    """Regression tests for YAML key order preservation in custom_commands.
+
+    Python 3.7+ guarantees dict insertion order, and PyYAML preserves mapping order.
+    These tests ensure custom_commands: {a: ..., b: ..., c: ...} results in
+    execution order a, b, c.
+    """
+
+    def test_custom_commands_yaml_order_preserved(self, tmp_path: Path) -> None:
+        """Custom commands preserve YAML key order through ValidationSpec.
+
+        This is a regression test to ensure that:
+        1. YAML key order is preserved when parsing custom_commands
+        2. ValidationConfig preserves dict insertion order
+        3. build_validation_spec() maintains that order in spec.commands
+        """
+        from src.domain.validation.spec import (
+            CommandKind,
+            ValidationScope,
+            build_validation_spec,
+        )
+
+        # Create YAML with custom commands in specific order
+        config_content = """
+commands:
+  test: "pytest"
+custom_commands:
+  cmd_alpha: "echo alpha"
+  cmd_beta: "echo beta"
+  cmd_gamma: "echo gamma"
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        # Build spec and extract custom commands
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        custom_cmds = [cmd for cmd in spec.commands if cmd.kind == CommandKind.CUSTOM]
+
+        # Verify order matches YAML key order
+        assert len(custom_cmds) == 3, "Expected exactly 3 custom commands"
+        assert custom_cmds[0].name == "cmd_alpha"
+        assert custom_cmds[1].name == "cmd_beta"
+        assert custom_cmds[2].name == "cmd_gamma"
