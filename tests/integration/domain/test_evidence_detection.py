@@ -12,8 +12,6 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-import pytest
-
 from src.domain.quality_gate import QualityGate
 from src.domain.validation.spec import (
     CommandKind,
@@ -99,10 +97,8 @@ class TestEvidenceDetectionCustomCommandsIntegration:
     """Integration test for custom command evidence detection (R5).
 
     This test exercises the full log parse → evidence → gate check path.
-    Tests are marked xfail until T007 implements marker parsing.
     """
 
-    @pytest.mark.xfail(reason="T007: marker parsing not yet implemented")
     def test_detects_custom_command_pass_marker(self, tmp_path: Path) -> None:
         """Custom command pass marker populates custom_commands_ran.
 
@@ -145,7 +141,6 @@ class TestEvidenceDetectionCustomCommandsIntegration:
         assert evidence.custom_commands_ran["import_lint"] is True
         assert evidence.custom_commands_failed.get("import_lint", False) is False
 
-    @pytest.mark.xfail(reason="T007: marker parsing not yet implemented")
     def test_detects_custom_command_fail_marker(self, tmp_path: Path) -> None:
         """Custom command fail marker populates custom_commands_failed.
 
@@ -185,7 +180,6 @@ class TestEvidenceDetectionCustomCommandsIntegration:
         assert evidence.custom_commands_ran["import_lint"] is True
         assert evidence.custom_commands_failed["import_lint"] is True
 
-    @pytest.mark.xfail(reason="T007: marker parsing not yet implemented")
     def test_detects_multiple_custom_commands(self, tmp_path: Path) -> None:
         """Multiple custom commands are tracked independently.
 

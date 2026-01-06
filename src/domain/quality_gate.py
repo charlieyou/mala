@@ -56,6 +56,15 @@ __all__ = [
 # block gate passing if omitted or failed.
 QUALITY_GATE_IGNORED_KINDS: set[CommandKind] = {CommandKind.SETUP}
 
+# Regex for parsing custom command markers from tool_result content.
+# Matches: [custom:<name>:start], [custom:<name>:pass],
+#          [custom:<name>:fail exit=<code>], [custom:<name>:timeout]
+# Group 1: command name (alphanumeric + underscore)
+# Group 2: marker type (start|pass|fail exit=\d+|timeout)
+CUSTOM_MARKER_PATTERN = re.compile(
+    r"\[custom:(\w+):(start|pass|fail exit=\d+|timeout)\]"
+)
+
 
 @dataclass
 class ValidationEvidence:
@@ -195,7 +204,7 @@ def get_required_evidence_kinds(spec: ValidationSpec) -> set[CommandKind]:
 
 def check_evidence_against_spec(
     evidence: ValidationEvidence, spec: ValidationSpec
-) -> tuple[bool, list[str]]:
+) -> tuple[bool, list[str], list[str]]:
     """Check if evidence satisfies a ValidationSpec's requirements.
 
     This is fully spec-driven: evidence requirements and display names are
@@ -205,15 +214,23 @@ def check_evidence_against_spec(
     This is scope-aware: a per-issue spec won't require E2E evidence because
     per-issue specs don't include E2E commands.
 
+    For custom commands (CommandKind.CUSTOM), checks:
+    - "not run" (no markers for spec'd command) → missing
+    - "ran and passed" → OK
+    - "ran and failed" with allow_fail=True → advisory failure (doesn't block gate)
+    - "ran and failed" with allow_fail=False → strict failure (blocks gate)
+
     Args:
         evidence: The parsed validation evidence.
         spec: The ValidationSpec defining what's required.
 
     Returns:
-        Tuple of (passed, missing_commands) where missing_commands lists
-        human-readable names of commands that didn't run.
+        Tuple of (passed, missing_commands, failed_strict) where:
+        - missing_commands lists commands that didn't run
+        - failed_strict lists strict (allow_fail=False) custom commands that failed
     """
     missing: list[str] = []
+    failed_strict: list[str] = []
 
     # Build kind-to-name mapping from spec (spec-driven display names)
     kind_to_name: dict[CommandKind, str] = {}
@@ -222,14 +239,33 @@ def check_evidence_against_spec(
         if cmd.kind not in kind_to_name:
             kind_to_name[cmd.kind] = cmd.name
 
-    # Check each required kind from the spec
+    # Check each required kind from the spec (non-CUSTOM kinds)
     for kind in get_required_evidence_kinds(spec):
+        if kind == CommandKind.CUSTOM:
+            # Custom commands are checked individually by name below
+            continue
         ran = evidence.commands_ran.get(kind, False)
         if not ran:
             name = kind_to_name.get(kind, kind.value)
             missing.append(name)
 
-    return len(missing) == 0, missing
+    # Check custom commands individually by name
+    for cmd in spec.commands:
+        if cmd.kind != CommandKind.CUSTOM:
+            continue
+        name = cmd.name
+        ran = evidence.custom_commands_ran.get(name, False)
+        if not ran:
+            missing.append(name)
+        elif evidence.custom_commands_failed.get(name, False):
+            # Command ran but failed
+            if not cmd.allow_fail:
+                # Strict failure - blocks gate
+                failed_strict.append(name)
+            # Advisory failure (allow_fail=True) - doesn't block gate, just noted
+
+    passed = len(missing) == 0 and len(failed_strict) == 0
+    return passed, missing, failed_strict
 
 
 @dataclass
@@ -367,6 +403,39 @@ class QualityGate:
                 kind_patterns[cmd.kind].append(cmd.detection_pattern)
         return kind_patterns
 
+    def _parse_custom_markers(
+        self,
+        content: str,
+        state: dict[str, tuple[bool, str | None]],
+    ) -> None:
+        """Parse custom command markers from tool result content.
+
+        Updates state in-place to track marker occurrences. For each command name,
+        tracks whether a start marker was seen and the latest terminal marker.
+
+        Latest terminal marker wins: if a command is retried and succeeds, the
+        final "pass" marker overrides earlier "fail" markers.
+
+        Args:
+            content: Tool result content to scan for markers.
+            state: Mutable dict tracking (has_start, latest_terminal) per command name.
+        """
+        for match in CUSTOM_MARKER_PATTERN.finditer(content):
+            name = match.group(1)
+            marker_type = match.group(2)
+
+            # Get or initialize state for this command
+            has_start, terminal = state.get(name, (False, None))
+
+            if marker_type == "start":
+                has_start = True
+            else:
+                # Terminal marker: pass, fail exit=N, timeout
+                # Latest wins (allows retries to override earlier failures)
+                terminal = marker_type
+
+            state[name] = (has_start, terminal)
+
     def _iter_jsonl_entries(
         self, log_path: Path, offset: int = 0
     ) -> Iterator[JsonlEntryProtocol]:
@@ -455,6 +524,10 @@ class QualityGate:
         tool_id_to_info: dict[str, list[tuple[CommandKind, str]]] = {}
         # Track failures per CommandKind (latest status wins for retries of same command)
         kind_failed: dict[CommandKind, tuple[bool, str]] = {}
+        # Track custom command markers: name → (has_start, latest_terminal_marker)
+        # Terminal markers: "pass", "fail exit=N", "timeout"
+        # None means no terminal marker seen yet
+        custom_marker_state: dict[str, tuple[bool, str | None]] = {}
 
         for entry in self._iter_jsonl_entries(log_path, offset):
             for tool_id, command in self._log_provider.extract_bash_commands(entry):
@@ -472,16 +545,12 @@ class QualityGate:
                         # Latest status for this CommandKind wins (allows retries to succeed)
                         kind_failed[kind] = (is_error, cmd_name)
 
-            # Extract tool result content for custom command marker parsing (T007)
-            # Currently a stub that returns empty list; T007 will implement marker parsing
-            # to populate evidence.custom_commands_ran and evidence.custom_commands_failed
+            # Extract tool result content for custom command marker parsing
             for (
                 _tool_use_id,
-                _content,
+                content,
             ) in self._log_provider.extract_tool_result_content(entry):
-                # T007: Parse markers like [custom:<name>:pass] or [custom:<name>:fail exit=N]
-                # and update evidence.custom_commands_ran[name] and evidence.custom_commands_failed[name]
-                pass
+                self._parse_custom_markers(content, custom_marker_state)
 
         # Build failed_commands from kinds that failed, using display names
         # Filter out ignored kinds (e.g., SETUP) so they don't block the gate
@@ -493,6 +562,23 @@ class QualityGate:
                 if is_failed and kind not in QUALITY_GATE_IGNORED_KINDS
             )
         )
+
+        # Populate custom command evidence from marker state
+        # A command "ran" if it has any terminal marker OR has start-only (which is a failure)
+        # A command "failed" if terminal marker is fail/timeout OR has start-only
+        for name, (has_start, terminal) in custom_marker_state.items():
+            if terminal is not None:
+                # Terminal marker present: command ran
+                evidence.custom_commands_ran[name] = True
+                # Check if terminal marker indicates failure
+                evidence.custom_commands_failed[name] = (
+                    terminal.startswith("fail") or terminal == "timeout"
+                )
+            elif has_start:
+                # Start-only without terminal: command ran but failed (incomplete)
+                evidence.custom_commands_ran[name] = True
+                evidence.custom_commands_failed[name] = True
+
         return evidence
 
     def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
@@ -972,15 +1058,21 @@ class QualityGate:
         # Gate 3: Check validation evidence (spec-driven)
         evidence = self.parse_validation_evidence_with_spec(log_path, spec, log_offset)
 
-        passed, missing = check_evidence_against_spec(evidence, spec)
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
 
         # Check for missing validation commands
-        if not passed:
+        if missing:
             failure_reasons.append(
                 f"Missing validation evidence for: {', '.join(missing)}"
             )
 
-        # Check for failed validation commands
+        # Check for strict custom command failures (allow_fail=False)
+        if failed_strict:
+            failure_reasons.append(
+                f"Custom command(s) failed: {', '.join(failed_strict)}"
+            )
+
+        # Check for failed built-in validation commands
         if evidence.failed_commands:
             passed = False
             failure_reasons.append(

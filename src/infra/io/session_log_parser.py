@@ -315,15 +315,64 @@ class SessionLogParser:
 
         Returns:
             List of (tool_use_id, content) tuples for Bash tool_result blocks.
-            Content is concatenated if the result contains multiple text items.
+            Content is converted to string: str used directly, list elements
+            concatenated, other types converted via str().
             Returns empty list if entry is not a user message or has no Bash results.
-
-        Note:
-            This is a stub implementation that returns an empty list. The actual
-            marker parsing logic will be implemented in a subsequent task (T007).
         """
-        # Stub: returns empty list - marker parsing not yet implemented
-        return []
+        # Use typed entry if available
+        if entry.entry is not None:
+            if not isinstance(entry.entry, UserLogEntry):
+                return []
+            results = []
+            for block in entry.entry.message.content:
+                if isinstance(block, ToolResultBlock):
+                    content = self._normalize_content(block.content)
+                    results.append((block.tool_use_id, content))
+            return results
+
+        # Fallback to raw data parsing for backward compatibility
+        return self._extract_tool_result_content_from_data(entry.data)
+
+    def _normalize_content(self, content: object) -> str:
+        """Normalize tool result content to a string.
+
+        Args:
+            content: The raw content from a tool_result block.
+
+        Returns:
+            String representation: str used directly, list elements
+            concatenated (only string elements), other types via str().
+        """
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            # Concatenate string elements from list
+            return "".join(item for item in content if isinstance(item, str))
+        return str(content)
+
+    def _extract_tool_result_content_from_data(
+        self, data: dict[str, Any]
+    ) -> list[tuple[str, str]]:
+        """Extract tool result content from raw entry data (fallback method).
+
+        Args:
+            data: Parsed JSONL entry data.
+
+        Returns:
+            List of (tool_use_id, content) tuples for tool_result blocks.
+        """
+        if data.get("type") != "user":
+            return []
+
+        results = []
+        message = data.get("message", {})
+        for block in message.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                tool_use_id = block.get("tool_use_id", "")
+                raw_content = block.get("content", "")
+                content = self._normalize_content(raw_content)
+                results.append((tool_use_id, content))
+        return results
 
 
 class FileSystemLogProvider:

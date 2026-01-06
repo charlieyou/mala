@@ -14,7 +14,9 @@ import pytest
 from src.infra.tools.command_runner import CommandResult
 from src.domain.validation.spec import (
     CommandKind,
+    ValidationCommand,
     ValidationScope,
+    ValidationSpec,
     build_validation_spec,
 )
 
@@ -1603,10 +1605,11 @@ class TestCheckEvidenceAgainstSpec:
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
-        passed, missing = check_evidence_against_spec(evidence, spec)
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
 
         assert passed is True
         assert len(missing) == 0
+        assert len(failed_strict) == 0
 
     def test_fails_when_missing_required_evidence(
         self,
@@ -1625,10 +1628,11 @@ class TestCheckEvidenceAgainstSpec:
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
-        passed, missing = check_evidence_against_spec(evidence, spec)
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
 
         assert passed is False
         assert "test" in missing
+        assert len(failed_strict) == 0
 
     def test_per_issue_does_not_require_e2e(
         self,
@@ -1648,11 +1652,12 @@ class TestCheckEvidenceAgainstSpec:
         (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
         spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
 
-        passed, missing = check_evidence_against_spec(evidence, spec)
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
 
         assert passed is True
         # E2E should not be in missing list for per-issue scope
         assert "e2e" not in [m.lower() for m in missing]
+        assert len(failed_strict) == 0
 
     def test_respects_disabled_validations(
         self,
@@ -1676,7 +1681,7 @@ class TestCheckEvidenceAgainstSpec:
             disable_validations={"post-validate"},
         )
 
-        passed, missing = check_evidence_against_spec(evidence, spec)
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
 
         assert passed is True
         # test, lint, format, typecheck should not be required when post-validate is disabled
@@ -1684,6 +1689,7 @@ class TestCheckEvidenceAgainstSpec:
         assert "lint" not in missing
         assert "format" not in missing
         assert "typecheck" not in missing
+        assert len(failed_strict) == 0
 
 
 class TestCheckWithResolutionSpec:
@@ -4396,3 +4402,311 @@ class TestExtractedToolNames:
         # Should have "ruff" in failed_commands, not duplicated
         assert evidence.failed_commands.count("ruff") == 1
         assert evidence.failed_commands == ["ruff"]
+
+
+class TestCustomCommandMarkerParsing:
+    """Unit tests for custom command marker parsing and gate logic."""
+
+    def _make_tool_result_entry(
+        self, tool_use_id: str, content: str, is_error: bool = False
+    ) -> str:
+        """Create a user message with a tool_result block."""
+        return json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": content,
+                            "is_error": is_error,
+                        }
+                    ]
+                },
+            }
+        )
+
+    def _make_custom_spec(
+        self, commands: list[tuple[str, str, bool]]
+    ) -> ValidationSpec:
+        """Create a ValidationSpec with only custom commands.
+
+        Args:
+            commands: List of (name, command, allow_fail) tuples.
+        """
+        return ValidationSpec(
+            scope=ValidationScope.PER_ISSUE,
+            commands=[
+                ValidationCommand(
+                    name=name,
+                    command=cmd,
+                    kind=CommandKind.CUSTOM,
+                    allow_fail=allow_fail,
+                )
+                for name, cmd, allow_fail in commands
+            ],
+        )
+
+    def test_parse_custom_marker_pass(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Pass marker sets ran=True and failed=False."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            self._make_tool_result_entry(
+                "toolu_1",
+                "Running import lint...\n[custom:import_lint:pass]\nDone.",
+                is_error=False,
+            )
+            + "\n"
+        )
+
+        spec = self._make_custom_spec(
+            [("import_lint", "python scripts/lint.py", False)]
+        )
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.custom_commands_ran.get("import_lint") is True
+        assert evidence.custom_commands_failed.get("import_lint", False) is False
+
+    def test_parse_custom_marker_fail_with_exit_code(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Fail marker with exit code sets ran=True and failed=True."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            self._make_tool_result_entry(
+                "toolu_1",
+                "[custom:import_lint:fail exit=1]",
+                is_error=True,
+            )
+            + "\n"
+        )
+
+        spec = self._make_custom_spec(
+            [("import_lint", "python scripts/lint.py", False)]
+        )
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.custom_commands_ran.get("import_lint") is True
+        assert evidence.custom_commands_failed.get("import_lint") is True
+
+    def test_parse_custom_marker_timeout(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Timeout marker sets ran=True and failed=True."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            self._make_tool_result_entry(
+                "toolu_1",
+                "[custom:slow_check:timeout]",
+                is_error=True,
+            )
+            + "\n"
+        )
+
+        spec = self._make_custom_spec([("slow_check", "python scripts/slow.py", False)])
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.custom_commands_ran.get("slow_check") is True
+        assert evidence.custom_commands_failed.get("slow_check") is True
+
+    def test_parse_custom_marker_start_only_is_failure(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Start marker without terminal marker is a failure (incomplete run)."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            self._make_tool_result_entry(
+                "toolu_1",
+                "[custom:import_lint:start]\nRunning...",
+                is_error=False,
+            )
+            + "\n"
+        )
+
+        spec = self._make_custom_spec(
+            [("import_lint", "python scripts/lint.py", False)]
+        )
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        # Start-only means command ran but failed (incomplete)
+        assert evidence.custom_commands_ran.get("import_lint") is True
+        assert evidence.custom_commands_failed.get("import_lint") is True
+
+    def test_parse_custom_marker_terminal_without_start_is_ran(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Terminal marker without start marker still counts as ran."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            self._make_tool_result_entry(
+                "toolu_1",
+                "[custom:import_lint:pass]",  # No start marker, just pass
+                is_error=False,
+            )
+            + "\n"
+        )
+
+        spec = self._make_custom_spec(
+            [("import_lint", "python scripts/lint.py", False)]
+        )
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        # Terminal marker implies "ran" even without start marker
+        assert evidence.custom_commands_ran.get("import_lint") is True
+        assert evidence.custom_commands_failed.get("import_lint", False) is False
+
+    def test_parse_custom_marker_latest_wins(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Latest terminal marker wins (retry scenario)."""
+        log_path = tmp_path / "session.jsonl"
+        # First attempt fails, second attempt passes
+        entries = [
+            self._make_tool_result_entry(
+                "toolu_1",
+                "[custom:import_lint:start]\n[custom:import_lint:fail exit=1]",
+                is_error=True,
+            ),
+            self._make_tool_result_entry(
+                "toolu_2",
+                "[custom:import_lint:start]\n[custom:import_lint:pass]",
+                is_error=False,
+            ),
+        ]
+        log_path.write_text("\n".join(entries) + "\n")
+
+        spec = self._make_custom_spec(
+            [("import_lint", "python scripts/lint.py", False)]
+        )
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        # Latest marker (pass) should win
+        assert evidence.custom_commands_ran.get("import_lint") is True
+        assert evidence.custom_commands_failed.get("import_lint", False) is False
+
+    def test_gate_advisory_failure_passes(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Advisory failure (allow_fail=True + failed) passes the gate."""
+        evidence = ValidationEvidence()
+        evidence.custom_commands_ran["import_lint"] = True
+        evidence.custom_commands_failed["import_lint"] = True
+
+        # allow_fail=True means this is an advisory failure
+        spec = self._make_custom_spec([("import_lint", "python scripts/lint.py", True)])
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is True  # Advisory failure doesn't block gate
+        assert len(missing) == 0
+        assert len(failed_strict) == 0  # Not a strict failure
+
+    def test_gate_strict_failure_fails(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Strict failure (allow_fail=False + failed) fails the gate."""
+        evidence = ValidationEvidence()
+        evidence.custom_commands_ran["import_lint"] = True
+        evidence.custom_commands_failed["import_lint"] = True
+
+        # allow_fail=False means this is a strict failure
+        spec = self._make_custom_spec(
+            [("import_lint", "python scripts/lint.py", False)]
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is False  # Strict failure blocks gate
+        assert len(missing) == 0  # Command ran, so not missing
+        assert "import_lint" in failed_strict
+
+    def test_gate_not_run_distinct_from_failed(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Not run (no markers) is distinct from failed (markers present)."""
+        evidence = ValidationEvidence()
+        # Neither ran nor failed - no markers at all for this spec'd command
+
+        spec = self._make_custom_spec(
+            [("import_lint", "python scripts/lint.py", False)]
+        )
+
+        passed, missing, failed_strict = check_evidence_against_spec(evidence, spec)
+
+        assert passed is False  # Missing = gate fails
+        assert "import_lint" in missing  # Listed as missing, not failed
+        assert len(failed_strict) == 0  # Not a failure, just not run
+
+    def test_extract_tool_result_content_list_type(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Content as list is concatenated correctly."""
+        log_path = tmp_path / "session.jsonl"
+        # Content as a list of strings (some tools return this format)
+        entry = json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_1",
+                            "content": [
+                                "Running...\n",
+                                "[custom:test_cmd:pass]\n",
+                                "Done.",
+                            ],
+                            "is_error": False,
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(entry + "\n")
+
+        spec = self._make_custom_spec([("test_cmd", "python test.py", False)])
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        # Should detect marker even when content is a list
+        assert evidence.custom_commands_ran.get("test_cmd") is True
+        assert evidence.custom_commands_failed.get("test_cmd", False) is False
