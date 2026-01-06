@@ -478,6 +478,10 @@ def _apply_custom_commands_override(
 
     For PER_ISSUE scope, always use base (run-level override only applies to RUN_LEVEL).
 
+    For programmatic ValidationConfig instances where _fields_set is empty,
+    a non-None override value is treated as explicit (consistent with
+    _apply_command_overrides behavior).
+
     Args:
         base: Repo-level custom_commands dict.
         override: Run-level custom_commands dict (None if not set or explicitly null).
@@ -491,8 +495,15 @@ def _apply_custom_commands_override(
     if scope == ValidationScope.PER_ISSUE:
         return base
 
-    # For RUN_LEVEL scope, check if run_level_custom_commands was explicitly set
-    if "run_level_custom_commands" not in fields_set:
+    # For RUN_LEVEL scope, check if run_level_custom_commands was explicitly set.
+    # When fields_set is non-empty (from_dict), check membership.
+    # When fields_set is empty (programmatic), fall back to checking if override is not None.
+    if fields_set:
+        is_explicit = "run_level_custom_commands" in fields_set
+    else:
+        is_explicit = override is not None
+
+    if not is_explicit:
         # Not set - use repo-level
         return base
 

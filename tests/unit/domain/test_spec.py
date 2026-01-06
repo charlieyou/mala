@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 
 
+from src.domain.validation.config import CustomCommandConfig
 from src.domain.validation.spec import (
     DEFAULT_COMMAND_TIMEOUT,
     CommandKind,
@@ -19,6 +20,7 @@ from src.domain.validation.spec import (
     ValidationCommand,
     ValidationScope,
     ValidationSpec,
+    _apply_custom_commands_override,
     build_validation_spec,
     classify_change,
 )
@@ -1027,3 +1029,71 @@ custom_commands:
 
         assert len(per_issue_custom) == 2
         assert len(run_level_custom) == 2
+
+
+class TestApplyCustomCommandsOverride:
+    """Tests for _apply_custom_commands_override with programmatic configs."""
+
+    def test_programmatic_override_with_empty_fields_set(self) -> None:
+        """Programmatic override should work even when _fields_set is empty.
+
+        When ValidationConfig is created programmatically (not via from_dict),
+        _fields_set is empty. The override should still apply if the value
+        is non-None, consistent with _apply_command_overrides behavior.
+        """
+        base = {"cmd_a": CustomCommandConfig(command="echo a")}
+        override = {"cmd_b": CustomCommandConfig(command="echo b")}
+
+        # With empty fields_set but non-None override, should use override
+        result = _apply_custom_commands_override(
+            base=base,
+            override=override,
+            fields_set=frozenset(),  # Empty - simulates programmatic creation
+            scope=ValidationScope.RUN_LEVEL,
+        )
+
+        assert result == override
+        assert "cmd_b" in result
+        assert "cmd_a" not in result
+
+    def test_explicit_fields_set_takes_precedence(self) -> None:
+        """When fields_set contains run_level_custom_commands, use it."""
+        base = {"cmd_a": CustomCommandConfig(command="echo a")}
+        override = {"cmd_b": CustomCommandConfig(command="echo b")}
+
+        result = _apply_custom_commands_override(
+            base=base,
+            override=override,
+            fields_set=frozenset(["run_level_custom_commands"]),
+            scope=ValidationScope.RUN_LEVEL,
+        )
+
+        assert result == override
+
+    def test_empty_fields_set_with_none_override_uses_base(self) -> None:
+        """When override is None and fields_set is empty, use base."""
+        base = {"cmd_a": CustomCommandConfig(command="echo a")}
+
+        result = _apply_custom_commands_override(
+            base=base,
+            override=None,
+            fields_set=frozenset(),
+            scope=ValidationScope.RUN_LEVEL,
+        )
+
+        assert result == base
+
+    def test_per_issue_scope_always_uses_base(self) -> None:
+        """PER_ISSUE scope should always use base regardless of override."""
+        base = {"cmd_a": CustomCommandConfig(command="echo a")}
+        override = {"cmd_b": CustomCommandConfig(command="echo b")}
+
+        # Even with override set, PER_ISSUE should use base
+        result = _apply_custom_commands_override(
+            base=base,
+            override=override,
+            fields_set=frozenset(["run_level_custom_commands"]),
+            scope=ValidationScope.PER_ISSUE,
+        )
+
+        assert result == base
