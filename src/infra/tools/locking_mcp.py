@@ -15,7 +15,7 @@ import inspect
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -29,12 +29,12 @@ if TYPE_CHECKING:
     LockEventCallback = Callable[[LockEvent], None | Awaitable[Any]]
 
 from .locking import (
-    canonicalize_path,
-    cleanup_agent_locks,
-    get_lock_holder,
-    release_lock,
-    try_lock,
-    wait_for_lock_async,
+    canonicalize_path as _canonicalize_path,
+    cleanup_agent_locks as _cleanup_agent_locks,
+    get_lock_holder as _get_lock_holder,
+    release_lock as _release_lock,
+    try_lock as _try_lock,
+    wait_for_lock_async as _wait_for_lock_async,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,75 @@ logger = logging.getLogger(__name__)
 # Tool names for hook matching
 LOCK_ACQUIRE_TOOL = "lock_acquire"
 LOCK_RELEASE_TOOL = "lock_release"
+
+
+class LockingBackend(Protocol):
+    """Protocol for locking operations used by MCP tool handlers.
+
+    Enables dependency injection for testing without patching.
+    """
+
+    def canonicalize_path(self, path: str, namespace: str | None) -> str:
+        """Canonicalize a file path for consistent lock identification."""
+        ...
+
+    def try_lock(self, filepath: str, agent_id: str, ns: str | None) -> bool:
+        """Try to acquire a lock without blocking."""
+        ...
+
+    def release_lock(self, filepath: str, agent_id: str, ns: str | None) -> bool:
+        """Release a lock on a file."""
+        ...
+
+    def get_lock_holder(self, filepath: str, ns: str | None) -> str | None:
+        """Get the agent ID holding a lock, or None if unlocked."""
+        ...
+
+    async def wait_for_lock_async(
+        self,
+        filepath: str,
+        agent_id: str,
+        ns: str | None,
+        timeout_seconds: float,
+        poll_interval_ms: int,
+    ) -> bool:
+        """Wait for and acquire a lock asynchronously."""
+        ...
+
+    def cleanup_agent_locks(self, agent_id: str) -> tuple[int, list[str]]:
+        """Release all locks held by an agent."""
+        ...
+
+
+class DefaultLockingBackend:
+    """Production implementation forwarding to locking.py functions."""
+
+    def canonicalize_path(self, path: str, namespace: str | None) -> str:
+        return _canonicalize_path(path, namespace)
+
+    def try_lock(self, filepath: str, agent_id: str, ns: str | None) -> bool:
+        return _try_lock(filepath, agent_id, ns)
+
+    def release_lock(self, filepath: str, agent_id: str, ns: str | None) -> bool:
+        return _release_lock(filepath, agent_id, ns)
+
+    def get_lock_holder(self, filepath: str, ns: str | None) -> str | None:
+        return _get_lock_holder(filepath, ns)
+
+    async def wait_for_lock_async(
+        self,
+        filepath: str,
+        agent_id: str,
+        ns: str | None,
+        timeout_seconds: float,
+        poll_interval_ms: int,
+    ) -> bool:
+        return await _wait_for_lock_async(
+            filepath, agent_id, ns, timeout_seconds, poll_interval_ms
+        )
+
+    def cleanup_agent_locks(self, agent_id: str) -> tuple[int, list[str]]:
+        return _cleanup_agent_locks(agent_id)
 
 
 class LockingToolHandlers:
@@ -65,6 +134,7 @@ def create_locking_mcp_server(
     repo_namespace: str | None,
     emit_lock_event: Callable[[LockEvent], object],
     *,
+    locking_backend: LockingBackend | None = None,
     _return_handlers: bool = False,
 ) -> McpSdkServerConfig | tuple[McpSdkServerConfig, LockingToolHandlers]:
     """Create MCP server config with locking tools bound to agent context.
@@ -76,6 +146,7 @@ def create_locking_mcp_server(
         agent_id: The agent ID for lock ownership.
         repo_namespace: Optional repo namespace for cross-repo disambiguation.
         emit_lock_event: Callback to emit lock events (captured in closures).
+        locking_backend: Optional backend for DI (defaults to DefaultLockingBackend).
         _return_handlers: If True, also return handler objects for testing.
 
     Returns:
@@ -87,9 +158,11 @@ def create_locking_mcp_server(
     # Import LockEvent and LockEventType here to avoid circular imports
     from src.core.models import LockEvent, LockEventType
 
+    backend = locking_backend or DefaultLockingBackend()
+
     def _canonical(filepath: str) -> str:
         """Canonicalize path for consistent deadlock graph nodes."""
-        return canonicalize_path(filepath, repo_namespace)
+        return backend.canonicalize_path(filepath, repo_namespace)
 
     async def _emit_waiting(canonical_path: str) -> None:
         """Emit WAITING event for a blocked file.
@@ -192,8 +265,10 @@ def create_locking_mcp_server(
 
         for canon in sorted_canonical:
             original = seen_canonical[canon]
-            acquired = try_lock(canon, agent_id, repo_namespace)
-            holder = None if acquired else get_lock_holder(canon, repo_namespace)
+            acquired = backend.try_lock(canon, agent_id, repo_namespace)
+            holder = (
+                None if acquired else backend.get_lock_holder(canon, repo_namespace)
+            )
             results.append(
                 {
                     "filepath": original,
@@ -232,7 +307,7 @@ def create_locking_mcp_server(
 
         for canon in blocked_paths:
             task = asyncio.create_task(
-                wait_for_lock_async(
+                backend.wait_for_lock_async(
                     canon,
                     agent_id,
                     repo_namespace,
@@ -272,7 +347,9 @@ def create_locking_mcp_server(
                     if r["canonical"] == canon:
                         r["acquired"] = acquired
                         r["holder"] = (
-                            None if acquired else get_lock_holder(canon, repo_namespace)
+                            None
+                            if acquired
+                            else backend.get_lock_holder(canon, repo_namespace)
                         )
                         break
 
@@ -358,7 +435,7 @@ def create_locking_mcp_server(
 
         if release_all:
             # Release all locks held by this agent
-            count, released_paths = cleanup_agent_locks(agent_id)
+            count, released_paths = backend.cleanup_agent_locks(agent_id)
             return {
                 "content": [
                     {
@@ -396,7 +473,7 @@ def create_locking_mcp_server(
             seen_canonical.add(canon)
             # release_lock returns True if released, False if not held
             # We track the path regardless (idempotent behavior)
-            release_lock(canon, agent_id, repo_namespace)
+            backend.release_lock(canon, agent_id, repo_namespace)
             released.append(fp)
 
         return {

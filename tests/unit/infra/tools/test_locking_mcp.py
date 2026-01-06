@@ -1,7 +1,7 @@
 """Unit tests for MCP tool handlers in locking_mcp.py.
 
-Tests tool input validation, return format, wiring to locking.py, and
-WAITING event emission. Uses mocks for fast execution (<1s each).
+Tests tool input validation, return format, wiring to LockingBackend, and
+WAITING event emission. Uses FakeLockingBackend for fast, observable tests.
 """
 
 from __future__ import annotations
@@ -9,13 +9,13 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from tests.fakes.locking_backend import FakeLockingBackend
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
-    from pathlib import Path
 
     from claude_agent_sdk.types import McpSdkServerConfig
 
@@ -29,6 +29,7 @@ def _create_handlers(
     agent_id: str = "test-agent",
     repo_namespace: str | None = "/test/repo",
     emit_lock_event: Callable[[LockEvent], None | Awaitable[None]] | None = None,
+    locking_backend: FakeLockingBackend | None = None,
 ) -> LockingToolHandlers:
     """Create MCP server and return the handlers object.
 
@@ -36,6 +37,7 @@ def _create_handlers(
     """
     events: list[Any] = []
     emit = emit_lock_event if emit_lock_event else events.append
+    backend = locking_backend or FakeLockingBackend()
 
     from src.infra.tools.locking_mcp import create_locking_mcp_server
 
@@ -43,6 +45,7 @@ def _create_handlers(
         agent_id=agent_id,
         repo_namespace=repo_namespace,
         emit_lock_event=emit,
+        locking_backend=backend,
         _return_handlers=True,
     )
     # _return_handlers=True returns tuple (server, handlers)
@@ -58,8 +61,7 @@ class TestLockAcquireInputValidation:
     @pytest.mark.asyncio
     async def test_empty_filepaths_rejected(self) -> None:
         """Empty filepaths array should return error."""
-        with patch("src.infra.tools.locking_mcp.try_lock", return_value=True):
-            handlers = _create_handlers()
+        handlers = _create_handlers()
 
         result = await handlers.lock_acquire.handler({"filepaths": []})
 
@@ -71,8 +73,7 @@ class TestLockAcquireInputValidation:
     @pytest.mark.asyncio
     async def test_missing_filepaths_rejected(self) -> None:
         """Missing filepaths should return error."""
-        with patch("src.infra.tools.locking_mcp.try_lock", return_value=True):
-            handlers = _create_handlers()
+        handlers = _create_handlers()
 
         result = await handlers.lock_acquire.handler({})
 
@@ -87,8 +88,7 @@ class TestLockReleaseInputValidation:
     @pytest.mark.asyncio
     async def test_mutually_exclusive_params_rejected(self) -> None:
         """Cannot specify both filepaths and all=true."""
-        with patch("src.infra.tools.locking_mcp.try_lock", return_value=True):
-            handlers = _create_handlers()
+        handlers = _create_handlers()
 
         result = await handlers.lock_release.handler(
             {"filepaths": ["file.py"], "all": True}
@@ -101,8 +101,7 @@ class TestLockReleaseInputValidation:
     @pytest.mark.asyncio
     async def test_neither_param_rejected(self) -> None:
         """Must specify either filepaths or all=true."""
-        with patch("src.infra.tools.locking_mcp.try_lock", return_value=True):
-            handlers = _create_handlers()
+        handlers = _create_handlers()
 
         result = await handlers.lock_release.handler({})
 
@@ -113,8 +112,7 @@ class TestLockReleaseInputValidation:
     @pytest.mark.asyncio
     async def test_empty_filepaths_rejected(self) -> None:
         """Empty filepaths array should return error."""
-        with patch("src.infra.tools.locking_mcp.try_lock", return_value=True):
-            handlers = _create_handlers()
+        handlers = _create_handlers()
 
         result = await handlers.lock_release.handler({"filepaths": []})
 
@@ -129,11 +127,8 @@ class TestLockAcquireReturnFormat:
     @pytest.mark.asyncio
     async def test_return_format_all_acquired(self) -> None:
         """Result contains per-file results and all_acquired flag."""
-        with patch("src.infra.tools.locking_mcp.try_lock", return_value=True):
-            handlers = _create_handlers()
-            result = await handlers.lock_acquire.handler(
-                {"filepaths": ["a.py", "b.py"]}
-            )
+        handlers = _create_handlers()
+        result = await handlers.lock_acquire.handler({"filepaths": ["a.py", "b.py"]})
 
         content = json.loads(result["content"][0]["text"])
 
@@ -151,32 +146,15 @@ class TestLockAcquireReturnFormat:
     @pytest.mark.asyncio
     async def test_return_format_partial_acquired(self) -> None:
         """Result shows partial acquisition with holder info."""
+        backend = FakeLockingBackend()
+        backend.try_lock_results["blocked.py"] = False
+        backend.holders["blocked.py"] = "other-agent"
 
-        def mock_try_lock(filepath: str, agent_id: str, namespace: str | None) -> bool:
-            return "blocked" not in filepath
+        handlers = _create_handlers(locking_backend=backend)
 
-        def mock_get_holder(filepath: str, namespace: str | None) -> str | None:
-            if "blocked" in filepath:
-                return "other-agent"
-            return None
-
-        with (
-            patch("src.infra.tools.locking_mcp.try_lock", side_effect=mock_try_lock),
-            patch(
-                "src.infra.tools.locking_mcp.get_lock_holder",
-                side_effect=mock_get_holder,
-            ),
-            patch(
-                "src.infra.tools.locking_mcp.wait_for_lock_async",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-        ):
-            handlers = _create_handlers()
-
-            result = await handlers.lock_acquire.handler(
-                {"filepaths": ["ok.py", "blocked.py"], "timeout_seconds": 0}
-            )
+        result = await handlers.lock_acquire.handler(
+            {"filepaths": ["ok.py", "blocked.py"], "timeout_seconds": 0}
+        )
 
         content = json.loads(result["content"][0]["text"])
 
@@ -191,59 +169,36 @@ class TestLockAcquireReturnFormat:
 
 
 class TestLockAcquireWiring:
-    """Test lock_acquire wiring to locking.py functions."""
+    """Test lock_acquire wiring to LockingBackend."""
 
     @pytest.mark.asyncio
     async def test_calls_try_lock_for_each_file_sorted(self) -> None:
         """try_lock called for each file in sorted canonical order."""
-        try_lock_calls: list[str] = []
+        backend = FakeLockingBackend()
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"  # type: ignore[assignment]
 
-        def mock_try_lock(filepath: str, agent_id: str, namespace: str | None) -> bool:
-            try_lock_calls.append(filepath)
-            return True
+        handlers = _create_handlers(locking_backend=backend)
 
-        with (
-            patch("src.infra.tools.locking_mcp.try_lock", side_effect=mock_try_lock),
-            patch(
-                "src.infra.tools.locking_mcp.canonicalize_path",
-                side_effect=lambda p, ns: f"/{p}",
-            ),
-        ):
-            handlers = _create_handlers()
-
-            await handlers.lock_acquire.handler({"filepaths": ["z.py", "a.py", "m.py"]})
+        await handlers.lock_acquire.handler({"filepaths": ["z.py", "a.py", "m.py"]})
 
         # Should be sorted by canonical path
-        assert try_lock_calls == ["/a.py", "/m.py", "/z.py"]
+        try_lock_paths = [call[0] for call in backend.try_lock_calls]
+        assert try_lock_paths == ["/a.py", "/m.py", "/z.py"]
 
     @pytest.mark.asyncio
     async def test_deduplicates_by_canonical_path(self) -> None:
         """Duplicate canonical paths are deduplicated."""
-        try_lock_calls: list[str] = []
+        backend = FakeLockingBackend()
+        backend.canonicalize_fn = lambda p, ns: "/same/path.py"  # type: ignore[assignment]
 
-        def mock_try_lock(filepath: str, agent_id: str, namespace: str | None) -> bool:
-            try_lock_calls.append(filepath)
-            return True
+        handlers = _create_handlers(locking_backend=backend)
 
-        # Both paths canonicalize to the same path
-        def mock_canonicalize(path: str, namespace: str | None) -> str:
-            return "/same/path.py"
-
-        with (
-            patch("src.infra.tools.locking_mcp.try_lock", side_effect=mock_try_lock),
-            patch(
-                "src.infra.tools.locking_mcp.canonicalize_path",
-                side_effect=mock_canonicalize,
-            ),
-        ):
-            handlers = _create_handlers()
-
-            await handlers.lock_acquire.handler(
-                {"filepaths": ["a.py", "./a.py", "b/../a.py"]}
-            )
+        await handlers.lock_acquire.handler(
+            {"filepaths": ["a.py", "./a.py", "b/../a.py"]}
+        )
 
         # Only one try_lock call despite 3 input paths
-        assert len(try_lock_calls) == 1
+        assert len(backend.try_lock_calls) == 1
 
 
 class TestLockAcquireWaitingEvents:
@@ -256,35 +211,25 @@ class TestLockAcquireWaitingEvents:
 
         events: list[Any] = []
 
-        def mock_try_lock(filepath: str, agent_id: str, namespace: str | None) -> bool:
-            return "free" in filepath
+        backend = FakeLockingBackend()
+        backend.canonicalize_fn = lambda p, ns: f"/canonical/{p}"  # type: ignore[assignment]
+        backend.try_lock_results["/canonical/blocked1.py"] = False
+        backend.try_lock_results["/canonical/blocked2.py"] = False
+        backend.holders["/canonical/blocked1.py"] = "blocker"
+        backend.holders["/canonical/blocked2.py"] = "blocker"
+        backend.wait_for_lock_results["/canonical/blocked1.py"] = False
+        backend.wait_for_lock_results["/canonical/blocked2.py"] = False
 
-        def mock_canonicalize(path: str, namespace: str | None) -> str:
-            return f"/canonical/{path}"
+        handlers = _create_handlers(
+            emit_lock_event=events.append, locking_backend=backend
+        )
 
-        with (
-            patch("src.infra.tools.locking_mcp.try_lock", side_effect=mock_try_lock),
-            patch(
-                "src.infra.tools.locking_mcp.get_lock_holder", return_value="blocker"
-            ),
-            patch(
-                "src.infra.tools.locking_mcp.canonicalize_path",
-                side_effect=mock_canonicalize,
-            ),
-            patch(
-                "src.infra.tools.locking_mcp.wait_for_lock_async",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-        ):
-            handlers = _create_handlers(emit_lock_event=events.append)
-
-            await handlers.lock_acquire.handler(
-                {
-                    "filepaths": ["free.py", "blocked1.py", "blocked2.py"],
-                    "timeout_seconds": 0.1,
-                }
-            )
+        await handlers.lock_acquire.handler(
+            {
+                "filepaths": ["free.py", "blocked1.py", "blocked2.py"],
+                "timeout_seconds": 0.1,
+            }
+        )
 
         # Should have WAITING events for the two blocked files
         waiting_events = [e for e in events if e.event_type == LockEventType.WAITING]
@@ -303,38 +248,30 @@ class TestLockAcquireWaitingEvents:
         """No WAITING events when all locks acquired immediately."""
         events: list[Any] = []
 
-        with patch("src.infra.tools.locking_mcp.try_lock", return_value=True):
-            handlers = _create_handlers(emit_lock_event=events.append)
+        handlers = _create_handlers(emit_lock_event=events.append)
 
-            await handlers.lock_acquire.handler({"filepaths": ["a.py", "b.py"]})
+        await handlers.lock_acquire.handler({"filepaths": ["a.py", "b.py"]})
 
         assert len(events) == 0
 
     @pytest.mark.asyncio
-    async def test_no_waiting_for_reentrant_acquire(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_no_waiting_for_reentrant_acquire(self) -> None:
         """No WAITING events when same agent re-acquires lock it already holds.
 
-        Uses real lock dir (not mocked try_lock) to verify actual idempotent
-        re-acquire behavior: same agent holding a lock can re-acquire it without
-        blocking or emitting WAITING events.
+        Uses FakeLockingBackend to verify idempotent re-acquire behavior:
+        same agent holding a lock can re-acquire it without blocking or
+        emitting WAITING events.
         """
-        # Set up real lock directory
-        lock_dir = tmp_path / "locks"
-        lock_dir.mkdir()
-        monkeypatch.setenv("MALA_LOCK_DIR", str(lock_dir))
-
         events: list[Any] = []
-        test_file = str(tmp_path / "reentrant_test.py")
+        backend = FakeLockingBackend()
+        test_file = "/test/reentrant_test.py"
         handlers = _create_handlers(
             agent_id="reentrant-agent",
-            repo_namespace=str(tmp_path),
             emit_lock_event=events.append,
+            locking_backend=backend,
         )
 
-        # First acquire - creates real lock file
-        # Use short timeout to fail fast if re-entrant behavior regresses
+        # First acquire
         result1 = await handlers.lock_acquire.handler(
             {"filepaths": [test_file], "timeout_seconds": 0.1}
         )
@@ -369,23 +306,16 @@ class TestAsyncEmitLockEvent:
             emit_awaited = True
             events.append(event)
 
-        def mock_try_lock(filepath: str, agent_id: str, namespace: str | None) -> bool:
-            return False  # All blocked to trigger WAITING
+        backend = FakeLockingBackend()
+        backend.try_lock_results["blocked.py"] = False
+        backend.holders["blocked.py"] = "other"
+        backend.wait_for_lock_results["blocked.py"] = False
 
-        with (
-            patch("src.infra.tools.locking_mcp.try_lock", side_effect=mock_try_lock),
-            patch("src.infra.tools.locking_mcp.get_lock_holder", return_value="other"),
-            patch(
-                "src.infra.tools.locking_mcp.wait_for_lock_async",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-        ):
-            handlers = _create_handlers(emit_lock_event=async_emit)
+        handlers = _create_handlers(emit_lock_event=async_emit, locking_backend=backend)
 
-            await handlers.lock_acquire.handler(
-                {"filepaths": ["blocked.py"], "timeout_seconds": 0.1}
-            )
+        await handlers.lock_acquire.handler(
+            {"filepaths": ["blocked.py"], "timeout_seconds": 0.1}
+        )
 
         # Verify async callback was awaited
         assert emit_awaited, "async emit_lock_event was not awaited"
@@ -399,99 +329,69 @@ class TestAsyncEmitLockEvent:
         async def failing_emit(event: LockEvent) -> None:
             raise RuntimeError("emit failed")
 
-        def mock_try_lock(filepath: str, agent_id: str, namespace: str | None) -> bool:
-            return False
+        backend = FakeLockingBackend()
+        backend.try_lock_results["file.py"] = False
+        backend.holders["file.py"] = "other"
+        backend.wait_for_lock_results["file.py"] = False
 
-        with (
-            patch("src.infra.tools.locking_mcp.try_lock", side_effect=mock_try_lock),
-            patch("src.infra.tools.locking_mcp.get_lock_holder", return_value="other"),
-            patch(
-                "src.infra.tools.locking_mcp.wait_for_lock_async",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
-        ):
-            handlers = _create_handlers(emit_lock_event=failing_emit)
+        handlers = _create_handlers(
+            emit_lock_event=failing_emit, locking_backend=backend
+        )
 
-            # Should not raise even though emit callback raises
-            result = await handlers.lock_acquire.handler(
-                {"filepaths": ["file.py"], "timeout_seconds": 0.1}
-            )
+        # Should not raise even though emit callback raises
+        result = await handlers.lock_acquire.handler(
+            {"filepaths": ["file.py"], "timeout_seconds": 0.1}
+        )
 
         # Should return a result (even if emit failed)
         assert "content" in result
 
 
 class TestLockReleaseWiring:
-    """Test lock_release wiring to locking.py functions."""
+    """Test lock_release wiring to LockingBackend."""
 
     @pytest.mark.asyncio
     async def test_release_all_calls_cleanup_agent_locks(self) -> None:
         """all=true calls cleanup_agent_locks and returns released paths."""
-        cleanup_called: list[str] = []
-        mock_released_paths = ["/path/to/file1.py", "/path/to/file2.py"]
+        backend = FakeLockingBackend()
+        backend.cleanup_result = (5, ["/path/to/file1.py", "/path/to/file2.py"])
 
-        def mock_cleanup(agent_id: str) -> tuple[int, list[str]]:
-            cleanup_called.append(agent_id)
-            return 5, mock_released_paths
+        handlers = _create_handlers(locking_backend=backend)
 
-        with patch(
-            "src.infra.tools.locking_mcp.cleanup_agent_locks", side_effect=mock_cleanup
-        ):
-            handlers = _create_handlers()
+        result = await handlers.lock_release.handler({"all": True})
 
-            result = await handlers.lock_release.handler({"all": True})
-
-        assert cleanup_called == ["test-agent"]
+        assert backend.cleanup_calls == ["test-agent"]
         content = json.loads(result["content"][0]["text"])
         assert content["count"] == 5
-        assert content["released"] == mock_released_paths
+        assert content["released"] == ["/path/to/file1.py", "/path/to/file2.py"]
 
     @pytest.mark.asyncio
     async def test_release_specific_calls_release_lock(self) -> None:
         """Specific filepaths call release_lock for each."""
-        release_calls: list[tuple[str, str]] = []
+        backend = FakeLockingBackend()
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"  # type: ignore[assignment]
+        # Pre-acquire locks so release returns True
+        backend.locks["/a.py"] = "test-agent"
+        backend.locks["/b.py"] = "test-agent"
 
-        def mock_release(filepath: str, agent_id: str, namespace: str | None) -> bool:
-            release_calls.append((filepath, agent_id))
-            return True
+        handlers = _create_handlers(locking_backend=backend)
 
-        with (
-            patch("src.infra.tools.locking_mcp.release_lock", side_effect=mock_release),
-            patch(
-                "src.infra.tools.locking_mcp.canonicalize_path",
-                side_effect=lambda p, ns: f"/{p}",
-            ),
-        ):
-            handlers = _create_handlers()
+        result = await handlers.lock_release.handler({"filepaths": ["a.py", "b.py"]})
 
-            result = await handlers.lock_release.handler(
-                {"filepaths": ["a.py", "b.py"]}
-            )
-
-        assert len(release_calls) == 2
+        assert len(backend.release_lock_calls) == 2
         content = json.loads(result["content"][0]["text"])
         assert content["count"] == 2
 
     @pytest.mark.asyncio
     async def test_release_idempotent_behavior(self) -> None:
         """Release succeeds even when lock not held (idempotent)."""
-        release_calls: list[str] = []
+        backend = FakeLockingBackend()
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"  # type: ignore[assignment]
+        # Don't pre-acquire lock, so release_lock returns False
 
-        def mock_release(filepath: str, agent_id: str, namespace: str | None) -> bool:
-            release_calls.append(filepath)
-            return False  # Lock was not held
+        handlers = _create_handlers(locking_backend=backend)
 
-        with (
-            patch("src.infra.tools.locking_mcp.release_lock", side_effect=mock_release),
-            patch(
-                "src.infra.tools.locking_mcp.canonicalize_path",
-                side_effect=lambda p, ns: f"/{p}",
-            ),
-        ):
-            handlers = _create_handlers()
-
-            result = await handlers.lock_release.handler({"filepaths": ["not_held.py"]})
+        result = await handlers.lock_release.handler({"filepaths": ["not_held.py"]})
 
         # Should succeed despite release_lock returning False
         content = json.loads(result["content"][0]["text"])
@@ -505,133 +405,89 @@ class TestLockAcquireAsyncWaiting:
     @pytest.mark.asyncio
     async def test_waits_for_blocked_files(self) -> None:
         """Spawns wait tasks for blocked files."""
-        wait_calls: list[str] = []
+        backend = FakeLockingBackend()
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"  # type: ignore[assignment]
+        backend.try_lock_results["/blocked.py"] = False
+        backend.holders["/blocked.py"] = "other"
 
-        async def mock_wait(
-            filepath: str,
-            agent_id: str,
-            namespace: str | None,
-            timeout_seconds: float,
-            poll_interval_ms: int,
-        ) -> bool:
-            wait_calls.append(filepath)
-            return True
+        handlers = _create_handlers(locking_backend=backend)
 
-        def mock_try_lock(filepath: str, agent_id: str, namespace: str | None) -> bool:
-            return "blocked" not in filepath
+        await handlers.lock_acquire.handler(
+            {
+                "filepaths": ["ok.py", "blocked.py"],
+                "timeout_seconds": 5.0,
+            }
+        )
 
-        with (
-            patch("src.infra.tools.locking_mcp.try_lock", side_effect=mock_try_lock),
-            patch("src.infra.tools.locking_mcp.get_lock_holder", return_value="other"),
-            patch(
-                "src.infra.tools.locking_mcp.wait_for_lock_async", side_effect=mock_wait
-            ),
-            patch(
-                "src.infra.tools.locking_mcp.canonicalize_path",
-                side_effect=lambda p, ns: f"/{p}",
-            ),
-        ):
-            handlers = _create_handlers()
-
-            await handlers.lock_acquire.handler(
-                {
-                    "filepaths": ["ok.py", "blocked.py"],
-                    "timeout_seconds": 5.0,
-                }
-            )
-
-        assert "/blocked.py" in wait_calls
+        wait_paths = [call["filepath"] for call in backend.wait_for_lock_calls]
+        assert "/blocked.py" in wait_paths
 
     @pytest.mark.asyncio
     async def test_non_blocking_mode_skips_waiting(self) -> None:
         """timeout_seconds=0 returns immediately without waiting."""
-        wait_calls: list[str] = []
+        backend = FakeLockingBackend()
+        backend.try_lock_results["file.py"] = False
+        backend.holders["file.py"] = "other"
 
-        with (
-            patch("src.infra.tools.locking_mcp.try_lock", return_value=False),
-            patch("src.infra.tools.locking_mcp.get_lock_holder", return_value="other"),
-            patch(
-                "src.infra.tools.locking_mcp.wait_for_lock_async",
-                new_callable=AsyncMock,
-                side_effect=lambda *a, **k: wait_calls.append("called") or True,
-            ),
-        ):
-            handlers = _create_handlers()
+        handlers = _create_handlers(locking_backend=backend)
 
-            await handlers.lock_acquire.handler(
-                {"filepaths": ["file.py"], "timeout_seconds": 0}
-            )
+        await handlers.lock_acquire.handler(
+            {"filepaths": ["file.py"], "timeout_seconds": 0}
+        )
 
-        assert len(wait_calls) == 0
+        assert len(backend.wait_for_lock_calls) == 0
 
     @pytest.mark.asyncio
     async def test_cancels_pending_waits_on_first_success(self) -> None:
-        """Cancels remaining wait tasks when first completes."""
+        """Cancels remaining wait tasks when first completes.
+
+        This test requires custom async behavior that can't be represented
+        in FakeLockingBackend's simple result dicts. We use a custom backend
+        subclass with async timing behavior.
+        """
         cancel_count = 0
-
-        async def slow_wait(
-            filepath: str,
-            agent_id: str,
-            namespace: str | None,
-            timeout_seconds: float,
-            poll_interval_ms: int,
-        ) -> bool:
-            nonlocal cancel_count
-            try:
-                await asyncio.sleep(10)  # Will be cancelled
-                return False
-            except asyncio.CancelledError:
-                cancel_count += 1
-                raise
-
-        async def fast_wait(
-            filepath: str,
-            agent_id: str,
-            namespace: str | None,
-            timeout_seconds: float,
-            poll_interval_ms: int,
-        ) -> bool:
-            await asyncio.sleep(0.01)
-            return True
-
         call_index = 0
 
-        async def mock_wait(
-            filepath: str,
-            agent_id: str,
-            namespace: str | None,
-            timeout_seconds: float,
-            poll_interval_ms: int,
-        ) -> bool:
-            nonlocal call_index
-            call_index += 1
-            if call_index == 1:
-                return await fast_wait(
-                    filepath, agent_id, namespace, timeout_seconds, poll_interval_ms
-                )
-            return await slow_wait(
-                filepath, agent_id, namespace, timeout_seconds, poll_interval_ms
-            )
+        class TimingBackend(FakeLockingBackend):
+            async def wait_for_lock_async(
+                self,
+                filepath: str,
+                agent_id: str,
+                ns: str | None,
+                timeout_seconds: float,
+                poll_interval_ms: int,
+            ) -> bool:
+                nonlocal call_index, cancel_count
+                call_index += 1
+                if call_index == 1:
+                    # Fast wait - completes quickly
+                    await asyncio.sleep(0.01)
+                    self.locks[filepath] = agent_id
+                    return True
+                else:
+                    # Slow wait - will be cancelled
+                    try:
+                        await asyncio.sleep(10)
+                        return False
+                    except asyncio.CancelledError:
+                        cancel_count += 1
+                        raise
 
-        with (
-            patch("src.infra.tools.locking_mcp.try_lock", return_value=False),
-            patch("src.infra.tools.locking_mcp.get_lock_holder", return_value="other"),
-            patch(
-                "src.infra.tools.locking_mcp.wait_for_lock_async", side_effect=mock_wait
-            ),
-            patch(
-                "src.infra.tools.locking_mcp.canonicalize_path",
-                side_effect=lambda p, ns: f"/{p}",
-            ),
-        ):
-            handlers = _create_handlers()
+        backend = TimingBackend()
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"  # type: ignore[assignment]
+        backend.try_lock_results["/a.py"] = False
+        backend.try_lock_results["/b.py"] = False
+        backend.holders["/a.py"] = "other"
+        backend.holders["/b.py"] = "other"
 
-            await handlers.lock_acquire.handler(
-                {
-                    "filepaths": ["a.py", "b.py"],
-                    "timeout_seconds": 5.0,
-                }
-            )
+        handlers = _create_handlers(locking_backend=backend)
+
+        await handlers.lock_acquire.handler(
+            {
+                "filepaths": ["a.py", "b.py"],
+                "timeout_seconds": 5.0,
+            }
+        )
 
         # The slow wait should have been cancelled
         assert cancel_count == 1
@@ -694,8 +550,9 @@ class TestMCPServerConfiguration:
         """Server has expected name."""
         from src.infra.tools.locking_mcp import create_locking_mcp_server
 
-        with patch("src.infra.tools.locking_mcp.try_lock", return_value=True):
-            result = create_locking_mcp_server("test", None, lambda e: None)
+        result = create_locking_mcp_server(
+            "test", None, lambda e: None, locking_backend=FakeLockingBackend()
+        )
 
         # Without _return_handlers, returns just the server config
         server: McpSdkServerConfig = result  # type: ignore[assignment]
@@ -705,8 +562,9 @@ class TestMCPServerConfiguration:
         """Server exposes an MCP server instance."""
         from src.infra.tools.locking_mcp import create_locking_mcp_server
 
-        with patch("src.infra.tools.locking_mcp.try_lock", return_value=True):
-            result = create_locking_mcp_server("test", None, lambda e: None)
+        result = create_locking_mcp_server(
+            "test", None, lambda e: None, locking_backend=FakeLockingBackend()
+        )
 
         server: McpSdkServerConfig = result  # type: ignore[assignment]
         assert "instance" in server
@@ -714,8 +572,7 @@ class TestMCPServerConfiguration:
 
     def test_handlers_have_both_tools(self) -> None:
         """Handlers object has lock_acquire and lock_release SdkMcpTool objects."""
-        with patch("src.infra.tools.locking_mcp.try_lock", return_value=True):
-            handlers = _create_handlers()
+        handlers = _create_handlers()
 
         assert hasattr(handlers, "lock_acquire")
         assert hasattr(handlers, "lock_release")
