@@ -4037,3 +4037,94 @@ class TestResumeSessionId:
         # Check the session ID was passed correctly
         _, resume_id = factory.with_resume_calls[0]
         assert resume_id == "test-session-123"
+
+    @pytest.mark.asyncio
+    async def test_stale_session_fallback_retries_without_resume(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Stale session error should trigger retry without resume_session_id.
+
+        When _run_lifecycle_loop raises a stale session error (e.g., 404),
+        run_session should clear resume_session_id and retry the loop.
+        """
+        # Track _initialize_session calls to verify resume_session_id changes
+        init_call_count = [0]
+        resume_ids_seen: list[str | None] = []
+
+        fake_client = FakeSDKClient(result_message=make_result_message())
+        factory = FakeSDKClientFactory(fake_client)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=120,
+            prompts=make_test_prompts(),
+            review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
+        )
+
+        runner = AgentSessionRunner(
+            config=config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        # Save original methods
+        original_init = runner._initialize_session
+        original_lifecycle = runner._run_lifecycle_loop
+
+        def mock_init(input: AgentSessionInput, agent_id: str) -> tuple:
+            init_call_count[0] += 1
+            resume_ids_seen.append(input.resume_session_id)
+            return original_init(input, agent_id)
+
+        async def mock_lifecycle(
+            input: AgentSessionInput,
+            session_cfg: object,
+            state: object,
+            tracer: object,
+        ) -> None:
+            # First call with resume - raise stale session error
+            if input.resume_session_id:
+                raise Exception("Session stale-session-id not found (404)")
+            # Second call (without resume) - call original
+            await original_lifecycle(input, session_cfg, state, tracer)
+
+        with (
+            patch.object(runner, "_initialize_session", mock_init),
+            patch.object(runner, "_run_lifecycle_loop", mock_lifecycle),
+        ):
+            input_data = AgentSessionInput(
+                issue_id="test-stale",
+                prompt="Test prompt",
+                resume_session_id="stale-session-id",
+            )
+
+            output = await runner.run_session(input_data)
+
+            # Should have initialized twice (once with resume, once without)
+            assert init_call_count[0] == 2, (
+                f"Expected 2 init calls, got {init_call_count[0]}"
+            )
+            # First call had resume_session_id, second should not
+            assert resume_ids_seen[0] == "stale-session-id"
+            assert resume_ids_seen[1] is None
+            # Session should succeed after retry
+            assert output.success is True

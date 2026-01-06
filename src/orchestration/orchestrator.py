@@ -122,33 +122,6 @@ LOG_FILE_POLL_INTERVAL = 0.5
 ESCALATION_WINDOW_SECONDS = 5.0
 
 
-def _is_stale_session_error(exc: Exception) -> bool:
-    """Check if an exception indicates an unresumable/stale session.
-
-    Catches SDK errors that indicate the session cannot be resumed:
-    - SessionNotFoundError or InvalidSessionError (if SDK defines these)
-    - HTTP 404/410 response errors wrapped in SDK exceptions
-    - Any error with "session" + "not found"/"invalid"/"expired" in message
-
-    Note: This heuristic may catch some auth-related errors if they mention
-    "session expired". This is acceptable as the fallback behavior (retry
-    without resume) is safe for both stale sessions and auth issues.
-    """
-    exc_name = type(exc).__name__
-    # Check for SDK-specific error types
-    if exc_name in ("SessionNotFoundError", "InvalidSessionError"):
-        return True
-
-    # Check error message for stale session indicators
-    msg = str(exc).lower()
-    if "session" in msg:
-        stale_keywords = ("not found", "invalid", "expired", "404", "410")
-        if any(kw in msg for kw in stale_keywords):
-            return True
-
-    return False
-
-
 class MalaOrchestrator:
     """Orchestrates parallel issue processing using Claude Agent SDK.
 
@@ -777,53 +750,9 @@ class MalaOrchestrator:
         try:
             with tracer:
                 tracer.log_input(prompt)
-                try:
-                    output = await runner.run_session(session_input, tracer=tracer)
-                except Exception as e:
-                    # Handle stale session errors when resuming
-                    if resume_session_id and _is_stale_session_error(e):
-                        if self.strict_resume:
-                            # Strict mode: fail the issue
-                            logger.warning(
-                                "Stale session %s for issue %s in strict mode: %s",
-                                resume_session_id,
-                                issue_id,
-                                e,
-                            )
-                            tracer.set_error(f"Stale session error: {e}")
-                            return IssueResult(
-                                issue_id=issue_id,
-                                agent_id=temp_agent_id,
-                                success=False,
-                                summary=f"Stale session error (strict mode): {e}",
-                                duration_seconds=0.0,
-                                session_id=None,
-                                gate_attempts=0,
-                                review_attempts=0,
-                                resolution=None,
-                                session_log_path=None,
-                            )
-                        else:
-                            # Lenient mode: retry without resume_session_id
-                            logger.warning(
-                                "Stale session %s for issue %s, retrying without resume: %s",
-                                resume_session_id,
-                                issue_id,
-                                e,
-                            )
-                            session_input_fresh = AgentSessionInput(
-                                issue_id=issue_id,
-                                prompt=prompt,
-                                baseline_commit=baseline_commit,
-                                issue_description=issue_description,
-                                agent_id=temp_agent_id,
-                                resume_session_id=None,  # Clear resume to start fresh
-                            )
-                            output = await runner.run_session(
-                                session_input_fresh, tracer=tracer
-                            )
-                    else:
-                        raise
+                # Stale session handling is done inside run_session - it will
+                # automatically retry without resume_session_id if SDK rejects it
+                output = await runner.run_session(session_input, tracer=tracer)
                 self._state.agent_ids[issue_id] = output.agent_id
                 if output.success:
                     tracer.set_success(True)

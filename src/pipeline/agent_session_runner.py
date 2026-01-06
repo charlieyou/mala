@@ -88,6 +88,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_stale_session_error(exc: Exception) -> bool:
+    """Check if an exception indicates an unresumable/stale session.
+
+    Catches SDK errors that indicate the session cannot be resumed:
+    - SessionNotFoundError or InvalidSessionError (if SDK defines these)
+    - HTTP 404/410 response errors wrapped in SDK exceptions
+    - Any error with "session" + "not found"/"invalid"/"expired" in message
+
+    Note: This heuristic may catch some auth-related errors if they mention
+    "session expired". This is acceptable as the fallback behavior (retry
+    without resume) is safe for both stale sessions and auth issues.
+    """
+    exc_name = type(exc).__name__
+    if exc_name in ("SessionNotFoundError", "InvalidSessionError"):
+        return True
+
+    msg = str(exc).lower()
+    if "session" in msg:
+        stale_keywords = ("not found", "invalid", "expired", "404", "410")
+        if any(kw in msg for kw in stale_keywords):
+            return True
+
+    return False
+
+
 # Type aliases for callbacks
 GateCheckCallback = Callable[
     [str, Path, "RetryState"],
@@ -830,6 +855,8 @@ class AgentSessionRunner:
         # Only use resume_session_id on first iteration; clear after to avoid resuming
         # exhausted sessions on context pressure restarts
         current_resume_session_id = input.resume_session_id
+        # Track whether we've already retried after a stale session error
+        stale_session_retried = False
 
         while True:
             # Calculate remaining time to enforce overall session timeout
@@ -846,8 +873,6 @@ class AgentSessionRunner:
                 resume_session_id=current_resume_session_id,
             )
             session_cfg, state = self._initialize_session(session_input, agent_id)
-            # Clear resume_session_id after first use to avoid resuming stale sessions
-            current_resume_session_id = None
 
             try:
                 # Check timeout inside try block so on_timeout cleanup runs
@@ -885,6 +910,23 @@ class AgentSessionRunner:
                 state.final_result = state.lifecycle_ctx.final_result
                 break
             except Exception as e:
+                # Handle stale session errors when resuming - retry without resume
+                if (
+                    session_input.resume_session_id
+                    and not stale_session_retried
+                    and _is_stale_session_error(e)
+                ):
+                    # Stale session on first attempt - clear resume and retry once
+                    logger.warning(
+                        "Stale session %s for %s, retrying without resume: %s",
+                        session_input.resume_session_id,
+                        input.issue_id,
+                        e,
+                    )
+                    current_resume_session_id = None
+                    stale_session_retried = True
+                    # Continue loop to retry with fresh session
+                    continue
                 state.lifecycle.on_error(state.lifecycle_ctx, e)
                 state.final_result = state.lifecycle_ctx.final_result
                 break
