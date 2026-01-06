@@ -15,28 +15,6 @@ from src.infra.io.config import (
 )
 
 
-class TestMalaConfigFeatureFlags:
-    """Tests for feature flag derivation."""
-
-    def test_braintrust_enabled_when_api_key_provided(self) -> None:
-        """braintrust_enabled is True when braintrust_api_key is provided."""
-        config = MalaConfig(braintrust_api_key="test-api-key")
-        assert config.braintrust_enabled is True
-
-    def test_feature_flag_explicit_override_preserved(self) -> None:
-        """Explicit feature flag setting is preserved."""
-        # With explicit flag=True but no API key, validation will fail
-        # So we test that the flag is set, not that it's valid
-        config = MalaConfig(
-            braintrust_enabled=True,
-        )
-        assert config.braintrust_enabled is True
-        # But validation should fail due to missing API keys
-        errors = config.validate()
-        assert len(errors) == 1
-        assert any("BRAINTRUST_API_KEY" in e for e in errors)
-
-
 class TestMalaConfigFromEnv:
     """Tests for from_env() classmethod."""
 
@@ -66,15 +44,6 @@ class TestMalaConfigFromEnv:
         # Use validate=False since /custom doesn't exist
         config = MalaConfig.from_env(validate=False)
         assert config.claude_config_dir == Path("/custom/claude")
-
-    def test_from_env_reads_braintrust_api_key(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """from_env() reads BRAINTRUST_API_KEY."""
-        monkeypatch.setenv("BRAINTRUST_API_KEY", "bt-test-key")
-        config = MalaConfig.from_env()
-        assert config.braintrust_api_key == "bt-test-key"
-        assert config.braintrust_enabled is True
 
     def test_from_env_reads_review_timeout(
         self, monkeypatch: pytest.MonkeyPatch
@@ -159,22 +128,12 @@ class TestMalaConfigFromEnv:
         with pytest.raises(ConfigurationError):
             MalaConfig.from_env(validate=False)
 
-    def test_from_env_treats_empty_string_as_none(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """from_env() treats empty string API keys as None."""
-        monkeypatch.setenv("BRAINTRUST_API_KEY", "")
-        config = MalaConfig.from_env()
-        assert config.braintrust_api_key is None
-        assert config.braintrust_enabled is False
-
     def test_from_env_validates_by_default(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """from_env() runs validation by default and raises on errors."""
         # Set relative path which will fail validation
         monkeypatch.setenv("MALA_RUNS_DIR", "relative/path")
-        monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
 
         with pytest.raises(ConfigurationError) as exc_info:
             MalaConfig.from_env()
@@ -194,21 +153,6 @@ class TestMalaConfigFromEnv:
 
 class TestMalaConfigValidate:
     """Tests for validate() method."""
-
-    def test_validate_missing_braintrust_api_key(self) -> None:
-        """validate() reports missing BRAINTRUST_API_KEY when enabled."""
-        config = MalaConfig(braintrust_enabled=True)
-        errors = config.validate()
-        assert any("BRAINTRUST_API_KEY" in e for e in errors)
-
-    def test_validate_api_key_present_passes(self) -> None:
-        """validate() passes when API key is present for enabled feature."""
-        config = MalaConfig(
-            braintrust_api_key="test-key",
-        )
-        errors = config.validate()
-        # Should pass - API keys are present
-        assert not any("BRAINTRUST_API_KEY" in e for e in errors)
 
     def test_validate_custom_absolute_paths(self, tmp_path: Path) -> None:
         """Custom absolute paths pass validation."""
@@ -292,8 +236,8 @@ class TestMalaConfigImmutability:
 
     def test_config_is_hashable(self) -> None:
         """Frozen MalaConfig is hashable and can be used in sets."""
-        config1 = MalaConfig(braintrust_api_key="key1")
-        config2 = MalaConfig(braintrust_api_key="key2")
+        config1 = MalaConfig(review_timeout=100)
+        config2 = MalaConfig(review_timeout=200)
 
         # Should be hashable
         config_set = {config1, config2}
@@ -309,16 +253,12 @@ class TestBuildResolvedConfig:
             runs_dir=tmp_path / "runs",
             lock_dir=tmp_path / "locks",
             claude_config_dir=tmp_path / "claude",
-            braintrust_api_key="bt-key",
         )
         resolved = build_resolved_config(base, None)
 
         assert resolved.runs_dir == tmp_path / "runs"
         assert resolved.lock_dir == tmp_path / "locks"
         assert resolved.claude_config_dir == tmp_path / "claude"
-        assert resolved.braintrust_api_key == "bt-key"
-        assert resolved.braintrust_enabled is True
-        assert resolved.braintrust_disabled_reason is None
 
     def test_cli_overrides_only_default_base(self) -> None:
         """build_resolved_config with default base and CLI overrides."""
@@ -505,46 +445,6 @@ class TestCerberusEnvParsing:
         assert "empty key" in str(exc_info.value).lower()
 
 
-class TestDerivedDisabledReasons:
-    """Tests for braintrust_disabled_reason derivation."""
-
-    def test_braintrust_disabled_reason_no_braintrust_flag(self) -> None:
-        """--no-braintrust flag sets braintrust_disabled_reason."""
-        base = MalaConfig(braintrust_api_key="key")
-        overrides = CLIOverrides(no_braintrust=True)
-        resolved = build_resolved_config(base, overrides)
-
-        assert resolved.braintrust_enabled is False
-        assert resolved.braintrust_disabled_reason == "--no-braintrust"
-
-    def test_braintrust_disabled_reason_missing_api_key(self) -> None:
-        """Missing BRAINTRUST_API_KEY sets appropriate disabled reason."""
-        base = MalaConfig(braintrust_api_key=None)
-        resolved = build_resolved_config(base, None)
-
-        assert resolved.braintrust_enabled is False
-        assert resolved.braintrust_disabled_reason is not None
-        assert "BRAINTRUST_API_KEY" in resolved.braintrust_disabled_reason
-
-    def test_braintrust_disabled_reason_config_disabled(self) -> None:
-        """Config with braintrust_enabled=False and no API key shows disabled by config."""
-        base = MalaConfig(braintrust_api_key=None, braintrust_enabled=False)
-        resolved = build_resolved_config(base, None)
-
-        assert resolved.braintrust_enabled is False
-        # With no API key and enabled=False, reason is "missing API key"
-        assert resolved.braintrust_disabled_reason is not None
-        assert "BRAINTRUST_API_KEY" in resolved.braintrust_disabled_reason
-
-    def test_braintrust_enabled_has_no_disabled_reason(self) -> None:
-        """Enabled braintrust has None disabled_reason."""
-        base = MalaConfig(braintrust_api_key="key")
-        resolved = build_resolved_config(base, None)
-
-        assert resolved.braintrust_enabled is True
-        assert resolved.braintrust_disabled_reason is None
-
-
 class TestResolvedConfigImmutability:
     """Tests for ResolvedConfig frozen dataclass behavior."""
 
@@ -558,8 +458,8 @@ class TestResolvedConfigImmutability:
 
     def test_resolved_config_is_hashable(self) -> None:
         """ResolvedConfig can be used in sets."""
-        base1 = MalaConfig(braintrust_api_key="key1")
-        base2 = MalaConfig(braintrust_api_key="key2")
+        base1 = MalaConfig(review_timeout=100)
+        base2 = MalaConfig(review_timeout=200)
         resolved1 = build_resolved_config(base1, None)
         resolved2 = build_resolved_config(base2, None)
 
@@ -574,7 +474,6 @@ class TestBuildResolvedConfigIdempotency:
         """Same inputs produce identical outputs."""
         base = MalaConfig(
             runs_dir=tmp_path,
-            braintrust_api_key="key",
             cerberus_spawn_args=("--arg",),
         )
         overrides = CLIOverrides(cerberus_env="FOO=bar")

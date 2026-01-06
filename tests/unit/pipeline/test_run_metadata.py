@@ -132,7 +132,6 @@ class TestRunMetadata:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
         )
 
     @pytest.fixture
@@ -183,7 +182,6 @@ class TestRunMetadataSerialization:
             max_issues=10,
             epic_id="epic-1",
             only_ids=["issue-1"],
-            braintrust_enabled=True,
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=True,
@@ -365,7 +363,6 @@ class TestRunMetadataSerialization:
 
             # Verify config
             assert loaded.config.max_agents == 4
-            assert loaded.config.braintrust_enabled is True
             assert loaded.config.review_enabled is True
 
             # Verify issue with validation
@@ -397,8 +394,7 @@ class TestRunMetadataSerialization:
                 max_issues=None,
                 epic_id=None,
                 only_ids=None,
-                braintrust_enabled=False,
-            )
+                )
 
             # Test the full save with DI via runs_dir
             runs_dir = Path(tmpdir) / "-home-user-my-project"
@@ -439,7 +435,6 @@ class TestRunMetadataSerialization:
                     "max_issues": None,
                     "epic_id": None,
                     "only_ids": None,
-                    "braintrust_enabled": False,
                 },
                 "issues": {
                     "old-issue": {
@@ -479,7 +474,6 @@ class TestRunMetadataSerialization:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
         )
         metadata = RunMetadata(
             repo_path=Path("/tmp/repo"),
@@ -519,7 +513,6 @@ class TestRunMetadataSerialization:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
         )
         metadata = RunMetadata(
             repo_path=Path("/tmp"),
@@ -906,9 +899,7 @@ class TestDebugLogging:
 
                 # Verify handler was added
                 src_logger = logging.getLogger("src")
-                handler_names = [
-                    getattr(h, "name", "") for h in src_logger.handlers
-                ]
+                handler_names = [getattr(h, "name", "") for h in src_logger.handlers]
                 assert f"mala_debug_{run_id}" in handler_names
                 assert log_path is not None
                 assert log_path.exists()
@@ -943,8 +934,7 @@ class TestDebugLogging:
                     max_issues=None,
                     epic_id=None,
                     only_ids=None,
-                    braintrust_enabled=False,
-                )
+                        )
                 # Use DI via runs_dir parameter
                 metadata = RunMetadata(
                     repo_path=Path("/tmp/test-repo"),
@@ -955,9 +945,7 @@ class TestDebugLogging:
 
                 # Verify handler was added
                 src_logger = logging.getLogger("src")
-                handler_names = [
-                    getattr(h, "name", "") for h in src_logger.handlers
-                ]
+                handler_names = [getattr(h, "name", "") for h in src_logger.handlers]
                 assert any(name.startswith("mala_debug_") for name in handler_names)
 
                 # Save should clean up the handler
@@ -988,9 +976,7 @@ class TestDebugLogging:
                 )
 
                 src_logger = logging.getLogger("src")
-                handler_names = [
-                    getattr(h, "name", "") for h in src_logger.handlers
-                ]
+                handler_names = [getattr(h, "name", "") for h in src_logger.handlers]
                 assert f"mala_debug_{run_id_1}" in handler_names
 
                 # Configure second handler - should remove first
@@ -1058,8 +1044,7 @@ class TestDebugLogging:
                     max_issues=None,
                     epic_id=None,
                     only_ids=None,
-                    braintrust_enabled=False,
-                )
+                        )
                 # Use DI via runs_dir parameter
                 metadata = RunMetadata(
                     repo_path=Path("/tmp/test-repo"),

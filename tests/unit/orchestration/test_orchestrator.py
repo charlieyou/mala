@@ -391,23 +391,14 @@ class TestOrchestratorInitialization:
         orch = make_orchestrator(repo_path=tmp_path, focus=False)
         assert orch.focus is False
 
-    def test_telemetry_provider_default_null_when_braintrust_disabled(
+    def test_telemetry_provider_default_null(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """Default telemetry provider is NullTelemetryProvider when braintrust disabled."""
+        """Default telemetry provider is NullTelemetryProvider."""
         from src.infra.telemetry import NullTelemetryProvider
 
-        orch = make_orchestrator(repo_path=tmp_path, braintrust_enabled=False)
+        orch = make_orchestrator(repo_path=tmp_path)
         assert isinstance(orch.telemetry_provider, NullTelemetryProvider)
-
-    def test_telemetry_provider_braintrust_when_enabled(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """Telemetry provider is BraintrustProvider when braintrust_enabled=True."""
-        from src.infra.clients.braintrust_integration import BraintrustProvider
-
-        orch = make_orchestrator(repo_path=tmp_path, braintrust_enabled=True)
-        assert isinstance(orch.telemetry_provider, BraintrustProvider)
 
     def test_telemetry_provider_injection(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
@@ -418,8 +409,7 @@ class TestOrchestratorInitialization:
         custom_provider = NullTelemetryProvider()
         orch = make_orchestrator(
             repo_path=tmp_path,
-            braintrust_enabled=True,  # Would default to Braintrust
-            telemetry_provider=custom_provider,  # But we override
+            telemetry_provider=custom_provider,
         )
         # Injected provider should be used, not the default
         assert orch.telemetry_provider is custom_provider
@@ -2892,7 +2882,6 @@ class TestOrchestratorFactory:
         assert config.max_issues is None
         assert config.epic_id is None
         assert config.only_ids is None
-        assert config.braintrust_enabled is None
         assert config.max_gate_retries == 3
         assert config.max_review_retries == 3
         assert config.disable_validations is None

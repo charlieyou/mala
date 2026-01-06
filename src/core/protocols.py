@@ -1322,8 +1322,6 @@ class EventRunConfig:
     max_review_retries: int
     epic_id: str | None = None
     only_ids: list[str] | None = None
-    braintrust_enabled: bool = False
-    braintrust_disabled_reason: str | None = None  # e.g., "add BRAINTRUST_API_KEY..."
     review_enabled: bool = True  # Cerberus code review enabled
     review_disabled_reason: str | None = None
     prioritize_wip: bool = False

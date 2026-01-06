@@ -6,7 +6,6 @@ requires-python = ">=3.11"
 dependencies = [
     "claude-agent-sdk",
     "typer>=0.9.0",
-    "braintrust>=0.0.180",
     "python-dotenv>=1.0.0",
     "pyyaml>=6.0",
     "tabulate>=0.9.0",
@@ -206,7 +205,7 @@ forbidden_modules = ["src.pipeline", "src.domain", "src.orchestration", "src.inf
 # -----------------------------------------------------------------------------
 # Contract 14: SDK confined to infra
 # -----------------------------------------------------------------------------
-# External SDKs (anthropic, braintrust) and their wrappers should only be
+# External SDKs (anthropic) and their wrappers should only be
 # imported by CLI/orchestration/infra layers. Pipeline/domain/core cannot
 # import either SDKs or their wrappers directly.
 
@@ -220,25 +219,9 @@ source_modules = [
 ]
 forbidden_modules = [
     "anthropic",
-    "braintrust",
     "claude_agent_sdk",
     "src.infra.clients.anthropic_client",
-    "src.infra.clients.braintrust_integration",
 ]
-
-# -----------------------------------------------------------------------------
-# Contract 6b: CLI/Orchestration use SDK through wrappers only
-# -----------------------------------------------------------------------------
-# CLI and orchestration can use SDK wrappers but should not directly import
-# the raw SDK packages. This is a future goal - currently cli imports
-# braintrust directly for setup.
-# NOTE: Currently disabled as cli.cli imports braintrust.wrappers directly.
-# Uncomment when code is refactored to use only infra wrappers.
-# [[tool.importlinter.contracts]]
-# name = "CLI uses SDK through wrappers"
-# type = "forbidden"
-# source_modules = ["src.cli", "src.orchestration"]
-# forbidden_modules = ["anthropic", "braintrust"]
 
 # -----------------------------------------------------------------------------
 # Contract 11: Only CLI imports typer
@@ -293,15 +276,13 @@ forbidden_modules = [
 # Contract 14: Telemetry abstraction pure
 # -----------------------------------------------------------------------------
 # Telemetry module should only contain protocols and null implementations.
-# Concrete implementations (Braintrust) are in separate modules.
 
 [[tool.importlinter.contracts]]
 name = "Telemetry abstraction pure"
 type = "forbidden"
 source_modules = ["src.infra.telemetry"]
 forbidden_modules = [
-    "src.infra.clients.braintrust_integration",
-    "braintrust",
+    "src.infra.clients",
 ]
 
 # -----------------------------------------------------------------------------
@@ -515,17 +496,6 @@ ignore_imports = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "Only infra.clients and CLI import braintrust"
-type = "forbidden"
-source_modules = ["src"]
-forbidden_modules = ["braintrust"]
-allow_indirect_imports = true
-ignore_imports = [
-    "src.cli.** -> braintrust",
-    "src.infra.clients.** -> braintrust",
-]
-
-[[tool.importlinter.contracts]]
 name = "Only infra.clients import anthropic"
 type = "forbidden"
 source_modules = ["src"]
@@ -562,7 +532,6 @@ source_modules = ["src"]
 forbidden_modules = ["claude_agent_sdk"]
 allow_indirect_imports = true
 ignore_imports = [
-    "src.infra.clients.braintrust_integration -> claude_agent_sdk",
     "src.infra.sdk_adapter -> claude_agent_sdk",
     "src.infra.epic_verifier -> claude_agent_sdk",
     "src.infra.tools.locking_mcp -> claude_agent_sdk",

@@ -16,8 +16,6 @@ import hashlib
 import os
 import subprocess
 from pathlib import Path
-from types import TracebackType
-from typing import Self
 
 import pytest
 
@@ -54,28 +52,6 @@ def clean_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
     # Remove API key to force OAuth via Claude Code CLI
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    try:
-        import braintrust
-
-        class _NoopSpan:
-            def __enter__(self) -> Self:
-                return self
-
-            def __exit__(
-                self,
-                exc_type: type[BaseException] | None,
-                exc_val: BaseException | None,
-                exc_tb: TracebackType | None,
-            ) -> None:
-                return None
-
-            def log(self, **_kwargs: object) -> None:
-                return None
-
-        braintrust.start_span = lambda *args, **kwargs: _NoopSpan()  # type: ignore[assignment]
-        braintrust.flush = lambda *args, **kwargs: None  # type: ignore[assignment]
-    except Exception:
-        pass
 
 
 @pytest.fixture

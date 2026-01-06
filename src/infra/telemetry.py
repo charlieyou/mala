@@ -6,10 +6,6 @@ Provides a pluggable telemetry system with:
 - TelemetrySpan protocol for span context managers
 - NullTelemetryProvider for testing and opt-out
 
-For production with Braintrust, use BraintrustProvider from braintrust_integration.py:
-
-    from src.infra.clients.braintrust_integration import BraintrustProvider
-
 Usage:
     # For tests or opt-out:
     provider = NullTelemetryProvider()
@@ -67,8 +63,7 @@ class TelemetryProvider(Protocol):
     """Protocol for telemetry providers.
 
     Telemetry providers abstract the underlying tracing system,
-    allowing tests to use a null implementation and production
-    code to use Braintrust or other backends.
+    allowing tests to use a null implementation.
     """
 
     def is_enabled(self) -> bool:

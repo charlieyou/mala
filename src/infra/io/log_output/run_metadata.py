@@ -182,7 +182,6 @@ class RunConfig:
     max_issues: int | None
     epic_id: str | None
     only_ids: list[str] | None
-    braintrust_enabled: bool
     # Retry/review config (optional for backward compatibility)
     max_gate_retries: int | None = None
     max_review_retries: int | None = None
@@ -386,7 +385,6 @@ class RunMetadata:
             max_issues=config_data.get("max_issues"),
             epic_id=config_data.get("epic_id"),
             only_ids=config_data.get("only_ids"),
-            braintrust_enabled=config_data.get("braintrust_enabled", False),
             max_gate_retries=config_data.get("max_gate_retries"),
             max_review_retries=config_data.get("max_review_retries"),
             review_enabled=config_data.get("review_enabled"),

@@ -53,7 +53,6 @@ class ConsoleEventSink(BaseEventSink):
         log_verbose("◦", f"Parallelism: {config.max_agents}", agent_id="run")
         self._log_limits(config)
         self._log_review_config(config)
-        self._log_braintrust_config(config)
         self._log_cli_args(config)
 
     def _log_limits(self, config: EventRunConfig) -> None:
@@ -74,10 +73,6 @@ class ConsoleEventSink(BaseEventSink):
             f"(gate retries: {config.max_gate_retries})",
             agent_id="run",
         )
-
-    def _log_braintrust_config(self, config: EventRunConfig) -> None:
-        braintrust_mode = "enabled" if config.braintrust_enabled else "disabled"
-        log_verbose("◦", f"Braintrust: {braintrust_mode}", agent_id="run")
 
     def _log_cli_args(self, config: EventRunConfig) -> None:
         # Log CLI arguments if available

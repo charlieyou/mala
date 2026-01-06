@@ -24,9 +24,7 @@ if TYPE_CHECKING:
     from src.infra.io.config import MalaConfig, ResolvedConfig
 
 # Bootstrap state: tracks whether bootstrap() has been called
-# These are populated on first access via __getattr__
 _bootstrapped = False
-_braintrust_enabled = False
 
 # Lazy-loaded module cache for SDK-dependent imports
 # These are populated on first access via __getattr__
@@ -61,16 +59,15 @@ def _lazy(name: str) -> Any:  # noqa: ANN401
 
 
 def bootstrap() -> None:
-    """Initialize environment and Braintrust tracing.
+    """Initialize environment.
 
     Must be called before using any CLI commands or importing claude_agent_sdk.
     This function is idempotent - calling it multiple times has no additional effect.
 
     Side effects:
         - Loads environment variables from ~/.config/mala/.env
-        - Sets up Braintrust SDK patching if BRAINTRUST_API_KEY is set
     """
-    global _bootstrapped, _braintrust_enabled
+    global _bootstrapped
 
     if _bootstrapped:
         return
@@ -78,31 +75,7 @@ def bootstrap() -> None:
     # Load environment variables early (needed for config)
     load_user_env()
 
-    # Setup Braintrust tracing BEFORE importing claude_agent_sdk anywhere
-    # This patches the SDK before any imports can use the unpatched version
-    # Note: We use MalaConfig here to read BRAINTRUST_API_KEY consistently
-    # from the environment (which now includes user .env after load_user_env)
-    from src.infra.io.config import MalaConfig
-
-    config = MalaConfig.from_env(validate=False)
-    if config.braintrust_api_key:
-        try:
-            from braintrust.wrappers.claude_agent_sdk import setup_claude_agent_sdk
-
-            setup_claude_agent_sdk(project="mala")
-            _braintrust_enabled = True
-        except ImportError:
-            pass  # braintrust not installed
-
     _bootstrapped = True
-
-
-def is_braintrust_enabled() -> bool:
-    """Return whether Braintrust tracing was successfully enabled.
-
-    Must be called after bootstrap().
-    """
-    return _braintrust_enabled
 
 
 # Import modules that do NOT depend on claude_agent_sdk at module level
@@ -411,7 +384,6 @@ def _build_cli_args_metadata(
     max_review_retries: int,
     epic_override: list[str] | None,
     resolved: ResolvedConfig,
-    braintrust_enabled: bool,
     watch: bool,
     validate_every: int,
 ) -> dict[str, object]:
@@ -426,7 +398,6 @@ def _build_cli_args_metadata(
         max_review_retries: Maximum review retry attempts.
         epic_override: List of epic IDs to override from CLI.
         resolved: Resolved config with effective values.
-        braintrust_enabled: Whether braintrust actually initialized successfully.
         watch: Whether watch mode is enabled.
         validate_every: Run validation after every N issues.
 
@@ -442,7 +413,6 @@ def _build_cli_args_metadata(
         "max_issues": max_issues,
         "max_gate_retries": max_gate_retries,
         "max_review_retries": max_review_retries,
-        "braintrust": braintrust_enabled,
         "review_timeout": resolved.review_timeout,
         "review_spawn_args": list(resolved.cerberus_spawn_args),
         "review_wait_args": list(resolved.cerberus_wait_args),
@@ -461,7 +431,6 @@ def _apply_config_overrides(
     cerberus_wait_args: str | None,
     cerberus_env: str | None,
     max_epic_verification_retries: int | None,
-    braintrust_enabled: bool,
     disable_review: bool,
     deadlock_detection_enabled: bool,
 ) -> ConfigOverrideResult:
@@ -474,7 +443,6 @@ def _apply_config_overrides(
         cerberus_wait_args: Raw string of extra args for wait.
         cerberus_env: Raw string of extra env vars (key=value pairs).
         max_epic_verification_retries: Optional max retries override.
-        braintrust_enabled: Whether braintrust is enabled.
         disable_review: Whether review is disabled.
         deadlock_detection_enabled: Whether deadlock detection is enabled.
 
@@ -490,7 +458,6 @@ def _apply_config_overrides(
         cerberus_env=cerberus_env,
         review_timeout=review_timeout,
         max_epic_verification_retries=max_epic_verification_retries,
-        no_braintrust=not braintrust_enabled,
         disable_review=disable_review,
     )
 
@@ -930,7 +897,6 @@ def run(
         cerberus_wait_args=review_wait_args,
         cerberus_env=review_env,
         max_epic_verification_retries=max_epic_verification_retries,
-        braintrust_enabled=_braintrust_enabled,
         disable_review="review" in (disable_set or set()),
         deadlock_detection_enabled=deadlock_detection,
     )
@@ -953,7 +919,6 @@ def run(
         max_review_retries=max_review_retries,
         epic_override=epic_override,
         resolved=override_result.resolved,
-        braintrust_enabled=_braintrust_enabled,
         watch=watch,
         validate_every=validate_every,
     )
@@ -966,7 +931,6 @@ def run(
         max_issues=max_issues,
         epic_id=epic_id,
         only_ids=only_ids,
-        braintrust_enabled=override_result.resolved.braintrust_enabled,
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         disable_validations=disable_set,

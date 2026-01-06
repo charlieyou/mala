@@ -17,13 +17,11 @@ from src.core.models import EpicVerificationResult
 
 
 def _reload_cli(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
-    monkeypatch.setenv("BRAINTRUST_API_KEY", "")
     # Reset bootstrap state before reloading
     if "src.cli.cli" in sys.modules:
         cli_mod = sys.modules["src.cli.cli"]
         # Reset internal state so bootstrap can run again
         cli_mod._bootstrapped = False  # type: ignore[attr-defined]
-        cli_mod._braintrust_enabled = False  # type: ignore[attr-defined]
         # Clear lazy-loaded modules cache so env changes take effect
         cli_mod._lazy_modules.clear()  # type: ignore[attr-defined]
         return importlib.reload(cli_mod)
@@ -56,42 +54,6 @@ class TestImportSafety:
 
             # Verify the module was imported correctly
             assert hasattr(src.cli.cli, "bootstrap")
-        finally:
-            # Reload modules from disk to restore clean state for other tests
-            for mod_name in deleted_modules:
-                if mod_name in sys.modules:
-                    del sys.modules[mod_name]
-            for mod_name in deleted_modules:
-                importlib.import_module(mod_name)
-
-    def test_import_does_not_setup_braintrust(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Importing src.cli.cli should not set up Braintrust."""
-        # Track which modules we'll delete for cleanup
-        deleted_modules = [
-            mod_name
-            for mod_name in list(sys.modules.keys())
-            if mod_name.startswith("src.cli")
-        ]
-        for mod_name in deleted_modules:
-            del sys.modules[mod_name]
-
-        try:
-            # Set a Braintrust API key that would trigger setup if called
-            monkeypatch.setenv("BRAINTRUST_API_KEY", "test-key")
-
-            # Mock braintrust modules as None so import doesn't fail
-            monkeypatch.setitem(sys.modules, "braintrust", None)
-            monkeypatch.setitem(sys.modules, "braintrust.wrappers", None)
-
-            import src.cli.cli
-
-            # Import should NOT have triggered Braintrust setup
-            # Check observable state: _braintrust_enabled should still be False
-            assert not src.cli.cli._braintrust_enabled, (
-                "Braintrust was enabled at import time - should only happen via bootstrap()"
-            )
         finally:
             # Reload modules from disk to restore clean state for other tests
             for mod_name in deleted_modules:
@@ -1908,7 +1870,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env=None,
             max_epic_verification_retries=None,
-            braintrust_enabled=False,
             disable_review=False,
             deadlock_detection_enabled=False,
         )
@@ -1938,7 +1899,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env=None,
             max_epic_verification_retries=None,
-            braintrust_enabled=False,
             disable_review=False,
             deadlock_detection_enabled=False,
         )
@@ -1966,7 +1926,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env=None,
             max_epic_verification_retries=10,
-            braintrust_enabled=False,
             disable_review=False,
             deadlock_detection_enabled=False,
         )
@@ -1993,7 +1952,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env=None,
             max_epic_verification_retries=None,
-            braintrust_enabled=False,
             disable_review=False,
             deadlock_detection_enabled=False,
         )
@@ -2030,7 +1988,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args="--poll-interval 5",
             cerberus_env=None,
             max_epic_verification_retries=None,
-            braintrust_enabled=False,
             disable_review=False,
             deadlock_detection_enabled=False,
         )
@@ -2057,7 +2014,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env="FOO=bar,BAZ=qux",
             max_epic_verification_retries=None,
-            braintrust_enabled=False,
             disable_review=False,
             deadlock_detection_enabled=False,
         )
@@ -2084,7 +2040,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env=None,
             max_epic_verification_retries=None,
-            braintrust_enabled=False,
             disable_review=False,
             deadlock_detection_enabled=False,
         )
@@ -2111,7 +2066,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args="--poll 'bad",
             cerberus_env=None,
             max_epic_verification_retries=None,
-            braintrust_enabled=False,
             disable_review=False,
             deadlock_detection_enabled=False,
         )
@@ -2138,7 +2092,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env="INVALID_NO_EQUALS",
             max_epic_verification_retries=None,
-            braintrust_enabled=False,
             disable_review=False,
             deadlock_detection_enabled=False,
         )
@@ -2166,7 +2119,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env=None,
             max_epic_verification_retries=None,
-            braintrust_enabled=False,
             disable_review=False,
             deadlock_detection_enabled=True,
         )
@@ -2191,7 +2143,6 @@ class TestApplyConfigOverrides:
             cerberus_wait_args=None,
             cerberus_env=None,
             max_epic_verification_retries=None,
-            braintrust_enabled=False,
             disable_review=False,
             deadlock_detection_enabled=False,
         )

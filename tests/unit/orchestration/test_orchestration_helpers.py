@@ -759,13 +759,11 @@ class TestBuildEventRunConfig:
             max_review_retries=2,
             epic_id="test-epic",
             only_ids=["bd-1", "bd-2"],
-            braintrust_enabled=True,
             review_enabled=True,
             review_disabled_reason=None,
             prioritize_wip=False,
             orphans_only=False,
             cli_args={"verbose": True},
-            braintrust_disabled_reason=None,
         )
 
         assert config.repo_path == str(tmp_path)
@@ -777,7 +775,6 @@ class TestBuildEventRunConfig:
         assert config.epic_id == "test-epic"
         assert config.only_ids is not None
         assert set(config.only_ids) == {"bd-1", "bd-2"}
-        assert config.braintrust_enabled is True
         assert config.review_enabled is True
         assert config.orphans_only is False
 
@@ -796,7 +793,6 @@ class TestBuildRunMetadata:
             max_issues=10,
             epic_id="test-epic",
             only_ids=["bd-1"],
-            braintrust_enabled=True,
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=True,
@@ -811,7 +807,6 @@ class TestBuildRunMetadata:
         assert metadata.config.timeout_minutes == 30
         assert metadata.config.max_issues == 10
         assert metadata.config.epic_id == "test-epic"
-        assert metadata.config.braintrust_enabled is True
         assert metadata.config.max_gate_retries == 3
         assert metadata.config.max_review_retries == 2
         assert metadata.config.review_enabled is True
@@ -826,7 +821,6 @@ class TestBuildRunMetadata:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,

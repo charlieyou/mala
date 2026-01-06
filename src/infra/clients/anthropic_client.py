@@ -2,7 +2,6 @@
 
 This module provides a centralized way to create Anthropic clients with:
 - Consistent configuration from MalaConfig (api_key, base_url)
-- Automatic Braintrust wrapping for observability when available
 
 Usage:
     from src.infra.clients.anthropic_client import create_anthropic_client
@@ -15,7 +14,7 @@ Usage:
         timeout=120.0,
     )
 
-    # Client is ready to use with Braintrust tracing enabled (if configured)
+    # Client is ready to use
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=1024,
@@ -33,13 +32,12 @@ def create_anthropic_client(
     api_key: str | None = None,
     base_url: str | None = None,
     timeout: float | None = None,
-) -> Any:  # noqa: ANN401 - Return type is dynamic (Anthropic or wrapped client)
-    """Create an Anthropic client with consistent configuration and tracing.
+) -> Any:  # noqa: ANN401 - Return type is dynamic (Anthropic client)
+    """Create an Anthropic client with consistent configuration.
 
     This factory function centralizes Anthropic client creation to ensure:
     1. Configuration is applied consistently (api_key, base_url)
-    2. Braintrust tracing is automatically enabled when available
-    3. Error handling and telemetry work uniformly across components
+    2. Error handling works uniformly across components
 
     Args:
         api_key: Anthropic API key. If not provided, the client will use
@@ -49,8 +47,7 @@ def create_anthropic_client(
         timeout: Optional timeout in seconds for API requests.
 
     Returns:
-        An Anthropic client instance, optionally wrapped with Braintrust
-        tracing if available.
+        An Anthropic client instance.
 
     Raises:
         RuntimeError: If the anthropic package is not installed.
@@ -67,8 +64,6 @@ def create_anthropic_client(
             base_url="https://proxy.example.com/v1",
             timeout=60.0,
         )
-
-        # Braintrust tracing is automatic when BRAINTRUST_API_KEY is set
     """
     try:
         from anthropic import Anthropic  # type: ignore[import-untyped]
@@ -86,16 +81,5 @@ def create_anthropic_client(
     if timeout is not None:
         client_kwargs["timeout"] = timeout
 
-    # Create the base client
-    client = Anthropic(**client_kwargs)
-
-    # Wrap with Braintrust for observability (no-op if Braintrust not configured)
-    # This provides automatic tracing of all LLM calls when BRAINTRUST_API_KEY is set
-    try:
-        from braintrust import wrap_anthropic
-
-        client = wrap_anthropic(client)
-    except ImportError:
-        pass  # Braintrust not installed, proceed without tracing
-
-    return client
+    # Create and return the client
+    return Anthropic(**client_kwargs)

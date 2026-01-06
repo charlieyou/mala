@@ -60,7 +60,6 @@ class OrchestratorConfig:
         max_issues: Maximum issues to process (None = unlimited).
         epic_id: Only process tasks under this epic.
         only_ids: List of issue IDs to process exclusively.
-        braintrust_enabled: Enable Braintrust tracing.
         max_gate_retries: Maximum quality gate retry attempts per issue.
         max_review_retries: Maximum code review retry attempts per issue.
         disable_validations: Set of validation types to disable.
@@ -81,7 +80,6 @@ class OrchestratorConfig:
     max_issues: int | None = None
     epic_id: str | None = None
     only_ids: list[str] | None = None
-    braintrust_enabled: bool | None = None
     max_gate_retries: int = 3
     max_review_retries: int = 3
     disable_validations: set[str] | None = None
@@ -136,10 +134,8 @@ class _DerivedConfig:
     """
 
     timeout_seconds: int
-    braintrust_enabled: bool
     disabled_validations: set[str]
     review_disabled_reason: str | None = None
-    braintrust_disabled_reason: str | None = None
 
 
 @dataclass(frozen=True)

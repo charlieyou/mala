@@ -1,7 +1,6 @@
 """Environment configuration and loading for mala.
 
-Centralizes config paths and dotenv loading. Import this module early
-to ensure environment variables are set before Braintrust setup.
+Centralizes config paths and dotenv loading.
 """
 
 import os
@@ -86,7 +85,6 @@ def load_user_env() -> None:
     """Load environment from user config directory.
 
     Loads ${USER_CONFIG_DIR}/.env (typically ~/.config/mala/.env).
-    Call this early for Braintrust API key setup before SDK imports.
     """
     load_dotenv(dotenv_path=USER_CONFIG_DIR / ".env")
 

@@ -1,7 +1,7 @@
 """Infrastructure layer for mala.
 
 This package contains all infrastructure concerns:
-- clients/: External service clients (Anthropic, Beads CLI, Braintrust, Cerberus)
+- clients/: External service clients (Anthropic, Beads CLI, Cerberus)
 - io/: I/O utilities (config, event sink, logging, session log parsing)
 - tools/: Command execution, environment, and locking utilities
 - hooks/: Claude Agent SDK hooks (security, caching, locking)

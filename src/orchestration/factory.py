@@ -31,7 +31,6 @@ import os
 import shutil
 from typing import TYPE_CHECKING, cast
 
-from src.infra.tools.env import USER_CONFIG_DIR
 
 # Import shared types from types module (breaks circular import)
 from .types import (
@@ -92,39 +91,18 @@ def _derive_config(
     )
     timeout_seconds = effective_timeout * 60
 
-    # Derive feature flags from mala_config if not explicitly set
-    if config.braintrust_enabled is not None:
-        braintrust_enabled = config.braintrust_enabled
-    else:
-        braintrust_enabled = mala_config.braintrust_enabled
-
     # Build disabled validations set
     disabled_validations = (
         set(config.disable_validations) if config.disable_validations else set()
     )
 
-    # Compute braintrust disabled reason
-    braintrust_disabled_reason: str | None = None
-    if not braintrust_enabled:
-        if config.cli_args and config.cli_args.get("no_braintrust"):
-            braintrust_disabled_reason = "--no-braintrust"
-        elif not mala_config.braintrust_api_key:
-            braintrust_disabled_reason = (
-                f"add BRAINTRUST_API_KEY to {USER_CONFIG_DIR}/.env"
-            )
-        else:
-            braintrust_disabled_reason = "disabled by config"
-
     logger.debug(
-        "Derived config: braintrust=%s timeout=%ds",
-        braintrust_enabled,
+        "Derived config: timeout=%ds",
         timeout_seconds,
     )
     return _DerivedConfig(
         timeout_seconds=timeout_seconds,
-        braintrust_enabled=braintrust_enabled,
         disabled_validations=disabled_validations,
-        braintrust_disabled_reason=braintrust_disabled_reason,
     )
 
 
@@ -202,7 +180,6 @@ def _build_dependencies(
     from src.core.models import RetryConfig
     from src.domain.quality_gate import QualityGate
     from src.infra.clients.beads_client import BeadsClient
-    from src.infra.clients.braintrust_integration import BraintrustProvider
     from src.infra.clients.cerberus_review import DefaultReviewer
     from src.infra.epic_verifier import ClaudeEpicVerificationModel, EpicVerifier
     from src.infra.io.console_sink import ConsoleEventSink
@@ -294,8 +271,6 @@ def _build_dependencies(
     telemetry_provider: TelemetryProvider
     if deps is not None and deps.telemetry_provider is not None:
         telemetry_provider = deps.telemetry_provider
-    elif derived.braintrust_enabled:
-        telemetry_provider = cast("TelemetryProvider", BraintrustProvider())
     else:
         telemetry_provider = cast("TelemetryProvider", NullTelemetryProvider())
 

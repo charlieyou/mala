@@ -33,13 +33,9 @@ def pytest_configure(config: pytest.Config) -> None:
     """Configure test environment before collection.
 
     Sets up environment variables to:
-    - Disable Braintrust tracing
     - Redirect run metadata to /tmp to avoid polluting ~/.config/mala/runs/
     - Redirect Claude SDK logs to /tmp to avoid polluting ~/.claude/projects/
     """
-    # Remove BRAINTRUST_API_KEY to disable Braintrust tracing
-    os.environ.pop("BRAINTRUST_API_KEY", None)
-
     # Disable debug logging in tests for better test isolation
     # (avoids disk I/O and global logging state changes in each test)
     os.environ["MALA_DISABLE_DEBUG_LOG"] = "1"
@@ -103,7 +99,6 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
         max_issues: int | None = None,
         epic_id: str | None = None,
         only_ids: list[str] | None = None,
-        braintrust_enabled: bool | None = None,
         max_gate_retries: int = 3,
         max_review_retries: int = 3,
         disable_validations: set[str] | None = None,
@@ -135,7 +130,6 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
             max_issues=max_issues,
             epic_id=epic_id,
             only_ids=only_ids,
-            braintrust_enabled=braintrust_enabled,
             max_gate_retries=max_gate_retries,
             max_review_retries=max_review_retries,
             disable_validations=disable_validations,

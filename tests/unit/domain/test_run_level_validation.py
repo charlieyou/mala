@@ -91,7 +91,6 @@ class TestRunLevelValidation:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
         )
         run_metadata = RunMetadata(tmp_path, run_config, "test")
 
@@ -136,7 +135,6 @@ class TestRunLevelValidation:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
         )
         run_metadata = RunMetadata(tmp_path, run_config, "test")
 
@@ -209,7 +207,6 @@ class TestRunLevelValidation:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
         )
         run_metadata = RunMetadata(tmp_path, run_config, "test")
 
@@ -296,7 +293,6 @@ class TestRunLevelValidation:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
         )
         run_metadata = RunMetadata(tmp_path, run_config, "test")
 
@@ -449,7 +445,6 @@ class TestRunLevelValidation:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
         )
         run_metadata = RunMetadata(tmp_path, run_config, "test")
 
@@ -522,7 +517,6 @@ class TestRunLevelValidation:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
         )
         run_metadata = RunMetadata(tmp_path, run_config, "test")
 
@@ -599,7 +593,6 @@ class TestRunLevelValidation:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
         )
         run_metadata = RunMetadata(tmp_path, run_config, "test")
 
@@ -681,7 +674,6 @@ class TestRunLevelValidation:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
         )
         run_metadata = RunMetadata(tmp_path, run_config, "test")
 
@@ -764,7 +756,6 @@ class TestRunLevelValidation:
             max_issues=None,
             epic_id=None,
             only_ids=None,
-            braintrust_enabled=False,
         )
         run_metadata = RunMetadata(tmp_path, run_config, "test")
 

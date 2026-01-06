@@ -8,7 +8,6 @@ Environment Variables:
     MALA_RUNS_DIR: Directory for run metadata files (default: ~/.config/mala/runs)
     MALA_LOCK_DIR: Directory for file locks (default: /tmp/mala-locks)
     CLAUDE_CONFIG_DIR: Claude SDK config directory (default: ~/.claude)
-    BRAINTRUST_API_KEY: Braintrust API key (required when braintrust_enabled=True)
     MALA_REVIEW_TIMEOUT: Timeout in seconds for review-gate wait
     MALA_CERBERUS_SPAWN_ARGS: Extra args for `review-gate spawn-code-review`
     MALA_CERBERUS_WAIT_ARGS: Extra args for `review-gate wait`
@@ -26,8 +25,6 @@ import os
 import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
-
-from src.infra.tools.env import USER_CONFIG_DIR
 
 
 def parse_cerberus_args(raw: str | None, *, source: str) -> list[str]:
@@ -166,10 +163,6 @@ class MalaConfig:
             Env: MALA_LOCK_DIR (default: /tmp/mala-locks)
         claude_config_dir: Claude SDK configuration directory.
             Env: CLAUDE_CONFIG_DIR (default: ~/.claude)
-        braintrust_api_key: Braintrust API key for tracing.
-            Env: BRAINTRUST_API_KEY (required when braintrust_enabled=True)
-        braintrust_enabled: Whether Braintrust tracing is enabled.
-            Derived from braintrust_api_key presence.
         review_enabled: Whether automated code review is enabled.
             Defaults to True.
         review_timeout: Timeout in seconds for review operations.
@@ -208,12 +201,6 @@ class MalaConfig:
     lock_dir: Path = field(default_factory=lambda: Path("/tmp/mala-locks"))
     claude_config_dir: Path = field(default_factory=lambda: Path.home() / ".claude")
 
-    # API keys (optional)
-    braintrust_api_key: str | None = None
-
-    # Feature flags (derived from API key presence)
-    braintrust_enabled: bool = field(default=False)
-
     # Review settings
     review_enabled: bool = field(default=True)
     review_timeout: int = field(default=1200)
@@ -236,7 +223,7 @@ class MalaConfig:
     deadlock_detection_enabled: bool = field(default=True)
 
     def __post_init__(self) -> None:
-        """Derive feature flags from API key presence.
+        """Normalize mutable fields to immutable types.
 
         Since the dataclass is frozen, we use object.__setattr__ to set
         derived fields after initialization.
@@ -257,10 +244,6 @@ class MalaConfig:
         elif isinstance(self.cerberus_env, list):
             object.__setattr__(self, "cerberus_env", tuple(self.cerberus_env))
 
-        # Derive braintrust_enabled from api key presence if not explicitly set
-        if not self.braintrust_enabled and self.braintrust_api_key:
-            object.__setattr__(self, "braintrust_enabled", True)
-
     @classmethod
     def from_env(cls, *, validate: bool = True) -> MalaConfig:
         """Create MalaConfig by loading from environment variables with validation.
@@ -269,7 +252,6 @@ class MalaConfig:
             - MALA_RUNS_DIR: Run metadata directory (optional)
             - MALA_LOCK_DIR: Lock files directory (optional)
             - CLAUDE_CONFIG_DIR: Claude SDK config directory (optional)
-            - BRAINTRUST_API_KEY: Braintrust API key (optional)
             - MALA_REVIEW_TIMEOUT: Review timeout in seconds (optional)
             - MALA_TRACK_REVIEW_ISSUES: Create beads issues for P2/P3 findings (optional)
             - MALA_CERBERUS_SPAWN_ARGS: Extra args for review-gate spawn (optional)
@@ -291,12 +273,8 @@ class MalaConfig:
             ConfigurationError: If validate=True and configuration is invalid.
 
         Example:
-            # Set environment variables first
-            os.environ["BRAINTRUST_API_KEY"] = "my-key"
-
             # Load configuration (validates by default)
             config = MalaConfig.from_env()
-            assert config.braintrust_enabled is True
 
             # Skip validation if needed
             config = MalaConfig.from_env(validate=False)
@@ -311,9 +289,6 @@ class MalaConfig:
         claude_config_dir = Path(
             os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))
         )
-
-        # Get optional API keys (treat empty strings as None)
-        braintrust_api_key = os.environ.get("BRAINTRUST_API_KEY") or None
 
         review_timeout = None
         review_timeout_raw = os.environ.get("MALA_REVIEW_TIMEOUT")
@@ -378,7 +353,6 @@ class MalaConfig:
             runs_dir=runs_dir,
             lock_dir=lock_dir,
             claude_config_dir=claude_config_dir,
-            braintrust_api_key=braintrust_api_key,
             review_timeout=review_timeout if review_timeout is not None else 1200,
             cerberus_bin_path=cerberus_bin_path,
             cerberus_spawn_args=tuple(cerberus_spawn_args),
@@ -404,7 +378,6 @@ class MalaConfig:
         """Validate configuration and return list of errors.
 
         Checks:
-            - Feature flags have required API keys
             - Paths are absolute
 
         Note: Parent directories are not checked since ensure_directories()
@@ -414,17 +387,10 @@ class MalaConfig:
             List of error messages. Empty list if configuration is valid.
 
         Example:
-            config = MalaConfig(braintrust_enabled=True)  # Missing API key
-            errors = config.validate()
-            # errors = ["braintrust_enabled=True requires BRAINTRUST_API_KEY"]
+            config = MalaConfig()
+            errors = config.validate()  # Returns [] if paths are valid
         """
         errors: list[str] = []
-
-        # Check required API keys for enabled features
-        if self.braintrust_enabled and not self.braintrust_api_key:
-            errors.append(
-                "braintrust_enabled=True requires BRAINTRUST_API_KEY to be set"
-            )
 
         # Validate paths are absolute (recommended for deterministic behavior)
         if not self.runs_dir.is_absolute():
@@ -463,7 +429,6 @@ class CLIOverrides:
         cerberus_env: Raw string of extra env vars (JSON or KEY=VALUE,KEY=VALUE).
         review_timeout: Override for review timeout in seconds.
         max_epic_verification_retries: Override for max epic verification retries.
-        no_braintrust: Whether --no-braintrust flag was passed.
         disable_review: Whether 'review' is in --disable-validations.
     """
 
@@ -472,7 +437,6 @@ class CLIOverrides:
     cerberus_env: str | None = None
     review_timeout: int | None = None
     max_epic_verification_retries: int | None = None
-    no_braintrust: bool = False
     disable_review: bool = False
 
 
@@ -488,8 +452,6 @@ class ResolvedConfig:
         runs_dir: Directory where run metadata files are stored.
         lock_dir: Directory for file locks during parallel processing.
         claude_config_dir: Claude SDK configuration directory.
-        braintrust_api_key: Braintrust API key for tracing.
-        braintrust_enabled: Whether Braintrust tracing is enabled.
         review_enabled: Whether automated code review is enabled.
         review_timeout: Timeout in seconds for review operations.
         cerberus_bin_path: Path to cerberus bin/ directory.
@@ -500,19 +462,12 @@ class ResolvedConfig:
         llm_api_key: API key for LLM calls.
         llm_base_url: Base URL for LLM API.
         max_epic_verification_retries: Maximum retries for epic verification loop.
-        braintrust_disabled_reason: Reason braintrust is disabled, if applicable.
     """
 
     # Paths
     runs_dir: Path
     lock_dir: Path
     claude_config_dir: Path
-
-    # API keys
-    braintrust_api_key: str | None
-
-    # Feature flags
-    braintrust_enabled: bool
 
     # Review settings
     review_enabled: bool
@@ -529,9 +484,6 @@ class ResolvedConfig:
 
     # Epic verification
     max_epic_verification_retries: int
-
-    # Derived disabled reasons
-    braintrust_disabled_reason: str | None
 
 
 def build_resolved_config(
@@ -598,28 +550,13 @@ def build_resolved_config(
         else base_config.max_epic_verification_retries
     )
 
-    # Determine if features are enabled after CLI overrides
-    braintrust_enabled = base_config.braintrust_enabled and not overrides.no_braintrust
+    # Determine if review is enabled after CLI overrides
     review_enabled = base_config.review_enabled and not overrides.disable_review
-
-    # Compute disabled reasons
-    braintrust_disabled_reason: str | None = None
-    if not braintrust_enabled:
-        if overrides.no_braintrust:
-            braintrust_disabled_reason = "--no-braintrust"
-        elif not base_config.braintrust_api_key:
-            braintrust_disabled_reason = (
-                f"add BRAINTRUST_API_KEY to {USER_CONFIG_DIR}/.env"
-            )
-        else:
-            braintrust_disabled_reason = "disabled by config"
 
     return ResolvedConfig(
         runs_dir=base_config.runs_dir,
         lock_dir=base_config.lock_dir,
         claude_config_dir=base_config.claude_config_dir,
-        braintrust_api_key=base_config.braintrust_api_key,
-        braintrust_enabled=braintrust_enabled,
         review_enabled=review_enabled,
         review_timeout=review_timeout,
         cerberus_bin_path=base_config.cerberus_bin_path,
@@ -630,5 +567,4 @@ def build_resolved_config(
         llm_api_key=base_config.llm_api_key,
         llm_base_url=base_config.llm_base_url,
         max_epic_verification_retries=max_epic_verification_retries,
-        braintrust_disabled_reason=braintrust_disabled_reason,
     )

@@ -186,7 +186,6 @@ class MalaOrchestrator:
         self.max_issues = orch_config.max_issues
         self.epic_id = orch_config.epic_id
         self.only_ids = orch_config.only_ids
-        self.braintrust_enabled = derived.braintrust_enabled
         self.max_gate_retries = orch_config.max_gate_retries
         self.max_review_retries = orch_config.max_review_retries
         self.disable_validations = orch_config.disable_validations
@@ -201,7 +200,6 @@ class MalaOrchestrator:
         self.context_restart_threshold = orch_config.context_restart_threshold
         self.context_limit = orch_config.context_limit
         self.review_disabled_reason = derived.review_disabled_reason
-        self.braintrust_disabled_reason = derived.braintrust_disabled_reason
         self._init_runtime_state()
         self.log_provider = log_provider
         self.quality_gate = gate_checker
@@ -886,13 +884,11 @@ class MalaOrchestrator:
             max_review_retries=self.max_review_retries,
             epic_id=self.epic_id,
             only_ids=self.only_ids,
-            braintrust_enabled=self.braintrust_enabled,
             review_enabled=self._is_review_enabled(),
             review_disabled_reason=self.review_disabled_reason,
             prioritize_wip=self.prioritize_wip,
             orphans_only=self.orphans_only,
             cli_args=self.cli_args,
-            braintrust_disabled_reason=self.braintrust_disabled_reason,
         )
         self.event_sink.on_run_started(run_config)
 
@@ -914,7 +910,6 @@ class MalaOrchestrator:
             max_issues=self.max_issues,
             epic_id=self.epic_id,
             only_ids=self.only_ids,
-            braintrust_enabled=self.braintrust_enabled,
             max_gate_retries=self.max_gate_retries,
             max_review_retries=self.max_review_retries,
             review_enabled=self._is_review_enabled(),
