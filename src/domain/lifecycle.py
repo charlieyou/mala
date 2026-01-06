@@ -37,6 +37,7 @@ _SKIP_REVIEW_OUTCOMES = frozenset(
         ResolutionOutcome.NO_CHANGE,
         ResolutionOutcome.OBSOLETE,
         ResolutionOutcome.ALREADY_COMPLETE,
+        ResolutionOutcome.DOCS_ONLY,
     }
 )
 

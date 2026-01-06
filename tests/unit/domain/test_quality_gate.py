@@ -3215,6 +3215,332 @@ class TestAlreadyCompleteResolution:
         assert any("bd-mala-xyz" in r for r in result.failure_reasons)
 
 
+class TestDocsOnlyResolution:
+    """Test ISSUE_DOCS_ONLY resolution for documentation-only commits."""
+
+    def test_docs_only_passes_with_valid_commit_and_no_code_files(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """DOCS_ONLY should pass if commit exists and contains no code files."""
+        from src.domain.validation.spec import ResolutionOutcome
+
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_DOCS_ONLY: Updated README with installation instructions.",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        # Create gate with fake command runner that returns commit found
+        # and diff-tree returns only docs files
+        git_log_cmd = (
+            "git",
+            "log",
+            "--format=%h %ct %s",
+            "--grep",
+            "bd-test-123",
+            "-n",
+            "1",
+            "--since=30 days ago",
+        )
+        git_diff_tree_cmd = (
+            "git",
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "abc123",
+        )
+        fake_runner = FakeCommandRunner(
+            responses={
+                git_log_cmd: CommandResult(
+                    command=[],
+                    returncode=0,
+                    stdout="abc123 1704067200 bd-test-123: Update docs\n",
+                    stderr="",
+                ),
+                git_diff_tree_cmd: CommandResult(
+                    command=[],
+                    returncode=0,
+                    stdout="README.md\ndocs/guide.md\n",
+                    stderr="",
+                ),
+            }
+        )
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
+        # Create minimal mala.yaml for test with code_patterns
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+
+        result = gate.check_with_resolution(
+            issue_id="test-123",
+            log_path=log_path,
+            baseline_timestamp=1704067100,  # Before commit timestamp
+            spec=spec,
+        )
+
+        # Should pass without validation evidence
+        assert result.passed is True
+        assert result.resolution is not None
+        assert result.resolution.outcome == ResolutionOutcome.DOCS_ONLY
+        assert result.commit_hash == "abc123"
+
+    def test_docs_only_fails_if_commit_contains_code_files(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """DOCS_ONLY should fail if commit contains files matching code_patterns."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_DOCS_ONLY: Updated docs and fixed a typo in code.",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        # Create gate with fake command runner
+        # diff-tree returns code files
+        git_log_cmd = (
+            "git",
+            "log",
+            "--format=%h %ct %s",
+            "--grep",
+            "bd-test-123",
+            "-n",
+            "1",
+            "--since=30 days ago",
+        )
+        git_diff_tree_cmd = (
+            "git",
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "abc123",
+        )
+        fake_runner = FakeCommandRunner(
+            responses={
+                git_log_cmd: CommandResult(
+                    command=[],
+                    returncode=0,
+                    stdout="abc123 1704067200 bd-test-123: Update docs\n",
+                    stderr="",
+                ),
+                git_diff_tree_cmd: CommandResult(
+                    command=[],
+                    returncode=0,
+                    stdout="README.md\nsrc/main.py\n",
+                    stderr="",
+                ),
+            }
+        )
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
+        # Create minimal mala.yaml for test with code_patterns
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+
+        result = gate.check_with_resolution(
+            issue_id="test-123",
+            log_path=log_path,
+            baseline_timestamp=1704067100,
+            spec=spec,
+        )
+
+        # Should fail because commit contains code files
+        assert result.passed is False
+        assert any("code files" in r.lower() for r in result.failure_reasons)
+        assert any("src/main.py" in r for r in result.failure_reasons)
+
+    def test_docs_only_fails_without_rationale(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """DOCS_ONLY should fail if no rationale is provided."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "ISSUE_DOCS_ONLY:   "}]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+
+        result = gate.check_with_resolution(
+            issue_id="test-123",
+            log_path=log_path,
+            spec=spec,
+        )
+
+        assert result.passed is False
+        assert any("rationale" in r.lower() for r in result.failure_reasons)
+
+    def test_docs_only_fails_without_commit(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """DOCS_ONLY should fail if no commit exists."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_DOCS_ONLY: Updated documentation.",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        # FakeCommandRunner with allow_unregistered returns empty for git log
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        # Create minimal mala.yaml for test
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+
+        result = gate.check_with_resolution(
+            issue_id="test-123",
+            log_path=log_path,
+            spec=spec,
+        )
+
+        assert result.passed is False
+        assert any("no commit" in r.lower() for r in result.failure_reasons)
+
+    def test_docs_only_parses_marker_correctly(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Should parse ISSUE_DOCS_ONLY marker and extract rationale."""
+        from src.domain.validation.spec import ResolutionOutcome
+
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_DOCS_ONLY: Updated CHANGELOG for version 2.0.",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        resolution = gate.parse_issue_resolution(log_path)
+
+        assert resolution is not None
+        assert resolution.outcome == ResolutionOutcome.DOCS_ONLY
+        assert "CHANGELOG" in resolution.rationale
+
+    def test_docs_only_with_empty_code_patterns_always_passes(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """DOCS_ONLY should pass even with code files if code_patterns is empty."""
+        from src.domain.validation.spec import ResolutionOutcome
+
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_DOCS_ONLY: Updated README.",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        # Create gate with fake command runner
+        git_log_cmd = (
+            "git",
+            "log",
+            "--format=%h %ct %s",
+            "--grep",
+            "bd-test-123",
+            "-n",
+            "1",
+            "--since=30 days ago",
+        )
+        fake_runner = FakeCommandRunner(
+            responses={
+                git_log_cmd: CommandResult(
+                    command=[],
+                    returncode=0,
+                    stdout="abc123 1704067200 bd-test-123: Update docs\n",
+                    stderr="",
+                ),
+            }
+        )
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
+        # Create mala.yaml with empty code_patterns
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\ncode_patterns: []\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        # Verify code_patterns is empty
+        assert spec.code_patterns == []
+
+        result = gate.check_with_resolution(
+            issue_id="test-123",
+            log_path=log_path,
+            baseline_timestamp=1704067100,
+            spec=spec,
+        )
+
+        # Should pass because code_patterns is empty (no check performed)
+        assert result.passed is True
+        assert result.resolution is not None
+        assert result.resolution.outcome == ResolutionOutcome.DOCS_ONLY
+
+
 class TestExtractIssueFromRationale:
     """Test extract_issue_from_rationale helper method."""
 

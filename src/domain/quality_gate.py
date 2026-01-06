@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from src.core.tool_name_extractor import extract_tool_name
 
+from .validation.code_pattern_matcher import filter_matching_files
 from .validation.spec import (
     CommandKind,
     IssueResolution,
@@ -261,6 +262,7 @@ class QualityGate:
         "already_complete": re.compile(
             r"ISSUE_ALREADY_COMPLETE:\s*(.*)$", re.MULTILINE
         ),
+        "docs_only": re.compile(r"ISSUE_DOCS_ONLY:\s*(.*)$", re.MULTILINE),
     }
 
     # Map pattern names to resolution outcomes
@@ -268,6 +270,7 @@ class QualityGate:
         "no_change": ResolutionOutcome.NO_CHANGE,
         "obsolete": ResolutionOutcome.OBSOLETE,
         "already_complete": ResolutionOutcome.ALREADY_COMPLETE,
+        "docs_only": ResolutionOutcome.DOCS_ONLY,
     }
 
     # Pattern to extract issue ID from ALREADY_COMPLETE rationale
@@ -676,6 +679,36 @@ class QualityGate:
                 message=message,
             )
 
+    def get_commit_files(self, commit_hash: str) -> list[str]:
+        """Get list of files changed in a commit.
+
+        Args:
+            commit_hash: The commit hash to get files from.
+
+        Returns:
+            List of file paths changed in the commit (relative to repo root).
+            Empty list if commit not found or git command fails.
+        """
+        result = self._command_runner.run(
+            [
+                "git",
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                commit_hash,
+            ]
+        )
+
+        if not result.ok:
+            return []
+
+        output = result.stdout.strip()
+        if not output:
+            return []
+
+        return output.split("\n")
+
     def check_with_resolution(
         self,
         issue_id: str,
@@ -690,6 +723,7 @@ class QualityGate:
         - ISSUE_NO_CHANGE: Issue already addressed, no commit needed
         - ISSUE_OBSOLETE: Issue no longer relevant, no commit needed
         - ISSUE_ALREADY_COMPLETE: Work done in previous run, verify commit exists
+        - ISSUE_DOCS_ONLY: Documentation-only changes, skip validation
 
         For no-op/obsolete resolutions:
         - Gate 2 (commit check) is skipped
@@ -700,6 +734,11 @@ class QualityGate:
         - Gate 2 (commit check) runs WITHOUT baseline timestamp (accepts stale commits)
         - Gate 3 (validation evidence) is skipped
         - Requires rationale and valid pre-existing commit
+
+        For docs_only resolutions:
+        - Gate 2 (commit check) runs normally
+        - Gate 3 (validation evidence) is skipped
+        - Requires rationale and commit must not contain code files (per code_patterns)
 
         When a ValidationSpec is provided, evidence requirements are derived
         from the spec rather than using hardcoded defaults. This ensures:
@@ -795,6 +834,65 @@ class QualityGate:
 
                 # Already complete with rationale and valid commit passes
                 # (skip validation evidence - was validated in prior run)
+                return GateResult(
+                    passed=True,
+                    commit_hash=commit_result.commit_hash,
+                    resolution=resolution,
+                )
+
+            # Docs-only resolution - verify commit exists and contains no code files
+            if resolution.outcome == ResolutionOutcome.DOCS_ONLY:
+                # Require rationale
+                if not resolution.rationale.strip():
+                    failure_reasons.append("DOCS_ONLY resolution requires a rationale")
+                    return GateResult(
+                        passed=False,
+                        failure_reasons=failure_reasons,
+                        resolution=resolution,
+                    )
+
+                # Verify commit exists
+                commit_result = self.check_commit_exists(issue_id, baseline_timestamp)
+                if not commit_result.exists:
+                    if baseline_timestamp is not None:
+                        failure_reasons.append(
+                            f"No commit with bd-{issue_id} found after run baseline "
+                            f"(stale commits from previous runs are rejected)"
+                        )
+                    else:
+                        failure_reasons.append(
+                            f"No commit with bd-{issue_id} found in the last 30 days"
+                        )
+                    return GateResult(
+                        passed=False,
+                        failure_reasons=failure_reasons,
+                        resolution=resolution,
+                    )
+
+                # Verify commit does not contain code files
+                # Only check if code_patterns is configured (non-empty)
+                if spec.code_patterns and commit_result.commit_hash:
+                    commit_files = self.get_commit_files(commit_result.commit_hash)
+                    code_files = filter_matching_files(commit_files, spec.code_patterns)
+                    if code_files:
+                        failure_reasons.append(
+                            f"DOCS_ONLY resolution but commit contains code files: "
+                            f"{', '.join(code_files[:5])}"
+                            + (
+                                f" (and {len(code_files) - 5} more)"
+                                if len(code_files) > 5
+                                else ""
+                            )
+                        )
+                        return GateResult(
+                            passed=False,
+                            failure_reasons=failure_reasons,
+                            commit_hash=commit_result.commit_hash,
+                            resolution=resolution,
+                        )
+
+                # Docs-only with rationale and no code files passes
+                # (skip validation evidence - only documentation changes)
                 return GateResult(
                     passed=True,
                     commit_hash=commit_result.commit_hash,

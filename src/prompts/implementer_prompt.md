@@ -194,6 +194,20 @@ If after investigation you determine no changes are needed, return one of these 
 
 After outputting a marker, skip to step 8 (Release Locks).
 
+### 6b. Documentation-Only Changes
+
+For commits that only modify documentation (no code changes), use:
+
+- `ISSUE_DOCS_ONLY: <rationale>` - Documentation-only changes, no quality checks needed
+
+**Requirements:**
+- Commit MUST be created first (unlike no-change markers)
+- Commit must NOT contain any code files (as defined by project's code_patterns)
+- Quality checks (lint, format, typecheck, test) are skipped
+- Code review is also skipped
+
+Use this when modifying README, docs/, CHANGELOG, comments-only changes, etc.
+
 ### 7. Commit
 
 If you made code changes:

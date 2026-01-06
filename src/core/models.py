@@ -74,6 +74,7 @@ class ResolutionOutcome(Enum):
     NO_CHANGE = "no_change"
     OBSOLETE = "obsolete"
     ALREADY_COMPLETE = "already_complete"
+    DOCS_ONLY = "docs_only"
 
 
 @dataclass(frozen=True)
