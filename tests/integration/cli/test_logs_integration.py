@@ -93,6 +93,10 @@ class TestLogsSessionsCommand:
         result = runner.invoke(app, ["logs", "sessions"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T004")
+        if result.exception is not None:
+            raise result.exception
+        if result.exit_code != 0:
+            pytest.fail(f"Unexpected exit_code={result.exit_code}")
         pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
     def test_sessions_with_issue_filter(self) -> None:
@@ -100,6 +104,10 @@ class TestLogsSessionsCommand:
         result = runner.invoke(app, ["logs", "sessions", "--issue", "test-123"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T004")
+        if result.exception is not None:
+            raise result.exception
+        if result.exit_code != 0:
+            pytest.fail(f"Unexpected exit_code={result.exit_code}")
         pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
     def test_sessions_with_json_flag(self) -> None:
@@ -107,6 +115,10 @@ class TestLogsSessionsCommand:
         result = runner.invoke(app, ["logs", "sessions", "--json"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T004")
+        if result.exception is not None:
+            raise result.exception
+        if result.exit_code != 0:
+            pytest.fail(f"Unexpected exit_code={result.exit_code}")
         pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
     def test_sessions_with_all_flag(self) -> None:
@@ -114,6 +126,10 @@ class TestLogsSessionsCommand:
         result = runner.invoke(app, ["logs", "sessions", "--all"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T004")
+        if result.exception is not None:
+            raise result.exception
+        if result.exit_code != 0:
+            pytest.fail(f"Unexpected exit_code={result.exit_code}")
         pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
 
@@ -125,6 +141,10 @@ class TestLogsShowCommand:
         result = runner.invoke(app, ["logs", "show", "abc12345"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T005")
+        if result.exception is not None:
+            raise result.exception
+        if result.exit_code != 0:
+            pytest.fail(f"Unexpected exit_code={result.exit_code}")
         pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
     def test_show_with_json_flag(self) -> None:
@@ -132,6 +152,10 @@ class TestLogsShowCommand:
         result = runner.invoke(app, ["logs", "show", "abc12345", "--json"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T005")
+        if result.exception is not None:
+            raise result.exception
+        if result.exit_code != 0:
+            pytest.fail(f"Unexpected exit_code={result.exit_code}")
         pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
     def test_show_missing_run_id_fails(self) -> None:
