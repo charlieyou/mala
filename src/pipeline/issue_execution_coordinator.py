@@ -51,17 +51,31 @@ class FinalizeCallback(Protocol):
         ...
 
 
+@dataclass
+class AbortResult:
+    """Result of aborting active tasks.
+
+    Attributes:
+        aborted_count: Number of tasks that were aborted.
+        has_unresponsive_tasks: True if any tasks didn't respond to cancellation
+            within the grace period and may still be running.
+    """
+
+    aborted_count: int
+    has_unresponsive_tasks: bool = False
+
+
 class AbortCallback(Protocol):
     """Callback for aborting active tasks."""
 
-    async def __call__(self, *, is_interrupt: bool = False) -> int:
+    async def __call__(self, *, is_interrupt: bool = False) -> AbortResult:
         """Abort all active tasks.
 
         Args:
             is_interrupt: If True, use "Interrupted" summary instead of "Aborted".
 
         Returns:
-            Number of tasks that were aborted.
+            AbortResult with aborted count and unresponsive task flag.
         """
         ...
 
@@ -160,21 +174,31 @@ class IssueExecutionCoordinator:
         validation_callback: Callable[[], Awaitable[bool]] | None,
         watch_state: WatchState,
         issues_spawned: int,
-        watch_enabled: bool,
     ) -> RunResult:
         """Handle SIGINT by aborting active tasks, running final validation, and returning.
 
         Note: abort_callback waits up to ABORT_GRACE_SECONDS for tasks to finish.
         Tasks that don't respond to cancellation within the grace period are finalized
-        as "unresponsive" but may still be running. It also updates
-        watch_state.completed_count for aborted tasks.
+        as "unresponsive" but may still be running. When tasks are unresponsive,
+        validation is skipped to avoid non-deterministic outcomes from concurrent
+        mutations, and exit_code=130 is forced.
         """
-        aborted_count = await abort_callback(is_interrupt=True)
-        if not isinstance(aborted_count, int):
-            aborted_count = 0
+        abort_result = await abort_callback(is_interrupt=True)
+        aborted_count = abort_result.aborted_count
         # Recompute completed_count from completed_ids to avoid polluted state
         watch_state.completed_count = len(self.completed_ids) + aborted_count
         exit_code = 130
+
+        # Skip validation if any tasks are still running (unresponsive to cancellation)
+        # to avoid non-deterministic outcomes from concurrent repo mutations
+        if abort_result.has_unresponsive_tasks:
+            logger.warning(
+                "Skipping validation: unresponsive tasks may still be mutating repo"
+            )
+            return RunResult(
+                issues_spawned, exit_code=exit_code, exit_reason="interrupted"
+            )
+
         if not isinstance(watch_state.last_validation_at, int):
             watch_state.last_validation_at = 0
         if watch_state.completed_count > watch_state.last_validation_at:
@@ -217,8 +241,8 @@ class IssueExecutionCoordinator:
             sleep_fn: Async sleep function, injectable for testing.
             drain_event: Event set to enter drain mode. In drain mode, no new issues
                 are spawned, but active tasks complete normally. When all active tasks
-                finish, validation is triggered (if in watch mode) and the loop exits.
-                If interrupt_event is also set, interrupt takes precedence.
+                finish, validation is triggered (if validation_callback present) and
+                the loop exits. If interrupt_event is also set, interrupt takes precedence.
 
         Returns:
             RunResult with issues_spawned, exit_code, and exit_reason.
@@ -233,8 +257,6 @@ class IssueExecutionCoordinator:
                 else 10
             )
         )
-        watch_enabled = bool(watch_config and watch_config.enabled)
-
         # Track interrupt_task outside the loop to ensure cleanup on any exit path
         interrupt_task: asyncio.Task[object] | None = None
 
@@ -267,7 +289,6 @@ class IssueExecutionCoordinator:
                         validation_callback,
                         watch_state,
                         issues_spawned,
-                        watch_enabled,
                     )
 
                 # Check for abort
@@ -385,7 +406,6 @@ class IssueExecutionCoordinator:
                                     validation_callback,
                                     watch_state,
                                     issues_spawned,
-                                    watch_enabled,
                                 )
                             except TimeoutError:
                                 pass  # Normal timeout, retry poll
@@ -488,7 +508,6 @@ class IssueExecutionCoordinator:
                                         validation_callback,
                                         watch_state,
                                         issues_spawned,
-                                        watch_enabled,
                                     )
                                 except TimeoutError:
                                     pass  # Normal timeout, continue loop
@@ -573,7 +592,6 @@ class IssueExecutionCoordinator:
                         validation_callback,
                         watch_state,
                         issues_spawned,
-                        watch_enabled,
                     )
 
                 # Check if validation threshold crossed
