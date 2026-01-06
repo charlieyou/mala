@@ -53,6 +53,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "code_patterns",
         "config_files",
         "setup_files",
+        "custom_commands",
     }
 )
 

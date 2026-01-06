@@ -49,6 +49,7 @@ class CommandKind(Enum):
     TYPECHECK = "typecheck"
     TEST = "test"
     E2E = "e2e"
+    CUSTOM = "custom"  # User-defined custom commands
 
 
 # Default timeout for validation commands in seconds

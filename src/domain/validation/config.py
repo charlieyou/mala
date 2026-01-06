@@ -123,6 +123,43 @@ class CommandConfig:
 
 
 @dataclass(frozen=True)
+class CustomCommandConfig:
+    """Configuration for a custom validation command.
+
+    Custom commands allow users to define additional validation steps
+    beyond the standard commands (lint, format, test, etc.).
+
+    Attributes:
+        command: The shell command string to execute.
+        timeout: Optional timeout in seconds. None means use system default.
+        allow_fail: If True, command failure won't fail the validation.
+    """
+
+    command: str
+    timeout: int | None = None
+    allow_fail: bool = False
+
+    @classmethod
+    def from_value(cls, value: str | dict[str, object]) -> CustomCommandConfig:
+        """Create CustomCommandConfig from YAML value (string or dict).
+
+        Args:
+            value: Either a command string or a dict with 'command' and
+                optional 'timeout', 'allow_fail' keys.
+
+        Returns:
+            CustomCommandConfig instance.
+
+        Raises:
+            ConfigError: If value is neither string nor valid dict.
+            NotImplementedError: Stub - not yet implemented.
+        """
+        raise NotImplementedError(
+            "CustomCommandConfig.from_value() not yet implemented"
+        )
+
+
+@dataclass(frozen=True)
 class YamlCoverageConfig:
     """Coverage configuration from mala.yaml.
 
@@ -333,6 +370,7 @@ class ValidationConfig:
         commands: Command definitions. May be partially filled if extending preset.
         run_level_commands: Optional overrides for run-level validation commands.
         coverage: Coverage configuration. None means coverage is disabled.
+        custom_commands: User-defined custom validation commands.
         code_patterns: Glob patterns for code files that trigger validation.
         config_files: Tool config files that invalidate lint/format cache.
         setup_files: Lock/dependency files that invalidate setup cache.
@@ -344,6 +382,7 @@ class ValidationConfig:
     run_level_commands: CommandsConfig = field(default_factory=CommandsConfig)
     preset: str | None = None
     coverage: YamlCoverageConfig | None = None
+    custom_commands: dict[str, CustomCommandConfig] = field(default_factory=dict)
     code_patterns: tuple[str, ...] = field(default_factory=tuple)
     config_files: tuple[str, ...] = field(default_factory=tuple)
     setup_files: tuple[str, ...] = field(default_factory=tuple)
