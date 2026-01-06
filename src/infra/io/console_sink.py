@@ -327,9 +327,10 @@ class ConsoleEventSink(BaseEventSink):
         summary: str,
     ) -> None:
         status_icon = "✓" if success else "✗"
+        color = Colors.GREEN if success else Colors.RED
         log(
             status_icon,
-            f"{issue_id} completed in {duration_seconds:.1f}s: {summary}",
+            f"{color}{issue_id} completed in {duration_seconds:.1f}s: {summary}{Colors.RESET}",
             agent_id=agent_id,
         )
 
@@ -490,7 +491,8 @@ class ConsoleEventSink(BaseEventSink):
     def on_fixer_text(self, attempt: int, text: str) -> None:
         # Strip ANSI codes for cleaner output
         clean_text = re.sub(r"\x1b\[[0-9;]*m", "", text)
-        log("→", f"[{attempt}] {clean_text}", agent_id="fixer")
+        truncated = truncate_text(clean_text, 100)
+        log_agent_text(f"[{attempt}] {truncated}", f"fixer-{attempt}")
 
     def on_fixer_tool_use(
         self,
@@ -504,12 +506,11 @@ class ConsoleEventSink(BaseEventSink):
         cycle_str = " → ".join(info.cycle)
         victim_issue = info.victim_issue_id or "unknown"
         blocker_issue = info.blocker_issue_id or "unknown"
-        log(
-            "⚠",
-            f"{Colors.YELLOW}Deadlock detected:{Colors.RESET} cycle=[{cycle_str}] "
-            f"victim={info.victim_id}({victim_issue}) blocked_on={info.blocked_on} "
-            f"blocker={info.blocker_id}({blocker_issue})",
-        )
+        log("⚠", f"{Colors.YELLOW}Deadlock detected{Colors.RESET}")
+        log("◦", f"  cycle: {cycle_str}")
+        log("◦", f"  victim: {info.victim_id} ({victim_issue})")
+        log("◦", f"  blocked_on: {info.blocked_on}")
+        log("◦", f"  blocker: {info.blocker_id} ({blocker_issue})")
 
     def on_watch_idle(self, wait_seconds: float, issues_blocked: int | None) -> None:
         poll_s = (
