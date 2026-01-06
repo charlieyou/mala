@@ -306,6 +306,57 @@ class TestCommandsConfig:
         assert config.custom_commands == {}
 
 
+class TestClearCustoms:
+    """Tests for _clear_customs reserved key handling."""
+
+    def test_clear_customs_true_at_run_level_sets_clear_mode(self) -> None:
+        """_clear_customs: true at run-level sets mode=CLEAR with empty customs."""
+        config = CommandsConfig.from_dict({"_clear_customs": True}, is_run_level=True)
+        assert config.custom_override_mode == CustomOverrideMode.CLEAR
+        assert config.custom_commands == {}
+
+    def test_clear_customs_false_raises_error(self) -> None:
+        """_clear_customs: false raises ConfigError."""
+        with pytest.raises(ConfigError, match="_clear_customs must be true"):
+            CommandsConfig.from_dict({"_clear_customs": False}, is_run_level=True)
+
+    def test_clear_customs_string_yes_raises_error(self) -> None:
+        """_clear_customs: 'yes' raises ConfigError (must be boolean true)."""
+        with pytest.raises(ConfigError, match="_clear_customs must be true"):
+            CommandsConfig.from_dict({"_clear_customs": "yes"}, is_run_level=True)
+
+    def test_clear_customs_at_repo_level_raises_error(self) -> None:
+        """_clear_customs at repo-level (is_run_level=False) raises ConfigError."""
+        with pytest.raises(
+            ConfigError, match="_clear_customs is only valid in run_level_commands"
+        ):
+            CommandsConfig.from_dict({"_clear_customs": True}, is_run_level=False)
+
+    def test_clear_customs_with_custom_keys_raises_error(self) -> None:
+        """_clear_customs combined with custom command keys raises ConfigError."""
+        with pytest.raises(
+            ConfigError, match="_clear_customs cannot be combined with custom commands"
+        ):
+            CommandsConfig.from_dict(
+                {"_clear_customs": True, "my_custom": "some cmd"}, is_run_level=True
+            )
+
+    def test_plus_clear_customs_raises_error(self) -> None:
+        """+_clear_customs raises ConfigError (reserved key cannot be prefixed)."""
+        with pytest.raises(ConfigError, match=r"\+_clear_customs is not allowed"):
+            CommandsConfig.from_dict({"+_clear_customs": True}, is_run_level=True)
+
+    def test_clear_customs_with_builtin_commands_allowed(self) -> None:
+        """_clear_customs can be combined with built-in commands like lint."""
+        config = CommandsConfig.from_dict(
+            {"_clear_customs": True, "lint": "ruff check ."}, is_run_level=True
+        )
+        assert config.custom_override_mode == CustomOverrideMode.CLEAR
+        assert config.custom_commands == {}
+        assert config.lint is not None
+        assert config.lint.command == "ruff check ."
+
+
 class TestValidationConfig:
     """Tests for ValidationConfig dataclass."""
 

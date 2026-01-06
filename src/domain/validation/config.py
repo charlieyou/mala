@@ -430,14 +430,38 @@ class CommandsConfig:
         Raises:
             ConfigError: If a command value is invalid.
         """
-        # is_run_level will be used in future to parse +prefix custom commands
-        _ = is_run_level
-
         if data is None:
             return cls()
 
         valid_kinds = ("setup", "test", "lint", "format", "typecheck", "e2e")
-        unknown_kinds = set(data.keys()) - set(valid_kinds)
+
+        # Check for +_clear_customs (error: reserved key cannot be prefixed)
+        if "+_clear_customs" in data:
+            raise ConfigError("+_clear_customs is not allowed")
+
+        # Handle _clear_customs reserved key
+        custom_override_mode = CustomOverrideMode.INHERIT
+        if "_clear_customs" in data:
+            clear_value = data["_clear_customs"]
+            # Value must be exactly boolean true
+            if clear_value is not True:
+                raise ConfigError(
+                    "_clear_customs must be true (got "
+                    f"{type(clear_value).__name__}: {clear_value!r})"
+                )
+            # Only allowed at run-level
+            if not is_run_level:
+                raise ConfigError("_clear_customs is only valid in run_level_commands")
+            # Check for custom command keys (non-builtin, non-reserved)
+            custom_keys = set(data.keys()) - set(valid_kinds) - {"_clear_customs"}
+            if custom_keys:
+                raise ConfigError(
+                    "_clear_customs cannot be combined with custom commands"
+                )
+            custom_override_mode = CustomOverrideMode.CLEAR
+
+        # For now, reject unknown keys (custom commands parsing in future task)
+        unknown_kinds = set(data.keys()) - set(valid_kinds) - {"_clear_customs"}
         if unknown_kinds:
             raise ConfigError(
                 f"Unknown command kind(s): {', '.join(sorted(unknown_kinds))}. "
@@ -467,6 +491,7 @@ class CommandsConfig:
             format=parse_command("format"),
             typecheck=parse_command("typecheck"),
             e2e=parse_command("e2e"),
+            custom_override_mode=custom_override_mode,
             _fields_set=frozenset(fields_set),
         )
 
