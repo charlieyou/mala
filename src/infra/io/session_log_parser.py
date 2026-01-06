@@ -302,6 +302,29 @@ class SessionLogParser:
                 texts.append(block.get("text", ""))
         return texts
 
+    def extract_tool_result_content(
+        self, entry: JsonlEntry | JsonlEntryProtocol
+    ) -> list[tuple[str, str]]:
+        """Extract tool_result content from Bash tool results.
+
+        Used for marker detection in custom validation commands. Extracts the
+        textual content from tool_result blocks that correspond to Bash tool uses.
+
+        Args:
+            entry: A JsonlEntry or JsonlEntryProtocol from iter_jsonl_entries.
+
+        Returns:
+            List of (tool_use_id, content) tuples for Bash tool_result blocks.
+            Content is concatenated if the result contains multiple text items.
+            Returns empty list if entry is not a user message or has no Bash results.
+
+        Note:
+            This is a stub implementation that returns an empty list. The actual
+            marker parsing logic will be implemented in a subsequent task (T007).
+        """
+        # Stub: returns empty list - marker parsing not yet implemented
+        return []
+
 
 class FileSystemLogProvider:
     """LogProvider implementation for Claude SDK filesystem logs.
@@ -411,3 +434,18 @@ class FileSystemLogProvider:
             List of text strings from text blocks in assistant messages.
         """
         return self._parser.extract_assistant_text_blocks(entry)
+
+    def extract_tool_result_content(
+        self, entry: JsonlEntryProtocol
+    ) -> list[tuple[str, str]]:
+        """Extract tool_result content from Bash tool results.
+
+        Delegates to SessionLogParser.extract_tool_result_content().
+
+        Args:
+            entry: A JsonlEntryProtocol from iter_events.
+
+        Returns:
+            List of (tool_use_id, content) tuples for Bash tool_result blocks.
+        """
+        return self._parser.extract_tool_result_content(entry)

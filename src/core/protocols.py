@@ -109,6 +109,12 @@ class ValidationEvidenceProtocol(Protocol):
     failed_commands: list[str]
     """List of validation commands that failed."""
 
+    custom_commands_ran: dict[str, bool]
+    """Mapping of custom command name to whether it ran."""
+
+    custom_commands_failed: dict[str, bool]
+    """Mapping of custom command name to whether it failed (exited non-zero)."""
+
     def has_any_evidence(self) -> bool:
         """Check if any validation command ran."""
         ...
@@ -443,6 +449,24 @@ class LogProvider(Protocol):
         Returns:
             List of text strings from text blocks in assistant messages.
             Returns empty list if entry is not an assistant message.
+        """
+        ...
+
+    def extract_tool_result_content(
+        self, entry: JsonlEntryProtocol
+    ) -> list[tuple[str, str]]:
+        """Extract tool_result content from Bash tool results.
+
+        Used for marker detection in custom validation commands. Extracts the
+        textual content from tool_result blocks that correspond to Bash tool uses.
+
+        Args:
+            entry: A JsonlEntryProtocol from iter_events.
+
+        Returns:
+            List of (tool_use_id, content) tuples for Bash tool_result blocks.
+            Content is concatenated if the result contains multiple text items.
+            Returns empty list if entry is not a user message or has no Bash results.
         """
         ...
 

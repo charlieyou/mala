@@ -77,6 +77,10 @@ class ValidationEvidence:
     # Track which validation commands failed (exited non-zero)
     failed_commands: list[str] = field(default_factory=list)
 
+    # Custom command evidence: command_name -> ran/failed boolean
+    custom_commands_ran: dict[str, bool] = field(default_factory=dict)
+    custom_commands_failed: dict[str, bool] = field(default_factory=dict)
+
     # Backward-compatible properties for external consumers
     @property
     def pytest_ran(self) -> bool:
