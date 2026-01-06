@@ -282,7 +282,7 @@ class IssueExecutionCoordinator:
                 # Check for drain mode (Stage 1 SIGINT - stop spawning, let active complete)
                 is_draining = drain_event is not None and drain_event.is_set()
                 if is_draining and not self.active_tasks:
-                    # All drained - trigger validation if in watch mode
+                    # All drained - trigger validation if callback present
                     if validation_callback:
                         if watch_state.completed_count > watch_state.last_validation_at:
                             validation_passed = await validation_callback()
@@ -349,8 +349,7 @@ class IssueExecutionCoordinator:
                             await abort_callback()
                             # Run final validation if any issues completed
                             if (
-                                watch_enabled
-                                and watch_state.completed_count
+                                watch_state.completed_count
                                 > watch_state.last_validation_at
                                 and validation_callback
                             ):
