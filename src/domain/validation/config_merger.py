@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 from src.domain.validation.config import (
     CommandsConfig,
+    CustomOverrideMode,
     ValidationConfig,
 )
 
@@ -234,10 +235,13 @@ def _merge_commands(
     # null/empty (no individual fields set), short-circuit to return the user's
     # empty config without inheriting. This allows users to clear all preset
     # run_level_commands overrides.
+    # Note: _clear_customs sets custom_override_mode=CLEAR but doesn't set built-in
+    # fields, so we must also check that no custom command directive was given.
     if (
         clear_on_explicit_empty
         and user_commands_explicitly_set
         and not user._fields_set
+        and user.custom_override_mode == CustomOverrideMode.INHERIT
     ):
         return user
 
@@ -252,6 +256,8 @@ def _merge_commands(
             preset.typecheck, user.typecheck, "typecheck", user._fields_set
         ),
         e2e=_merge_command_field(preset.e2e, user.e2e, "e2e", user._fields_set),
+        custom_commands=user.custom_commands,  # Preserve user's custom commands
+        custom_override_mode=user.custom_override_mode,  # Preserve user's mode
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 

@@ -6,6 +6,7 @@ from src.domain.validation.config import (
     CommandConfig,
     CommandsConfig,
     CustomCommandConfig,
+    CustomOverrideMode,
     ValidationConfig,
     YamlCoverageConfig,
 )
@@ -1377,3 +1378,47 @@ class TestMergeConfigsCustomCommands:
 
         assert result is user  # No preset means user returned as-is
         assert len(result.custom_commands) == 1
+
+
+class TestClearCustomsPresetMerge:
+    """Tests for _clear_customs with preset merging.
+
+    When _clear_customs: true is set in run_level_commands, it should clear
+    custom commands but NOT clear the preset's built-in run-level commands.
+    """
+
+    def test_clear_customs_does_not_clear_preset_run_level_commands(self) -> None:
+        """_clear_customs: true should not clear preset run_level_commands builtins.
+
+        Regression test: When user sets run_level_commands: {_clear_customs: true},
+        the custom_override_mode is CLEAR but _fields_set is empty. The merger
+        must NOT treat this as an "explicit empty" that clears preset builtins.
+        """
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+            ),
+            run_level_commands=CommandsConfig(
+                test=CommandConfig(command="pytest -m integration"),
+                lint=CommandConfig(command="ruff check . --select=E"),
+            ),
+        )
+        # User sets _clear_customs: true - only wants to clear customs, not builtins
+        user = ValidationConfig(
+            run_level_commands=CommandsConfig(
+                custom_override_mode=CustomOverrideMode.CLEAR,
+            ),
+            _fields_set=frozenset({"run_level_commands"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        # Preset run_level_commands should be INHERITED, not cleared
+        assert result.run_level_commands.test is not None
+        assert result.run_level_commands.test.command == "pytest -m integration"
+        assert result.run_level_commands.lint is not None
+        assert result.run_level_commands.lint.command == "ruff check . --select=E"
+        # But custom_override_mode should be CLEAR
+        assert (
+            result.run_level_commands.custom_override_mode == CustomOverrideMode.CLEAR
+        )
