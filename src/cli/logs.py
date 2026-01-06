@@ -511,8 +511,8 @@ def _find_matching_runs(
     """Find runs matching the given run_id or prefix.
 
     Search strategy:
-    1. Fast path: match by filename prefix (first 8 chars of search_id)
-    2. Fallback: scan non-conforming files for run_id field match
+    1. Scan conforming files: use filename prefix to prune, track corrupt candidates
+    2. Fallback: only scan non-conforming files if no matches found
 
     Args:
         search_id: Full UUID or prefix (any length >= 1) to search for.
@@ -528,44 +528,48 @@ def _find_matching_runs(
         return [], []
 
     files = list(repo_runs_dir.glob("*.json"))
+    search_prefix = search_id[:8] if len(search_id) >= 8 else search_id
 
     matches: list[tuple[Path, dict[str, Any]]] = []
     corrupt_files: list[Path] = []
-    checked_paths: set[Path] = set()
+    non_conforming_files: list[Path] = []
 
-    # Fast path: filename-based matching (only works for >= 8-char input)
-    if len(search_id) >= 8:
-        search_prefix = search_id[:8]
-        for path in files:
-            filename_prefix = _extract_run_id_prefix_from_filename(path.name)
-            if filename_prefix is None or filename_prefix != search_prefix:
-                continue
-
-            checked_paths.add(path)
-            data = _parse_run_file(path)
-            if data is None:
-                corrupt_files.append(path)
-                continue
-
-            # Match if run_id starts with search_id (handles any prefix length)
-            run_id_field = data.get("run_id", "")
-            if isinstance(run_id_field, str) and run_id_field.startswith(search_id):
-                matches.append((path, data))
-
-    # Fallback: scan files not covered by fast path for run_id field match
-    # This handles non-conforming filenames or short prefixes (< 8 chars)
+    # First pass: scan conforming files, prune by filename prefix
     for path in files:
-        if path in checked_paths:
+        filename_prefix = _extract_run_id_prefix_from_filename(path.name)
+
+        if filename_prefix is None:
+            # Non-conforming filename - save for fallback
+            non_conforming_files.append(path)
             continue
 
+        # Prune: filename prefix must start with search prefix
+        if not filename_prefix.startswith(search_prefix):
+            continue
+
+        # Parse and check
         data = _parse_run_file(path)
         if data is None:
-            # Don't track corrupt for non-conforming files (can't attribute to search)
+            corrupt_files.append(path)
             continue
 
+        # Match if run_id starts with search_id
         run_id_field = data.get("run_id", "")
         if isinstance(run_id_field, str) and run_id_field.startswith(search_id):
             matches.append((path, data))
+
+    # Fallback: scan non-conforming files only if no matches found
+    if not matches:
+        for path in non_conforming_files:
+            data = _parse_run_file(path)
+            if data is None:
+                # Track corrupt for non-conforming files too
+                corrupt_files.append(path)
+                continue
+
+            run_id_field = data.get("run_id", "")
+            if isinstance(run_id_field, str) and run_id_field.startswith(search_id):
+                matches.append((path, data))
 
     return matches, corrupt_files
 
@@ -626,7 +630,8 @@ def show(
 ) -> None:
     """Show details for a specific run."""
     matches, corrupt_files = _find_matching_runs(run_id)
-    is_prefix_search = len(run_id) <= 8
+    # Full UUID is 36 chars (8-4-4-4-12 with hyphens); anything shorter is a prefix
+    is_prefix_search = len(run_id) < 36
 
     # For prefix search: treat valid matches + corrupt files as potentially ambiguous
     # (corrupt file could be the intended run)
