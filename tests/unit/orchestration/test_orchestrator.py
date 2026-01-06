@@ -104,6 +104,7 @@ class TestPromptTemplate:
             "lint_command",
             "format_command",
             "typecheck_command",
+            "custom_commands_section",
             "test_command",
         }
 

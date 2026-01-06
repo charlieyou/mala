@@ -338,6 +338,7 @@ class TestPromptTemplateIntegration:
             lint_command=cmds.lint,
             format_command=cmds.format,
             typecheck_command=cmds.typecheck,
+            custom_commands_section="",
             test_command=cmds.test,
         )
 
@@ -368,6 +369,7 @@ class TestPromptTemplateIntegration:
             lint_command=cmds.lint,
             format_command=cmds.format,
             typecheck_command=cmds.typecheck,
+            custom_commands_section="",
             test_command=cmds.test,
         )
 

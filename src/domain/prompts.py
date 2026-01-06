@@ -14,6 +14,57 @@ if TYPE_CHECKING:
     from src.domain.validation.config import PromptValidationCommands
 
 
+def _build_custom_commands_section(
+    custom_commands: list[tuple[str, str, int, bool]],
+) -> str:
+    """Build the custom commands section for the implementer prompt.
+
+    Each custom command is wrapped with markers for status tracking.
+    Strict commands (allow_fail=False) exit with the command's status.
+    Advisory commands (allow_fail=True) always exit 0.
+
+    Args:
+        custom_commands: List of (name, command, timeout, allow_fail) tuples.
+
+    Returns:
+        Formatted custom commands section, or empty string if no custom commands.
+    """
+    if not custom_commands:
+        return ""
+
+    lines = ["# Custom validation commands (run after typecheck, before test)"]
+
+    for name, command, timeout, allow_fail in custom_commands:
+        # Build marker-wrapped command pattern
+        # Uses __status to capture exit code without polluting environment
+        if allow_fail:
+            # Advisory: always exit 0, note failure but don't block
+            wrapper = (
+                f"echo '[custom:{name}:start]'; "
+                f"__status=0; timeout {timeout} {command} || __status=$?; "
+                f"if [ $__status -eq 0 ]; then echo '[custom:{name}:pass]'; "
+                f"elif [ $__status -eq 124 ]; then echo '[custom:{name}:timeout]'; "
+                f'else echo "[custom:{name}:fail exit=$__status]"; fi; '
+                f"exit 0  # advisory (allow_fail=true)"
+            )
+            lines.append(f"# {name} (advisory - failures don't block)")
+        else:
+            # Strict: exit with command's status
+            wrapper = (
+                f"echo '[custom:{name}:start]'; "
+                f"__status=0; timeout {timeout} {command} || __status=$?; "
+                f"if [ $__status -eq 0 ]; then echo '[custom:{name}:pass]'; "
+                f"elif [ $__status -eq 124 ]; then echo '[custom:{name}:timeout]'; "
+                f'else echo "[custom:{name}:fail exit=$__status]"; fi; '
+                f"exit $__status"
+            )
+            lines.append(f"# {name}")
+
+        lines.append(wrapper)
+
+    return "\n".join(lines)
+
+
 @dataclass(frozen=True)
 class PromptProvider:
     """Data class holding all loaded prompt templates.
@@ -75,6 +126,11 @@ def format_implementer_prompt(
     Returns:
         Formatted prompt string.
     """
+    # Build custom_commands_section from custom_commands list
+    custom_commands_section = _build_custom_commands_section(
+        validation_commands.custom_commands
+    )
+
     return implementer_prompt.format(
         issue_id=issue_id,
         repo_path=repo_path,
@@ -83,6 +139,7 @@ def format_implementer_prompt(
         lint_command=validation_commands.lint,
         format_command=validation_commands.format,
         typecheck_command=validation_commands.typecheck,
+        custom_commands_section=custom_commands_section,
         test_command=validation_commands.test,
     )
 
@@ -104,6 +161,7 @@ def get_default_validation_commands() -> PromptValidationCommands:
         format="RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format .",
         typecheck="uvx ty check",
         test="uv run pytest -o cache_dir=/tmp/pytest-${AGENT_ID:-default}",
+        custom_commands=[],
     )
 
 

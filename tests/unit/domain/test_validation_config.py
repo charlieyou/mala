@@ -490,6 +490,39 @@ class TestPromptValidationCommands:
         assert "No format command configured" in prompt_cmds.format
         assert "No typecheck command configured" in prompt_cmds.typecheck
         assert "No test command configured" in prompt_cmds.test
+        assert prompt_cmds.custom_commands == []
+
+    def test_prompt_validation_commands_includes_custom_commands(self) -> None:
+        """Custom commands are populated as (name, command, timeout, allow_fail) tuples."""
+        config = ValidationConfig.from_dict(
+            {
+                "commands": {"test": "pytest"},
+                "custom_commands": {
+                    "check_types": "mypy .",
+                    "slow_check": {
+                        "command": "slow-cmd",
+                        "timeout": 300,
+                        "allow_fail": True,
+                    },
+                },
+            }
+        )
+        prompt_cmds = PromptValidationCommands.from_validation_config(config)
+
+        # Verify custom_commands contains tuples with correct values
+        assert len(prompt_cmds.custom_commands) == 2
+
+        # Convert to dict for easier verification (order not guaranteed)
+        custom_dict = {
+            name: (cmd, timeout, allow_fail)
+            for name, cmd, timeout, allow_fail in prompt_cmds.custom_commands
+        }
+
+        # check_types: string shorthand uses default timeout 120, allow_fail=False
+        assert custom_dict["check_types"] == ("mypy .", 120, False)
+
+        # slow_check: object form with explicit timeout and allow_fail
+        assert custom_dict["slow_check"] == ("slow-cmd", 300, True)
 
 
 class TestCustomCommandConfig:
