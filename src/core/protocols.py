@@ -777,6 +777,14 @@ class CodeReviewer(Protocol):
         """
         ...
 
+    def overrides_disabled_setting(self) -> bool:
+        """Return True if this reviewer should run even when review is disabled.
+
+        DefaultReviewer returns False (respects disabled settings).
+        Custom/injected reviewers return True (user explicitly provided them).
+        """
+        ...
+
 
 @runtime_checkable
 class GateChecker(Protocol):

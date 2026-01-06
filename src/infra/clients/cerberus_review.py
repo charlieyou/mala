@@ -86,6 +86,10 @@ class DefaultReviewer:
         """
         return CerberusGateCLI.extract_wait_timeout(args)
 
+    def overrides_disabled_setting(self) -> bool:
+        """Return False; DefaultReviewer respects the disabled setting."""
+        return False
+
     async def __call__(
         self,
         diff_range: str,

@@ -2458,6 +2458,10 @@ class TestReviewUsesIssueCommits:
         captured_commit_lists: list[Sequence[str] | None] = []
 
         class MockCodeReviewer:
+            def overrides_disabled_setting(self) -> bool:
+                """Return True; test fakes override the disabled setting."""
+                return True
+
             async def __call__(
                 self,
                 diff_range: str,

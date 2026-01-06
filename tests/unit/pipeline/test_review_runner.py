@@ -64,6 +64,10 @@ class FakeCodeReviewer:
     )
     calls: list[dict] = field(default_factory=list)
 
+    def overrides_disabled_setting(self) -> bool:
+        """Return True; test fakes override the disabled setting."""
+        return True
+
     async def __call__(
         self,
         diff_range: str,
