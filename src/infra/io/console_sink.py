@@ -432,6 +432,23 @@ class ConsoleEventSink(BaseEventSink):
         log("→", f"ABORT Cancelling {count} tasks: {reason}", agent_id="run")
 
     # -------------------------------------------------------------------------
+    # SIGINT escalation lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_drain_started(self, active_task_count: int) -> None:
+        log(
+            "→",
+            f"Ctrl-C: draining {active_task_count} active task(s)...",
+            agent_id="run",
+        )
+
+    def on_abort_started(self) -> None:
+        log("→", "Ctrl-C: aborting...", agent_id="run")
+
+    def on_force_abort(self) -> None:
+        log("→", "Ctrl-C: force killing...", agent_id="run")
+
+    # -------------------------------------------------------------------------
     # Epic verification lifecycle
     # -------------------------------------------------------------------------
 

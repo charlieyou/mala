@@ -288,6 +288,19 @@ class BaseEventSink:
         pass
 
     # -------------------------------------------------------------------------
+    # SIGINT escalation lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_drain_started(self, active_task_count: int) -> None:
+        pass
+
+    def on_abort_started(self) -> None:
+        pass
+
+    def on_force_abort(self) -> None:
+        pass
+
+    # -------------------------------------------------------------------------
     # Epic verification lifecycle
     # -------------------------------------------------------------------------
 

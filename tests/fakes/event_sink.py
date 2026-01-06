@@ -402,6 +402,19 @@ class FakeEventSink:
         self._record("tasks_aborting", count=count, reason=reason)
 
     # -------------------------------------------------------------------------
+    # SIGINT escalation lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_drain_started(self, active_task_count: int) -> None:
+        self._record("drain_started", active_task_count=active_task_count)
+
+    def on_abort_started(self) -> None:
+        self._record("abort_started")
+
+    def on_force_abort(self) -> None:
+        self._record("force_abort")
+
+    # -------------------------------------------------------------------------
     # Epic verification lifecycle
     # -------------------------------------------------------------------------
 

@@ -1858,6 +1858,26 @@ class MalaEventSink(Protocol):
         ...
 
     # -------------------------------------------------------------------------
+    # SIGINT escalation lifecycle
+    # -------------------------------------------------------------------------
+
+    def on_drain_started(self, active_task_count: int) -> None:
+        """Called when drain mode starts (1st Ctrl-C).
+
+        Args:
+            active_task_count: Number of active tasks being drained.
+        """
+        ...
+
+    def on_abort_started(self) -> None:
+        """Called when graceful abort starts (2nd Ctrl-C)."""
+        ...
+
+    def on_force_abort(self) -> None:
+        """Called when hard abort starts (3rd Ctrl-C)."""
+        ...
+
+    # -------------------------------------------------------------------------
     # Epic verification lifecycle
     # -------------------------------------------------------------------------
 
