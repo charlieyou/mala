@@ -1082,3 +1082,106 @@ class TestCustomCommandsYamlOrderPreservation:
         assert custom_cmds[0].name == "cmd_alpha"
         assert custom_cmds[1].name == "cmd_beta"
         assert custom_cmds[2].name == "cmd_gamma"
+
+
+class TestInlineCustomCommandsIntegration:
+    """Integration tests: YAML with inline customs → ValidationSpec."""
+
+    def test_inline_customs_in_commands_yaml_to_spec(self, tmp_path: Path) -> None:
+        """YAML with inline custom commands in commands section → ValidationSpec.
+
+        Tests full path: YAML file → ValidationConfig → build_validation_spec → ValidationSpec
+        with custom commands appearing in the commands list.
+        """
+        # Create mala.yaml with inline custom command in commands section
+        yaml_content = """\
+preset: python-uv
+commands:
+  lint: uvx ruff check .
+  typecheck: uvx ty check
+  test: uv run pytest
+  security: bandit -r src/
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        spec = build_validation_spec(tmp_path)
+
+        # Verify custom command is in spec
+        cmd_names = [cmd.name for cmd in spec.commands]
+        assert "security" in cmd_names
+
+        # Verify custom command has correct attributes
+        security_cmd = next(cmd for cmd in spec.commands if cmd.name == "security")
+        assert security_cmd.kind == CommandKind.CUSTOM
+        assert security_cmd.command == "bandit -r src/"
+
+        # Verify pipeline order: standard commands before test, custom after typecheck
+        typecheck_idx = cmd_names.index("typecheck")
+        security_idx = cmd_names.index("security")
+        test_idx = cmd_names.index("test")
+        assert typecheck_idx < security_idx < test_idx
+
+    def test_run_level_additive_customs_yaml_to_spec(self, tmp_path: Path) -> None:
+        """YAML with +prefixed customs in run_level_commands → merged ValidationSpec.
+
+        Tests ADDITIVE mode: run-level customs are merged with repo-level customs.
+        """
+        yaml_content = """\
+preset: python-uv
+commands:
+  lint: uvx ruff check .
+  test: uv run pytest
+  security: bandit -r src/
+run_level_commands:
+  +integration: uv run pytest -m integration
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        # PER_ISSUE scope: only repo-level customs
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+        per_issue_names = [cmd.name for cmd in per_issue_spec.commands]
+        assert "security" in per_issue_names
+        assert "integration" not in per_issue_names
+
+        # RUN_LEVEL scope: merged customs (repo + run-level additive)
+        run_level_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.RUN_LEVEL
+        )
+        run_level_names = [cmd.name for cmd in run_level_spec.commands]
+        assert "security" in run_level_names
+        assert "integration" in run_level_names
+
+    def test_run_level_replace_customs_clears_repo_customs(
+        self, tmp_path: Path
+    ) -> None:
+        """YAML with unprefixed custom in run_level_commands → repo customs cleared.
+
+        Tests REPLACE mode with actual custom command at run-level.
+        """
+        yaml_content = """\
+preset: python-uv
+commands:
+  lint: uvx ruff check .
+  test: uv run pytest
+  security: bandit -r src/
+run_level_commands:
+  integration: uv run pytest -m integration
+"""
+        (tmp_path / "mala.yaml").write_text(yaml_content)
+
+        # PER_ISSUE scope: only repo-level customs
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+        per_issue_names = [cmd.name for cmd in per_issue_spec.commands]
+        assert "security" in per_issue_names
+
+        # RUN_LEVEL scope: REPLACE mode - only run-level customs
+        run_level_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.RUN_LEVEL
+        )
+        run_level_names = [cmd.name for cmd in run_level_spec.commands]
+        assert "security" not in run_level_names  # Repo custom cleared
+        assert "integration" in run_level_names  # Run-level custom present
