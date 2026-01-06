@@ -54,7 +54,7 @@ if TYPE_CHECKING:
         ReviewIssueProtocol,
         SDKClientFactoryProtocol,
     )
-    from src.infra.epic_verifier import EpicVerificationResult
+    from src.core.models import EpicVerificationResult
     from src.infra.io.log_output.run_metadata import RunMetadata
     from src.orchestration.types import (
         IssueFilterConfig,

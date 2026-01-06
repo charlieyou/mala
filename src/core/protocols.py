@@ -914,6 +914,37 @@ class GateChecker(Protocol):
 
 
 @runtime_checkable
+class EpicVerifierProtocol(Protocol):
+    """Protocol for epic verification to avoid importing concrete EpicVerifier.
+
+    Provides the async interface for verifying and closing epics based on
+    their acceptance criteria. The orchestrator uses this to trigger epic
+    verification when child issues complete.
+
+    The canonical implementation is EpicVerifier in src/infra/epic_verifier.py.
+    """
+
+    async def verify_and_close_epic(
+        self,
+        epic_id: str,
+        human_override: bool = False,
+    ) -> object:
+        """Verify and close a single specific epic if eligible.
+
+        This method checks if the specified epic is eligible (all children closed),
+        then verifies it if eligible, and closes it if verification passes.
+
+        Args:
+            epic_id: The epic ID to verify and close.
+            human_override: If True, bypass verification and close directly.
+
+        Returns:
+            EpicVerificationResult with verification outcome.
+        """
+        ...
+
+
+@runtime_checkable
 class EpicVerificationModel(Protocol):
     """Protocol for model-agnostic epic verification.
 

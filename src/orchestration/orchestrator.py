@@ -24,7 +24,6 @@ from src.infra.git_utils import (
     get_git_branch_async,
     get_git_commit_async,
 )
-from src.infra.clients.cerberus_review import DefaultReviewer
 from src.infra.io.log_output.run_metadata import (
     lookup_prior_session,
     remove_run_marker,
@@ -86,12 +85,12 @@ if TYPE_CHECKING:
     from src.pipeline.issue_execution_coordinator import AbortResult
     from src.core.protocols import (
         CodeReviewer,
+        EpicVerifierProtocol,
         GateChecker,
         IssueProvider,
         LogProvider,
     )
     from src.domain.prompts import PromptProvider
-    from src.infra.epic_verifier import EpicVerifier
     from src.infra.io.config import MalaConfig
     from src.core.protocols import MalaEventSink
     from src.infra.io.log_output.run_metadata import RunMetadata
@@ -145,7 +144,7 @@ class MalaOrchestrator:
         _log_provider: LogProvider,
         _telemetry_provider: TelemetryProvider,
         _event_sink: MalaEventSink,
-        _epic_verifier: EpicVerifier | None = None,
+        _epic_verifier: EpicVerifierProtocol | None = None,
         runs_dir: Path | None = None,
         lock_releaser: Callable[[list[str]], int] | None = None,
     ):
@@ -175,7 +174,7 @@ class MalaOrchestrator:
         log_provider: LogProvider,
         telemetry_provider: TelemetryProvider,
         event_sink: MalaEventSink,
-        epic_verifier: EpicVerifier | None,
+        epic_verifier: EpicVerifierProtocol | None,
         *,
         runs_dir: Path | None = None,
         lock_releaser: Callable[[list[str]], int] | None = None,
@@ -536,8 +535,9 @@ class MalaOrchestrator:
         """Return whether review should run for this orchestrator instance."""
         if "review" not in self._disabled_validations:
             return True
-        if self.review_disabled_reason and not isinstance(
-            self.review_runner.code_reviewer, DefaultReviewer
+        if (
+            self.review_disabled_reason
+            and self.review_runner.code_reviewer.overrides_disabled_setting()
         ):
             return True
         return False
