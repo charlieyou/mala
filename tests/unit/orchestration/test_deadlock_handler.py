@@ -59,7 +59,6 @@ class FakeCallbacks:
     # Custom side effects for advanced tests
     add_dependency_side_effect: Any = None
     mark_needs_followup_side_effect: Any = None
-    unregister_agent_enabled: bool = True
 
     async def add_dependency(self, dependent_id: str, dependency_id: str) -> bool:
         """Track add_dependency calls."""
@@ -125,10 +124,7 @@ class FakeCallbacks:
             on_locks_cleaned=self.on_locks_cleaned,
             on_tasks_aborting=self.on_tasks_aborting,
             do_cleanup_agent_locks=self.do_cleanup_agent_locks,
-            # Pass the method when enabled, None when disabled (simulates missing callback)
-            unregister_agent=self.unregister_agent
-            if self.unregister_agent_enabled
-            else None,
+            unregister_agent=self.unregister_agent,
             finalize_issue_result=self.finalize_issue_result,
             mark_completed=self.mark_completed,
         )
@@ -652,17 +648,6 @@ class TestCleanupAgentLocks:
         handler.cleanup_agent_locks("agent-1")
 
         assert fake_callbacks.unregister_agent_calls == ["agent-1"]
-
-    def test_handles_none_unregister_callback(self) -> None:
-        """cleanup_agent_locks handles None unregister_agent callback."""
-        fake_cbs = FakeCallbacks(unregister_agent_enabled=False)
-        handler = DeadlockHandler(callbacks=fake_cbs.as_callbacks())
-
-        # Should not raise
-        handler.cleanup_agent_locks("agent-1")
-
-        # Cleanup was still called
-        assert fake_cbs.do_cleanup_agent_locks_calls == ["agent-1"]
 
     def test_emits_event_only_when_locks_released(self) -> None:
         """cleanup_agent_locks only emits on_locks_cleaned when locks are released."""

@@ -41,7 +41,6 @@ class DeadlockHandlerCallbacks:
         do_cleanup_agent_locks: Clean up locks held by agent. Args: (agent_id).
             Returns: (count, paths).
         unregister_agent: Unregister agent from deadlock monitor. Args: (agent_id).
-            Optional - only called when deadlock monitoring is enabled.
         finalize_issue_result: Finalize an issue result. Args: (issue_id, result, run_metadata).
         mark_completed: Mark issue as completed in coordinator. Args: (issue_id).
     """
@@ -53,7 +52,7 @@ class DeadlockHandlerCallbacks:
     on_locks_cleaned: Callable[[str, int], None]
     on_tasks_aborting: Callable[[int, str], None]
     do_cleanup_agent_locks: Callable[[str], tuple[int, list[str]]]
-    unregister_agent: Callable[[str], None] | None
+    unregister_agent: Callable[[str], None]
     finalize_issue_result: Callable[[str, IssueResult, RunMetadata], Awaitable[None]]
     mark_completed: Callable[[str], None]
 
@@ -277,6 +276,5 @@ class DeadlockHandler:
         if count:
             logger.info("Agent locks cleaned: agent_id=%s count=%d", agent_id, count)
             self._callbacks.on_locks_cleaned(agent_id, count)
-        # Unregister agent from deadlock monitor (only when monitoring is enabled)
-        if self._callbacks.unregister_agent is not None:
-            self._callbacks.unregister_agent(agent_id)
+        # Unregister agent from deadlock monitor
+        self._callbacks.unregister_agent(agent_id)

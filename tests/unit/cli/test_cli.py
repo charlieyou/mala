@@ -1823,7 +1823,6 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=None,
             disable_review=False,
-            deadlock_detection_enabled=False,
         )
 
         assert result.resolved is not None
@@ -1852,7 +1851,6 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=None,
             disable_review=False,
-            deadlock_detection_enabled=False,
         )
 
         assert result.resolved is not None
@@ -1879,7 +1877,6 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=10,
             disable_review=False,
-            deadlock_detection_enabled=False,
         )
 
         assert result.resolved is not None
@@ -1905,7 +1902,6 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=None,
             disable_review=False,
-            deadlock_detection_enabled=False,
         )
 
         assert result.resolved is not None
@@ -1941,7 +1937,6 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=None,
             disable_review=False,
-            deadlock_detection_enabled=False,
         )
 
         assert result.resolved is not None
@@ -1967,7 +1962,6 @@ class TestApplyConfigOverrides:
             cerberus_env="FOO=bar,BAZ=qux",
             max_epic_verification_retries=None,
             disable_review=False,
-            deadlock_detection_enabled=False,
         )
 
         assert result.resolved is not None
@@ -1993,7 +1987,6 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=None,
             disable_review=False,
-            deadlock_detection_enabled=False,
         )
 
         assert result.is_error
@@ -2019,7 +2012,6 @@ class TestApplyConfigOverrides:
             cerberus_env=None,
             max_epic_verification_retries=None,
             disable_review=False,
-            deadlock_detection_enabled=False,
         )
 
         assert result.is_error
@@ -2045,62 +2037,12 @@ class TestApplyConfigOverrides:
             cerberus_env="INVALID_NO_EQUALS",
             max_epic_verification_retries=None,
             disable_review=False,
-            deadlock_detection_enabled=False,
         )
 
         assert result.is_error
         assert result.error is not None
         assert result.resolved is None
         assert result.updated_config is None
-
-    def test_deadlock_detection_enabled_applies(self) -> None:
-        """deadlock_detection_enabled is applied to updated config."""
-        from src.cli.cli import _apply_config_overrides
-        from src.infra.io.config import MalaConfig
-
-        config = MalaConfig(
-            runs_dir=Path("/tmp/runs"),
-            lock_dir=Path("/tmp/locks"),
-        )
-
-        # Test enabled (default)
-        result = _apply_config_overrides(
-            config=config,
-            review_timeout=None,
-            cerberus_spawn_args=None,
-            cerberus_wait_args=None,
-            cerberus_env=None,
-            max_epic_verification_retries=None,
-            disable_review=False,
-            deadlock_detection_enabled=True,
-        )
-
-        assert result.updated_config is not None
-        assert result.updated_config.deadlock_detection_enabled is True
-
-    def test_deadlock_detection_disabled_applies(self) -> None:
-        """deadlock_detection_enabled=False is applied to updated config."""
-        from src.cli.cli import _apply_config_overrides
-        from src.infra.io.config import MalaConfig
-
-        config = MalaConfig(
-            runs_dir=Path("/tmp/runs"),
-            lock_dir=Path("/tmp/locks"),
-        )
-
-        result = _apply_config_overrides(
-            config=config,
-            review_timeout=None,
-            cerberus_spawn_args=None,
-            cerberus_wait_args=None,
-            cerberus_env=None,
-            max_epic_verification_retries=None,
-            disable_review=False,
-            deadlock_detection_enabled=False,
-        )
-
-        assert result.updated_config is not None
-        assert result.updated_config.deadlock_detection_enabled is False
 
 
 # ============================================================================

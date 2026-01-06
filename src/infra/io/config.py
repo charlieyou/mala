@@ -219,9 +219,6 @@ class MalaConfig:
     # Epic verification retry configuration
     max_epic_verification_retries: int = field(default=3)
 
-    # Deadlock detection
-    deadlock_detection_enabled: bool = field(default=True)
-
     def __post_init__(self) -> None:
         """Normalize mutable fields to immutable types.
 
