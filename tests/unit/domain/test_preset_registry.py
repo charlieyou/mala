@@ -9,7 +9,7 @@ from src.domain.validation.preset_registry import PresetRegistry
 
 
 class TestPresetRegistryUnit:
-    """Unit tests for PresetRegistry with mocked file loading."""
+    """Unit tests for PresetRegistry."""
 
     @pytest.fixture
     def registry(self) -> PresetRegistry:
