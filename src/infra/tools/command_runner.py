@@ -183,7 +183,7 @@ class CommandRunner(CommandRunnerPort):
         if sys.platform == "win32":
             return
         pgids = _SIGINT_FORWARD_PGIDS.copy()
-        _SIGINT_FORWARD_PGIDS.clear()
+        _SIGINT_FORWARD_PGIDS.difference_update(pgids)
         for pgid in pgids:
             try:
                 os.killpg(pgid, signal.SIGKILL)
