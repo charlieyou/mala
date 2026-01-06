@@ -491,3 +491,122 @@ class TestPromptValidationCommands:
         assert "No format command configured" in prompt_cmds.format
         assert "No typecheck command configured" in prompt_cmds.typecheck
         assert "No test command configured" in prompt_cmds.test
+
+
+class TestCustomCommandConfig:
+    """Tests for CustomCommandConfig dataclass."""
+
+    def test_from_string_shorthand(self) -> None:
+        """String shorthand creates config with defaults."""
+        config = CustomCommandConfig.from_value("my_cmd", "uvx cmd")
+        assert config.command == "uvx cmd"
+        assert config.timeout == 120  # default per spec
+        assert config.allow_fail is False
+
+    def test_from_object_form(self) -> None:
+        """Object form with all fields creates correct config."""
+        config = CustomCommandConfig.from_value(
+            "my_cmd", {"command": "uvx cmd", "timeout": 60, "allow_fail": True}
+        )
+        assert config.command == "uvx cmd"
+        assert config.timeout == 60
+        assert config.allow_fail is True
+
+    def test_defaults_from_object_form(self) -> None:
+        """Object form with only command uses defaults for other fields."""
+        config = CustomCommandConfig.from_value("my_cmd", {"command": "go test ./..."})
+        assert config.command == "go test ./..."
+        assert config.timeout == 120  # default
+        assert config.allow_fail is False  # default
+
+    def test_invalid_name_starts_with_digit(self) -> None:
+        """Name starting with digit raises ConfigError."""
+        with pytest.raises(ConfigError, match="Invalid custom command name '123abc'"):
+            CustomCommandConfig.from_value("123abc", "some cmd")
+
+    def test_invalid_name_contains_hyphen(self) -> None:
+        """Name containing hyphen raises ConfigError."""
+        with pytest.raises(ConfigError, match="Invalid custom command name 'cmd-name'"):
+            CustomCommandConfig.from_value("cmd-name", "some cmd")
+
+    def test_invalid_name_contains_dot(self) -> None:
+        """Name containing dot raises ConfigError."""
+        with pytest.raises(
+            ConfigError, match=r"Invalid custom command name 'cmd\.name'"
+        ):
+            CustomCommandConfig.from_value("cmd.name", "some cmd")
+
+    def test_valid_name_with_underscore(self) -> None:
+        """Name with underscore is valid."""
+        config = CustomCommandConfig.from_value("my_cmd_2", "some cmd")
+        assert config.command == "some cmd"
+
+    def test_valid_name_starts_with_underscore(self) -> None:
+        """Name starting with underscore is valid."""
+        config = CustomCommandConfig.from_value("_private", "some cmd")
+        assert config.command == "some cmd"
+
+    def test_null_value_error(self) -> None:
+        """Null value raises ConfigError with guidance."""
+        with pytest.raises(ConfigError, match="use run-level override to disable"):
+            CustomCommandConfig.from_value("my_cmd", None)  # type: ignore[arg-type]
+
+    def test_empty_command_string_error(self) -> None:
+        """Empty command string raises ConfigError."""
+        with pytest.raises(ConfigError, match="cannot be empty"):
+            CustomCommandConfig.from_value("my_cmd", "")
+
+    def test_whitespace_only_command_error(self) -> None:
+        """Whitespace-only command raises ConfigError."""
+        with pytest.raises(ConfigError, match="cannot be empty"):
+            CustomCommandConfig.from_value("my_cmd", "   ")
+
+    def test_empty_command_in_object_form_error(self) -> None:
+        """Empty command in object form raises ConfigError."""
+        with pytest.raises(ConfigError, match="cannot be empty"):
+            CustomCommandConfig.from_value("my_cmd", {"command": ""})
+
+    def test_unknown_keys_error(self) -> None:
+        """Unknown keys in object form raises ConfigError."""
+        with pytest.raises(ConfigError, match="Unknown key 'foo'"):
+            CustomCommandConfig.from_value(
+                "my_cmd", {"command": "some cmd", "foo": "bar"}
+            )
+
+    def test_multiple_unknown_keys_error(self) -> None:
+        """Multiple unknown keys mentions first unknown key."""
+        with pytest.raises(ConfigError, match="Unknown key"):
+            CustomCommandConfig.from_value(
+                "my_cmd", {"command": "some cmd", "foo": "bar", "baz": 123}
+            )
+
+    def test_missing_command_in_object_form_error(self) -> None:
+        """Object form without command key raises ConfigError."""
+        with pytest.raises(ConfigError, match="must have a 'command' string field"):
+            CustomCommandConfig.from_value("my_cmd", {"timeout": 60})
+
+    def test_invalid_timeout_type(self) -> None:
+        """Non-integer timeout raises ConfigError."""
+        with pytest.raises(ConfigError, match="timeout must be an integer"):
+            CustomCommandConfig.from_value(
+                "my_cmd", {"command": "cmd", "timeout": "60"}
+            )
+
+    def test_boolean_timeout_rejected(self) -> None:
+        """Boolean timeout is rejected."""
+        with pytest.raises(ConfigError, match="timeout must be an integer"):
+            CustomCommandConfig.from_value(
+                "my_cmd", {"command": "cmd", "timeout": True}
+            )
+
+    def test_invalid_allow_fail_type(self) -> None:
+        """Non-boolean allow_fail raises ConfigError."""
+        with pytest.raises(ConfigError, match="allow_fail must be a boolean"):
+            CustomCommandConfig.from_value(
+                "my_cmd", {"command": "cmd", "allow_fail": "yes"}
+            )
+
+    def test_invalid_value_type(self) -> None:
+        """Non-string, non-dict value raises ConfigError."""
+        with pytest.raises(ConfigError, match="must be a string or object"):
+            CustomCommandConfig.from_value("my_cmd", 123)  # type: ignore[arg-type]

@@ -17,8 +17,13 @@ Key types:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import cast
+
+# Regex for valid custom command names: starts with letter or underscore,
+# followed by letters, digits, or underscores
+CUSTOM_COMMAND_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class ConfigError(Exception):
@@ -140,10 +145,13 @@ class CustomCommandConfig:
     allow_fail: bool = False
 
     @classmethod
-    def from_value(cls, value: str | dict[str, object]) -> CustomCommandConfig:
+    def from_value(
+        cls, name: str, value: str | dict[str, object] | None
+    ) -> CustomCommandConfig:
         """Create CustomCommandConfig from YAML value (string or dict).
 
         Args:
+            name: The custom command name (used as key in custom_commands dict).
             value: Either a command string or a dict with 'command' and
                 optional 'timeout', 'allow_fail' keys.
 
@@ -151,11 +159,87 @@ class CustomCommandConfig:
             CustomCommandConfig instance.
 
         Raises:
-            ConfigError: If value is neither string nor valid dict.
-            NotImplementedError: Stub - not yet implemented.
+            ConfigError: If name is invalid, value is null/invalid, or
+                object has unknown keys.
+
+        Examples:
+            >>> CustomCommandConfig.from_value("my_check", "uvx cmd")
+            CustomCommandConfig(command='uvx cmd', timeout=120, allow_fail=False)
+
+            >>> CustomCommandConfig.from_value("slow_check", {"command": "cmd", "timeout": 300})
+            CustomCommandConfig(command='cmd', timeout=300, allow_fail=False)
         """
-        raise NotImplementedError(
-            "CustomCommandConfig.from_value() not yet implemented"
+        # Validate command name
+        if not CUSTOM_COMMAND_NAME_PATTERN.match(name):
+            raise ConfigError(
+                f"Invalid custom command name '{name}'. "
+                "Names must start with a letter or underscore, "
+                "followed by letters, digits, or underscores."
+            )
+
+        # Reject null values
+        if value is None:
+            raise ConfigError(
+                f"Custom command '{name}' cannot be null. "
+                "To disable, use run-level override to disable."
+            )
+
+        # String shorthand
+        if isinstance(value, str):
+            if not value or not value.strip():
+                raise ConfigError(
+                    f"Custom command '{name}' cannot be empty. "
+                    "Provide a command string."
+                )
+            return cls(command=value, timeout=120, allow_fail=False)
+
+        # Object form
+        if isinstance(value, dict):
+            known_keys = {"command", "timeout", "allow_fail"}
+            unknown_keys = set(value.keys()) - known_keys
+            if unknown_keys:
+                first_unknown = sorted(unknown_keys)[0]
+                raise ConfigError(
+                    f"Unknown key '{first_unknown}' in custom command '{name}'. "
+                    f"Allowed keys: {', '.join(sorted(known_keys))}"
+                )
+
+            command = value.get("command")
+            if not isinstance(command, str):
+                raise ConfigError(
+                    f"Custom command '{name}' object must have a 'command' string field"
+                )
+            if not command or not command.strip():
+                raise ConfigError(
+                    f"Custom command '{name}' cannot be empty. "
+                    "Provide a command string."
+                )
+
+            timeout = value.get("timeout", 120)
+            if timeout is not None:
+                # Reject booleans explicitly (bool is subclass of int)
+                if isinstance(timeout, bool) or not isinstance(timeout, int):
+                    raise ConfigError(
+                        f"Custom command '{name}' timeout must be an integer, "
+                        f"got {type(timeout).__name__}"
+                    )
+
+            allow_fail = value.get("allow_fail", False)
+            if not isinstance(allow_fail, bool):
+                raise ConfigError(
+                    f"Custom command '{name}' allow_fail must be a boolean, "
+                    f"got {type(allow_fail).__name__}"
+                )
+
+            return cls(
+                command=command,
+                timeout=cast("int | None", timeout),
+                allow_fail=allow_fail,
+            )
+
+        raise ConfigError(
+            f"Custom command '{name}' must be a string or object, "
+            f"got {type(value).__name__}"
         )
 
 
@@ -503,7 +587,7 @@ class ValidationConfig:
                             f"custom_commands key must be a string, got {type(name).__name__}"
                         )
                     custom_commands[name] = CustomCommandConfig.from_value(
-                        cast("str | dict[str, object]", value)
+                        name, cast("str | dict[str, object] | None", value)
                     )
 
         return cls(
