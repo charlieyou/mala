@@ -385,21 +385,14 @@ def _select_python_invoker(repo_root: Path) -> list[str]:
 def _config_prefers_uv(repo_root: Path) -> bool:
     """Return True if validation commands indicate uv usage."""
     try:
-        from src.domain.validation.spec import (
-            CommandKind,
-            ValidationScope,
-            build_validation_spec,
-        )
+        from src.domain.validation.spec import ValidationScope, build_validation_spec
 
         spec = build_validation_spec(repo_root, scope=ValidationScope.RUN_LEVEL)
     except Exception:
         return False
 
-    setup_cmd = next(
-        (cmd.command for cmd in spec.commands if cmd.kind == CommandKind.SETUP), ""
-    )
-    if setup_cmd:
-        return _commands_use_uv([setup_cmd])
+    if _commands_use_uv(cmd.command for cmd in spec.commands):
+        return True
 
     return (repo_root / "uv.lock").exists()
 

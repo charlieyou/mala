@@ -17,6 +17,7 @@ from src.domain.validation.e2e import (
     E2ERunner,
     E2EStatus,
     _commands_use_uv,
+    _config_prefers_uv,
     _select_python_invoker,
     check_e2e_prereqs,
 )
@@ -614,6 +615,31 @@ class TestE2EInvokerSelection:
 
     def test_commands_use_uv_ignores_non_uv(self) -> None:
         assert not _commands_use_uv(["python -m pytest", "go test ./..."])
+
+    def test_config_prefers_uv_for_python_uv_preset(self, tmp_path: Path) -> None:
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        assert _config_prefers_uv(tmp_path) is True
+
+    def test_config_prefers_uv_false_for_go_preset(self, tmp_path: Path) -> None:
+        (tmp_path / "mala.yaml").write_text("preset: go\n")
+        assert _config_prefers_uv(tmp_path) is False
+
+    def test_config_prefers_uv_false_for_node_preset(self, tmp_path: Path) -> None:
+        (tmp_path / "mala.yaml").write_text("preset: node-npm\n")
+        assert _config_prefers_uv(tmp_path) is False
+
+    def test_config_prefers_uv_when_any_command_uses_uv(self, tmp_path: Path) -> None:
+        (tmp_path / "mala.yaml").write_text('commands:\n  test: "uv run pytest"\n')
+        assert _config_prefers_uv(tmp_path) is True
+
+    def test_config_prefers_uv_when_uv_lock_present(self, tmp_path: Path) -> None:
+        (tmp_path / "mala.yaml").write_text('commands:\n  test: "pytest"\n')
+        (tmp_path / "uv.lock").write_text("# uv lock\n")
+        assert _config_prefers_uv(tmp_path) is True
+
+    def test_config_prefers_uv_false_without_uv_signals(self, tmp_path: Path) -> None:
+        (tmp_path / "mala.yaml").write_text('commands:\n  test: "pytest"\n')
+        assert _config_prefers_uv(tmp_path) is False
 
     def test_select_python_invoker_prefers_uv_when_available(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
