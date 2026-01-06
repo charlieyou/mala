@@ -1024,7 +1024,7 @@ from pathlib import Path
 from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
 from src.core.models import WatchConfig
 from tests.fakes.event_sink import FakeEventSink
-from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+from tests.fakes.issue_provider import FakeIssueProvider
 from src.pipeline.issue_execution_coordinator import IssueExecutionCoordinator
 
 # Globals to check state after signal handling
@@ -1049,10 +1049,9 @@ async def main():
     runs_dir = tmp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create orchestrator with one issue
-    provider = FakeIssueProvider(
-        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
-    )
+    # Empty provider - avoids spawning real agent work (SDK, git, review)
+    # Watch mode + slow poll keeps orchestrator alive for signal testing
+    provider = FakeIssueProvider()
     event_sink = FakeEventSink()
 
     config = OrchestratorConfig(
@@ -1067,7 +1066,8 @@ async def main():
     )
     _orchestrator = create_orchestrator(config, deps=deps)
 
-    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
+    # Slow poll interval keeps orchestrator alive in watch mode
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=10.0)
 
     # Start orchestrator as task, wait for SIGINT handler to be installed
     run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
