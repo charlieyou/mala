@@ -196,7 +196,7 @@ Existing modules updated:
 - Expected evidence is derived from ValidationSpec by scope:
   - Per-issue EvidenceGate expects per-issue commands only (no E2E).
   - Run-level E2E evidence is only required at run-level validation.
-- Must honor CLI opt-outs (e.g., `--disable-validations=slow-tests`).
+- Must honor CLI opt-outs (e.g., `--disable slow-tests`).
 - No-op / obsolete issue path (no commit required):
   - Agent logs an explicit marker: `ISSUE_NO_CHANGE` or `ISSUE_OBSOLETE`.
   - Include a short rationale in the log line.
@@ -226,7 +226,7 @@ Existing modules updated:
 - Includes `uv sync --all-extras` + full test/coverage/E2E defaults.
 - Must pass before closing issues (strict-by-default).
 - On failure: run ends non-zero, metadata recorded, follow-up issue created
-  unless `--disable-validations=followup-on-run-validate-fail` is set.
+  unless `--disable followup-on-run-validate-fail` is set.
 
 ## 4) CLI Defaults (Strict by Default, Opt-Outs Only)
 
@@ -238,8 +238,9 @@ Defaults:
 - E2E fixture repo: ON (run-level only)
 - codex review: ON
 
-Disable list (comma-separated):
-- `--disable-validations <csv>`
+Disable list (repeatable or comma-separated):
+- `--disable <value>` (repeatable, e.g., `--disable slow-tests --disable coverage`)
+- `--disable <csv>` (comma-separated, e.g., `--disable "slow-tests,coverage"`)
   - values: `post-validate`, `run-level-validate`, `slow-tests`, `coverage`,
     `e2e`, `codex-review`, `followup-on-run-validate-fail`
 
@@ -277,7 +278,7 @@ Preconditions:
 - MORPH_API_KEY (optional; enables MorphLLM MCP tools when present)
 
 Strict default: fail closed if missing and E2E is enabled
-(i.e., `--disable-validations` does not include `e2e`).
+(i.e., `--disable` does not include `e2e`).
 Optional dev flag: `--skip-e2e-if-no-keys` (warn and skip instead of failing).
 
 ## 6) Coverage (High but Reasonable)
@@ -322,9 +323,9 @@ If enabled and a change is classified as docs-only:
 - Run-level validation still runs the full suite unless explicitly disabled.
 
 ### EvidenceGate opt-out mapping
-- `--disable-validations=slow-tests` => EvidenceGate expects non-slow pytest only.
-- `--disable-validations=coverage` => coverage evidence not required.
-- `--disable-validations=e2e` => E2E evidence not required.
+- `--disable slow-tests` => EvidenceGate expects non-slow pytest only.
+- `--disable coverage` => coverage evidence not required.
+- `--disable e2e` => E2E evidence not required.
 
 ## 8) Worktree + venv notes
 
