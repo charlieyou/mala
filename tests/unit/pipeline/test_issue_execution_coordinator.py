@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.core.models import OrderPreference
+from src.core.models import OrderPreference, PeriodicValidationConfig
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
@@ -599,7 +599,6 @@ class TestDrainMode:
         # The coordinator checks watch_enabled = bool(watch_config and watch_config.enabled)
         mock_watch_config = MagicMock()
         mock_watch_config.enabled = True
-        mock_watch_config.validate_every = 10  # Required by coordinator init
 
         loop_task = asyncio.create_task(
             coord.run_loop(
@@ -607,6 +606,7 @@ class TestDrainMode:
                 finalize_callback,
                 AsyncMock(),
                 watch_config=mock_watch_config,
+                validation_config=PeriodicValidationConfig(validate_every=10),
                 validation_callback=validation_callback,
                 drain_event=drain_event,
             )
@@ -652,7 +652,6 @@ class TestDrainMode:
         # Create a mock WatchConfig that acts like enabled=True
         mock_watch_config = MagicMock()
         mock_watch_config.enabled = True
-        mock_watch_config.validate_every = 10
 
         loop_task = asyncio.create_task(
             coord.run_loop(
@@ -660,6 +659,7 @@ class TestDrainMode:
                 finalize_callback,
                 AsyncMock(),
                 watch_config=mock_watch_config,
+                validation_config=PeriodicValidationConfig(validate_every=10),
                 validation_callback=validation_callback,
                 drain_event=drain_event,
             )
