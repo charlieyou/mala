@@ -702,7 +702,9 @@ def _is_process_running(pid: int) -> bool:
 def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
     """Look up the session ID from a prior run on this issue.
 
-    Stub - implementation in T002.
+    Scans run metadata files in the repo's runs directory, finds entries
+    for the given issue, and returns the session_id from the most recent
+    run (sorted by started_at timestamp descending).
 
     Args:
         repo_path: Repository path for finding run metadata.
@@ -711,4 +713,62 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
     Returns:
         Session ID from the most recent run on this issue, or None if not found.
     """
-    return None
+    runs_dir = get_repo_runs_dir(repo_path)
+    if not runs_dir.exists():
+        return None
+
+    # Collect all (started_at, session_id) pairs for this issue
+    candidates: list[tuple[float, str]] = []
+
+    for json_path in runs_dir.glob("*.json"):
+        try:
+            with json_path.open() as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            # Skip corrupt files silently
+            continue
+
+        if not isinstance(data, dict):
+            continue
+
+        issues = data.get("issues")
+        if not isinstance(issues, dict):
+            continue
+
+        issue_data = issues.get(issue_id)
+        if not isinstance(issue_data, dict):
+            continue
+
+        session_id = issue_data.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            continue
+
+        # Parse started_at for sorting
+        started_at = data.get("started_at", "")
+        timestamp = _parse_timestamp_for_sort(started_at)
+        candidates.append((timestamp, session_id))
+
+    if not candidates:
+        return None
+
+    # Sort by timestamp descending (most recent first)
+    candidates.sort(key=lambda x: -x[0])
+    return candidates[0][1]
+
+
+def _parse_timestamp_for_sort(ts: str) -> float:
+    """Parse ISO timestamp to epoch float for sorting.
+
+    Args:
+        ts: ISO format timestamp string (with Z or +00:00 suffix).
+
+    Returns:
+        Epoch timestamp as float, or 0.0 if parsing fails.
+    """
+    try:
+        # Handle both Z suffix and +00:00
+        ts = ts.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts)
+        return dt.timestamp()
+    except (ValueError, TypeError, AttributeError):
+        return 0.0

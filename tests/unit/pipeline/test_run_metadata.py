@@ -27,6 +27,7 @@ from src.infra.io.log_output.run_metadata import (
     configure_debug_logging,
     get_running_instances,
     get_running_instances_for_dir,
+    lookup_prior_session,
     remove_run_marker,
     write_run_marker,
 )
@@ -1080,3 +1081,260 @@ class TestDebugLogging:
                 finally:
                     # Ensure handler is always cleaned up, even if assertions fail
                     metadata.cleanup()
+
+
+class TestLookupPriorSession:
+    """Test lookup_prior_session function."""
+
+    def test_lookup_finds_recent_session(self) -> None:
+        """Test that lookup returns the most recent session_id for an issue."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            runs_dir = repo_path / ".mala" / "runs"
+            runs_dir.mkdir(parents=True)
+
+            # Create two run files with different timestamps
+            older_run = {
+                "run_id": "run-1",
+                "started_at": "2024-01-01T10:00:00Z",
+                "issues": {"issue-123": {"session_id": "old-session-abc"}},
+            }
+            newer_run = {
+                "run_id": "run-2",
+                "started_at": "2024-01-02T10:00:00Z",
+                "issues": {"issue-123": {"session_id": "new-session-xyz"}},
+            }
+
+            (runs_dir / "2024-01-01T10-00-00_run1.json").write_text(
+                json.dumps(older_run)
+            )
+            (runs_dir / "2024-01-02T10-00-00_run2.json").write_text(
+                json.dumps(newer_run)
+            )
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=runs_dir,
+            ):
+                result = lookup_prior_session(repo_path, "issue-123")
+
+            assert result == "new-session-xyz"
+
+    def test_lookup_returns_none_if_missing(self) -> None:
+        """Test that lookup returns None when no matching issue found."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            runs_dir = repo_path / ".mala" / "runs"
+            runs_dir.mkdir(parents=True)
+
+            # Create a run file with a different issue
+            run_data = {
+                "run_id": "run-1",
+                "started_at": "2024-01-01T10:00:00Z",
+                "issues": {"other-issue": {"session_id": "session-abc"}},
+            }
+            (runs_dir / "2024-01-01T10-00-00_run1.json").write_text(
+                json.dumps(run_data)
+            )
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=runs_dir,
+            ):
+                result = lookup_prior_session(repo_path, "issue-123")
+
+            assert result is None
+
+    def test_lookup_returns_none_if_dir_missing(self) -> None:
+        """Test that lookup returns None when runs directory doesn't exist."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            nonexistent_dir = repo_path / ".mala" / "runs"
+            # Don't create the directory
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=nonexistent_dir,
+            ):
+                result = lookup_prior_session(repo_path, "issue-123")
+
+            assert result is None
+
+    def test_lookup_ignores_runs_without_session_id(self) -> None:
+        """Test that runs without session_id are skipped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            runs_dir = repo_path / ".mala" / "runs"
+            runs_dir.mkdir(parents=True)
+
+            # Run with session_id
+            with_session = {
+                "run_id": "run-1",
+                "started_at": "2024-01-01T10:00:00Z",
+                "issues": {"issue-123": {"session_id": "valid-session"}},
+            }
+            # Run without session_id (newer)
+            without_session = {
+                "run_id": "run-2",
+                "started_at": "2024-01-02T10:00:00Z",
+                "issues": {"issue-123": {"status": "done"}},  # No session_id
+            }
+            # Run with null session_id (even newer)
+            null_session = {
+                "run_id": "run-3",
+                "started_at": "2024-01-03T10:00:00Z",
+                "issues": {"issue-123": {"session_id": None}},
+            }
+            # Run with empty session_id
+            empty_session = {
+                "run_id": "run-4",
+                "started_at": "2024-01-04T10:00:00Z",
+                "issues": {"issue-123": {"session_id": ""}},
+            }
+
+            (runs_dir / "run1.json").write_text(json.dumps(with_session))
+            (runs_dir / "run2.json").write_text(json.dumps(without_session))
+            (runs_dir / "run3.json").write_text(json.dumps(null_session))
+            (runs_dir / "run4.json").write_text(json.dumps(empty_session))
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=runs_dir,
+            ):
+                result = lookup_prior_session(repo_path, "issue-123")
+
+            # Should return the only valid session_id
+            assert result == "valid-session"
+
+    def test_lookup_handles_corrupt_json(self) -> None:
+        """Test that corrupt JSON files are skipped gracefully."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            runs_dir = repo_path / ".mala" / "runs"
+            runs_dir.mkdir(parents=True)
+
+            # Create a corrupt JSON file
+            (runs_dir / "corrupt.json").write_text("not valid json {{{")
+
+            # Create a valid run file
+            valid_run = {
+                "run_id": "run-1",
+                "started_at": "2024-01-01T10:00:00Z",
+                "issues": {"issue-123": {"session_id": "valid-session"}},
+            }
+            (runs_dir / "valid.json").write_text(json.dumps(valid_run))
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=runs_dir,
+            ):
+                # Should not raise, and should return the valid session
+                result = lookup_prior_session(repo_path, "issue-123")
+
+            assert result == "valid-session"
+
+    def test_lookup_sorts_by_started_at_timestamp(self) -> None:
+        """Test that sessions are sorted by started_at, not filename."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            runs_dir = repo_path / ".mala" / "runs"
+            runs_dir.mkdir(parents=True)
+
+            # Create runs with timestamps in opposite order of filenames
+            # File z.json has older timestamp
+            older_run = {
+                "run_id": "run-old",
+                "started_at": "2024-01-01T10:00:00Z",
+                "issues": {"issue-123": {"session_id": "old-session"}},
+            }
+            # File a.json has newer timestamp
+            newer_run = {
+                "run_id": "run-new",
+                "started_at": "2024-01-02T10:00:00Z",
+                "issues": {"issue-123": {"session_id": "new-session"}},
+            }
+
+            # Intentionally name files opposite to timestamp order
+            (runs_dir / "z_run.json").write_text(json.dumps(older_run))
+            (runs_dir / "a_run.json").write_text(json.dumps(newer_run))
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=runs_dir,
+            ):
+                result = lookup_prior_session(repo_path, "issue-123")
+
+            # Should return newer session based on timestamp, not filename
+            assert result == "new-session"
+
+    def test_lookup_handles_timezone_formats(self) -> None:
+        """Test that both Z and +00:00 timezone formats work."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            runs_dir = repo_path / ".mala" / "runs"
+            runs_dir.mkdir(parents=True)
+
+            # Run with Z suffix
+            run_z = {
+                "run_id": "run-z",
+                "started_at": "2024-01-01T10:00:00Z",
+                "issues": {"issue-123": {"session_id": "session-z"}},
+            }
+            # Run with +00:00 suffix (newer)
+            run_offset = {
+                "run_id": "run-offset",
+                "started_at": "2024-01-02T10:00:00+00:00",
+                "issues": {"issue-123": {"session_id": "session-offset"}},
+            }
+
+            (runs_dir / "run_z.json").write_text(json.dumps(run_z))
+            (runs_dir / "run_offset.json").write_text(json.dumps(run_offset))
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=runs_dir,
+            ):
+                result = lookup_prior_session(repo_path, "issue-123")
+
+            assert result == "session-offset"
+
+    def test_lookup_handles_malformed_data_structures(self) -> None:
+        """Test that malformed data structures are handled gracefully."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = Path(tmpdir)
+            runs_dir = repo_path / ".mala" / "runs"
+            runs_dir.mkdir(parents=True)
+
+            # issues is a list instead of dict
+            bad_issues_type = {
+                "run_id": "run-1",
+                "started_at": "2024-01-01T10:00:00Z",
+                "issues": ["issue-123"],
+            }
+            # issue_data is a string instead of dict
+            bad_issue_data = {
+                "run_id": "run-2",
+                "started_at": "2024-01-02T10:00:00Z",
+                "issues": {"issue-123": "not-a-dict"},
+            }
+            # Top-level is an array instead of dict
+            (runs_dir / "array.json").write_text('[{"run_id": "x"}]')
+
+            # Valid run
+            valid_run = {
+                "run_id": "run-3",
+                "started_at": "2024-01-03T10:00:00Z",
+                "issues": {"issue-123": {"session_id": "valid-session"}},
+            }
+
+            (runs_dir / "bad1.json").write_text(json.dumps(bad_issues_type))
+            (runs_dir / "bad2.json").write_text(json.dumps(bad_issue_data))
+            (runs_dir / "valid.json").write_text(json.dumps(valid_run))
+
+            with patch(
+                "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+                return_value=runs_dir,
+            ):
+                result = lookup_prior_session(repo_path, "issue-123")
+
+            assert result == "valid-session"
