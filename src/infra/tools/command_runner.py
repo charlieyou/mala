@@ -177,7 +177,7 @@ class CommandRunner(CommandRunnerPort):
     def kill_active_process_groups() -> None:
         """Send SIGKILL to all tracked process groups.
 
-        Safe to call multiple times - removes killed pgids from set.
+        Safe to call multiple times - removes attempted pgids from set.
         No-op on Windows. Silently handles ProcessLookupError/PermissionError.
         """
         if sys.platform == "win32":
