@@ -10,6 +10,7 @@ import pytest
 
 from src.pipeline.issue_execution_coordinator import (
     AbortCallback,
+    AbortResult,
     FinalizeCallback,
     SpawnCallback,
 )
@@ -117,7 +118,7 @@ class TestFakeAbortCallbackBehavior:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_returns_zero_without_coordinator(self) -> None:
-        """Returns 0 when no coordinator is set."""
+        """Returns AbortResult with aborted_count=0 when no coordinator is set."""
         callback = FakeAbortCallback()
         result = await callback()
-        assert result == 0
+        assert result == AbortResult(aborted_count=0)

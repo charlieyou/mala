@@ -10,6 +10,8 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.pipeline.issue_execution_coordinator import AbortResult
+
 
 @dataclass
 class FakeSpawnCallback:
@@ -81,16 +83,16 @@ class FakeAbortCallback:
     aborted_count: int = 0
     coordinator: Any = None  # Optional coordinator reference for task cleanup
 
-    async def __call__(self, *, is_interrupt: bool = False) -> int:
-        """Cancel all active tasks and return count."""
+    async def __call__(self, *, is_interrupt: bool = False) -> AbortResult:
+        """Cancel all active tasks and return AbortResult."""
         self.abort_calls.append({"is_interrupt": is_interrupt})
 
         if self.coordinator is None:
-            return 0
+            return AbortResult(aborted_count=0)
 
         tasks = list(self.coordinator.active_tasks.values())
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self.aborted_count += len(tasks)
-        return len(tasks)
+        return AbortResult(aborted_count=len(tasks))

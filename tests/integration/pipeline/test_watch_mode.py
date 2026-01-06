@@ -21,6 +21,7 @@ import pytest
 
 from src.core.models import PeriodicValidationConfig, WatchConfig
 from src.pipeline.issue_execution_coordinator import (
+    AbortResult,
     CoordinatorConfig,
     IssueExecutionCoordinator,
 )
@@ -128,13 +129,13 @@ class TestSigintHandling:
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
             coord.mark_completed(issue_id)
 
-        async def abort_callback(*, is_interrupt: bool = False) -> int:
+        async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:
             # Cancel and await all active tasks to avoid "Task destroyed" warnings
             tasks = list(coord.active_tasks.values())
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            return len(tasks)
+            return AbortResult(aborted_count=len(tasks))
 
         async def set_interrupt_when_active() -> None:
             """Wait for task to start then trigger interrupt."""
@@ -682,9 +683,6 @@ class TestPeriodicValidationWithoutWatch:
 
         This test verifies that when watch_config.enabled=False but
         validation_config.validate_every is set, validation still triggers.
-
-        Expected to FAIL until T003 removes watch_enabled guards.
-        The test will PASS (unexpectedly) once T003 is implemented.
         """
         # Set up issues that will complete
         provider = FakeIssueProvider(
