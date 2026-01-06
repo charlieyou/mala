@@ -667,7 +667,8 @@ class ValidationConfig:
                 f"{type(run_level_commands_data).__name__}"
             )
         run_level_commands = CommandsConfig.from_dict(
-            cast("dict[str, object] | None", run_level_commands_data)
+            cast("dict[str, object] | None", run_level_commands_data),
+            is_run_level=True,
         )
 
         # Parse coverage - track if explicitly present (even if null)
