@@ -740,7 +740,9 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
             name = json_path.name
             if len(name) >= 19:  # "2026-01-06T16-00-25" = 19 chars
                 try:
-                    file_ts = datetime.strptime(name[:19], "%Y-%m-%dT%H-%M-%S")
+                    file_ts = datetime.strptime(name[:19], "%Y-%m-%dT%H-%M-%S").replace(
+                        tzinfo=UTC
+                    )
                     # Compare at second granularity: best[0] may have sub-second
                     # precision while filename only has seconds
                     if file_ts.timestamp() < int(best[0]):
