@@ -467,6 +467,9 @@ class TestContextFileCleanup:
         class CapturingReviewer:
             """Reviewer that captures the context file path."""
 
+            def overrides_disabled_setting(self) -> bool:
+                return True
+
             async def __call__(
                 self,
                 diff_range: str,
@@ -509,6 +512,9 @@ class TestContextFileCleanup:
         @dataclass
         class FailingReviewer:
             """Reviewer that raises an exception."""
+
+            def overrides_disabled_setting(self) -> bool:
+                return True
 
             async def __call__(
                 self,
