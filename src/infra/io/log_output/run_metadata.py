@@ -943,7 +943,11 @@ def extract_session_from_run(
     )
 
 
-def find_sessions_for_issue(repo_path: Path | None, issue_id: str) -> list[SessionInfo]:
+def find_sessions_for_issue(
+    repo_path: Path | None,
+    issue_id: str,
+    on_corrupt: CorruptFileCallback | None = None,
+) -> list[SessionInfo]:
     """Find all sessions for a specific issue.
 
     This is the canonical implementation for session lookup, used by
@@ -952,6 +956,9 @@ def find_sessions_for_issue(repo_path: Path | None, issue_id: str) -> list[Sessi
     Args:
         repo_path: Repository path. If None, uses current directory.
         issue_id: The issue ID to filter by (exact match).
+        on_corrupt: Optional callback invoked when a file is corrupt or invalid.
+            Receives (path, exception) where exception is None for validation
+            failures and the actual exception for parse/IO errors.
 
     Returns:
         List of SessionInfo sorted by run_started_at descending, then run_id
@@ -961,7 +968,7 @@ def find_sessions_for_issue(repo_path: Path | None, issue_id: str) -> list[Sessi
     sessions: list[SessionInfo] = []
 
     for path in files:
-        data = _parse_run_file(path)
+        data = _parse_run_file(path, on_corrupt=on_corrupt)
         if data is None:
             continue
 

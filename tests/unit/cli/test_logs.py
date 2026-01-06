@@ -259,12 +259,14 @@ class TestParseRunFile:
             assert "Warning: skipping corrupt file" in mock_stderr.getvalue()
 
     def test_parse_missing_required_keys(self, tmp_path: Path) -> None:
-        """Verify file missing required keys returns None (no warning)."""
+        """Verify file missing required keys returns None with warning."""
         run_file = tmp_path / "incomplete.json"
         run_file.write_text('{"run_id": "abc123"}')  # missing started_at, issues
 
-        result = _parse_run_file_cli(run_file)
-        assert result is None
+        with patch("sys.stderr", new_callable=StringIO) as mock_stderr:
+            result = _parse_run_file_cli(run_file)
+            assert result is None
+            assert "Warning: skipping invalid file" in mock_stderr.getvalue()
 
     def test_parse_invalid_encoding(self, tmp_path: Path) -> None:
         """Verify file with invalid encoding returns None with warning."""

@@ -11,7 +11,7 @@ import typer
 from tabulate import tabulate
 
 from src.infra.io.log_output.run_metadata import (
-    _validate_run_data,
+    _parse_run_file,
     discover_run_files,
     find_sessions_for_issue,
     load_runs,
@@ -84,11 +84,8 @@ def _sort_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _parse_run_file_cli(path: Path) -> dict[str, Any] | None:
     """Parse a run metadata JSON file with CLI-specific error handling.
 
-    Unlike infra's _parse_run_file which logs warnings, this version prints
-    to stderr for CLI user visibility.
-
-    Uses the shared _validate_run_data from run_metadata.py to avoid
-    duplicating validation logic.
+    Delegates to run_metadata._parse_run_file with _warn_corrupt_file callback
+    to print warnings to stderr for CLI user visibility.
 
     Args:
         path: Path to JSON file.
@@ -97,18 +94,7 @@ def _parse_run_file_cli(path: Path) -> dict[str, Any] | None:
         Parsed dict if valid, None if corrupt or missing required keys.
         Prints warning to stderr for corrupt files.
     """
-    try:
-        with path.open() as f:
-            data = json.load(f)
-        if not _validate_run_data(data):
-            return None
-        # Normalize issues to empty dict if None
-        if data.get("issues") is None:
-            data["issues"] = {}
-        return data
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
-        print(f"Warning: skipping corrupt file {path}: {e}", file=sys.stderr)
-        return None
+    return _parse_run_file(path, on_corrupt=_warn_corrupt_file)
 
 
 def _warn_corrupt_file(path: Path, exc: Exception | None) -> None:
@@ -341,7 +327,9 @@ def sessions(
         session_rows = _find_sessions_all_repos(issue)
     else:
         # Use shared infra function for current repo
-        session_infos = find_sessions_for_issue(None, issue)
+        session_infos = find_sessions_for_issue(
+            None, issue, on_corrupt=_warn_corrupt_file
+        )
         # Convert SessionInfo to dict for CLI display
         session_rows = [
             {
