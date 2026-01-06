@@ -24,7 +24,7 @@ def _build_custom_commands_section(
     Advisory commands (allow_fail=True) always exit 0.
 
     Args:
-        custom_commands: List of (name, command, timeout, allow_fail) tuples.
+        custom_commands: Tuple of (name, command, timeout, allow_fail) tuples.
 
     Returns:
         Formatted custom commands section, or empty string if no custom commands.
@@ -131,7 +131,7 @@ def format_implementer_prompt(
     Returns:
         Formatted prompt string.
     """
-    # Build custom_commands_section from custom_commands list
+    # Build custom_commands_section from custom_commands tuple
     custom_commands_section = _build_custom_commands_section(
         validation_commands.custom_commands
     )
