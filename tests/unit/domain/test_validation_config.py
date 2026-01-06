@@ -761,18 +761,20 @@ class TestPromptValidationCommands:
 
     def test_prompt_validation_commands_includes_custom_commands(self) -> None:
         """Custom commands are populated as (name, command, timeout, allow_fail) tuples."""
-        # Build ValidationConfig with custom_commands directly (from_dict deprecated)
+        # Build ValidationConfig with inline custom_commands in commands
         check_types_cmd = CustomCommandConfig.from_value("check_types", "mypy .")
         slow_check_cmd = CustomCommandConfig.from_value(
             "slow_check",
             {"command": "slow-cmd", "timeout": 300, "allow_fail": True},
         )
         config = ValidationConfig(
-            commands=CommandsConfig(test=CommandConfig(command="pytest")),
-            custom_commands={
-                "check_types": check_types_cmd,
-                "slow_check": slow_check_cmd,
-            },
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+                custom_commands={
+                    "check_types": check_types_cmd,
+                    "slow_check": slow_check_cmd,
+                },
+            ),
         )
         prompt_cmds = PromptValidationCommands.from_validation_config(config)
 

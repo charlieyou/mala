@@ -834,10 +834,10 @@ class PromptValidationCommands:
         """
         cmds = config.commands
 
-        # Build custom_commands tuple from config (immutable for frozen dataclass)
-        # Each entry: (name, command, timeout, allow_fail)
+        # Build custom_commands tuple from inline commands.custom_commands
+        # (immutable for frozen dataclass). Each entry: (name, command, timeout, allow_fail)
         custom_cmds_list: list[tuple[str, str, int, bool]] = []
-        for name, custom_cmd in config.custom_commands.items():
+        for name, custom_cmd in cmds.custom_commands.items():
             # Use default timeout of 120 if not specified
             timeout = custom_cmd.timeout if custom_cmd.timeout is not None else 120
             custom_cmds_list.append(
