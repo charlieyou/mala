@@ -3786,6 +3786,7 @@ class TestDocsOnlyResolution:
         assert result.passed is False
         assert any("mala.yaml" in r for r in result.failure_reasons)
 
+
 class TestExtractIssueFromRationale:
     """Test extract_issue_from_rationale helper method."""
 

@@ -1527,7 +1527,10 @@ class TestHandleDryRun:
         assert DummyBeadsClient.last_kwargs["only_ids"] == ["id-1", "id-2"]
         assert DummyBeadsClient.last_kwargs["prioritize_wip"] is True
         assert DummyBeadsClient.last_kwargs["focus"] is True
-        assert DummyBeadsClient.last_kwargs["order_preference"] == OrderPreference.EPIC_PRIORITY
+        assert (
+            DummyBeadsClient.last_kwargs["order_preference"]
+            == OrderPreference.EPIC_PRIORITY
+        )
 
     def test_raises_typer_exit_zero(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

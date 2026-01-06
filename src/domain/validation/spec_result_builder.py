@@ -363,13 +363,9 @@ class SpecResultBuilder:
 
         if event_sink is not None:
             if e2e_result.passed:
-                event_sink.on_validation_step_passed(
-                    "e2e", e2e_result.duration_seconds
-                )
+                event_sink.on_validation_step_passed("e2e", e2e_result.duration_seconds)
             else:
-                event_sink.on_validation_step_failed(
-                    "e2e", e2e_result.returncode or 1
-                )
+                event_sink.on_validation_step_failed("e2e", e2e_result.returncode or 1)
 
         return e2e_result
 

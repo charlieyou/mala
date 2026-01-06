@@ -436,7 +436,9 @@ class TestFocusModeOrderPreference:
         ]
 
         result = IssueManager.sort_issues(
-            issues, focus=True, prioritize_wip=False,
+            issues,
+            focus=True,
+            prioritize_wip=False,
             order_preference=OrderPreference.FOCUS,
         )
 
@@ -469,7 +471,9 @@ class TestFocusModeOrderPreference:
         ]
 
         result = IssueManager.sort_issues(
-            issues, focus=True, prioritize_wip=False,
+            issues,
+            focus=True,
+            prioritize_wip=False,
             order_preference=OrderPreference.FOCUS,
         )
 
@@ -506,7 +510,9 @@ class TestFocusModeOrderPreference:
         ]
 
         result = IssueManager.sort_issues(
-            issues, focus=True, prioritize_wip=True,
+            issues,
+            focus=True,
+            prioritize_wip=True,
             order_preference=OrderPreference.FOCUS,
         )
 
@@ -550,7 +556,9 @@ class TestIssePriorityModeOrderPreference:
         ]
 
         result = IssueManager.sort_issues(
-            issues, focus=False, prioritize_wip=False,
+            issues,
+            focus=False,
+            prioritize_wip=False,
             order_preference=OrderPreference.ISSUE_PRIORITY,
         )
 

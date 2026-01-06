@@ -495,7 +495,10 @@ def _handle_dry_run(
     epic_id = scope_config.epic_id if scope_config else None
     only_ids = scope_config.ids if scope_config else None
     orphans_only = scope_config.scope_type == "orphans" if scope_config else False
-    focus = order_preference in (_lazy("OrderPreference").FOCUS, _lazy("OrderPreference").EPIC_PRIORITY)
+    focus = order_preference in (
+        _lazy("OrderPreference").FOCUS,
+        _lazy("OrderPreference").EPIC_PRIORITY,
+    )
 
     async def _dry_run() -> None:
         beads = _lazy("BeadsClient")(repo_path)
@@ -819,7 +822,10 @@ def run(
     epic_id = scope_config.epic_id if scope_config else None
     only_ids = scope_config.ids if scope_config else None
     orphans_only = scope_config.scope_type == "orphans" if scope_config else False
-    focus = order_preference in (_lazy("OrderPreference").FOCUS, _lazy("OrderPreference").EPIC_PRIORITY)
+    focus = order_preference in (
+        _lazy("OrderPreference").FOCUS,
+        _lazy("OrderPreference").EPIC_PRIORITY,
+    )
 
     # Validate and parse CLI arguments
     validated = _validate_run_args(

@@ -101,7 +101,12 @@ class TestFakeIssueProviderContract:
         self, fake_provider: FakeIssueProvider
     ) -> None:
         """get_ready_async returns issues with ready status."""
-        ready = await fake_provider.get_ready_async()
+        # Use EPIC_PRIORITY to get all issues (FOCUS mode returns single epic group)
+        from src.infra.issue_manager import OrderPreference
+
+        ready = await fake_provider.get_ready_async(
+            order_preference=OrderPreference.EPIC_PRIORITY
+        )
         assert "issue-1" in ready
         assert "issue-2" in ready
 
@@ -128,7 +133,11 @@ class TestFakeIssueProviderContract:
         self, fake_provider: FakeIssueProvider
     ) -> None:
         """get_ready_async returns issues sorted by priority (lower first)."""
-        ready = await fake_provider.get_ready_async()
+        from src.infra.issue_manager import OrderPreference
+
+        ready = await fake_provider.get_ready_async(
+            order_preference=OrderPreference.ISSUE_PRIORITY
+        )
         # issue-1 has priority 1, issue-2 has priority 2
         issue1_idx = ready.index("issue-1")
         issue2_idx = ready.index("issue-2")
@@ -139,13 +148,19 @@ class TestFakeIssueProviderContract:
         self, fake_provider: FakeIssueProvider
     ) -> None:
         """get_ready_async with prioritize_wip=True includes in_progress issues first."""
+        from src.infra.issue_manager import OrderPreference
+
         # Claim issue-2 to make it in_progress
         await fake_provider.claim_async("issue-2")
         # Without prioritize_wip, in_progress issues are excluded
-        ready_normal = await fake_provider.get_ready_async(prioritize_wip=False)
+        ready_normal = await fake_provider.get_ready_async(
+            prioritize_wip=False, order_preference=OrderPreference.EPIC_PRIORITY
+        )
         assert "issue-2" not in ready_normal
         # With prioritize_wip, in_progress issues are included and sorted first
-        ready_wip = await fake_provider.get_ready_async(prioritize_wip=True)
+        ready_wip = await fake_provider.get_ready_async(
+            prioritize_wip=True, order_preference=OrderPreference.EPIC_PRIORITY
+        )
         assert "issue-2" in ready_wip
         assert ready_wip.index("issue-2") == 0  # in_progress comes first
 

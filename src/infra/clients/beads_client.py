@@ -277,7 +277,7 @@ class BeadsClient:
         prioritize_wip: bool,
         only_ids: list[str] | None = None,
         order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
-        ) -> list[dict[str, object]]:
+    ) -> list[dict[str, object]]:
         """Sort issues by focus mode vs priority (pipeline step 5, pure function).
 
         Delegates to IssueManager.sort_issues for actual logic.
