@@ -3725,3 +3725,169 @@ class TestSessionResume:
             assert "No prior session found" not in result.summary
             # Session ran - we have a session_id from the SDK
             assert result.session_id is not None
+
+    @pytest.mark.asyncio
+    async def test_lenient_mode_fallback_on_stale_session(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """When SDK rejects a stale session in lenient mode, retry without resume."""
+        fake_issues = FakeIssueProvider(
+            {"test-issue": FakeIssue(id="test-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "test-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+            prioritize_wip=True,
+            strict_resume=False,  # Lenient mode
+            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
+        )
+
+        # Track how many times run_session is called
+        call_count = [0]
+
+        # Create mock SDK client that fails first time with stale session error
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="new-session",
+                result="ISSUE_NO_CHANGE: Done",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        # Mock runner to raise stale session error on first call, succeed on retry
+        async def mock_run_session_with_stale_error(
+            session_input: object, tracer: object = None
+        ) -> object:
+            call_count[0] += 1
+            if call_count[0] == 1 and session_input.resume_session_id:
+                # First call with resume_session_id raises stale session error
+                raise Exception("Session stale-session-id not found (404)")
+            # Second call (or first without resume) returns success
+            from src.pipeline.agent_session_runner import AgentSessionOutput
+
+            return AgentSessionOutput(
+                success=True,
+                summary="Done",
+                session_id="new-session",
+                log_path=log_file,
+                agent_id=session_input.agent_id or "test-agent",
+            )
+
+        with (
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="abc123",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_baseline_for_issue",
+                return_value="baseline123",
+            ),
+            patch.object(
+                orchestrator.beads,
+                "get_issue_description_async",
+                return_value="Test issue",
+            ),
+            patch(
+                "src.orchestration.orchestrator.lookup_prior_session",
+                return_value="stale-session-id",  # Return a stale session
+            ),
+            patch(
+                "src.pipeline.agent_session_runner.AgentSessionRunner.run_session",
+                side_effect=mock_run_session_with_stale_error,
+            ),
+        ):
+            result = await orchestrator.run_implementer("test-issue")
+
+            # Should succeed after fallback
+            assert result.success is True
+            # Should have retried (2 calls: first fails, second succeeds)
+            assert call_count[0] == 2
+
+    @pytest.mark.asyncio
+    async def test_strict_mode_fails_on_stale_session(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """When SDK rejects a stale session in strict mode, fail the issue."""
+        fake_issues = FakeIssueProvider(
+            {"test-issue": FakeIssue(id="test-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+            prioritize_wip=True,
+            strict_resume=True,  # Strict mode
+        )
+
+        async def mock_run_session_stale_error(
+            session_input: object, tracer: object = None
+        ) -> object:
+            # Always raise stale session error
+            raise Exception("Session stale-session-id not found (404)")
+
+        with (
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="abc123",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_baseline_for_issue",
+                return_value="baseline123",
+            ),
+            patch.object(
+                orchestrator.beads,
+                "get_issue_description_async",
+                return_value="Test issue",
+            ),
+            patch(
+                "src.orchestration.orchestrator.lookup_prior_session",
+                return_value="stale-session-id",  # Return a stale session
+            ),
+            patch(
+                "src.pipeline.agent_session_runner.AgentSessionRunner.run_session",
+                side_effect=mock_run_session_stale_error,
+            ),
+        ):
+            result = await orchestrator.run_implementer("test-issue")
+
+            # Should fail in strict mode
+            assert result.success is False
+            assert "Stale session error" in result.summary
+            assert "strict mode" in result.summary

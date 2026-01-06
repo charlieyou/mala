@@ -827,6 +827,9 @@ class AgentSessionRunner:
         current_prompt = input.prompt
         # Use provided agent_id or generate one to preserve lock continuity across restarts
         agent_id = input.agent_id or f"{input.issue_id}-{uuid.uuid4().hex[:8]}"
+        # Only use resume_session_id on first iteration; clear after to avoid resuming
+        # exhausted sessions on context pressure restarts
+        current_resume_session_id = input.resume_session_id
 
         while True:
             # Calculate remaining time to enforce overall session timeout
@@ -840,9 +843,11 @@ class AgentSessionRunner:
                 prompt=current_prompt,
                 baseline_commit=input.baseline_commit,
                 issue_description=input.issue_description,
-                resume_session_id=input.resume_session_id,
+                resume_session_id=current_resume_session_id,
             )
             session_cfg, state = self._initialize_session(session_input, agent_id)
+            # Clear resume_session_id after first use to avoid resuming stale sessions
+            current_resume_session_id = None
 
             try:
                 # Check timeout inside try block so on_timeout cleanup runs

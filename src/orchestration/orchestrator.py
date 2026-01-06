@@ -122,6 +122,35 @@ LOG_FILE_POLL_INTERVAL = 0.5
 ESCALATION_WINDOW_SECONDS = 5.0
 
 
+def _is_stale_session_error(exc: Exception) -> bool:
+    """Check if an exception indicates an unresumable/stale session.
+
+    Catches SDK errors that indicate the session cannot be resumed:
+    - SessionNotFoundError or InvalidSessionError (if SDK defines these)
+    - HTTP 404/410 response errors wrapped in SDK exceptions
+    - Any error with "session" + "not found"/"invalid"/"expired" in message
+
+    Does NOT catch:
+    - Rate limit errors (429)
+    - Network timeouts
+    - Authentication failures
+    - Generic server errors (500)
+    """
+    exc_name = type(exc).__name__
+    # Check for SDK-specific error types
+    if exc_name in ("SessionNotFoundError", "InvalidSessionError"):
+        return True
+
+    # Check error message for stale session indicators
+    msg = str(exc).lower()
+    if "session" in msg:
+        stale_keywords = ("not found", "invalid", "expired", "404", "410")
+        if any(kw in msg for kw in stale_keywords):
+            return True
+
+    return False
+
+
 class MalaOrchestrator:
     """Orchestrates parallel issue processing using Claude Agent SDK.
 
@@ -668,14 +697,7 @@ class MalaOrchestrator:
         temp_agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
         self._state.agent_ids[issue_id] = temp_agent_id
 
-        # Register with deadlock monitor
-        self.deadlock_monitor.register_agent(
-            agent_id=temp_agent_id,
-            issue_id=issue_id,
-            start_time=time.time(),
-        )
-
-        # Prepare session inputs
+        # Prepare session inputs (before deadlock registration for strict-resume early exit)
         issue_description = await self.beads.get_issue_description_async(issue_id)
         baseline_commit = await get_baseline_for_issue(self.repo_path, issue_id)
         if baseline_commit is None:
@@ -691,6 +713,7 @@ class MalaOrchestrator:
         )
 
         # Look up prior session for resumption when prioritize_wip is enabled
+        # Must happen BEFORE deadlock registration to avoid leaking agent on strict early exit
         resume_session_id: str | None = None
         if self.prioritize_wip:
             resume_session_id = lookup_prior_session(self.repo_path, issue_id)
@@ -718,6 +741,13 @@ class MalaOrchestrator:
                     resolution=None,
                     session_log_path=None,
                 )
+
+        # Register with deadlock monitor (after strict-resume check to avoid leaks)
+        self.deadlock_monitor.register_agent(
+            agent_id=temp_agent_id,
+            issue_id=issue_id,
+            start_time=time.time(),
+        )
 
         session_input = AgentSessionInput(
             issue_id=issue_id,
@@ -749,7 +779,53 @@ class MalaOrchestrator:
         try:
             with tracer:
                 tracer.log_input(prompt)
-                output = await runner.run_session(session_input, tracer=tracer)
+                try:
+                    output = await runner.run_session(session_input, tracer=tracer)
+                except Exception as e:
+                    # Handle stale session errors when resuming
+                    if resume_session_id and _is_stale_session_error(e):
+                        if self.strict_resume:
+                            # Strict mode: fail the issue
+                            logger.warning(
+                                "Stale session %s for issue %s in strict mode: %s",
+                                resume_session_id,
+                                issue_id,
+                                e,
+                            )
+                            tracer.set_error(f"Stale session error: {e}")
+                            return IssueResult(
+                                issue_id=issue_id,
+                                agent_id=temp_agent_id,
+                                success=False,
+                                summary=f"Stale session error (strict mode): {e}",
+                                duration_seconds=0.0,
+                                session_id=None,
+                                gate_attempts=0,
+                                review_attempts=0,
+                                resolution=None,
+                                session_log_path=None,
+                            )
+                        else:
+                            # Lenient mode: retry without resume_session_id
+                            logger.warning(
+                                "Stale session %s for issue %s, retrying without resume: %s",
+                                resume_session_id,
+                                issue_id,
+                                e,
+                            )
+                            session_input_fresh = AgentSessionInput(
+                                issue_id=issue_id,
+                                prompt=prompt,
+                                baseline_commit=baseline_commit,
+                                issue_description=issue_description,
+                                agent_id=temp_agent_id,
+                                resume_session_id=None,  # Clear resume to start fresh
+                            )
+                            output = await runner.run_session(
+                                session_input_fresh, tracer=tracer
+                            )
+                    else:
+                        raise
                 self._state.agent_ids[issue_id] = output.agent_id
                 if output.success:
                     tracer.set_success(True)
