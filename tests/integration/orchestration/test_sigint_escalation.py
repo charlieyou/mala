@@ -663,6 +663,14 @@ asyncio.run(main())
                     f"got {proc.returncode}. Stderr: {stderr}"
                 )
 
+            # Assert validation_callback actually ran (not just any failure with code 1)
+            remaining_stdout = proc.stdout.read() if proc.stdout else ""
+            all_stdout = output + remaining_stdout
+            assert "VALIDATION_FAILED" in all_stdout, (
+                f"validation_callback did not run - VALIDATION_FAILED not in stdout. "
+                f"Stdout: {all_stdout}"
+            )
+
         finally:
             if proc.poll() is None:
                 proc.kill()
