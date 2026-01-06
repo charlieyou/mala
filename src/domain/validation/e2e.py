@@ -21,7 +21,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
 from .helpers import (
     annotate_issue,
@@ -31,7 +31,7 @@ from .helpers import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
     from src.core.protocols import CommandRunnerPort, EnvConfigPort
 
