@@ -490,7 +490,7 @@ class TestPromptValidationCommands:
         assert "No format command configured" in prompt_cmds.format
         assert "No typecheck command configured" in prompt_cmds.typecheck
         assert "No test command configured" in prompt_cmds.test
-        assert prompt_cmds.custom_commands == []
+        assert prompt_cmds.custom_commands == ()
 
     def test_prompt_validation_commands_includes_custom_commands(self) -> None:
         """Custom commands are populated as (name, command, timeout, allow_fail) tuples."""

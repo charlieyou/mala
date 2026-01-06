@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 def _build_custom_commands_section(
-    custom_commands: list[tuple[str, str, int, bool]],
+    custom_commands: tuple[tuple[str, str, int, bool], ...],
 ) -> str:
     """Build the custom commands section for the implementer prompt.
 
@@ -166,7 +166,7 @@ def get_default_validation_commands() -> PromptValidationCommands:
         format="RUFF_CACHE_DIR=/tmp/ruff-${AGENT_ID:-default} uvx ruff format .",
         typecheck="uvx ty check",
         test="uv run pytest -o cache_dir=/tmp/pytest-${AGENT_ID:-default}",
-        custom_commands=[],
+        custom_commands=(),
     )
 
 

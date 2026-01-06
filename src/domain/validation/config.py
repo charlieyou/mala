@@ -677,15 +677,16 @@ class PromptValidationCommands:
         format: Format command string (e.g., "uvx ruff format ." or "gofmt -l .")
         typecheck: Type check command string (e.g., "uvx ty check" or "go vet ./...")
         test: Test command string (e.g., "uv run pytest" or "go test ./...")
-        custom_commands: List of custom commands as (name, command, timeout, allow_fail) tuples.
-            These are run after lint/format/typecheck but before test.
+        custom_commands: Tuple of custom commands as (name, command, timeout, allow_fail) tuples.
+            These are run after lint/format/typecheck but before test. Immutable to match
+            frozen dataclass contract.
     """
 
     lint: str
     format: str
     typecheck: str
     test: str
-    custom_commands: list[tuple[str, str, int, bool]]
+    custom_commands: tuple[tuple[str, str, int, bool], ...]
 
     # Default fallback message for unconfigured commands - exits with code 0
     # since missing optional tooling is not a validation failure
@@ -705,7 +706,7 @@ class PromptValidationCommands:
         """
         cmds = config.commands
 
-        # Build custom_commands list from config
+        # Build custom_commands tuple from config (immutable for frozen dataclass)
         # Each entry: (name, command, timeout, allow_fail)
         custom_cmds_list: list[tuple[str, str, int, bool]] = []
         for name, custom_cmd in config.custom_commands.items():
@@ -728,5 +729,5 @@ class PromptValidationCommands:
             test=cmds.test.command
             if cmds.test
             else cls._NOT_CONFIGURED.format(kind="test"),
-            custom_commands=custom_cmds_list,
+            custom_commands=tuple(custom_cmds_list),
         )
