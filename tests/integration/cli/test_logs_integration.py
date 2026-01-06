@@ -88,36 +88,41 @@ class TestLogsListCommand:
 class TestLogsSessionsCommand:
     """Tests for 'mala logs sessions' command."""
 
-    def test_sessions_basic_invocation(self) -> None:
-        """Test basic 'mala logs sessions' invocation."""
+    def test_sessions_requires_issue(self) -> None:
+        """Test 'mala logs sessions' without --issue fails."""
         result = runner.invoke(app, ["logs", "sessions"])
-        assert result.exit_code == 0
-        # Empty result expected when no runs exist
-        assert "No sessions found" in result.output or result.output.strip() == ""
+        assert result.exit_code != 0
+        # Should indicate missing required option
+        assert "--issue" in result.output
 
     def test_sessions_with_issue_filter(self) -> None:
         """Test 'mala logs sessions --issue test-123' filters by issue."""
         result = runner.invoke(app, ["logs", "sessions", "--issue", "test-123"])
         assert result.exit_code == 0
         # Empty result expected when no matching sessions
-        assert "No sessions found" in result.output or result.output.strip() == ""
+        assert "No sessions found" in result.output
 
     def test_sessions_with_json_flag(self) -> None:
-        """Test 'mala logs sessions --json' produces valid JSON output."""
-        result = runner.invoke(app, ["logs", "sessions", "--json"])
+        """Test 'mala logs sessions --json --issue' produces valid JSON output."""
+        result = runner.invoke(
+            app, ["logs", "sessions", "--issue", "test-123", "--json"]
+        )
         assert result.exit_code == 0
         # Should produce valid JSON (empty array when no sessions)
         import json
 
         data = json.loads(result.output)
         assert isinstance(data, list)
+        assert data == []
 
     def test_sessions_with_all_flag(self) -> None:
-        """Test 'mala logs sessions --all' runs without error."""
-        result = runner.invoke(app, ["logs", "sessions", "--all"])
+        """Test 'mala logs sessions --all --issue' runs without error."""
+        result = runner.invoke(
+            app, ["logs", "sessions", "--issue", "test-123", "--all"]
+        )
         assert result.exit_code == 0
-        # May find sessions from other repos or show "No sessions found"
-        assert result.output.strip() != "" or "No sessions found" in result.output
+        # When no sessions match, should show "No sessions found"
+        assert "No sessions found" in result.output
 
 
 class TestLogsShowCommand:

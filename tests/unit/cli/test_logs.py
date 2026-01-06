@@ -613,6 +613,7 @@ class TestExtractSessions:
             {
                 "run_id": "run1",
                 "started_at": "2024-01-01T10:00:00+00:00",
+                "metadata_path": "/tmp/runs/run1/run.json",
                 "issues": {
                     "bd-mala-abc": {"session_id": "s1", "status": "success"},
                     "BD-MALA-ABC": {"session_id": "s2", "status": "failed"},
@@ -635,6 +636,7 @@ class TestExtractSessions:
             {
                 "run_id": "run1",
                 "started_at": "2024-01-01T10:00:00+00:00",
+                "metadata_path": "/tmp/runs/run1/run.json",
                 "issues": {
                     "bd-mala-abc": {"session_id": "s1", "status": "success"},
                     "bd-mala-abc-suffix": {"session_id": "s2", "status": "success"},
@@ -657,6 +659,7 @@ class TestExtractSessions:
                 "run_id": "run-123",
                 "started_at": "2024-01-01T10:00:00+00:00",
                 "metadata_path": "/path/to/run.json",
+                "repo_path": "/home/user/project",
                 "issues": {
                     "issue-1": {
                         "session_id": "sess-abc",
@@ -667,7 +670,7 @@ class TestExtractSessions:
             }
         ]
 
-        result = _extract_sessions(runs, None)
+        result = _extract_sessions(runs, "issue-1")
         assert len(result) == 1
         session = result[0]
         assert session["run_id"] == "run-123"
@@ -677,6 +680,7 @@ class TestExtractSessions:
         assert session["status"] == "success"
         assert session["log_path"] == "/path/to/log.jsonl"
         assert session["metadata_path"] == "/path/to/run.json"
+        assert session["repo_path"] == "/home/user/project"
 
     def test_sessions_null_session_id(self) -> None:
         """Verify null session_id is handled correctly."""
@@ -686,6 +690,7 @@ class TestExtractSessions:
             {
                 "run_id": "run1",
                 "started_at": "2024-01-01T10:00:00+00:00",
+                "metadata_path": "/tmp/runs/run1/run.json",
                 "issues": {
                     "issue-1": {
                         "status": "failed",
@@ -696,7 +701,7 @@ class TestExtractSessions:
             }
         ]
 
-        result = _extract_sessions(runs, None)
+        result = _extract_sessions(runs, "issue-1")
         assert len(result) == 1
         assert result[0]["session_id"] is None
 
@@ -708,6 +713,7 @@ class TestExtractSessions:
             {
                 "run_id": "run1",
                 "started_at": "2024-01-01T10:00:00+00:00",
+                "metadata_path": "/tmp/runs/run1/run.json",
                 "issues": {
                     "issue-1": {
                         "session_id": "sess-1",
@@ -718,7 +724,7 @@ class TestExtractSessions:
             }
         ]
 
-        result = _extract_sessions(runs, None)
+        result = _extract_sessions(runs, "issue-1")
         assert len(result) == 1
         assert result[0]["log_path"] is None
 

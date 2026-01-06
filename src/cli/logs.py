@@ -336,17 +336,17 @@ def list_runs(
 
 
 def _extract_sessions(
-    runs: list[dict[str, Any]], issue_filter: str | None
+    runs: list[dict[str, Any]], issue_filter: str
 ) -> list[dict[str, Any]]:
     """Extract per-issue session rows from runs.
 
     Args:
         runs: List of run metadata dicts.
-        issue_filter: If provided, only include sessions matching this issue ID (exact match).
+        issue_filter: Only include sessions matching this issue ID (exact match).
 
     Returns:
         List of session dicts with keys: run_id, session_id, issue_id, run_started_at,
-        status, log_path, metadata_path.
+        status, log_path, metadata_path, repo_path.
     """
     sessions: list[dict[str, Any]] = []
     for run in runs:
@@ -354,8 +354,8 @@ def _extract_sessions(
         if not isinstance(issues, dict):
             continue
         for issue_id, issue_data in issues.items():
-            # Skip if filter provided and doesn't match (exact, case-sensitive)
-            if issue_filter is not None and issue_id != issue_filter:
+            # Skip if filter doesn't match (exact, case-sensitive)
+            if issue_id != issue_filter:
                 continue
             if not isinstance(issue_data, dict):
                 continue
@@ -368,6 +368,7 @@ def _extract_sessions(
                     "status": issue_data.get("status"),
                     "log_path": issue_data.get("log_path"),
                     "metadata_path": run.get("metadata_path"),
+                    "repo_path": _get_repo_path(run),
                 }
             )
     return sessions
@@ -395,12 +396,12 @@ def _sort_sessions(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 @logs_app.command()
 def sessions(
     issue: Annotated[
-        str | None,
+        str,
         typer.Option(
             "--issue",
             help="Filter by issue ID (exact match, case-sensitive)",
         ),
-    ] = None,
+    ],
     json_output: Annotated[
         bool,
         typer.Option(
@@ -441,11 +442,7 @@ def sessions(
                 "log_path": s["log_path"],
             }
             if all_sessions:
-                # Get repo_path from the run
-                for run in runs:
-                    if run["run_id"] == s["run_id"]:
-                        entry["repo_path"] = _get_repo_path(run)
-                        break
+                entry["repo_path"] = s["repo_path"]
             output.append(entry)
         print(json.dumps(output, indent=2))
     else:
@@ -460,9 +457,6 @@ def sessions(
         if all_sessions:
             headers.insert(1, "repo_path")
 
-        # Build lookup for repo_path
-        run_repo_map = {run["run_id"]: _get_repo_path(run) for run in runs}
-
         rows = []
         for s in session_rows:
             row = [
@@ -474,7 +468,7 @@ def sessions(
                 _format_null(s["log_path"]),
             ]
             if all_sessions:
-                row.insert(1, _format_null(run_repo_map.get(s["run_id"])))
+                row.insert(1, _format_null(s["repo_path"]))
             rows.append(row)
 
         print(tabulate(rows, headers=headers, tablefmt="simple"))
