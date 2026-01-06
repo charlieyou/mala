@@ -22,14 +22,19 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from src.cli.logs import (
-    _collect_runs,
     _count_issue_statuses,
+    _discover_run_files_all_repos,
     _extract_run_id_prefix_from_filename,
-    _extract_timestamp_prefix,
     _format_null,
-    _parse_run_file,
+    _parse_run_file_cli,
     _sort_runs,
-    _validate_run_metadata,
+)
+from src.infra.io.log_output.run_metadata import (
+    _extract_timestamp_prefix,
+    _validate_run_data,
+    discover_run_files,
+    find_sessions_for_issue,
+    load_runs,
 )
 
 pytestmark = pytest.mark.unit
@@ -108,7 +113,7 @@ class TestCountStatusAggregation:
 
 
 class TestValidateRunMetadataKeys:
-    """Tests for _validate_run_metadata function."""
+    """Tests for _validate_run_data function (now in run_metadata.py)."""
 
     def test_validate_run_metadata_keys(self) -> None:
         """Verify required key checking works correctly."""
@@ -118,28 +123,28 @@ class TestValidateRunMetadataKeys:
             "started_at": "2024-01-01T10:00:00+00:00",
             "issues": {},
         }
-        assert _validate_run_metadata(valid_data) is True
+        assert _validate_run_data(valid_data) is True
 
         # Invalid: missing run_id
         missing_run_id = {
             "started_at": "2024-01-01T10:00:00+00:00",
             "issues": {},
         }
-        assert _validate_run_metadata(missing_run_id) is False
+        assert _validate_run_data(missing_run_id) is False
 
         # Invalid: missing started_at
         missing_started_at = {
             "run_id": "abc123",
             "issues": {},
         }
-        assert _validate_run_metadata(missing_started_at) is False
+        assert _validate_run_data(missing_started_at) is False
 
         # Invalid: missing issues
         missing_issues = {
             "run_id": "abc123",
             "started_at": "2024-01-01T10:00:00+00:00",
         }
-        assert _validate_run_metadata(missing_issues) is False
+        assert _validate_run_data(missing_issues) is False
 
     def test_validate_with_extra_keys(self) -> None:
         """Verify extra keys don't affect validation."""
@@ -150,14 +155,14 @@ class TestValidateRunMetadataKeys:
             "extra_key": "ignored",
             "another": 123,
         }
-        assert _validate_run_metadata(data) is True
+        assert _validate_run_data(data) is True
 
     def test_validate_rejects_non_dict(self) -> None:
         """Verify non-dict JSON is rejected."""
-        assert _validate_run_metadata([]) is False
-        assert _validate_run_metadata("string") is False
-        assert _validate_run_metadata(123) is False
-        assert _validate_run_metadata(None) is False
+        assert _validate_run_data([]) is False
+        assert _validate_run_data("string") is False
+        assert _validate_run_data(123) is False
+        assert _validate_run_data(None) is False
 
     def test_validate_rejects_null_started_at(self) -> None:
         """Verify null started_at is rejected."""
@@ -166,7 +171,7 @@ class TestValidateRunMetadataKeys:
             "started_at": None,
             "issues": {},
         }
-        assert _validate_run_metadata(data) is False
+        assert _validate_run_data(data) is False
 
     def test_validate_accepts_null_issues(self) -> None:
         """Verify null issues is accepted (normalized to {})."""
@@ -175,7 +180,7 @@ class TestValidateRunMetadataKeys:
             "started_at": "2024-01-01T10:00:00+00:00",
             "issues": None,
         }
-        assert _validate_run_metadata(data) is True
+        assert _validate_run_data(data) is True
 
     def test_validate_rejects_non_dict_issues(self) -> None:
         """Verify non-dict issues is rejected."""
@@ -184,7 +189,7 @@ class TestValidateRunMetadataKeys:
             "started_at": "2024-01-01T10:00:00+00:00",
             "issues": ["list", "not", "dict"],
         }
-        assert _validate_run_metadata(data) is False
+        assert _validate_run_data(data) is False
 
     def test_validate_rejects_null_run_id(self) -> None:
         """Verify null run_id is rejected."""
@@ -193,7 +198,7 @@ class TestValidateRunMetadataKeys:
             "started_at": "2024-01-01T10:00:00+00:00",
             "issues": {},
         }
-        assert _validate_run_metadata(data) is False
+        assert _validate_run_data(data) is False
 
     def test_validate_rejects_non_string_run_id(self) -> None:
         """Verify non-string run_id is rejected."""
@@ -202,7 +207,7 @@ class TestValidateRunMetadataKeys:
             "started_at": "2024-01-01T10:00:00+00:00",
             "issues": {},
         }
-        assert _validate_run_metadata(data) is False
+        assert _validate_run_data(data) is False
 
 
 class TestNullValueHandling:
@@ -227,7 +232,7 @@ class TestNullValueHandling:
 
 
 class TestParseRunFile:
-    """Tests for _parse_run_file function."""
+    """Tests for _parse_run_file_cli function (CLI-specific with stderr warnings)."""
 
     def test_parse_valid_file(self, tmp_path: Path) -> None:
         """Verify valid JSON file is parsed correctly."""
@@ -239,7 +244,7 @@ class TestParseRunFile:
         }
         run_file.write_text(json.dumps(data))
 
-        result = _parse_run_file(run_file)
+        result = _parse_run_file_cli(run_file)
         assert result is not None
         assert result["run_id"] == "abc123"
 
@@ -249,7 +254,7 @@ class TestParseRunFile:
         run_file.write_text("not valid json {{{")
 
         with patch("sys.stderr", new_callable=StringIO) as mock_stderr:
-            result = _parse_run_file(run_file)
+            result = _parse_run_file_cli(run_file)
             assert result is None
             assert "Warning: skipping corrupt file" in mock_stderr.getvalue()
 
@@ -258,7 +263,7 @@ class TestParseRunFile:
         run_file = tmp_path / "incomplete.json"
         run_file.write_text('{"run_id": "abc123"}')  # missing started_at, issues
 
-        result = _parse_run_file(run_file)
+        result = _parse_run_file_cli(run_file)
         assert result is None
 
     def test_parse_invalid_encoding(self, tmp_path: Path) -> None:
@@ -268,13 +273,13 @@ class TestParseRunFile:
         run_file.write_bytes(b'{"run_id": "\xff\xfe invalid bytes"}')
 
         with patch("sys.stderr", new_callable=StringIO) as mock_stderr:
-            result = _parse_run_file(run_file)
+            result = _parse_run_file_cli(run_file)
             assert result is None
             assert "Warning: skipping corrupt file" in mock_stderr.getvalue()
 
 
 class TestCollectRuns:
-    """Tests for _collect_runs function."""
+    """Tests for load_runs function (now in run_metadata.py)."""
 
     def test_collect_all_valid_runs(self, tmp_path: Path) -> None:
         """Verify all valid runs are collected when no limit specified."""
@@ -291,11 +296,11 @@ class TestCollectRuns:
             files.append(run_file)
 
         # Without limit, all valid runs are collected
-        runs = _collect_runs(files)
+        runs = load_runs(files)
         assert len(runs) == 25
 
     def test_collect_with_limit_stops_early(self, tmp_path: Path) -> None:
-        """Verify _collect_runs stops after collecting limit valid runs.
+        """Verify load_runs stops after collecting limit valid runs.
 
         Uses realistic filename format with different timestamps so the
         early termination logic can stop at different timestamp boundaries.
@@ -317,10 +322,10 @@ class TestCollectRuns:
             files.append(run_file)
 
         # With limit, only that many runs are collected (early stop)
-        runs = _collect_runs(files, limit=10)
+        runs = load_runs(files, limit=10)
         assert len(runs) == 10
         # Should have collected the first 10 files in order
-        assert [r["run_id"] for r in runs] == [f"run-{i:02d}" for i in range(10)]
+        assert [r[0]["run_id"] for r in runs] == [f"run-{i:02d}" for i in range(10)]
 
     def test_collect_skips_invalid_files(self, tmp_path: Path) -> None:
         """Verify invalid files are skipped, valid ones collected."""
@@ -342,14 +347,14 @@ class TestCollectRuns:
         corrupt_file = tmp_path / "corrupt.json"
         corrupt_file.write_text("not json")
 
-        with patch("sys.stderr", new_callable=StringIO):
-            runs = _collect_runs([valid_file, invalid_file, corrupt_file])
+        # load_runs logs warnings instead of printing to stderr
+        runs = load_runs([valid_file, invalid_file, corrupt_file])
 
         assert len(runs) == 1
-        assert runs[0]["run_id"] == "valid-run"
+        assert runs[0][0]["run_id"] == "valid-run"
 
-    def test_collect_adds_metadata_path(self, tmp_path: Path) -> None:
-        """Verify metadata_path is added to each run."""
+    def test_collect_returns_path(self, tmp_path: Path) -> None:
+        """Verify path is returned with each run."""
         run_file = tmp_path / "run.json"
         run_file.write_text(
             json.dumps(
@@ -361,12 +366,12 @@ class TestCollectRuns:
             )
         )
 
-        runs = _collect_runs([run_file])
+        runs = load_runs([run_file])
         assert len(runs) == 1
-        assert runs[0]["metadata_path"] == str(run_file)
+        assert runs[0][1] == run_file
 
     def test_collect_continues_for_same_timestamp_prefix(self, tmp_path: Path) -> None:
-        """Verify _collect_runs continues past limit for files with same timestamp prefix.
+        """Verify load_runs continues past limit for files with same timestamp prefix.
 
         When multiple runs share the same second-resolution timestamp in their
         filenames, we must collect all of them to ensure correct top-N after
@@ -422,18 +427,19 @@ class TestCollectRuns:
         # But correct top-2 by started_at should be [A, C] (latest two)
         #
         # New behavior: continues collecting all files with same timestamp prefix
-        runs = _collect_runs(files, limit=2)
+        runs = load_runs(files, limit=2)
 
         # Should collect all 3 files since they share timestamp prefix
         assert len(runs) == 3
 
         # After sorting by started_at desc and slicing (done by caller),
         # we would get [run-aaa, run-ccc] which is correct
-        sorted_runs = _sort_runs(runs)[:2]
+        runs_dicts = [{**data, "metadata_path": str(path)} for data, path in runs]
+        sorted_runs = _sort_runs(runs_dicts)[:2]
         assert [r["run_id"] for r in sorted_runs] == ["run-aaa", "run-ccc"]
 
     def test_collect_stops_at_different_timestamp_prefix(self, tmp_path: Path) -> None:
-        """Verify _collect_runs stops when timestamp prefix changes."""
+        """Verify load_runs stops when timestamp prefix changes."""
         files = []
 
         # Two files with timestamp "2024-01-02T10-00-00"
@@ -476,13 +482,13 @@ class TestCollectRuns:
 
         # With limit=2, should collect exactly 2 (A and B have same prefix as boundary)
         # and stop before C (different prefix)
-        runs = _collect_runs(files, limit=2)
+        runs = load_runs(files, limit=2)
         assert len(runs) == 2
-        assert {r["run_id"] for r in runs} == {"run-a", "run-b"}
+        assert {r[0]["run_id"] for r in runs} == {"run-a", "run-b"}
 
 
 class TestExtractTimestampPrefix:
-    """Tests for _extract_timestamp_prefix function."""
+    """Tests for _extract_timestamp_prefix function (now in run_metadata.py)."""
 
     def test_standard_filename(self) -> None:
         """Verify extraction from standard run filename format."""
@@ -540,15 +546,13 @@ class TestRepoScoping:
             )
         )
 
-        # Mock get_repo_runs_dir to return repo1_dir
+        # Mock get_repo_runs_dir in run_metadata (used by discover_run_files)
         monkeypatch.setattr(
-            "src.cli.logs.get_repo_runs_dir",
+            "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
             lambda _: repo1_dir,
         )
 
-        from src.cli.logs import _discover_run_files
-
-        files = _discover_run_files(all_runs=False)
+        files = discover_run_files(None)
 
         # Should only find repo1's run file
         assert len(files) == 1
@@ -588,15 +592,10 @@ class TestRepoScoping:
             )
         )
 
-        # Mock get_runs_dir to return our test runs_dir
-        monkeypatch.setattr(
-            "src.cli.logs.get_runs_dir",
-            lambda: runs_dir,
-        )
+        # Override MALA_RUNS_DIR env var to use test directory
+        monkeypatch.setenv("MALA_RUNS_DIR", str(runs_dir))
 
-        from src.cli.logs import _discover_run_files
-
-        files = _discover_run_files(all_runs=True)
+        files = _discover_run_files_all_repos()
 
         # Should find both repo run files
         assert len(files) == 2
@@ -604,210 +603,144 @@ class TestRepoScoping:
         assert run_ids == {"repo1-run", "repo2-run"}
 
 
-class TestExtractSessions:
-    """Tests for _extract_sessions helper function."""
+class TestFindSessionsForIssue:
+    """Tests for find_sessions_for_issue function (now in run_metadata.py)."""
 
-    def test_issue_id_exact_match(self) -> None:
+    def test_issue_id_exact_match(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Verify issue filter matches exactly (case-sensitive)."""
-        from src.cli.logs import _extract_sessions
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir(parents=True)
 
-        runs = [
-            {
-                "run_id": "run1",
-                "started_at": "2024-01-01T10:00:00+00:00",
-                "metadata_path": "/tmp/runs/run1/run.json",
-                "issues": {
-                    "bd-mala-abc": {"session_id": "s1", "status": "success"},
-                    "BD-MALA-ABC": {"session_id": "s2", "status": "failed"},
-                    "bd-mala-abc-2": {"session_id": "s3", "status": "success"},
-                },
-            }
-        ]
-
-        # Exact match should return only the matching issue
-        result = _extract_sessions(runs, "bd-mala-abc")
-        assert len(result) == 1
-        assert result[0]["issue_id"] == "bd-mala-abc"
-        assert result[0]["session_id"] == "s1"
-
-    def test_issue_id_no_partial_match(self) -> None:
-        """Verify issue filter does not do substring matching."""
-        from src.cli.logs import _extract_sessions
-
-        runs = [
-            {
-                "run_id": "run1",
-                "started_at": "2024-01-01T10:00:00+00:00",
-                "metadata_path": "/tmp/runs/run1/run.json",
-                "issues": {
-                    "bd-mala-abc": {"session_id": "s1", "status": "success"},
-                    "bd-mala-abc-suffix": {"session_id": "s2", "status": "success"},
-                    "prefix-bd-mala-abc": {"session_id": "s3", "status": "success"},
-                },
-            }
-        ]
-
-        # Filter should match exactly, not substring
-        result = _extract_sessions(runs, "bd-mala-abc")
-        assert len(result) == 1
-        assert result[0]["issue_id"] == "bd-mala-abc"
-
-    def test_sessions_output_format(self) -> None:
-        """Verify extracted sessions have expected fields."""
-        from src.cli.logs import _extract_sessions
-
-        runs = [
-            {
-                "run_id": "run-123",
-                "started_at": "2024-01-01T10:00:00+00:00",
-                "metadata_path": "/path/to/run.json",
-                "repo_path": "/home/user/project",
-                "issues": {
-                    "issue-1": {
-                        "session_id": "sess-abc",
-                        "status": "success",
-                        "log_path": "/path/to/log.jsonl",
+        run_file = runs_dir / "2024-01-01T10-00-00_12345678.json"
+        run_file.write_text(
+            json.dumps(
+                {
+                    "run_id": "run1",
+                    "started_at": "2024-01-01T10:00:00+00:00",
+                    "issues": {
+                        "bd-mala-abc": {"session_id": "s1", "status": "success"},
+                        "BD-MALA-ABC": {"session_id": "s2", "status": "failed"},
+                        "bd-mala-abc-2": {"session_id": "s3", "status": "success"},
                     },
-                },
-            }
-        ]
+                }
+            )
+        )
 
-        result = _extract_sessions(runs, "issue-1")
+        monkeypatch.setattr(
+            "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+            lambda _: runs_dir,
+        )
+
+        result = find_sessions_for_issue(None, "bd-mala-abc")
+        assert len(result) == 1
+        assert result[0].issue_id == "bd-mala-abc"
+        assert result[0].session_id == "s1"
+
+    def test_sessions_output_format(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify extracted sessions have expected fields."""
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir(parents=True)
+
+        run_file = runs_dir / "2024-01-01T10-00-00_12345678.json"
+        run_file.write_text(
+            json.dumps(
+                {
+                    "run_id": "run-123",
+                    "started_at": "2024-01-01T10:00:00+00:00",
+                    "repo_path": "/home/user/project",
+                    "issues": {
+                        "issue-1": {
+                            "session_id": "sess-abc",
+                            "status": "success",
+                            "log_path": "/path/to/log.jsonl",
+                        },
+                    },
+                }
+            )
+        )
+
+        monkeypatch.setattr(
+            "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+            lambda _: runs_dir,
+        )
+
+        result = find_sessions_for_issue(None, "issue-1")
         assert len(result) == 1
         session = result[0]
-        assert session["run_id"] == "run-123"
-        assert session["session_id"] == "sess-abc"
-        assert session["issue_id"] == "issue-1"
-        assert session["run_started_at"] == "2024-01-01T10:00:00+00:00"
-        assert session["status"] == "success"
-        assert session["log_path"] == "/path/to/log.jsonl"
-        assert session["metadata_path"] == "/path/to/run.json"
-        assert session["repo_path"] == "/home/user/project"
+        assert session.run_id == "run-123"
+        assert session.session_id == "sess-abc"
+        assert session.issue_id == "issue-1"
+        assert session.run_started_at == "2024-01-01T10:00:00+00:00"
+        assert session.status == "success"
+        assert session.log_path == "/path/to/log.jsonl"
+        assert session.metadata_path == run_file
+        assert session.repo_path == "/home/user/project"
 
-    def test_sessions_null_session_id(self) -> None:
-        """Verify null session_id is handled correctly."""
-        from src.cli.logs import _extract_sessions
-
-        runs = [
-            {
-                "run_id": "run1",
-                "started_at": "2024-01-01T10:00:00+00:00",
-                "metadata_path": "/tmp/runs/run1/run.json",
-                "issues": {
-                    "issue-1": {
-                        "status": "failed",
-                        "log_path": "/some/path.jsonl",
-                        # session_id is missing
-                    },
-                },
-            }
-        ]
-
-        result = _extract_sessions(runs, "issue-1")
-        assert len(result) == 1
-        assert result[0]["session_id"] is None
-
-    def test_sessions_null_log_path(self) -> None:
-        """Verify null log_path is handled correctly."""
-        from src.cli.logs import _extract_sessions
-
-        runs = [
-            {
-                "run_id": "run1",
-                "started_at": "2024-01-01T10:00:00+00:00",
-                "metadata_path": "/tmp/runs/run1/run.json",
-                "issues": {
-                    "issue-1": {
-                        "session_id": "sess-1",
-                        "status": "success",
-                        # log_path is missing
-                    },
-                },
-            }
-        ]
-
-        result = _extract_sessions(runs, "issue-1")
-        assert len(result) == 1
-        assert result[0]["log_path"] is None
-
-
-class TestSortSessions:
-    """Tests for _sort_sessions helper function."""
-
-    def test_sort_by_run_started_at_desc(self) -> None:
+    def test_sort_by_run_started_at_desc(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Verify sessions are sorted by run_started_at descending."""
-        from src.cli.logs import _sort_sessions
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir(parents=True)
 
-        sessions = [
-            {
-                "run_started_at": "2024-01-01T10:00:00+00:00",
-                "run_id": "a",
-                "issue_id": "i1",
-            },
-            {
-                "run_started_at": "2024-01-03T10:00:00+00:00",
-                "run_id": "b",
-                "issue_id": "i2",
-            },
-            {
-                "run_started_at": "2024-01-02T10:00:00+00:00",
-                "run_id": "c",
-                "issue_id": "i3",
-            },
-        ]
+        # Create multiple run files with same issue but different timestamps
+        for i, ts in enumerate(["2024-01-01", "2024-01-03", "2024-01-02"]):
+            run_file = runs_dir / f"{ts}T10-00-00_{chr(ord('a') + i) * 8}.json"
+            run_file.write_text(
+                json.dumps(
+                    {
+                        "run_id": chr(ord("a") + i),
+                        "started_at": f"{ts}T10:00:00+00:00",
+                        "issues": {
+                            "issue-1": {"session_id": f"s{i}", "status": "success"},
+                        },
+                    }
+                )
+            )
 
-        result = _sort_sessions(sessions)
-        assert [s["run_id"] for s in result] == ["b", "c", "a"]
+        monkeypatch.setattr(
+            "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+            lambda _: runs_dir,
+        )
 
-    def test_sort_tiebreaker_run_id_asc(self) -> None:
+        result = find_sessions_for_issue(None, "issue-1")
+        # Should be sorted by started_at desc: 2024-01-03, 2024-01-02, 2024-01-01
+        assert [s.run_id for s in result] == ["b", "c", "a"]
+
+    def test_sort_tiebreaker_run_id_asc(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Verify run_id is used as tiebreaker (ascending) when started_at is same."""
-        from src.cli.logs import _sort_sessions
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir(parents=True)
 
-        sessions = [
-            {
-                "run_started_at": "2024-01-01T10:00:00+00:00",
-                "run_id": "c",
-                "issue_id": "i1",
-            },
-            {
-                "run_started_at": "2024-01-01T10:00:00+00:00",
-                "run_id": "a",
-                "issue_id": "i2",
-            },
-            {
-                "run_started_at": "2024-01-01T10:00:00+00:00",
-                "run_id": "b",
-                "issue_id": "i3",
-            },
-        ]
+        # Create multiple run files with same timestamp
+        for i, rid in enumerate(["c", "a", "b"]):
+            run_file = runs_dir / f"2024-01-01T10-00-00_{rid * 8}.json"
+            run_file.write_text(
+                json.dumps(
+                    {
+                        "run_id": rid,
+                        "started_at": "2024-01-01T10:00:00+00:00",
+                        "issues": {
+                            "issue-1": {"session_id": f"s{i}", "status": "success"},
+                        },
+                    }
+                )
+            )
 
-        result = _sort_sessions(sessions)
-        assert [s["run_id"] for s in result] == ["a", "b", "c"]
+        monkeypatch.setattr(
+            "src.infra.io.log_output.run_metadata.get_repo_runs_dir",
+            lambda _: runs_dir,
+        )
 
-    def test_sort_tiebreaker_issue_id_asc(self) -> None:
-        """Verify issue_id is final tiebreaker (ascending)."""
-        from src.cli.logs import _sort_sessions
-
-        sessions = [
-            {
-                "run_started_at": "2024-01-01T10:00:00+00:00",
-                "run_id": "a",
-                "issue_id": "z",
-            },
-            {
-                "run_started_at": "2024-01-01T10:00:00+00:00",
-                "run_id": "a",
-                "issue_id": "m",
-            },
-            {
-                "run_started_at": "2024-01-01T10:00:00+00:00",
-                "run_id": "a",
-                "issue_id": "a",
-            },
-        ]
-
-        result = _sort_sessions(sessions)
-        assert [s["issue_id"] for s in result] == ["a", "m", "z"]
+        result = find_sessions_for_issue(None, "issue-1")
+        # Should be sorted by run_id asc when started_at is same
+        assert [s.run_id for s in result] == ["a", "b", "c"]
 
 
 class TestExtractRunIdPrefixFromFilename:

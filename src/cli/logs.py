@@ -10,94 +10,34 @@ from typing import Annotated, Any
 import typer
 from tabulate import tabulate
 
-from src.infra.io.log_output.run_metadata import parse_timestamp
+from src.infra.io.log_output.run_metadata import (
+    discover_run_files,
+    find_sessions_for_issue,
+    load_runs,
+    parse_timestamp,
+)
 from src.infra.tools.env import get_repo_runs_dir, get_runs_dir
 
 logs_app = typer.Typer(name="logs", help="Search and inspect mala run logs")
-
-# Required keys for valid run metadata
-_REQUIRED_KEYS = {"run_id", "started_at", "issues"}
 
 # Default limit for number of runs to display
 _DEFAULT_LIMIT = 20
 
 
-def _discover_run_files(all_runs: bool) -> list[Path]:
-    """Discover run metadata JSON files.
+def _discover_run_files_all_repos() -> list[Path]:
+    """Discover run metadata JSON files across all repos.
 
-    Args:
-        all_runs: If True, search all repos. Otherwise, only current repo.
+    This is only used for --all flag in list and sessions commands.
 
     Returns:
         List of JSON file paths sorted by filename descending (newest first).
     """
-    if all_runs:
-        runs_dir = get_runs_dir()
-        if not runs_dir.exists():
-            return []
-        # rglob for all .json files across all repo directories
-        files = list(runs_dir.rglob("*.json"))
-    else:
-        cwd = Path.cwd()
-        repo_runs_dir = get_repo_runs_dir(cwd)
-        if not repo_runs_dir.exists():
-            return []
-        files = list(repo_runs_dir.glob("*.json"))
-
-    # Sort by filename descending (timestamps in filenames give newest first)
+    runs_dir = get_runs_dir()
+    if not runs_dir.exists():
+        return []
+    # rglob for all .json files across all repo directories
+    files = list(runs_dir.rglob("*.json"))
     return sorted(files, key=lambda p: p.name, reverse=True)
-
-
-def _validate_run_metadata(data: object) -> bool:
-    """Check if run metadata is a dict with required keys and valid values.
-
-    Args:
-        data: Parsed JSON data (any JSON value).
-
-    Returns:
-        True if data is a dict with all required keys and valid values.
-    """
-    if not isinstance(data, dict):
-        return False
-    # Cast to dict[str, Any] for type checker after isinstance check
-    d = dict(data)  # type: dict[str, Any]
-    if not _REQUIRED_KEYS.issubset(d.keys()):
-        return False
-    # Validate run_id is a non-null string
-    if not isinstance(d.get("run_id"), str):
-        return False
-    # Validate started_at is a non-null string
-    if not isinstance(d.get("started_at"), str):
-        return False
-    # Validate issues is a dict (or None which we treat as empty)
-    issues = d.get("issues")
-    if issues is not None and not isinstance(issues, dict):
-        return False
-    return True
-
-
-def _parse_run_file(path: Path) -> dict[str, Any] | None:
-    """Parse a run metadata JSON file.
-
-    Args:
-        path: Path to JSON file.
-
-    Returns:
-        Parsed dict if valid, None if corrupt or missing required keys.
-        Prints warning to stderr for corrupt files.
-    """
-    try:
-        with path.open() as f:
-            data = json.load(f)
-        if not _validate_run_metadata(data):
-            return None
-        # Normalize issues to empty dict if None
-        if data.get("issues") is None:
-            data["issues"] = {}
-        return data
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
-        print(f"Warning: skipping corrupt file {path}: {e}", file=sys.stderr)
-        return None
 
 
 def _count_issue_statuses(issues: dict[str, Any]) -> tuple[int, int, int, int]:
@@ -140,35 +80,54 @@ def _sort_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(runs, key=lambda r: (-parse_timestamp(r["started_at"]), r["run_id"]))
 
 
-def _extract_timestamp_prefix(filename: str) -> str:
-    """Extract the timestamp prefix from a run filename.
+# Required keys for valid run metadata (used for _parse_run_file_cli)
+_REQUIRED_KEYS = {"run_id", "started_at", "issues"}
 
-    Filenames have format: {timestamp}_{short_id}.json
-    where timestamp is %Y-%m-%dT%H-%M-%S (second resolution).
+
+def _parse_run_file_cli(path: Path) -> dict[str, Any] | None:
+    """Parse a run metadata JSON file with CLI-specific error handling.
+
+    Unlike infra's _parse_run_file which logs warnings, this version prints
+    to stderr for CLI user visibility.
 
     Args:
-        filename: The filename (not full path).
+        path: Path to JSON file.
 
     Returns:
-        The timestamp prefix (everything before the first underscore),
-        or empty string if no underscore found.
+        Parsed dict if valid, None if corrupt or missing required keys.
+        Prints warning to stderr for corrupt files.
     """
-    underscore_pos = filename.find("_")
-    if underscore_pos == -1:
-        return ""
-    return filename[:underscore_pos]
+    try:
+        with path.open() as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None
+        d = dict(data)  # type: dict[str, Any]
+        if not _REQUIRED_KEYS.issubset(d.keys()):
+            return None
+        if not isinstance(d.get("run_id"), str):
+            return None
+        if not isinstance(d.get("started_at"), str):
+            return None
+        issues = d.get("issues")
+        if issues is not None and not isinstance(issues, dict):
+            return None
+        # Normalize issues to empty dict if None
+        if d.get("issues") is None:
+            d["issues"] = {}
+        return d
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+        print(f"Warning: skipping corrupt file {path}: {e}", file=sys.stderr)
+        return None
 
 
-def _collect_runs(files: list[Path], limit: int | None = None) -> list[dict[str, Any]]:
-    """Collect valid run metadata from files, stopping early if limit reached.
+def _collect_runs_with_paths(
+    files: list[Path], limit: int | None = None
+) -> list[dict[str, Any]]:
+    """Collect runs from files using shared load_runs, adding metadata_path.
 
-    Files are assumed to be pre-sorted by filename descending (newest first),
-    allowing early termination once `limit` valid runs are collected.
-
-    To preserve correctness when multiple runs share the same second-resolution
-    timestamp, this function continues scanning files with the same timestamp
-    prefix as the last-collected file, then returns all candidates for final
-    sorting and slicing by the caller.
+    Thin wrapper around infra's load_runs() that adds 'metadata_path' field
+    for CLI display compatibility.
 
     Args:
         files: List of JSON file paths (pre-sorted newest first).
@@ -176,36 +135,9 @@ def _collect_runs(files: list[Path], limit: int | None = None) -> list[dict[str,
 
     Returns:
         List of run metadata dicts with 'metadata_path' added.
-        Caller must apply final sort and slice to limit for correctness.
     """
-    # Guard against invalid limit values
-    if limit is not None and limit <= 0:
-        return []
-
-    runs: list[dict[str, Any]] = []
-    boundary_prefix: str | None = None
-
-    for path in files:
-        # If we've reached limit, only continue for files with same timestamp prefix
-        if limit is not None and len(runs) >= limit:
-            if boundary_prefix is None:
-                # Extract timestamp prefix from filename (metadata_path is full path)
-                boundary_prefix = _extract_timestamp_prefix(
-                    Path(runs[-1]["metadata_path"]).name
-                )
-
-            current_prefix = _extract_timestamp_prefix(path.name)
-            if current_prefix != boundary_prefix:
-                # Different timestamp prefix, safe to stop
-                break
-
-        data = _parse_run_file(path)
-        if data is not None:
-            # Add metadata_path to a copy to avoid mutating parsed data
-            run_entry = {**data, "metadata_path": str(path)}
-            runs.append(run_entry)
-
-    return runs
+    runs_with_paths = load_runs(files, limit=limit)
+    return [{**data, "metadata_path": str(path)} for data, path in runs_with_paths]
 
 
 def _format_null(value: object) -> str:
@@ -255,10 +187,11 @@ def list_runs(
     ] = _DEFAULT_LIMIT,
 ) -> None:
     """List recent mala runs."""
-    files = _discover_run_files(all_runs)
+    # Use all-repos discovery for --all, otherwise current repo
+    files = _discover_run_files_all_repos() if all_runs else discover_run_files(None)
     # Collect with limit (files are pre-sorted newest first by filename)
-    # _collect_runs may return more than limit if ties exist at the boundary
-    runs = _collect_runs(files, limit=limit)
+    # load_runs may return more than limit if ties exist at the boundary
+    runs = _collect_runs_with_paths(files, limit=limit)
 
     # Final sort for determinism (handles ties within the collected set)
     runs = _sort_runs(runs)
@@ -326,60 +259,59 @@ def list_runs(
         print(tabulate(rows, headers=headers, tablefmt="simple"))
 
 
-def _extract_sessions(
-    runs: list[dict[str, Any]], issue_filter: str
-) -> list[dict[str, Any]]:
-    """Extract per-issue session rows from runs.
+def _find_sessions_all_repos(issue_id: str) -> list[dict[str, Any]]:
+    """Find sessions across all repos for --all flag.
+
+    Uses _discover_run_files_all_repos and manually extracts sessions since
+    find_sessions_for_issue only searches one repo.
 
     Args:
-        runs: List of run metadata dicts.
-        issue_filter: Only include sessions matching this issue ID (exact match).
+        issue_id: The issue ID to filter by (exact match).
 
     Returns:
-        List of session dicts with keys: run_id, session_id, issue_id, run_started_at,
-        status, log_path, metadata_path, repo_path.
+        List of session dicts sorted by run_started_at descending.
     """
+    files = _discover_run_files_all_repos()
+    runs_with_paths = load_runs(files)
     sessions: list[dict[str, Any]] = []
-    for run in runs:
-        issues = run.get("issues", {})
+
+    for data, path in runs_with_paths:
+        issues = data.get("issues", {})
         if not isinstance(issues, dict):
             continue
-        for issue_id, issue_data in issues.items():
-            # Skip if filter doesn't match (exact, case-sensitive)
-            if issue_id != issue_filter:
-                continue
-            if not isinstance(issue_data, dict):
-                continue
-            sessions.append(
-                {
-                    "run_id": run["run_id"],
-                    "session_id": issue_data.get("session_id"),
-                    "issue_id": issue_id,
-                    "run_started_at": run.get("started_at"),
-                    "status": issue_data.get("status"),
-                    "log_path": issue_data.get("log_path"),
-                    "metadata_path": run.get("metadata_path"),
-                    "repo_path": _get_repo_path(run),
-                }
-            )
-    return sessions
 
+        issue_data = issues.get(issue_id)
+        if not isinstance(issue_data, dict):
+            continue
 
-def _sort_sessions(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Sort sessions by run_started_at desc, then run_id asc, then issue_id asc.
+        started_at = data.get("started_at") or ""
+        # Get repo_path from metadata, with fallback to parent dir name
+        stored_path = data.get("repo_path")
+        if isinstance(stored_path, str):
+            repo_path = stored_path
+        else:
+            parent_name = path.parent.name
+            repo_path = parent_name if parent_name else None
 
-    Args:
-        sessions: List of session dicts.
+        sessions.append(
+            {
+                "run_id": data.get("run_id") or "",
+                "session_id": issue_data.get("session_id"),
+                "issue_id": issue_id,
+                "run_started_at": started_at,
+                "status": issue_data.get("status"),
+                "log_path": issue_data.get("log_path"),
+                "metadata_path": str(path),
+                "repo_path": repo_path,
+            }
+        )
 
-    Returns:
-        Sorted list.
-    """
+    # Sort by started_at descending, then run_id ascending for ties
     return sorted(
         sessions,
         key=lambda s: (
             -parse_timestamp(s.get("run_started_at") or ""),
             s.get("run_id") or "",
-            s.get("issue_id") or "",
         ),
     )
 
@@ -409,10 +341,26 @@ def sessions(
     ] = False,
 ) -> None:
     """List Claude sessions from mala runs."""
-    files = _discover_run_files(all_sessions)
-    runs = _collect_runs(files)
-    session_rows = _extract_sessions(runs, issue)
-    session_rows = _sort_sessions(session_rows)
+    if all_sessions:
+        # Search all repos
+        session_rows = _find_sessions_all_repos(issue)
+    else:
+        # Use shared infra function for current repo
+        session_infos = find_sessions_for_issue(None, issue)
+        # Convert SessionInfo to dict for CLI display
+        session_rows = [
+            {
+                "run_id": s.run_id,
+                "session_id": s.session_id,
+                "issue_id": s.issue_id,
+                "run_started_at": s.run_started_at,
+                "status": s.status,
+                "log_path": s.log_path,
+                "metadata_path": str(s.metadata_path),
+                "repo_path": s.repo_path,
+            }
+            for s in session_infos
+        ]
 
     if not session_rows:
         if json_output:
@@ -450,13 +398,14 @@ def sessions(
 
         rows = []
         for s in session_rows:
+            run_id = s.get("run_id") or ""
             row = [
-                s["run_id"][:8],  # Short ID for display
-                _format_null(s["session_id"]),
-                _format_null(s["issue_id"]),
-                _format_null(s["run_started_at"]),
-                _format_null(s["status"]),
-                _format_null(s["log_path"]),
+                run_id[:8],  # Short ID for display
+                _format_null(s.get("session_id")),
+                _format_null(s.get("issue_id")),
+                _format_null(s.get("run_started_at")),
+                _format_null(s.get("status")),
+                _format_null(s.get("log_path")),
             ]
             if all_sessions:
                 row.insert(1, _format_null(s["repo_path"]))
@@ -537,7 +486,7 @@ def _find_matching_runs(
             continue
 
         # Parse and check
-        data = _parse_run_file(path)
+        data = _parse_run_file_cli(path)
         if data is None:
             corrupt_files.append(path)
             continue
@@ -550,7 +499,7 @@ def _find_matching_runs(
     # Fallback: scan non-conforming files only if no matches found
     if not matches:
         for path in non_conforming_files:
-            data = _parse_run_file(path)
+            data = _parse_run_file_cli(path)
             if data is None:
                 # Track corrupt for non-conforming files too
                 corrupt_files.append(path)

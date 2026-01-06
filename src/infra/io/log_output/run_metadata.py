@@ -702,16 +702,245 @@ def _is_process_running(pid: int) -> bool:
 _logger = logging.getLogger(__name__)
 
 
+# --- Session Discovery Functions (shared by CLI and orchestrator) ---
+
+
+# Required keys for valid run metadata (used for validation in load functions)
+_REQUIRED_KEYS = {"run_id", "started_at", "issues"}
+
+
+def _validate_run_data(data: object) -> bool:
+    """Check if run metadata is a dict with required keys and valid values.
+
+    Args:
+        data: Parsed JSON data (any JSON value).
+
+    Returns:
+        True if data is a dict with all required keys and valid values.
+    """
+    if not isinstance(data, dict):
+        return False
+    d = dict(data)  # type: dict[str, Any]
+    if not _REQUIRED_KEYS.issubset(d.keys()):
+        return False
+    # Validate run_id is a non-null string
+    if not isinstance(d.get("run_id"), str):
+        return False
+    # Validate started_at is a non-null string
+    if not isinstance(d.get("started_at"), str):
+        return False
+    # Validate issues is a dict (or None which we treat as empty)
+    issues = d.get("issues")
+    if issues is not None and not isinstance(issues, dict):
+        return False
+    return True
+
+
+def _parse_run_file(path: Path) -> dict[str, Any] | None:
+    """Parse a run metadata JSON file.
+
+    Args:
+        path: Path to JSON file.
+
+    Returns:
+        Parsed dict if valid, None if corrupt or missing required keys.
+        Logs a warning for corrupt files.
+    """
+    try:
+        with path.open() as f:
+            data = json.load(f)
+        if not _validate_run_data(data):
+            return None
+        # Normalize issues to empty dict if None
+        if data.get("issues") is None:
+            data["issues"] = {}
+        return data
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
+        _logger.warning("Skipping corrupt file %s: %s", path, e)
+        return None
+
+
+def _extract_timestamp_prefix(filename: str) -> str:
+    """Extract the timestamp prefix from a run filename.
+
+    Filenames have format: {timestamp}_{short_id}.json
+    where timestamp is %Y-%m-%dT%H-%M-%S (second resolution).
+
+    Args:
+        filename: The filename (not full path).
+
+    Returns:
+        The timestamp prefix (everything before the first underscore),
+        or empty string if no underscore found.
+    """
+    underscore_pos = filename.find("_")
+    if underscore_pos == -1:
+        return ""
+    return filename[:underscore_pos]
+
+
+def discover_run_files(repo_path: Path | None = None) -> list[Path]:
+    """Discover run metadata JSON files.
+
+    This is the canonical implementation for run file discovery, used by
+    both CLI (logs commands) and orchestrator (session resume).
+
+    Args:
+        repo_path: Repository path to search in. If None, uses current directory.
+
+    Returns:
+        List of JSON file paths sorted by filename descending (newest first).
+    """
+    effective_repo = repo_path if repo_path is not None else Path.cwd()
+    repo_runs_dir = get_repo_runs_dir(effective_repo)
+    if not repo_runs_dir.exists():
+        return []
+    files = list(repo_runs_dir.glob("*.json"))
+    # Sort by filename descending (timestamps in filenames give newest first)
+    return sorted(files, key=lambda p: p.name, reverse=True)
+
+
+def load_runs(
+    files: list[Path], limit: int | None = None
+) -> list[tuple[dict[str, Any], Path]]:
+    """Load valid run metadata from files.
+
+    Files are assumed to be pre-sorted by filename descending (newest first),
+    allowing early termination once `limit` valid runs are collected.
+
+    To preserve correctness when multiple runs share the same second-resolution
+    timestamp, this function continues scanning files with the same timestamp
+    prefix as the last-collected file, then returns all candidates for final
+    sorting and slicing by the caller.
+
+    Args:
+        files: List of JSON file paths (pre-sorted newest first).
+        limit: Maximum number of runs to collect. None means collect all.
+
+    Returns:
+        List of (run_data, path) tuples. Caller must apply final sort and
+        slice to limit for correctness.
+    """
+    # Guard against invalid limit values
+    if limit is not None and limit <= 0:
+        return []
+
+    runs: list[tuple[dict[str, Any], Path]] = []
+    boundary_prefix: str | None = None
+
+    for path in files:
+        # If we've reached limit, only continue for files with same timestamp prefix
+        if limit is not None and len(runs) >= limit:
+            if boundary_prefix is None:
+                # Extract timestamp prefix from the last-collected run's file
+                boundary_prefix = _extract_timestamp_prefix(runs[-1][1].name)
+
+            current_prefix = _extract_timestamp_prefix(path.name)
+            if current_prefix != boundary_prefix:
+                # Different timestamp prefix, safe to stop
+                break
+
+        data = _parse_run_file(path)
+        if data is not None:
+            runs.append((data, path))
+
+    return runs
+
+
+def _get_repo_path_from_run(run: dict[str, Any], metadata_path: Path) -> str | None:
+    """Get repo path from run metadata, preferring stored value.
+
+    Falls back to the encoded directory name if repo_path is not in metadata.
+
+    Args:
+        run: Run metadata dict.
+        metadata_path: Path to the metadata file (for fallback).
+
+    Returns:
+        Repo path string or None.
+    """
+    stored_path = run.get("repo_path")
+    if isinstance(stored_path, str):
+        return stored_path
+    parent_name = metadata_path.parent.name
+    return parent_name if parent_name else None
+
+
+@dataclass
+class SessionInfo:
+    """Information about a session for a specific issue.
+
+    Returned by find_sessions_for_issue() with all relevant metadata.
+    """
+
+    run_id: str
+    session_id: str | None
+    issue_id: str
+    run_started_at: str
+    started_at_ts: float  # Epoch timestamp for sorting
+    status: str | None
+    log_path: str | None
+    metadata_path: Path
+    repo_path: str | None
+
+
+def find_sessions_for_issue(repo_path: Path | None, issue_id: str) -> list[SessionInfo]:
+    """Find all sessions for a specific issue.
+
+    This is the canonical implementation for session lookup, used by
+    both CLI (logs sessions) and orchestrator (session resume).
+
+    Args:
+        repo_path: Repository path. If None, uses current directory.
+        issue_id: The issue ID to filter by (exact match).
+
+    Returns:
+        List of SessionInfo sorted by run_started_at descending, then run_id
+        ascending for ties.
+    """
+    files = discover_run_files(repo_path)
+    sessions: list[SessionInfo] = []
+
+    for path in files:
+        data = _parse_run_file(path)
+        if data is None:
+            continue
+
+        issues = data.get("issues", {})
+        if not isinstance(issues, dict):
+            continue
+
+        issue_data = issues.get(issue_id)
+        if not isinstance(issue_data, dict):
+            continue
+
+        started_at = data.get("started_at") or ""
+        sessions.append(
+            SessionInfo(
+                run_id=data.get("run_id") or "",
+                session_id=issue_data.get("session_id"),
+                issue_id=issue_id,
+                run_started_at=started_at,
+                started_at_ts=parse_timestamp(started_at),
+                status=issue_data.get("status"),
+                log_path=issue_data.get("log_path"),
+                metadata_path=path,
+                repo_path=_get_repo_path_from_run(data, path),
+            )
+        )
+
+    # Sort by started_at descending, then run_id ascending for ties
+    return sorted(
+        sessions,
+        key=lambda s: (-s.started_at_ts, s.run_id),
+    )
+
+
 def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
     """Look up the session ID from a prior run on this issue.
 
-    Scans run metadata files in the repo's runs directory, finds entries
-    for the given issue, and returns the session_id from the most recent
-    run (sorted by started_at timestamp descending, with run_id as tiebreaker).
-
-    Files are sorted by filename descending before scanning (leveraging the
-    timestamp prefix in filenames for efficiency). Corrupt files are logged
-    as warnings and skipped.
+    Uses find_sessions_for_issue() to find all sessions for the issue,
+    then returns the session_id from the most recent run.
 
     Args:
         repo_path: Repository path for finding run metadata.
@@ -720,74 +949,14 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
     Returns:
         Session ID from the most recent run on this issue, or None if not found.
     """
-    runs_dir = get_repo_runs_dir(repo_path)
-    if not runs_dir.exists():
-        return None
+    sessions = find_sessions_for_issue(repo_path, issue_id)
 
-    # Sort files by filename descending (newest first based on timestamp prefix)
-    # This enables early-exit optimization: once we find a match, we can stop
-    # when the current file's timestamp prefix is older than our best match.
-    json_files = sorted(runs_dir.glob("*.json"), key=lambda p: p.name, reverse=True)
+    # Find the first session with a valid session_id
+    for session in sessions:
+        if session.session_id:
+            return session.session_id
 
-    # Track best match: (started_at, run_id, session_id)
-    best: tuple[float, str, str] | None = None
-
-    for json_path in json_files:
-        # Early-exit: if we have a match and current file's timestamp prefix
-        # is older than our best, we can stop (files are sorted newest-first)
-        if best is not None:
-            # Extract timestamp prefix from filename (format: YYYY-MM-DDTHH-MM-SS_*)
-            name = json_path.name
-            if len(name) >= 19:  # "2026-01-06T16-00-25" = 19 chars
-                try:
-                    file_ts = datetime.strptime(name[:19], "%Y-%m-%dT%H-%M-%S").replace(
-                        tzinfo=UTC
-                    )
-                    # Compare at second granularity: best[0] may have sub-second
-                    # precision while filename only has seconds
-                    if file_ts.timestamp() < int(best[0]):
-                        break  # All remaining files are older
-                except ValueError:
-                    pass  # Non-standard filename, continue scanning
-
-        try:
-            with json_path.open() as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
-            _logger.warning("Skipping corrupt file %s: %s", json_path, e)
-            continue
-
-        if not isinstance(data, dict):
-            continue
-
-        issues = data.get("issues")
-        if not isinstance(issues, dict):
-            continue
-
-        issue_data = issues.get(issue_id)
-        if not isinstance(issue_data, dict):
-            continue
-
-        session_id = issue_data.get("session_id")
-        if not isinstance(session_id, str) or not session_id:
-            continue
-
-        # Parse started_at for sorting, use run_id as secondary key for ties
-        # Use `or ""` to handle both missing keys AND explicit null values
-        started_at = data.get("started_at") or ""
-        run_id = data.get("run_id") or ""
-        timestamp = parse_timestamp(started_at)
-
-        # Update best if this is newer, or same timestamp with smaller run_id
-        # (smaller run_id wins for determinism when timestamps tie)
-        if (
-            best is None
-            or timestamp > best[0]
-            or (timestamp == best[0] and run_id < best[1])
-        ):
-            best = (timestamp, run_id, session_id)
-
-    return best[2] if best else None
+    return None
 
 
 def parse_timestamp(ts: str) -> float:
