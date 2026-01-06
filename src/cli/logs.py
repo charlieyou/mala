@@ -486,7 +486,7 @@ def _extract_run_id_prefix_from_filename(filename: str) -> str | None:
         filename: The filename (not full path).
 
     Returns:
-        The 8-char run_id prefix, or None if parsing fails.
+        The 8-char run_id prefix, or None if parsing fails or length != 8.
     """
     # Remove .json extension
     if not filename.endswith(".json"):
@@ -499,7 +499,7 @@ def _extract_run_id_prefix_from_filename(filename: str) -> str | None:
         return None
 
     prefix = base[underscore_pos + 1 :]
-    # Validate it looks like an 8-char hex prefix
+    # Validate length is exactly 8 chars
     if len(prefix) != 8:
         return None
     return prefix
@@ -510,13 +510,17 @@ def _find_matching_runs(
 ) -> tuple[list[tuple[Path, dict[str, Any]]], list[Path]]:
     """Find runs matching the given run_id or prefix.
 
+    Search strategy:
+    1. Fast path: match by filename prefix (first 8 chars of search_id)
+    2. Fallback: if no matches found, scan all JSON files for run_id field match
+
     Args:
-        search_id: Full UUID or 8-char prefix to search for.
+        search_id: Full UUID or prefix (any length >= 1) to search for.
 
     Returns:
         Tuple of (matches, corrupt_files) where:
         - matches: List of (path, parsed_data) tuples for matching runs
-        - corrupt_files: List of paths that matched by filename but were corrupt
+        - corrupt_files: List of paths that matched but were corrupt/unreadable
     """
     cwd = Path.cwd()
     repo_runs_dir = get_repo_runs_dir(cwd)
@@ -524,29 +528,42 @@ def _find_matching_runs(
         return [], []
 
     files = list(repo_runs_dir.glob("*.json"))
-    is_prefix = len(search_id) == 8
-    search_prefix = search_id[:8]
+    # Treat as prefix search if <= 8 chars, otherwise full UUID
+    is_prefix_search = len(search_id) <= 8
 
     matches: list[tuple[Path, dict[str, Any]]] = []
     corrupt_files: list[Path] = []
 
-    for path in files:
-        filename_prefix = _extract_run_id_prefix_from_filename(path.name)
+    # Fast path: filename-based matching (only works for 8-char prefix)
+    if len(search_id) >= 8:
+        search_prefix = search_id[:8]
+        for path in files:
+            filename_prefix = _extract_run_id_prefix_from_filename(path.name)
+            if filename_prefix is None or filename_prefix != search_prefix:
+                continue
 
-        # First check: filename prefix must match
-        if filename_prefix is None or filename_prefix != search_prefix:
-            continue
+            data = _parse_run_file(path)
+            if data is None:
+                corrupt_files.append(path)
+                continue
 
-        # Parse the file
-        data = _parse_run_file(path)
-        if data is None:
-            corrupt_files.append(path)
-            continue
+            # For prefix search: filename match is sufficient
+            # For full UUID: verify run_id field matches exactly
+            if is_prefix_search or data.get("run_id") == search_id:
+                matches.append((path, data))
 
-        # For 8-char prefix: filename match is sufficient
-        # For full UUID: verify run_id field matches exactly
-        if is_prefix or data.get("run_id") == search_id:
-            matches.append((path, data))
+    # Fallback: scan JSON run_id fields if fast path found nothing
+    # This handles non-conforming filenames or short prefixes
+    if not matches and not corrupt_files:
+        for path in files:
+            data = _parse_run_file(path)
+            if data is None:
+                # Only track corrupt if it could be a match
+                continue
+
+            run_id_field = data.get("run_id", "")
+            if isinstance(run_id_field, str) and run_id_field.startswith(search_id):
+                matches.append((path, data))
 
     return matches, corrupt_files
 
@@ -569,8 +586,8 @@ def _print_run_details(run: dict[str, Any]) -> None:
     print(f"Metadata:     {run.get('metadata_path', '-')}")
 
     # Issues section
-    issues = run.get("issues", {})
-    if not issues:
+    issues = run.get("issues")
+    if not isinstance(issues, dict) or not issues:
         print("\nIssues:       (none)")
     else:
         print(f"\nIssues ({len(issues)}):")
@@ -607,21 +624,39 @@ def show(
 ) -> None:
     """Show details for a specific run."""
     matches, corrupt_files = _find_matching_runs(run_id)
+    is_prefix_search = len(run_id) <= 8
 
-    # Handle ambiguous prefix (multiple matches)
-    if len(matches) > 1:
+    # For prefix search: treat valid matches + corrupt files as potentially ambiguous
+    # (corrupt file could be the intended run)
+    total_candidates = len(matches) + len(corrupt_files)
+
+    # Handle ambiguous prefix (multiple valid matches, or mix of valid + corrupt)
+    if len(matches) > 1 or (
+        is_prefix_search and total_candidates > 1 and corrupt_files
+    ):
         match_ids = sorted([m[1]["run_id"] for m in matches])
+        corrupt_note = (
+            f" ({len(corrupt_files)} additional corrupt file(s))"
+            if corrupt_files
+            else ""
+        )
         if json_output:
-            error_obj = {
+            error_obj: dict[str, Any] = {
                 "error": "ambiguous_prefix",
-                "message": f"Ambiguous prefix '{run_id}' matches multiple runs",
+                "message": f"Ambiguous prefix '{run_id}' matches multiple runs{corrupt_note}",
                 "matches": match_ids,
             }
+            if corrupt_files:
+                error_obj["corrupt_count"] = len(corrupt_files)
             print(json.dumps(error_obj, indent=2))
         else:
-            print(f"Error: Ambiguous prefix '{run_id}' matches multiple runs:")
+            print(
+                f"Error: Ambiguous prefix '{run_id}' matches multiple runs{corrupt_note}:"
+            )
             for mid in match_ids:
                 print(f"  {mid}")
+            if corrupt_files:
+                print(f"  ({len(corrupt_files)} corrupt file(s) also matched)")
         raise typer.Exit(1)
 
     # Handle not found

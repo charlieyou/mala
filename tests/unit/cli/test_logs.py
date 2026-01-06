@@ -1198,3 +1198,71 @@ class TestShowCommand:
                 break
         output = json.loads("\n".join(json_lines))
         assert output["error"] == "corrupt"
+
+    def test_show_prefix_plus_corrupt_is_ambiguous(self, tmp_path: Path) -> None:
+        """Verify valid match + corrupt file with same prefix is treated as ambiguous."""
+        from typer.testing import CliRunner
+
+        from src.cli.logs import logs_app
+
+        runner = CliRunner()
+
+        # One valid run and one corrupt file with same prefix
+        valid_run = {
+            "run_id": "a1b2c3d4-aaaa-0000-0000-000000000001",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        (tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json").write_text(
+            json.dumps(valid_run)
+        )
+        (tmp_path / "2024-01-01T11-00-00_a1b2c3d4.json").write_text("not valid json")
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            result = runner.invoke(logs_app, ["show", "a1b2c3d4"])
+
+        # Should be ambiguous (exit 1), not success
+        assert result.exit_code == 1
+        assert "Ambiguous" in result.output or "ambiguous" in result.output
+
+
+class TestFindMatchingRunsFallback:
+    """Tests for _find_matching_runs fallback to JSON scan."""
+
+    def test_short_prefix_uses_fallback(self, tmp_path: Path) -> None:
+        """Verify short prefix (< 8 chars) uses JSON field scan."""
+        from src.cli.logs import _find_matching_runs
+
+        run_data = {
+            "run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        (tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json").write_text(
+            json.dumps(run_data)
+        )
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            # Search with 4-char prefix
+            matches, _corrupt = _find_matching_runs("a1b2")
+
+        assert len(matches) == 1
+        assert matches[0][1]["run_id"] == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    def test_nonconforming_filename_uses_fallback(self, tmp_path: Path) -> None:
+        """Verify fallback finds runs with non-standard filenames."""
+        from src.cli.logs import _find_matching_runs
+
+        run_data = {
+            "run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        # Non-standard filename (no underscore-prefix pattern)
+        (tmp_path / "manual-run.json").write_text(json.dumps(run_data))
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            matches, _corrupt = _find_matching_runs("a1b2c3d4")
+
+        assert len(matches) == 1
+        assert matches[0][1]["run_id"] == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
