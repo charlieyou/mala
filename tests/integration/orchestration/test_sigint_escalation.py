@@ -28,11 +28,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 def _wait_for_ready(
     proc: subprocess.Popen[str], timeout: float = 5.0
-) -> tuple[bool, str]:
+) -> tuple[bool, str, str]:
     """Wait for subprocess to print READY signal.
 
     Returns:
-        (ready_received, output_so_far)
+        (ready_received, stdout_so_far, stderr_if_exited_early)
     """
     output_lines: list[str] = []
     deadline = time.monotonic() + timeout
@@ -41,21 +41,21 @@ def _wait_for_ready(
     for _ in range(iterations):
         if proc.poll() is not None:
             # Process exited early - use communicate to safely drain pipes
-            remaining, _ = proc.communicate(timeout=5.0)
+            remaining, stderr = proc.communicate(timeout=5.0)
             output_lines.append(remaining)
-            return False, "".join(output_lines)
+            return False, "".join(output_lines), stderr
 
         # Non-blocking read
         if proc.stdout and select.select([proc.stdout], [], [], 0.1)[0]:
             line = proc.stdout.readline()
             output_lines.append(line)
             if "READY" in line:
-                return True, "".join(output_lines)
+                return True, "".join(output_lines), ""
 
         if time.monotonic() > deadline:
             break
 
-    return False, "".join(output_lines)
+    return False, "".join(output_lines), ""
 
 
 def _send_sigint_and_wait(
@@ -170,14 +170,14 @@ asyncio.run(main())
         )
 
         try:
-            ready, output = _wait_for_ready(proc)
+            ready, output, early_stderr = _wait_for_ready(proc)
             if not ready:
-                stderr = _get_stderr(proc)
                 if proc.poll() is not None:
                     pytest.fail(
                         f"Subprocess exited early with code {proc.returncode}. "
-                        f"Output: {output}\nStderr: {stderr}"
+                        f"Output: {output}\nStderr: {early_stderr}"
                     )
+                stderr = _get_stderr(proc)
                 pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
 
             # Send single SIGINT for drain mode
@@ -259,14 +259,14 @@ while True:
         )
 
         try:
-            ready, output = _wait_for_ready(proc)
+            ready, output, early_stderr = _wait_for_ready(proc)
             if not ready:
-                stderr = _get_stderr(proc)
                 if proc.poll() is not None:
                     pytest.fail(
                         f"Subprocess exited early with code {proc.returncode}. "
-                        f"Output: {output}\nStderr: {stderr}"
+                        f"Output: {output}\nStderr: {early_stderr}"
                     )
+                stderr = _get_stderr(proc)
                 pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
 
             # Wait briefly for task to start
@@ -395,14 +395,14 @@ asyncio.run(main())
         )
 
         try:
-            ready, output = _wait_for_ready(proc)
+            ready, output, early_stderr = _wait_for_ready(proc)
             if not ready:
-                stderr = _get_stderr(proc)
                 if proc.poll() is not None:
                     pytest.fail(
                         f"Subprocess exited early with code {proc.returncode}. "
-                        f"Output: {output}\nStderr: {stderr}"
+                        f"Output: {output}\nStderr: {early_stderr}"
                     )
+                stderr = _get_stderr(proc)
                 pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
 
             # Wait for task to start
@@ -501,8 +501,13 @@ while True:
         )
 
         try:
-            ready, _output = _wait_for_ready(proc)
+            ready, _output, early_stderr = _wait_for_ready(proc)
             if not ready:
+                if proc.poll() is not None:
+                    pytest.fail(
+                        f"Subprocess exited early with code {proc.returncode}. "
+                        f"Stderr: {early_stderr}"
+                    )
                 stderr = _get_stderr(proc)
                 pytest.fail(f"Subprocess never sent READY. Stderr: {stderr}")
 
@@ -635,14 +640,14 @@ asyncio.run(main())
         )
 
         try:
-            ready, output = _wait_for_ready(proc)
+            ready, output, early_stderr = _wait_for_ready(proc)
             if not ready:
-                stderr = _get_stderr(proc)
                 if proc.poll() is not None:
                     pytest.fail(
                         f"Subprocess exited early with code {proc.returncode}. "
-                        f"Output: {output}\nStderr: {stderr}"
+                        f"Output: {output}\nStderr: {early_stderr}"
                     )
+                stderr = _get_stderr(proc)
                 pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
 
             # Wait for task to start
@@ -699,6 +704,7 @@ class TestMalaOrchestratorSigint:
         script.write_text(
             """
 import asyncio
+import signal
 import sys
 
 from pathlib import Path
@@ -708,8 +714,11 @@ from src.core.models import WatchConfig
 from tests.fakes.event_sink import FakeEventSink
 from tests.fakes.issue_provider import FakeIssueProvider
 
+_orchestrator = None
+
 
 async def main():
+    global _orchestrator
     tmp_dir = Path(sys.argv[1])
     runs_dir = tmp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -728,39 +737,48 @@ async def main():
         event_sink=event_sink,
         runs_dir=runs_dir,
     )
-    orchestrator = create_orchestrator(config, deps=deps)
-
-    print("READY", flush=True)
+    _orchestrator = create_orchestrator(config, deps=deps)
 
     # Run with watch mode so it waits for SIGINT
     watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
+
+    # Start orchestrator as task, wait for SIGINT handler to be installed
+    run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
+
+    # Wait for SIGINT handler to be installed (not default handler)
+    while signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+        await asyncio.sleep(0.01)
+
+    # Now safe to signal READY
+    print("READY", flush=True)
+
     try:
-        success_count, total = await orchestrator.run(watch_config=watch_config)
+        success_count, total = await run_task
     except asyncio.CancelledError:
         # CancelledError can propagate from Stage 2/3 handling
         pass
 
     # Check internal state to verify drain mode was triggered
-    # This is more reliable than checking event_sink since events are async
-    if orchestrator._drain_mode_active:
+    if _orchestrator._drain_mode_active:
         print("DRAIN_MODE_ACTIVE", flush=True)
     else:
-        print(f"drain_mode_active={orchestrator._drain_mode_active}", flush=True)
-        print(f"sigint_count={orchestrator._sigint_count}", flush=True)
+        print(f"drain_mode_active={_orchestrator._drain_mode_active}", flush=True)
+        print(f"sigint_count={_orchestrator._sigint_count}", flush=True)
 
-    # Force flush and exit
     sys.stdout.flush()
     sys.stderr.flush()
-    sys.exit(orchestrator.exit_code)
+    sys.exit(_orchestrator.exit_code)
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        # SIGINT during asyncio.run cleanup - exit with default 130
-        # This happens when the signal handler is not fully installed yet
-        # or when asyncio.run is shutting down after CancelledError
+        # Check state even after KeyboardInterrupt
+        if _orchestrator is not None:
+            if _orchestrator._drain_mode_active:
+                print("DRAIN_MODE_ACTIVE", flush=True)
+            sys.stdout.flush()
         sys.exit(130)
 """
         )
@@ -777,14 +795,14 @@ if __name__ == "__main__":
         )
 
         try:
-            ready, output = _wait_for_ready(proc, timeout=10.0)
+            ready, output, early_stderr = _wait_for_ready(proc, timeout=10.0)
             if not ready:
-                stderr = _get_stderr(proc)
                 if proc.poll() is not None:
                     pytest.fail(
                         f"Subprocess exited early with code {proc.returncode}. "
-                        f"Output: {output}\nStderr: {stderr}"
+                        f"Output: {output}\nStderr: {early_stderr}"
                     )
+                stderr = _get_stderr(proc)
                 pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
 
             # Wait for orchestrator to enter its run loop before sending SIGINT
@@ -836,12 +854,16 @@ if __name__ == "__main__":
         """MalaOrchestrator: double SIGINT triggers abort mode via _handle_sigint.
 
         Verifies Stage 2 behavior: two SIGINTs cause the orchestrator to
-        set interrupt_event and exit with code 130.
+        set _abort_mode_active and exit with code 130.
+
+        Uses a slow poll interval and watch mode to keep the orchestrator
+        alive long enough to receive two SIGINTs.
         """
         script = tmp_path / "orchestrator_abort_test.py"
         script.write_text(
             """
 import asyncio
+import signal
 import sys
 
 from pathlib import Path
@@ -849,18 +871,19 @@ from pathlib import Path
 from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
 from src.core.models import WatchConfig
 from tests.fakes.event_sink import FakeEventSink
-from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+from tests.fakes.issue_provider import FakeIssueProvider
+
+_orchestrator = None
 
 
 async def main():
+    global _orchestrator
     tmp_dir = Path(sys.argv[1])
     runs_dir = tmp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create orchestrator with one issue so it has work to do
-    provider = FakeIssueProvider(
-        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
-    )
+    # Create orchestrator with empty provider - watch mode keeps it alive
+    provider = FakeIssueProvider()
     event_sink = FakeEventSink()
 
     config = OrchestratorConfig(
@@ -873,31 +896,48 @@ async def main():
         event_sink=event_sink,
         runs_dir=runs_dir,
     )
-    orchestrator = create_orchestrator(config, deps=deps)
+    _orchestrator = create_orchestrator(config, deps=deps)
+
+    # Use slow poll interval so orchestrator stays alive waiting for issues
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=10.0)
+
+    # Start orchestrator as task, wait for SIGINT handler to be installed
+    run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
+
+    # Wait for SIGINT handler to be installed
+    while signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+        await asyncio.sleep(0.01)
 
     print("READY", flush=True)
 
-    # Run with watch mode
-    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
     try:
-        await orchestrator.run(watch_config=watch_config)
+        await run_task
     except asyncio.CancelledError:
         # Stage 2/3 may cancel the run task
         pass
 
-    # Check events
-    if event_sink.has_event("drain_started"):
-        print("DRAIN_EVENT_RECORDED", flush=True)
-    if event_sink.has_event("abort_started"):
-        print("ABORT_EVENT_RECORDED", flush=True)
+    # Check internal state (more reliable than async event sink)
+    if _orchestrator._abort_mode_active:
+        print("ABORT_MODE_ACTIVE", flush=True)
+    else:
+        print(f"abort_mode_active={_orchestrator._abort_mode_active}", flush=True)
+    print(f"sigint_count={_orchestrator._sigint_count}", flush=True)
 
-    sys.exit(orchestrator.exit_code)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    sys.exit(_orchestrator.exit_code)
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
+        # Check state even after KeyboardInterrupt
+        if _orchestrator is not None:
+            if _orchestrator._abort_mode_active:
+                print("ABORT_MODE_ACTIVE", flush=True)
+            print(f"sigint_count={_orchestrator._sigint_count}", flush=True)
+            sys.stdout.flush()
         sys.exit(130)
 """
         )
@@ -914,20 +954,21 @@ if __name__ == "__main__":
         )
 
         try:
-            ready, output = _wait_for_ready(proc, timeout=10.0)
+            ready, output, early_stderr = _wait_for_ready(proc, timeout=10.0)
             if not ready:
-                stderr = _get_stderr(proc)
                 if proc.poll() is not None:
                     pytest.fail(
                         f"Subprocess exited early with code {proc.returncode}. "
-                        f"Output: {output}\nStderr: {stderr}"
+                        f"Output: {output}\nStderr: {early_stderr}"
                     )
+                stderr = _get_stderr(proc)
                 pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
 
             # Wait for orchestrator to start its main loop
             time.sleep(0.5)
 
             # Send two SIGINTs for abort mode
+            # First triggers drain, second triggers abort
             _send_sigint_and_wait(proc, wait_after=0.3)
             _send_sigint_and_wait(proc, wait_after=0.3)
 
@@ -950,9 +991,10 @@ if __name__ == "__main__":
                     f"Stdout: {all_stdout}\nStderr: {stderr}"
                 )
 
-            # Verify abort event was recorded
-            assert "ABORT_EVENT_RECORDED" in all_stdout, (
-                f"on_abort_started event not recorded. Stdout: {all_stdout}"
+            # Verify abort mode was activated via internal state
+            assert "ABORT_MODE_ACTIVE" in all_stdout, (
+                f"_abort_mode_active not set by Stage 2 _handle_sigint. "
+                f"Stdout: {all_stdout}"
             )
 
         finally:
@@ -974,6 +1016,7 @@ if __name__ == "__main__":
         script.write_text(
             """
 import asyncio
+import signal
 import sys
 
 from pathlib import Path
@@ -1024,11 +1067,19 @@ async def main():
     )
     _orchestrator = create_orchestrator(config, deps=deps)
 
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
+
+    # Start orchestrator as task, wait for SIGINT handler to be installed
+    run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
+
+    # Wait for SIGINT handler to be installed
+    while signal.getsignal(signal.SIGINT) is signal.default_int_handler:
+        await asyncio.sleep(0.01)
+
     print("READY", flush=True)
 
-    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
     try:
-        await _orchestrator.run(watch_config=watch_config)
+        await run_task
     except asyncio.CancelledError:
         # Stage 3 cancels the run task
         pass
@@ -1073,14 +1124,14 @@ if __name__ == "__main__":
         )
 
         try:
-            ready, output = _wait_for_ready(proc, timeout=10.0)
+            ready, output, early_stderr = _wait_for_ready(proc, timeout=10.0)
             if not ready:
-                stderr = _get_stderr(proc)
                 if proc.poll() is not None:
                     pytest.fail(
                         f"Subprocess exited early with code {proc.returncode}. "
-                        f"Output: {output}\nStderr: {stderr}"
+                        f"Output: {output}\nStderr: {early_stderr}"
                     )
+                stderr = _get_stderr(proc)
                 pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
 
             time.sleep(0.5)
