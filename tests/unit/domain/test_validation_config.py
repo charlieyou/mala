@@ -605,15 +605,13 @@ class TestRunLevelCustomCommandsMode:
         with pytest.raises(ConfigError, match=r"\+lint.*conflicts.*built-in"):
             CommandsConfig.from_dict({"+lint": "some cmd"}, is_run_level=True)
 
-    def test_run_level_unprefixed_builtin_collision_raises_error(self) -> None:
-        """Unprefixed key matching built-in name raises error."""
-        # This would be caught by the built-in parsing, but custom collision
-        # check should also handle edge cases
-        # Actually built-in "lint" will be parsed as built-in, not custom
-        # So this tests a hypothetical edge case - the key would be parsed as built-in
+    def test_run_level_builtin_key_parsed_as_builtin_not_custom(self) -> None:
+        """Built-in key names are parsed as built-ins, not custom commands."""
+        # "lint" matches a valid_kind so it's parsed as built-in, not custom
         config = CommandsConfig.from_dict({"lint": "some cmd"}, is_run_level=True)
         assert config.lint is not None
         assert config.lint.command == "some cmd"
+        assert "lint" not in config.custom_commands
 
     def test_repo_level_plus_prefix_raises_error(self) -> None:
         """Plus-prefixed key at repo-level raises ConfigError."""
