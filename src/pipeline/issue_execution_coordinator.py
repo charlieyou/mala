@@ -178,7 +178,7 @@ class IssueExecutionCoordinator:
         if not isinstance(watch_state.last_validation_at, int):
             watch_state.last_validation_at = 0
         if watch_state.completed_count > watch_state.last_validation_at:
-            if watch_enabled and validation_callback:
+            if validation_callback:
                 validation_passed = await validation_callback()
                 watch_state.last_validation_at = watch_state.completed_count
                 if not validation_passed:
@@ -283,7 +283,7 @@ class IssueExecutionCoordinator:
                 is_draining = drain_event is not None and drain_event.is_set()
                 if is_draining and not self.active_tasks:
                     # All drained - trigger validation if in watch mode
-                    if watch_enabled and validation_callback:
+                    if validation_callback:
                         if watch_state.completed_count > watch_state.last_validation_at:
                             validation_passed = await validation_callback()
                             watch_state.last_validation_at = watch_state.completed_count
@@ -436,7 +436,7 @@ class IssueExecutionCoordinator:
                         )
                         # Run final validation if needed
                         if watch_state.completed_count > watch_state.last_validation_at:
-                            if watch_enabled and validation_callback:
+                            if validation_callback:
                                 validation_passed = await validation_callback()
                                 watch_state.last_validation_at = (
                                     watch_state.completed_count
@@ -504,7 +504,7 @@ class IssueExecutionCoordinator:
                                 watch_state.completed_count
                                 > watch_state.last_validation_at
                             ):
-                                if watch_enabled and validation_callback:
+                                if validation_callback:
                                     validation_passed = await validation_callback()
                                     watch_state.last_validation_at = (
                                         watch_state.completed_count
@@ -580,9 +580,7 @@ class IssueExecutionCoordinator:
                 # Check if validation threshold crossed
                 # Only enter this block if validation is actually configured
                 if (
-                    watch_config
-                    and watch_config.enabled
-                    and validation_config
+                    validation_config is not None
                     and validation_config.validate_every is not None
                     and validation_callback
                     and watch_state.completed_count

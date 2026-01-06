@@ -677,10 +677,6 @@ class TestPeriodicValidationWithoutWatch:
     """
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="T003 not implemented: watch_enabled guards still prevent validation",
-        strict=True,
-    )
     async def test_periodic_validation_without_watch_mode(self) -> None:
         """Verify periodic validation triggers in non-watch mode.
 
