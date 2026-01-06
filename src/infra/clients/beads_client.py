@@ -16,7 +16,6 @@ import json
 import re
 from typing import TYPE_CHECKING
 
-from src.core.models import OrderPreference
 from src.infra.issue_manager import IssueManager
 from src.infra.tools.command_runner import CommandResult, CommandRunner
 
@@ -278,7 +277,7 @@ class BeadsClient:
         focus: bool,
         prioritize_wip: bool,
         only_ids: list[str] | None = None,
-        order_preference: OrderPreferenceLike = OrderPreference.EPIC_PRIORITY,
+        order_preference: OrderPreferenceLike = "epic-priority",
     ) -> list[dict[str, object]]:
         """Sort issues by focus mode vs priority (pipeline step 5, pure function).
 
@@ -333,7 +332,7 @@ class BeadsClient:
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
-        order_preference: OrderPreferenceLike = OrderPreference.EPIC_PRIORITY,
+        order_preference: OrderPreferenceLike = "epic-priority",
     ) -> list[dict[str, object]]:
         """Fetch, filter, enrich, and sort ready issues."""
         exclude_ids = exclude_ids or set()
@@ -368,7 +367,7 @@ class BeadsClient:
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
-        order_preference: OrderPreferenceLike = OrderPreference.EPIC_PRIORITY,
+        order_preference: OrderPreferenceLike = "epic-priority",
     ) -> list[str]:
         """Get list of ready issue IDs via bd CLI, sorted by priority (async version).
 
@@ -411,7 +410,7 @@ class BeadsClient:
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
-        order_preference: OrderPreferenceLike = OrderPreference.EPIC_PRIORITY,
+        order_preference: OrderPreferenceLike = "epic-priority",
     ) -> list[dict[str, object]]:
         """Get list of ready issues with full metadata, sorted by priority (async version).
 

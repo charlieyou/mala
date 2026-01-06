@@ -409,7 +409,6 @@ class TestFocusModeOrderPreference:
 
     def test_focus_mode_returns_only_first_epic(self) -> None:
         """FOCUS mode should return only issues from the top epic group."""
-        from src.core.models import OrderPreference
 
         issues = [
             {
@@ -439,7 +438,7 @@ class TestFocusModeOrderPreference:
             issues,
             focus=True,
             prioritize_wip=False,
-            order_preference=OrderPreference.FOCUS,
+            order_preference="focus",
         )
 
         # epic-a has min_priority=1, should be first group
@@ -451,7 +450,6 @@ class TestFocusModeOrderPreference:
 
     def test_focus_mode_with_orphans_as_first_group(self) -> None:
         """FOCUS mode should work when orphans are the top group."""
-        from src.core.models import OrderPreference
 
         issues = [
             {
@@ -474,7 +472,7 @@ class TestFocusModeOrderPreference:
             issues,
             focus=True,
             prioritize_wip=False,
-            order_preference=OrderPreference.FOCUS,
+            order_preference="focus",
         )
 
         # Orphan group has P0, epic-a has P1 - orphans first
@@ -483,7 +481,6 @@ class TestFocusModeOrderPreference:
 
     def test_focus_mode_with_wip_prioritization(self) -> None:
         """FOCUS mode should still respect prioritize_wip within the epic."""
-        from src.core.models import OrderPreference
 
         issues = [
             {
@@ -513,7 +510,7 @@ class TestFocusModeOrderPreference:
             issues,
             focus=True,
             prioritize_wip=True,
-            order_preference=OrderPreference.FOCUS,
+            order_preference="focus",
         )
 
         # epic-a has P1 min, epic-b has P0 - but we filter first, then prioritize
@@ -529,7 +526,6 @@ class TestIssePriorityModeOrderPreference:
 
     def test_issue_priority_mode_ignores_epics(self) -> None:
         """ISSUE_PRIORITY should sort globally by priority, ignoring epics."""
-        from src.core.models import OrderPreference
 
         issues = [
             {
@@ -559,7 +555,7 @@ class TestIssePriorityModeOrderPreference:
             issues,
             focus=False,
             prioritize_wip=False,
-            order_preference=OrderPreference.ISSUE_PRIORITY,
+            order_preference="issue-priority",
         )
 
         # Sorted by priority only: P1, P2, P3

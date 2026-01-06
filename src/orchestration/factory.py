@@ -61,9 +61,8 @@ if TYPE_CHECKING:
         IssueProvider,
         LogProvider,
     )
-    from src.infra.epic_verifier import EpicVerifier
     from src.infra.io.config import MalaConfig
-    from src.core.protocols import MalaEventSink
+    from src.core.protocols import EpicVerifierProtocol, MalaEventSink
     from src.infra.telemetry import TelemetryProvider
 
     from .orchestrator import MalaOrchestrator
@@ -189,7 +188,7 @@ def _build_dependencies(
     LogProvider,
     TelemetryProvider,
     MalaEventSink,
-    EpicVerifier | None,
+    EpicVerifierProtocol | None,
 ]:
     """Build all dependencies, using provided ones or creating defaults.
 
@@ -257,7 +256,7 @@ def _build_dependencies(
         issue_provider = beads_client  # type: ignore[assignment]
 
     # Epic verifier (only when using real BeadsClient - either created or injected)
-    epic_verifier: EpicVerifier | None = None
+    epic_verifier: EpicVerifierProtocol | None = None
     if isinstance(issue_provider, BeadsClient):
         verification_model = ClaudeEpicVerificationModel(
             timeout_ms=derived.timeout_seconds * 1000,
@@ -266,13 +265,16 @@ def _build_dependencies(
         )
         from src.infra.tools.locking import LockManager
 
-        epic_verifier = EpicVerifier(
-            beads=issue_provider,
-            model=cast("EpicVerificationModel", verification_model),
-            repo_path=repo_path,
-            command_runner=command_runner,
-            event_sink=event_sink,
-            lock_manager=LockManager(),
+        epic_verifier = cast(
+            "EpicVerifierProtocol",
+            EpicVerifier(
+                beads=issue_provider,
+                model=cast("EpicVerificationModel", verification_model),
+                repo_path=repo_path,
+                command_runner=command_runner,
+                event_sink=event_sink,
+                lock_manager=LockManager(),
+            ),
         )
 
     # Code reviewer
