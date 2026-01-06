@@ -71,7 +71,6 @@ def build_gate_runner(
     config = GateRunnerConfig(
         max_gate_retries=pipeline.max_gate_retries,
         disable_validations=pipeline.disabled_validations,
-        coverage_threshold=pipeline.coverage_threshold,
     )
     gate_runner = GateRunner(
         gate_checker=runtime.quality_gate,
@@ -108,7 +107,6 @@ def build_run_coordinator(
         timeout_seconds=pipeline.timeout_seconds,
         max_gate_retries=pipeline.max_gate_retries,
         disable_validations=pipeline.disabled_validations,
-        coverage_threshold=pipeline.coverage_threshold,
         fixer_prompt=pipeline.prompts.fixer_prompt,
         mcp_server_factory=mcp_server_factory,
     )

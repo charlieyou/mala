@@ -2792,7 +2792,6 @@ class TestOrchestratorFactory:
             max_gate_retries=5,
             max_review_retries=2,
             disable_validations={"coverage"},
-            coverage_threshold=80.0,
             prioritize_wip=True,
             focus=False,
         )
@@ -2806,7 +2805,6 @@ class TestOrchestratorFactory:
         assert orchestrator.only_ids == ["issue-1", "issue-2"]
         assert orchestrator.max_gate_retries == 5
         assert orchestrator.max_review_retries == 2
-        assert orchestrator.coverage_threshold == 80.0
         assert orchestrator.prioritize_wip is True
         assert orchestrator.focus is False
 
@@ -2885,7 +2883,6 @@ class TestOrchestratorFactory:
         assert config.max_gate_retries == 3
         assert config.max_review_retries == 3
         assert config.disable_validations is None
-        assert config.coverage_threshold is None
         assert config.prioritize_wip is False
         assert config.focus is True
 

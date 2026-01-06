@@ -190,7 +190,6 @@ class MalaOrchestrator:
         self.max_review_retries = orch_config.max_review_retries
         self.disable_validations = orch_config.disable_validations
         self._disabled_validations = derived.disabled_validations
-        self.coverage_threshold = orch_config.coverage_threshold
         self.prioritize_wip = orch_config.prioritize_wip
         self.focus = orch_config.focus
         self.orphans_only = orch_config.orphans_only
@@ -301,7 +300,6 @@ class MalaOrchestrator:
             timeout_seconds=self.timeout_seconds,
             max_gate_retries=self.max_gate_retries,
             max_review_retries=self.max_review_retries,
-            coverage_threshold=self.coverage_threshold,
             disabled_validations=set(self._disabled_validations)
             if self._disabled_validations
             else None,

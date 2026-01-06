@@ -379,7 +379,6 @@ def _emit_deprecation_warnings() -> None:
 def _build_cli_args_metadata(
     *,
     disable: list[str] | None,
-    coverage_threshold: float | None,
     resume: bool,
     max_issues: int | None,
     max_gate_retries: int,
@@ -393,7 +392,6 @@ def _build_cli_args_metadata(
 
     Args:
         disable: List of validation names to disable from CLI.
-        coverage_threshold: Coverage threshold from CLI.
         resume: Whether WIP prioritization is enabled (--resume flag).
         max_issues: Maximum issues to process.
         max_gate_retries: Maximum gate retry attempts.
@@ -410,7 +408,6 @@ def _build_cli_args_metadata(
     normalized_epic = sorted(set(_normalize_repeatable_option(epic_override)))
     return {
         "disable_validations": normalized_disable if normalized_disable else None,
-        "coverage_threshold": coverage_threshold,
         "wip": resume,
         "max_issues": max_issues,
         "max_gate_retries": max_gate_retries,
@@ -541,7 +538,6 @@ def _normalize_repeatable_option(values: list[str] | None) -> list[str]:
 
 def _validate_run_args(
     disable: list[str] | None,
-    coverage_threshold: float | None,
     epic_override: list[str] | None,
     repo_path: Path,
 ) -> ValidatedRunArgs:
@@ -549,7 +545,6 @@ def _validate_run_args(
 
     Args:
         disable: List of validation names to disable (repeatable, comma-separated supported)
-        coverage_threshold: Coverage threshold percentage (0-100)
         epic_override: List of epic IDs to override (repeatable, comma-separated supported)
         repo_path: Path to the repository (must exist)
 
@@ -573,15 +568,6 @@ def _validate_run_args(
                 Colors.RED,
             )
             raise typer.Exit(1)
-
-    # Validate coverage threshold range
-    if coverage_threshold is not None and not 0 <= coverage_threshold <= 100:
-        log(
-            "✗",
-            f"Invalid --coverage-threshold value: {coverage_threshold}. Must be between 0 and 100.",
-            Colors.RED,
-        )
-        raise typer.Exit(1)
 
     # Parse --epic-override flag into a set of epic IDs (supports both repeatable and comma-separated)
     epic_override_ids: set[str] = set()
@@ -680,14 +666,6 @@ def run(
                 "e2e (skip end-to-end fixture tests), "
                 "review (skip LLM code review)"
             ),
-            rich_help_panel="Quality Gates",
-        ),
-    ] = None,
-    coverage_threshold: Annotated[
-        float | None,
-        typer.Option(
-            "--coverage-threshold",
-            help="Minimum coverage percentage (0-100). If not set, uses 'no decrease' mode which requires coverage >= previous baseline.",
             rich_help_panel="Quality Gates",
         ),
     ] = None,
@@ -844,7 +822,6 @@ def run(
     # Validate and parse CLI arguments
     validated = _validate_run_args(
         disable=disable,
-        coverage_threshold=coverage_threshold,
         epic_override=epic_override,
         repo_path=repo_path,
     )
@@ -888,7 +865,6 @@ def run(
     # Build cli_args metadata for logging
     cli_args = _build_cli_args_metadata(
         disable=disable,
-        coverage_threshold=coverage_threshold,
         resume=resume,
         max_issues=max_issues,
         max_gate_retries=max_gate_retries,
@@ -910,7 +886,6 @@ def run(
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         disable_validations=disable_set,
-        coverage_threshold=coverage_threshold,
         prioritize_wip=resume,
         focus=focus,
         order_preference=order_preference,

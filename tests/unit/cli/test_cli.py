@@ -758,13 +758,11 @@ def test_run_validation_flags_passed_to_orchestrator(
         cli.run(
             repo_path=tmp_path,
             disable=["post-validate"],
-            coverage_threshold=72.5,
         )
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
     assert DummyOrchestrator.last_orch_config.disable_validations == {"post-validate"}
-    assert DummyOrchestrator.last_orch_config.coverage_threshold == 72.5
 
 
 def test_run_validation_flags_defaults(
@@ -790,7 +788,6 @@ def test_run_validation_flags_defaults(
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
     assert DummyOrchestrator.last_orch_config.disable_validations is None
-    assert DummyOrchestrator.last_orch_config.coverage_threshold is None
     assert DummyOrchestrator.last_orch_config.prioritize_wip is False
     assert DummyOrchestrator.last_orch_config.focus is True
 
@@ -1193,62 +1190,6 @@ def test_run_review_empty_string_clears_value(
     assert config.cerberus_spawn_args == ()
 
 
-def test_run_coverage_threshold_invalid_negative(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Test that negative --coverage-threshold value produces error."""
-    cli = _reload_cli(monkeypatch)
-
-    logs: list[tuple[object, ...]] = []
-
-    def _log(*args: object, **_kwargs: object) -> None:
-        logs.append(args)
-
-    config_dir = tmp_path / "config"
-    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "log", _log)
-    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
-
-    with pytest.raises(typer.Exit) as excinfo:
-        cli.run(
-            repo_path=tmp_path,
-            coverage_threshold=-10.0,
-        )
-
-    assert excinfo.value.exit_code == 1
-    error_msg = str(logs[-1])
-    assert "Invalid --coverage-threshold" in error_msg
-    assert "-10.0" in error_msg
-
-
-def test_run_coverage_threshold_invalid_over_100(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Test that --coverage-threshold over 100 produces error."""
-    cli = _reload_cli(monkeypatch)
-
-    logs: list[tuple[object, ...]] = []
-
-    def _log(*args: object, **_kwargs: object) -> None:
-        logs.append(args)
-
-    config_dir = tmp_path / "config"
-    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(cli, "log", _log)
-    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
-
-    with pytest.raises(typer.Exit) as excinfo:
-        cli.run(
-            repo_path=tmp_path,
-            coverage_threshold=150.0,
-        )
-
-    assert excinfo.value.exit_code == 1
-    error_msg = str(logs[-1])
-    assert "Invalid --coverage-threshold" in error_msg
-    assert "150.0" in error_msg
-
-
 def test_run_scope_epic_and_orphans_are_distinct(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1626,7 +1567,6 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             disable=["coverage, e2e"],
-            coverage_threshold=80.0,
             epic_override=["epic-a, epic-b"],
             repo_path=tmp_path,
         )
@@ -1643,7 +1583,6 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             disable=None,
-            coverage_threshold=None,
             epic_override=None,
             repo_path=tmp_path,
         )
@@ -1658,7 +1597,6 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             disable=["  ,  "],
-            coverage_threshold=None,
             epic_override=None,
             repo_path=tmp_path,
         )
@@ -1672,33 +1610,6 @@ class TestValidateRunArgs:
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 disable=["coverage", "unknown-value"],
-                coverage_threshold=None,
-                epic_override=None,
-                repo_path=tmp_path,
-            )
-        assert excinfo.value.exit_code == 1
-
-    def test_coverage_threshold_negative_raises_exit(self, tmp_path: Path) -> None:
-        """Negative coverage threshold raises Exit(1)."""
-        from src.cli.cli import _validate_run_args
-
-        with pytest.raises(typer.Exit) as excinfo:
-            _validate_run_args(
-                disable=None,
-                coverage_threshold=-5.0,
-                epic_override=None,
-                repo_path=tmp_path,
-            )
-        assert excinfo.value.exit_code == 1
-
-    def test_coverage_threshold_over_100_raises_exit(self, tmp_path: Path) -> None:
-        """Coverage threshold over 100 raises Exit(1)."""
-        from src.cli.cli import _validate_run_args
-
-        with pytest.raises(typer.Exit) as excinfo:
-            _validate_run_args(
-                disable=None,
-                coverage_threshold=150.0,
                 epic_override=None,
                 repo_path=tmp_path,
             )
@@ -1710,7 +1621,6 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             disable=None,
-            coverage_threshold=None,
             epic_override=["  ,  ,  "],
             repo_path=tmp_path,
         )
@@ -1725,37 +1635,10 @@ class TestValidateRunArgs:
         with pytest.raises(typer.Exit) as excinfo:
             _validate_run_args(
                 disable=None,
-                coverage_threshold=None,
                 epic_override=None,
                 repo_path=nonexistent,
             )
         assert excinfo.value.exit_code == 1
-
-    def test_coverage_threshold_boundary_zero_valid(self, tmp_path: Path) -> None:
-        """Coverage threshold of 0 is valid."""
-        from src.cli.cli import _validate_run_args
-
-        result = _validate_run_args(
-            disable=None,
-            coverage_threshold=0.0,
-            epic_override=None,
-            repo_path=tmp_path,
-        )
-        # No exception raised
-        assert result.only_ids is None
-
-    def test_coverage_threshold_boundary_100_valid(self, tmp_path: Path) -> None:
-        """Coverage threshold of 100 is valid."""
-        from src.cli.cli import _validate_run_args
-
-        result = _validate_run_args(
-            disable=None,
-            coverage_threshold=100.0,
-            epic_override=None,
-            repo_path=tmp_path,
-        )
-        # No exception raised
-        assert result.only_ids is None
 
     def test_repeatable_disable_values(self, tmp_path: Path) -> None:
         """Repeatable --disable values work correctly."""
@@ -1763,7 +1646,6 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             disable=["coverage", "review", "e2e"],
-            coverage_threshold=None,
             epic_override=None,
             repo_path=tmp_path,
         )
@@ -1775,7 +1657,6 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             disable=None,
-            coverage_threshold=None,
             epic_override=["epic-1", "epic-2"],
             repo_path=tmp_path,
         )
@@ -1787,7 +1668,6 @@ class TestValidateRunArgs:
 
         result = _validate_run_args(
             disable=["coverage,review", "e2e"],
-            coverage_threshold=None,
             epic_override=["epic-1,epic-2", "epic-3"],
             repo_path=tmp_path,
         )

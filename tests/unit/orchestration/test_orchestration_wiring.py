@@ -94,7 +94,6 @@ def mock_pipeline_config(
         timeout_seconds=3600,
         max_gate_retries=3,
         max_review_retries=3,
-        coverage_threshold=85.0,
         disabled_validations={"lint"},
         context_restart_threshold=0.90,
         context_limit=200_000,
@@ -143,7 +142,6 @@ class TestBuildGateRunner:
         """GateRunner is configured with PipelineConfig values."""
         gate_runner, _ = build_gate_runner(mock_runtime_deps, mock_pipeline_config)
         assert gate_runner.config.max_gate_retries == 3
-        assert gate_runner.config.coverage_threshold == 85.0
         assert gate_runner.config.disable_validations == {"lint"}
 
 

@@ -78,7 +78,6 @@ class RunCoordinatorConfig:
         timeout_seconds: Session timeout in seconds.
         max_gate_retries: Maximum gate retry attempts.
         disable_validations: Set of validation names to disable.
-        coverage_threshold: Optional coverage threshold override.
         fixer_prompt: Template for the fixer agent prompt.
     """
 
@@ -86,7 +85,6 @@ class RunCoordinatorConfig:
     timeout_seconds: int
     max_gate_retries: int = 3
     disable_validations: set[str] | None = None
-    coverage_threshold: float | None = None
     fixer_prompt: str | _FixerPromptNotSet = _FIXER_PROMPT_NOT_SET
     mcp_server_factory: McpServerFactory | None = None
 

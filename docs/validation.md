@@ -126,7 +126,6 @@ from src.domain.validation import build_validation_spec, ValidationScope
 spec = build_validation_spec(
     scope=ValidationScope.PER_ISSUE,
     disable_validations={"integration-tests"},  # Optional disable flags
-    coverage_threshold=85.0,
 )
 ```
 

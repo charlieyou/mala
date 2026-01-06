@@ -63,7 +63,6 @@ class OrchestratorConfig:
         max_gate_retries: Maximum quality gate retry attempts per issue.
         max_review_retries: Maximum code review retry attempts per issue.
         disable_validations: Set of validation types to disable.
-        coverage_threshold: Minimum coverage percentage (None = no-decrease mode).
         prioritize_wip: Prioritize in_progress issues before open issues.
         focus: Group tasks by epic for focused work.
         order_preference: Issue ordering preference (focus, priority, or input).
@@ -83,7 +82,6 @@ class OrchestratorConfig:
     max_gate_retries: int = 3
     max_review_retries: int = 3
     disable_validations: set[str] | None = None
-    coverage_threshold: float | None = None
     prioritize_wip: bool = False
     focus: bool = True
     order_preference: OrderPreference = _OrderPreference.FOCUS
@@ -176,7 +174,6 @@ class PipelineConfig:
         timeout_seconds: Timeout per agent in seconds.
         max_gate_retries: Maximum quality gate retry attempts per issue.
         max_review_retries: Maximum code review retry attempts per issue.
-        coverage_threshold: Minimum coverage percentage (None = no-decrease mode).
         disabled_validations: Set of validation types to disable.
         context_restart_threshold: Ratio (0.0-1.0) at which to restart agent.
         context_limit: Maximum context tokens (default 200K for Claude).
@@ -189,7 +186,6 @@ class PipelineConfig:
     timeout_seconds: int
     max_gate_retries: int
     max_review_retries: int
-    coverage_threshold: float | None
     disabled_validations: set[str] | None
     context_restart_threshold: float
     context_limit: int

@@ -49,12 +49,10 @@ class GateRunnerConfig:
     Attributes:
         max_gate_retries: Maximum number of gate retry attempts.
         disable_validations: Set of validation names to disable.
-        coverage_threshold: Optional coverage threshold override.
     """
 
     max_gate_retries: int = 3
     disable_validations: set[str] | None = None
-    coverage_threshold: float | None = None
 
 
 @dataclass
