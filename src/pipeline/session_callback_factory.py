@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     from src.domain.lifecycle import RetryState
     from src.domain.quality_gate import GateResult
     from src.domain.validation.spec import ValidationSpec
-    from src.infra.clients.review_output_parser import ReviewResult
     from src.core.protocols import MalaEventSink
     from src.pipeline.review_runner import ReviewRunner
 
@@ -137,7 +136,7 @@ class SessionCallbackFactory:
             baseline: str | None,
             session_id: str | None,
             retry_state: RetryState,
-        ) -> ReviewResult | ReviewResultProtocol:
+        ) -> ReviewResultProtocol:
             current_head = await get_git_commit_async(self._repo_path)
             self._review_runner.config.capture_session_log = self._is_verbose()
             commit_shas = await get_issue_commits_async(

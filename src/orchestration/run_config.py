@@ -23,7 +23,7 @@ def build_event_run_config(
     max_gate_retries: int,
     max_review_retries: int,
     epic_id: str | None,
-    only_ids: set[str] | None,
+    only_ids: list[str] | None,
     braintrust_enabled: bool,
     review_enabled: bool,
     review_disabled_reason: str | None,
@@ -42,7 +42,7 @@ def build_event_run_config(
         max_gate_retries: Maximum quality gate retry attempts.
         max_review_retries: Maximum code review retry attempts.
         epic_id: Epic ID filter.
-        only_ids: Set of issue IDs to process exclusively.
+        only_ids: List of issue IDs to process exclusively.
         braintrust_enabled: Whether Braintrust tracing is enabled.
         review_enabled: Whether code review is enabled.
         review_disabled_reason: Reason review is disabled (if any).
@@ -62,7 +62,7 @@ def build_event_run_config(
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
         epic_id=epic_id,
-        only_ids=list(only_ids) if only_ids else None,
+        only_ids=only_ids,
         braintrust_enabled=braintrust_enabled,
         braintrust_disabled_reason=braintrust_disabled_reason,
         review_enabled=review_enabled,
@@ -79,7 +79,7 @@ def build_run_metadata(
     timeout_seconds: int | None,
     max_issues: int | None,
     epic_id: str | None,
-    only_ids: set[str] | None,
+    only_ids: list[str] | None,
     braintrust_enabled: bool,
     max_gate_retries: int,
     max_review_retries: int,
@@ -87,6 +87,7 @@ def build_run_metadata(
     orphans_only: bool,
     cli_args: dict[str, object] | None,
     version: str,
+    runs_dir: Path | None = None,
 ) -> RunMetadata:
     """Create run metadata tracker with current configuration.
 
@@ -96,7 +97,7 @@ def build_run_metadata(
         timeout_seconds: Timeout per agent in seconds.
         max_issues: Maximum issues to process.
         epic_id: Epic ID filter.
-        only_ids: Set of issue IDs to process exclusively.
+        only_ids: List of issue IDs to process exclusively.
         braintrust_enabled: Whether Braintrust tracing is enabled.
         max_gate_retries: Maximum quality gate retry attempts.
         max_review_retries: Maximum code review retry attempts.
@@ -104,6 +105,7 @@ def build_run_metadata(
         orphans_only: Whether to only process issues without parent epic.
         cli_args: CLI arguments for logging.
         version: Mala version string.
+        runs_dir: Optional custom runs directory for test isolation.
 
     Returns:
         RunMetadata instance for the run.
@@ -113,7 +115,7 @@ def build_run_metadata(
         timeout_minutes=timeout_seconds // 60 if timeout_seconds else None,
         max_issues=max_issues,
         epic_id=epic_id,
-        only_ids=list(only_ids) if only_ids else None,
+        only_ids=only_ids,
         braintrust_enabled=braintrust_enabled,
         max_gate_retries=max_gate_retries,
         max_review_retries=max_review_retries,
@@ -121,4 +123,4 @@ def build_run_metadata(
         orphans_only=orphans_only,
         cli_args=cli_args,
     )
-    return RunMetadata(repo_path, run_config, version)
+    return RunMetadata(repo_path, run_config, version, runs_dir=runs_dir)

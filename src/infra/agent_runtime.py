@@ -36,7 +36,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.core.models import LockEvent
-    from src.core.protocols import DeadlockMonitorProtocol, SDKClientFactoryProtocol
+    from src.core.protocols import (
+        DeadlockMonitorProtocol,
+        McpServerFactory,
+        SDKClientFactoryProtocol,
+    )
     from src.infra.hooks import FileReadCache, LintCache
 
 
@@ -98,6 +102,7 @@ class AgentRuntimeBuilder:
         repo_path: Path,
         agent_id: str,
         sdk_client_factory: SDKClientFactoryProtocol,
+        mcp_server_factory: McpServerFactory | None = None,
     ) -> None:
         """Initialize the builder.
 
@@ -105,10 +110,13 @@ class AgentRuntimeBuilder:
             repo_path: Path to the repository root.
             agent_id: Unique agent identifier for lock management.
             sdk_client_factory: Factory for creating SDK options and matchers.
+            mcp_server_factory: Optional factory for creating MCP server configs.
+                Required unless MCP servers are explicitly provided via with_mcp().
         """
         self._repo_path = repo_path
         self._agent_id = agent_id
         self._sdk_client_factory = sdk_client_factory
+        self._mcp_server_factory = mcp_server_factory
 
         # Lint tools configuration
         self._lint_tools: set[str] | frozenset[str] | None = None
@@ -117,6 +125,7 @@ class AgentRuntimeBuilder:
         self._deadlock_monitor: DeadlockMonitorProtocol | None = None
         self._include_stop_hook: bool = True
         self._include_mala_disallowed_tools_hook: bool = True
+        self._include_lock_enforcement_hook: bool = True
 
         # Environment and options
         self._env: dict[str, str] | None = None
@@ -126,25 +135,42 @@ class AgentRuntimeBuilder:
     def with_hooks(
         self,
         *,
-        deadlock_monitor: DeadlockMonitorProtocol | None = None,
-        include_stop_hook: bool = True,
-        include_mala_disallowed_tools_hook: bool = True,
+        deadlock_monitor: DeadlockMonitorProtocol | None | _Unset = _UNSET,
+        include_stop_hook: bool | _Unset = _UNSET,
+        include_mala_disallowed_tools_hook: bool | _Unset = _UNSET,
+        include_lock_enforcement_hook: bool | _Unset = _UNSET,
     ) -> AgentRuntimeBuilder:
         """Configure hook behavior.
 
+        Only parameters that are explicitly provided will be updated;
+        omitted parameters preserve their current state.
+
         Args:
             deadlock_monitor: Optional DeadlockMonitor for lock event hooks.
-            include_stop_hook: Whether to include stop hook (default True).
+            include_stop_hook: Whether to include stop hook. Omit to preserve
+                current state (initially True).
             include_mala_disallowed_tools_hook: Whether to include the
-                block_mala_disallowed_tools hook (default True). Set False
-                for fixer agents which don't need this restriction.
+                block_mala_disallowed_tools hook. Omit to preserve current
+                state (initially True). Set False for fixer agents which
+                don't need this restriction.
+            include_lock_enforcement_hook: Whether to include the lock
+                enforcement hook. Omit to preserve current state (initially
+                True). Set False when MCP servers do not include locking
+                tools (e.g., custom with_mcp(servers=...)).
 
         Returns:
             Self for chaining.
         """
-        self._deadlock_monitor = deadlock_monitor
-        self._include_stop_hook = include_stop_hook
-        self._include_mala_disallowed_tools_hook = include_mala_disallowed_tools_hook
+        if deadlock_monitor is not _UNSET:
+            self._deadlock_monitor = deadlock_monitor
+        if include_stop_hook is not _UNSET:
+            self._include_stop_hook = include_stop_hook
+        if include_mala_disallowed_tools_hook is not _UNSET:
+            self._include_mala_disallowed_tools_hook = (
+                include_mala_disallowed_tools_hook
+            )
+        if include_lock_enforcement_hook is not _UNSET:
+            self._include_lock_enforcement_hook = include_lock_enforcement_hook
         return self
 
     def with_env(self, extra: dict[str, str] | None = None) -> AgentRuntimeBuilder:
@@ -183,8 +209,9 @@ class AgentRuntimeBuilder:
             servers: MCP server configuration. If None, defers to build() for
                 late-binding with deadlock monitor (if configured).
             emit_lock_event: Callback for lock events. When _UNSET (default),
-                defers to build() for late-binding. Pass None explicitly to
-                disable locking, or a callback to enable it.
+                defers to build() for late-binding. Pass None to use a no-op
+                handler (locking tools work but events aren't tracked for
+                deadlock detection), or a callback to enable event tracking.
 
         Returns:
             Self for chaining.
@@ -193,13 +220,7 @@ class AgentRuntimeBuilder:
             self._mcp_servers = servers
         elif emit_lock_event is not _UNSET:
             # Explicit emit_lock_event provided (including None) - configure now
-            from src.infra.mcp import get_mcp_servers
-
-            self._mcp_servers = get_mcp_servers(
-                self._repo_path,
-                agent_id=self._agent_id,
-                emit_lock_event=emit_lock_event,
-            )
+            self._mcp_servers = self._build_mcp_servers(emit_lock_event)
         # else: emit_lock_event is _UNSET, defer to build() for late-binding
         return self
 
@@ -209,7 +230,7 @@ class AgentRuntimeBuilder:
         """Configure disallowed tools.
 
         Args:
-            tools: List of disallowed tool names. If None, uses get_disallowed_tools().
+            tools: List of disallowed tool names. If None, uses MALA_DISALLOWED_TOOLS.
 
         Returns:
             Self for chaining.
@@ -217,9 +238,9 @@ class AgentRuntimeBuilder:
         if tools is not None:
             self._disallowed_tools = tools
         else:
-            from src.infra.mcp import get_disallowed_tools
+            from src.infra.tool_config import MALA_DISALLOWED_TOOLS
 
-            self._disallowed_tools = get_disallowed_tools()
+            self._disallowed_tools = list(MALA_DISALLOWED_TOOLS)
         return self
 
     def with_lint_tools(
@@ -235,6 +256,34 @@ class AgentRuntimeBuilder:
         """
         self._lint_tools = lint_tools
         return self
+
+    def _build_mcp_servers(
+        self, emit_lock_event: Callable[[LockEvent], object] | None
+    ) -> dict[str, object]:
+        """Build MCP servers configuration.
+
+        Args:
+            emit_lock_event: Optional callback to emit lock events. If None,
+                a no-op handler is used (locking tools work but events
+                aren't tracked for deadlock detection).
+
+        Returns:
+            Dictionary of MCP server configurations.
+        """
+        if self._mcp_server_factory is None:
+            msg = (
+                "MCP server factory is required. Either provide mcp_server_factory "
+                "or explicitly provide servers via with_mcp(servers={...}). "
+                "If your custom servers don't include locking tools, also call "
+                "with_hooks(include_lock_enforcement_hook=False)."
+            )
+            raise ValueError(msg)
+
+        return self._mcp_server_factory(
+            self._agent_id,
+            self._repo_path,
+            emit_lock_event,
+        )
 
     def build(self) -> AgentRuntime:
         """Build the agent runtime configuration.
@@ -271,10 +320,15 @@ class AgentRuntimeBuilder:
         # Build pre-tool hooks (order matters)
         pre_tool_hooks: list[object] = [
             block_dangerous_commands,
-            make_lock_enforcement_hook(self._agent_id, str(self._repo_path)),
             make_file_read_cache_hook(file_read_cache),
             make_lint_cache_hook(lint_cache),
         ]
+
+        # Conditionally add lock enforcement hook (requires locking MCP tools)
+        if self._include_lock_enforcement_hook:
+            pre_tool_hooks.insert(
+                1, make_lock_enforcement_hook(self._agent_id, str(self._repo_path))
+            )
 
         # Conditionally add mala disallowed tools hook (not needed for fixer agents)
         if self._include_mala_disallowed_tools_hook:

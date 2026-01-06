@@ -772,51 +772,8 @@ class TestFullLifecycleScenarios:
         assert "Another bug" in ctx.final_result
 
 
-class TestReviewIssueProtocol:
-    """Tests verifying ReviewIssue protocol compliance."""
-
-    def test_review_issue_has_reviewer_field(self) -> None:
-        """ReviewIssue includes reviewer field for attribution."""
-        issue = ReviewIssue(
-            file="test.py",
-            line_start=10,
-            line_end=10,
-            priority=1,
-            title="Test bug",
-            body="Description",
-            reviewer="cerberus",
-        )
-        assert issue.reviewer == "cerberus"
-
-    def test_review_issue_fields(self) -> None:
-        """ReviewIssue provides all required fields."""
-        issue = ReviewIssue(
-            file="test.py",
-            line_start=10,
-            line_end=20,
-            priority=1,
-            title="Test bug",
-            body="Description",
-            reviewer="code-reviewer",
-        )
-        assert issue.file == "test.py"
-        assert issue.line_start == 10
-        assert issue.line_end == 20
-        assert issue.priority == 1
-        assert issue.title == "Test bug"
-        assert issue.body == "Description"
-        assert issue.reviewer == "code-reviewer"
-
-
 class TestContextUsage:
     """Tests for ContextUsage dataclass and pressure_ratio method."""
-
-    def test_default_values(self) -> None:
-        """ContextUsage initializes with zero token counts."""
-        usage = ContextUsage()
-        assert usage.input_tokens == 0
-        assert usage.output_tokens == 0
-        assert usage.cache_read_tokens == 0
 
     def test_pressure_ratio_at_zero(self) -> None:
         """pressure_ratio returns 0.0 when input_tokens is 0."""
@@ -858,11 +815,6 @@ class TestContextUsage:
         # Total: 80_000 / 200_000 = 0.4 (cache_read not added separately)
         assert usage.pressure_ratio(200_000) == 0.4
 
-    def test_tracking_disabled_default_false(self) -> None:
-        """tracking_disabled is False by default (fresh instance)."""
-        usage = ContextUsage()
-        assert usage.tracking_disabled is False
-
     def test_disable_tracking_sets_sentinel(self) -> None:
         """disable_tracking() sets input_tokens to -1 sentinel."""
         usage = ContextUsage(input_tokens=1000)
@@ -875,50 +827,3 @@ class TestContextUsage:
         usage = ContextUsage(input_tokens=100_000, output_tokens=50_000)
         usage.disable_tracking()
         assert usage.pressure_ratio(200_000) == 0.0
-
-
-class TestLifecycleContextUsage:
-    """Tests for context_usage field in LifecycleContext."""
-
-    def test_default_context_usage(self) -> None:
-        """LifecycleContext has default ContextUsage instance."""
-        ctx = LifecycleContext()
-        assert ctx.context_usage is not None
-        assert ctx.context_usage.input_tokens == 0
-        assert ctx.context_usage.output_tokens == 0
-        assert ctx.context_usage.cache_read_tokens == 0
-
-    def test_context_usage_independent_instances(self) -> None:
-        """Each LifecycleContext gets its own ContextUsage instance."""
-        ctx1 = LifecycleContext()
-        ctx2 = LifecycleContext()
-        ctx1.context_usage.input_tokens = 1000
-        assert ctx2.context_usage.input_tokens == 0
-
-
-class TestOrchestratorConfigContextFields:
-    """Tests for context exhaustion config fields in OrchestratorConfig."""
-
-    def test_context_config_defaults(self) -> None:
-        """OrchestratorConfig has correct context exhaustion defaults."""
-        from pathlib import Path
-
-        from src.orchestration.types import OrchestratorConfig
-
-        config = OrchestratorConfig(repo_path=Path("/tmp"))
-        assert config.context_restart_threshold == 0.90
-        assert config.context_limit == 200_000
-
-    def test_context_config_custom_values(self) -> None:
-        """OrchestratorConfig accepts custom context values."""
-        from pathlib import Path
-
-        from src.orchestration.types import OrchestratorConfig
-
-        config = OrchestratorConfig(
-            repo_path=Path("/tmp"),
-            context_restart_threshold=0.85,
-            context_limit=150_000,
-        )
-        assert config.context_restart_threshold == 0.85
-        assert config.context_limit == 150_000

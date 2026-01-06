@@ -22,11 +22,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from collections.abc import Callable
+from pathlib import Path
+
+from src.core.models import OrderPreference
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
-    from pathlib import Path
     from types import TracebackType
     from typing import Self
+
+
+# =============================================================================
+# Type Aliases
+# =============================================================================
+# Centralized type aliases used across multiple modules.
+# =============================================================================
+
+# Factory function for creating MCP servers configuration.
+# Parameters: agent_id, repo_path, optional emit_lock_event callback
+# Returns: Dict mapping server names to server configurations
+McpServerFactory = Callable[[str, Path, Callable | None], dict[str, object]]
 
 
 # =============================================================================
@@ -450,22 +466,24 @@ class IssueProvider(Protocol):
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
     ) -> list[str]:
         """Get list of ready issue IDs, sorted by priority.
 
         Args:
             exclude_ids: Set of issue IDs to exclude from results.
             epic_id: Optional epic ID to filter by - only return children.
-            only_ids: Optional set of issue IDs to include exclusively.
+            only_ids: Optional list of issue IDs to include exclusively.
             suppress_warn_ids: Set of issue IDs to suppress from warnings.
             prioritize_wip: If True, sort in_progress issues first.
             focus: If True, group tasks by parent epic.
             orphans_only: If True, only return issues with no parent epic.
+            order_preference: Issue ordering preference (focus, priority, or input).
 
         Returns:
             List of issue IDs sorted by priority (lower = higher priority).
@@ -491,6 +509,20 @@ class IssueProvider(Protocol):
 
         Returns:
             True if successfully closed, False otherwise.
+        """
+        ...
+
+    async def reopen_issue_async(self, issue_id: str) -> bool:
+        """Reopen an issue by setting status to ready.
+
+        Used by deadlock resolution to reset victim issues so they can be
+        picked up again after the blocker completes.
+
+        Args:
+            issue_id: The issue ID to reopen.
+
+        Returns:
+            True if successfully reopened, False otherwise.
         """
         ...
 
@@ -668,6 +700,17 @@ class IssueProvider(Protocol):
 
         Returns:
             True if successfully updated, False otherwise.
+        """
+        ...
+
+    async def get_blocked_count_async(self) -> int | None:
+        """Get count of issues that exist but aren't ready.
+
+        Used by watch mode to report how many issues are blocked on
+        dependencies or other conditions.
+
+        Returns:
+            Count of blocked issues, or None if unknown/unsupported.
         """
         ...
 
@@ -955,6 +998,7 @@ class SDKClientFactoryProtocol(Protocol):
         disallowed_tools: list[str] | None = None,
         env: dict[str, str] | None = None,
         hooks: dict[str, list[object]] | None = None,
+        resume: str | None = None,
     ) -> object:
         """Create SDK options without requiring SDK import in caller.
 
@@ -968,6 +1012,8 @@ class SDKClientFactoryProtocol(Protocol):
             disallowed_tools: List of tools to disallow.
             env: Environment variables for the agent.
             hooks: Hook configurations keyed by event type.
+            resume: Session ID to resume from. When set, the SDK loads
+                the prior conversation context before processing the query.
 
         Returns:
             ClaudeAgentOptions instance.
@@ -987,6 +1033,22 @@ class SDKClientFactoryProtocol(Protocol):
 
         Returns:
             HookMatcher instance.
+        """
+        ...
+
+    def with_resume(self, options: object, resume: str | None) -> object:
+        """Create a copy of options with a different resume session ID.
+
+        This is used to resume a prior session when retrying after idle timeout
+        or review failures. The SDK's resume feature loads the prior conversation
+        context before processing the next query.
+
+        Args:
+            options: Existing ClaudeAgentOptions to clone.
+            resume: Session ID to resume from, or None to start fresh.
+
+        Returns:
+            New ClaudeAgentOptions with the resume field set.
         """
         ...
 
@@ -1916,5 +1978,14 @@ class MalaEventSink(Protocol):
             info: Information about the detected deadlock, including the cycle
                 of agents, the victim selected for cancellation, and the
                 blocker holding the needed resource.
+        """
+        ...
+
+    def on_watch_idle(self, wait_seconds: float, issues_blocked: int | None) -> None:
+        """Called when watch mode enters idle sleep.
+
+        Args:
+            wait_seconds: Duration of the upcoming sleep.
+            issues_blocked: Count of blocked issues, or None if unknown.
         """
         ...

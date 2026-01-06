@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ..mcp import MALA_DISALLOWED_TOOLS
+from ..tool_config import MALA_DISALLOWED_TOOLS
 
 # Type alias for PreToolUse hooks (using Any to avoid SDK import)
 PreToolUseHook = Callable[
@@ -45,13 +45,16 @@ DANGEROUS_PATTERNS = [
 DESTRUCTIVE_GIT_PATTERNS = [
     # Hard reset - discards uncommitted changes silently
     "git reset --hard",
+    "git reset --mixed",
+    # Soft reset that unstages files
+    "git reset HEAD",
     # Clean - removes untracked files
     "git clean -fd",
     "git clean -f",
     "git clean -df",
     "git clean -d -f",
-    # Force checkout - discards local changes
-    "git checkout -- .",
+    # Force checkout - discards local changes (catches both "-- ." and "-- <file>")
+    "git checkout --",
     "git checkout -f",
     "git checkout --force",
     # Restore - discards uncommitted changes without confirmation
@@ -67,20 +70,29 @@ DESTRUCTIVE_GIT_PATTERNS = [
     "git merge --abort",
     "git rebase --abort",
     "git cherry-pick --abort",
+    # Worktree removal - can discard uncommitted changes in worktree
+    "git worktree remove",
+    # Force submodule operations
+    "git submodule deinit -f",
 ]
 
 # Safe alternatives to blocked git operations (for error messages)
 SAFE_GIT_ALTERNATIVES: dict[str, str] = {
     "git stash": "commit changes instead: git add . && git commit -m 'WIP: ...'",
-    "git reset --hard": "use git checkout <file> to revert specific files, or commit first",
+    "git reset --hard": "commit first, or use git diff to review changes before discarding",
+    "git reset --mixed": "commit staged changes first",
+    "git reset HEAD": "commit staged changes first",
     "git rebase": "use git merge instead, or coordinate with other agents",
-    "git checkout -f": "commit or stash changes first (in non-agent context)",
-    "git checkout --force": "commit or stash changes first (in non-agent context)",
+    "git checkout --": "commit changes first, or use git diff to review before discarding",
+    "git checkout -f": "commit changes first",
+    "git checkout --force": "commit changes first",
     "git restore": "commit changes first, or use git diff to review before discarding",
     "git clean -f": "manually remove specific untracked files with rm",
     "git merge --abort": "resolve merge conflicts instead of aborting",
     "git rebase --abort": "resolve rebase conflicts instead of aborting",
     "git cherry-pick --abort": "resolve cherry-pick conflicts instead of aborting",
+    "git worktree remove": "commit changes in worktree first",
+    "git submodule deinit -f": "use git submodule deinit without -f",
 }
 
 # Tool names that should be treated as bash (case-insensitive matching)

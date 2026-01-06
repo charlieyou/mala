@@ -10,7 +10,7 @@ isinstance checks work correctly in the runner.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,18 +27,34 @@ from src.pipeline.agent_session_runner import (
 )
 from src.pipeline.message_stream_processor import (
     ContextPressureError,
+    IdleTimeoutStream,
     MessageIterationState,
 )
 from src.domain.quality_gate import GateResult
+from tests.fakes import FakeLintCache
+from tests.fakes.sdk_client import FakeSDKClient, FakeSDKClientFactory
 
 if TYPE_CHECKING:
-    from src.pipeline.agent_session_runner import (
-        SDKClientProtocol,
-    )
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
+    from src.core.protocols import McpServerFactory, SDKClientProtocol
     from src.domain.lifecycle import RetryState
+
+
+def make_noop_mcp_factory() -> McpServerFactory:
+    """Create a no-op MCP server factory for tests (no locking).
+
+    Returns a factory that returns empty servers, disabling locking.
+    This is used for tests that don't need the locking MCP server.
+    """
+
+    def factory(
+        agent_id: str, repo_path: Path, emit_lock_event: Callable | None
+    ) -> dict[str, object]:
+        return {}
+
+    return factory
 
 
 def make_test_prompts() -> SessionPrompts:
@@ -71,52 +87,6 @@ def make_result_message(
         session_id=session_id,
         result=result,
     )
-
-
-class FakeSDKClient:
-    """Fake SDK client for testing.
-
-    Allows tests to configure what messages are returned from receive_response.
-    Uses actual SDK types so isinstance checks work correctly.
-    """
-
-    def __init__(
-        self,
-        messages: list[Any] | None = None,
-        result_message: ResultMessage | None = None,
-    ):
-        self.messages = messages or []
-        self.result_message = result_message or make_result_message()
-        self.queries: list[tuple[str, str | None]] = []
-        self._response_index = 0
-        self.disconnect_called = False
-        self.disconnect_delay: float = 0
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: object,
-    ) -> None:
-        pass
-
-    async def query(self, prompt: str, session_id: str | None = None) -> None:
-        self.queries.append((prompt, session_id))
-
-    async def receive_response(self) -> AsyncIterator[Any]:
-        """Yield messages then the result message."""
-        for msg in self.messages:
-            yield msg
-        yield self.result_message
-
-    async def disconnect(self) -> None:
-        """Disconnect the client."""
-        if self.disconnect_delay > 0:
-            await asyncio.sleep(self.disconnect_delay)
-        self.disconnect_called = True
 
 
 class HangingSDKClient(FakeSDKClient):
@@ -154,7 +124,10 @@ class SlowSDKClient(FakeSDKClient):
         messages: list[Any] | None = None,
         result_message: ResultMessage | None = None,
     ):
-        super().__init__(messages=messages, result_message=result_message)
+        # Default to empty list and result message if not provided
+        msgs = messages if messages is not None else []
+        rm = result_message if result_message is not None else make_result_message()
+        super().__init__(messages=msgs, result_message=rm)
         self.delay = delay
 
     async def receive_response(self) -> AsyncIterator[Any]:
@@ -162,7 +135,8 @@ class SlowSDKClient(FakeSDKClient):
             await asyncio.sleep(self.delay)
             yield msg
         await asyncio.sleep(self.delay)
-        yield self.result_message
+        if self.result_message is not None:
+            yield self.result_message
 
 
 class FakeHookMatcher:
@@ -171,50 +145,6 @@ class FakeHookMatcher:
     def __init__(self, matcher: object, hooks: list[object]):
         self.matcher = matcher
         self.hooks = hooks
-
-
-class FakeSDKClientFactory:
-    """Factory for creating fake SDK clients in tests."""
-
-    def __init__(self, client: FakeSDKClient):
-        self.client = client
-        self.create_calls: list[Any] = []
-
-    def create(self, options: object) -> SDKClientProtocol:
-        self.create_calls.append(options)
-        return cast("SDKClientProtocol", self.client)
-
-    def create_options(
-        self,
-        *,
-        cwd: str,
-        permission_mode: str = "bypassPermissions",
-        model: str = "opus",
-        system_prompt: dict[str, str] | None = None,
-        setting_sources: list[str] | None = None,
-        mcp_servers: object | None = None,
-        disallowed_tools: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        hooks: dict[str, list[object]] | None = None,
-    ) -> object:
-        return {
-            "cwd": cwd,
-            "permission_mode": permission_mode,
-            "model": model,
-            "system_prompt": system_prompt,
-            "setting_sources": setting_sources,
-            "mcp_servers": mcp_servers,
-            "disallowed_tools": disallowed_tools,
-            "env": env,
-            "hooks": hooks,
-        }
-
-    def create_hook_matcher(
-        self,
-        matcher: object | None,
-        hooks: list[object],
-    ) -> object:
-        return FakeHookMatcher(matcher, hooks)
 
 
 class SequencedSDKClientFactory:
@@ -228,6 +158,7 @@ class SequencedSDKClientFactory:
     def __init__(self, clients: list[FakeSDKClient]):
         self.clients = clients
         self.create_calls: list[Any] = []
+        self.with_resume_calls: list[tuple[object, str | None]] = []
         self._index = 0
 
     def create(self, options: object) -> SDKClientProtocol:
@@ -235,6 +166,18 @@ class SequencedSDKClientFactory:
         client = self.clients[min(self._index, len(self.clients) - 1)]
         self._index += 1
         return cast("SDKClientProtocol", client)
+
+    def with_resume(self, options: object, resume: str | None) -> object:
+        """Create a copy of options with a different resume session ID."""
+        self.with_resume_calls.append((options, resume))
+        if isinstance(options, dict):
+            return {**options, "resume": resume}
+        # For real ClaudeAgentOptions, use dataclass fields
+        from dataclasses import fields
+
+        kwargs = {f.name: getattr(options, f.name) for f in fields(options)}  # type: ignore[arg-type]
+        kwargs["resume"] = resume
+        return type(options)(**kwargs)  # type: ignore[return-value]
 
     def create_options(
         self,
@@ -248,6 +191,7 @@ class SequencedSDKClientFactory:
         disallowed_tools: list[str] | None = None,
         env: dict[str, str] | None = None,
         hooks: dict[str, list[object]] | None = None,
+        resume: str | None = None,
     ) -> object:
         return {
             "cwd": cwd,
@@ -259,6 +203,7 @@ class SequencedSDKClientFactory:
             "disallowed_tools": disallowed_tools,
             "env": env,
             "hooks": hooks,
+            "resume": resume,
         }
 
     def create_hook_matcher(
@@ -289,12 +234,13 @@ class TestAgentSessionRunnerBasics:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,  # Disable review for basic tests
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.fixture
     def fake_client(self) -> FakeSDKClient:
-        """Create a fake SDK client."""
-        return FakeSDKClient()
+        """Create a fake SDK client with a default result message."""
+        return FakeSDKClient(result_message=make_result_message())
 
     @pytest.fixture
     def fake_factory(self, fake_client: FakeSDKClient) -> FakeSDKClientFactory:
@@ -400,6 +346,7 @@ class TestAgentSessionRunnerBasics:
             prompts=make_test_prompts(),
             idle_timeout_seconds=0.1,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         fake_client = HangingSDKClient()
         fake_factory = FakeSDKClientFactory(fake_client)
@@ -433,6 +380,7 @@ class TestAgentSessionRunnerBasics:
             prompts=make_test_prompts(),
             idle_timeout_seconds=0.2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         slow_client = SlowSDKClient(delay=0.05)
         fake_factory = FakeSDKClientFactory(slow_client)
@@ -481,6 +429,7 @@ class TestAgentSessionRunnerBasics:
             prompts=make_test_prompts(),
             idle_timeout_seconds=0,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         slow_client = SlowSDKClient(delay=0.2)
         fake_factory = FakeSDKClientFactory(slow_client)
@@ -537,6 +486,7 @@ class TestAgentSessionRunnerGateHandling:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.mark.asyncio
@@ -546,7 +496,7 @@ class TestAgentSessionRunnerGateHandling:
         tmp_log_path: Path,
     ) -> None:
         """Runner should complete successfully when gate passes."""
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
 
         gate_check_calls: list[str] = []
@@ -599,9 +549,10 @@ class TestAgentSessionRunnerGateHandling:
             prompts=make_test_prompts(),
             max_gate_retries=1,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
 
         def get_log_path(session_id: str) -> Path:
@@ -661,52 +612,8 @@ class TestAgentSessionRunnerCallbacks:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
-
-    @pytest.mark.asyncio
-    async def test_get_log_path_callback_invoked(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-    ) -> None:
-        """Runner should call get_log_path callback with session ID."""
-        fake_client = FakeSDKClient()
-        fake_factory = FakeSDKClientFactory(fake_client)
-
-        log_path_calls: list[str] = []
-
-        def get_log_path(session_id: str) -> Path:
-            log_path_calls.append(session_id)
-            return tmp_log_path
-
-        async def on_gate_check(
-            issue_id: str, log_path: Path, retry_state: RetryState
-        ) -> tuple[GateResult, int]:
-            return (
-                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
-                1000,
-            )
-
-        callbacks = SessionCallbacks(
-            get_log_path=get_log_path,
-            on_gate_check=on_gate_check,
-        )
-
-        runner = AgentSessionRunner(
-            config=session_config,
-            callbacks=callbacks,
-            sdk_client_factory=fake_factory,
-        )
-
-        input = AgentSessionInput(
-            issue_id="test-123",
-            prompt="Test prompt",
-        )
-
-        await runner.run_session(input)
-
-        assert len(log_path_calls) == 1
-        assert log_path_calls[0] == "test-session-123"
 
     @pytest.mark.asyncio
     async def test_raises_when_callback_missing(
@@ -714,7 +621,7 @@ class TestAgentSessionRunnerCallbacks:
         session_config: AgentSessionConfig,
     ) -> None:
         """Runner should raise when required callback is missing."""
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
 
         # No callbacks configured
@@ -738,77 +645,6 @@ class TestAgentSessionRunnerCallbacks:
         assert "get_log_path" in output.summary
 
 
-class TestAgentSessionRunnerConfig:
-    """Test configuration handling."""
-
-    def test_config_with_custom_values(self, tmp_path: Path) -> None:
-        """Config should accept custom values via flags."""
-        config = AgentSessionConfig(
-            repo_path=tmp_path,
-            timeout_seconds=120,
-            prompts=make_test_prompts(),
-            max_gate_retries=5,
-            max_review_retries=4,
-            review_enabled=False,
-        )
-
-        assert config.timeout_seconds == 120
-        assert config.max_gate_retries == 5
-        assert config.max_review_retries == 4
-        assert config.review_enabled is False
-
-
-class TestAgentSessionInput:
-    """Test input data handling."""
-
-    def test_input_required_fields(self) -> None:
-        """Input should require issue_id and prompt."""
-        input = AgentSessionInput(
-            issue_id="test-123",
-            prompt="Test prompt",
-        )
-
-        assert input.issue_id == "test-123"
-        assert input.prompt == "Test prompt"
-        assert input.baseline_commit is None
-        assert input.issue_description is None
-
-    def test_input_with_optional_fields(self) -> None:
-        """Input should accept optional fields."""
-        input = AgentSessionInput(
-            issue_id="test-123",
-            prompt="Test prompt",
-            baseline_commit="abc123",
-            issue_description="Fix the bug",
-        )
-
-        assert input.baseline_commit == "abc123"
-        assert input.issue_description == "Fix the bug"
-
-
-class TestAgentSessionOutput:
-    """Test output data handling."""
-
-    def test_output_required_fields(self) -> None:
-        """Output should have required fields with defaults."""
-        from src.pipeline.agent_session_runner import AgentSessionOutput
-
-        output = AgentSessionOutput(
-            success=True,
-            summary="Done",
-        )
-
-        assert output.success is True
-        assert output.summary == "Done"
-        assert output.session_id is None
-        assert output.log_path is None
-        assert output.gate_attempts == 1
-        assert output.review_attempts == 0
-        assert output.resolution is None
-        assert output.duration_seconds == 0.0
-        assert output.agent_id == ""
-
-
 class TestAgentSessionRunnerStreamingCallbacks:
     """Test streaming event callbacks (on_tool_use, on_agent_text)."""
 
@@ -829,6 +665,7 @@ class TestAgentSessionRunnerStreamingCallbacks:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.mark.asyncio
@@ -842,7 +679,9 @@ class TestAgentSessionRunnerStreamingCallbacks:
         tool_block = ToolUseBlock(id="tool-1", name="Read", input={"path": "test.py"})
         assistant_msg = AssistantMessage(content=[tool_block], model="test-model")
 
-        fake_client = FakeSDKClient(messages=[assistant_msg])
+        fake_client = FakeSDKClient(
+            messages=[assistant_msg], result_message=make_result_message()
+        )
         fake_factory = FakeSDKClientFactory(fake_client)
 
         tool_use_calls: list[tuple[str, str, dict[str, Any] | None]] = []
@@ -896,7 +735,9 @@ class TestAgentSessionRunnerStreamingCallbacks:
         text_block = TextBlock(text="Processing the request...")
         assistant_msg = AssistantMessage(content=[text_block], model="test-model")
 
-        fake_client = FakeSDKClient(messages=[assistant_msg])
+        fake_client = FakeSDKClient(
+            messages=[assistant_msg], result_message=make_result_message()
+        )
         fake_factory = FakeSDKClientFactory(fake_client)
 
         agent_text_calls: list[tuple[str, str]] = []
@@ -951,7 +792,9 @@ class TestAgentSessionRunnerStreamingCallbacks:
             content=[text_block, tool_block], model="test-model"
         )
 
-        fake_client = FakeSDKClient(messages=[assistant_msg])
+        fake_client = FakeSDKClient(
+            messages=[assistant_msg], result_message=make_result_message()
+        )
         fake_factory = FakeSDKClientFactory(fake_client)
 
         def get_log_path(session_id: str) -> Path:
@@ -1142,6 +985,7 @@ class TestAgentSessionRunnerEventSink:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.mark.asyncio
@@ -1151,7 +995,7 @@ class TestAgentSessionRunnerEventSink:
         tmp_log_path: Path,
     ) -> None:
         """Runner should emit on_gate_started and on_gate_passed when gate passes."""
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -1231,9 +1075,10 @@ class TestAgentSessionRunnerEventSink:
             prompts=make_test_prompts(),
             max_gate_retries=1,  # Fail immediately
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -1314,9 +1159,10 @@ class TestAgentSessionRunnerEventSink:
             prompts=make_test_prompts(),
             max_gate_retries=2,  # Allow 1 retry
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -1386,7 +1232,7 @@ class TestAgentSessionRunnerEventSink:
         tmp_log_path: Path,
     ) -> None:
         """Runner should work without event sink (sink is None)."""
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
 
         def get_log_path(session_id: str) -> Path:
@@ -1437,9 +1283,10 @@ class TestAgentSessionRunnerEventSink:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=True,  # Enable review
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -1535,9 +1382,10 @@ class TestAgentSessionRunnerEventSink:
             max_gate_retries=3,
             max_review_retries=2,  # Allow 1 retry
             review_enabled=True,  # Enable review
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -1682,6 +1530,7 @@ class TestContextPressureDetection:
             review_enabled=False,  # Disable review for this test
             context_restart_threshold=0.95,  # High threshold - won't trigger
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         runner = AgentSessionRunner(
             config=config,
@@ -1731,6 +1580,7 @@ class TestContextPressureDetection:
             timeout_seconds=60,
             prompts=make_test_prompts(),
             review_enabled=False,  # Disable review for this test
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         runner = AgentSessionRunner(
             config=config,
@@ -1792,6 +1642,7 @@ class TestContextPressureDetection:
             review_enabled=False,
             context_restart_threshold=0.90,
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         runner = AgentSessionRunner(
             config=config, sdk_client_factory=mock_sdk_client_factory
@@ -1803,11 +1654,16 @@ class TestContextPressureDetection:
 
         lifecycle_ctx = LifecycleContext()
         state = MessageIterationState()
-        lint_cache = MagicMock()
+        lint_cache = FakeLintCache()
 
         with pytest.raises(ContextPressureError) as exc_info:
-            await runner._process_message_stream(
-                mock_stream(),
+            # Wrap stream with IdleTimeoutStream (no timeout, shared pending_tool_ids)
+            stream = IdleTimeoutStream(mock_stream(), None, state.pending_tool_ids)
+            # Get a fresh stream processor from the factory
+            stream_processor = runner._get_stream_processor()
+            await runner._retry_policy._process_message_stream(
+                stream_processor,
+                stream,
                 "test-pressure",
                 state,
                 lifecycle_ctx,
@@ -1872,6 +1728,7 @@ class TestContextPressureDetection:
             review_enabled=False,  # Disable review for this test
             context_restart_threshold=0.90,
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
         runner = AgentSessionRunner(
             config=config,
@@ -1912,7 +1769,7 @@ class TestIdleTimeoutRetry:
         )
 
         # Second client: succeeds immediately
-        success_client = FakeSDKClient()
+        success_client = FakeSDKClient(result_message=make_result_message())
 
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
@@ -1922,6 +1779,7 @@ class TestIdleTimeoutRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         factory = SequencedSDKClientFactory([hanging_client, success_client])
@@ -1965,7 +1823,9 @@ class TestIdleTimeoutRetry:
         # Verify second client used resume prompt with session_id
         assert len(success_client.queries) == 1
         assert "Continue on issue test-123" in success_client.queries[0][0]
-        assert success_client.queries[0][1] == "hang-session-123"
+        # Resume is now passed via with_resume on options, not via query session_id
+        assert len(factory.with_resume_calls) == 1
+        assert factory.with_resume_calls[0][1] == "hang-session-123"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -1985,6 +1845,7 @@ class TestIdleTimeoutRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         factory = SequencedSDKClientFactory(clients)
@@ -2027,6 +1888,7 @@ class TestIdleTimeoutRetry:
             idle_timeout_seconds=0.01,
             max_idle_retries=0,  # No retries allowed
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         factory = FakeSDKClientFactory(client)
@@ -2062,7 +1924,7 @@ class TestIdleTimeoutRetry:
         hanging_client = HangingSDKClient()
 
         # Second client: succeeds
-        success_client = FakeSDKClient()
+        success_client = FakeSDKClient(result_message=make_result_message())
 
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
@@ -2072,6 +1934,7 @@ class TestIdleTimeoutRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         factory = SequencedSDKClientFactory([hanging_client, success_client])
@@ -2140,6 +2003,7 @@ class TestIdleTimeoutRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 0.0, 0.0),
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         factory = FakeSDKClientFactory(hanging_client)
@@ -2178,7 +2042,7 @@ class TestIdleTimeoutRetry:
         no client is created and no query is sent.
         """
         # Setup a successful client
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         factory = FakeSDKClientFactory(fake_client)
 
         session_config = AgentSessionConfig(
@@ -2187,6 +2051,7 @@ class TestIdleTimeoutRetry:
             prompts=make_test_prompts(),
             idle_timeout_seconds=0.01,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         def get_log_path(session_id: str) -> Path:
@@ -2241,7 +2106,7 @@ class TestIdleTimeoutRetry:
         result_msg = make_result_message(session_id="session-123")
         hanging1 = HangingAfterMessagesSDKClient(messages=[result_msg])
         hanging2 = HangingAfterMessagesSDKClient(messages=[result_msg])
-        success_client = FakeSDKClient()
+        success_client = FakeSDKClient(result_message=make_result_message())
 
         session_config = AgentSessionConfig(
             repo_path=tmp_path,
@@ -2251,6 +2116,7 @@ class TestIdleTimeoutRetry:
             max_idle_retries=2,
             idle_retry_backoff=(0.0, 5.0, 15.0),
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         factory = SequencedSDKClientFactory([hanging1, hanging2, success_client])
@@ -2337,6 +2203,7 @@ class TestIdleTimeoutRetry:
             prompts=make_test_prompts(),
             max_gate_retries=2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         # Track which session IDs we return
@@ -2358,6 +2225,12 @@ class TestIdleTimeoutRetry:
                 sid = session_ids[min(self.idx, len(session_ids) - 1)]
                 self.idx += 1
                 return cast("SDKClientProtocol", make_client_for_session(sid))
+
+            def with_resume(self, options: object, resume: str | None) -> object:
+                """Create a copy of options with resume session ID."""
+                if isinstance(options, dict):
+                    return {**options, "resume": resume}
+                return options
 
             def create_options(
                 self,
@@ -2462,12 +2335,13 @@ class TestInitializeSession:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=True,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.fixture
     def runner(self, session_config: AgentSessionConfig) -> AgentSessionRunner:
         """Create a runner for testing initialization."""
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         return AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
@@ -2565,8 +2439,9 @@ class TestInitializeSession:
             timeout_seconds=3000,  # 50 min -> derived = 600
             prompts=make_test_prompts(),
             idle_timeout_seconds=None,  # Let it be computed
+            mcp_server_factory=make_noop_mcp_factory(),
         )
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
@@ -2590,8 +2465,9 @@ class TestInitializeSession:
             timeout_seconds=600,  # 10 min -> derived = 120 < 300
             prompts=make_test_prompts(),
             idle_timeout_seconds=None,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
@@ -2615,8 +2491,9 @@ class TestInitializeSession:
             timeout_seconds=6000,  # 100 min -> derived = 1200 > 900
             prompts=make_test_prompts(),
             idle_timeout_seconds=None,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
@@ -2640,8 +2517,9 @@ class TestInitializeSession:
             timeout_seconds=600,
             prompts=make_test_prompts(),
             idle_timeout_seconds=0,  # Explicitly disabled
+            mcp_server_factory=make_noop_mcp_factory(),
         )
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
@@ -2665,8 +2543,9 @@ class TestInitializeSession:
             timeout_seconds=600,
             prompts=make_test_prompts(),
             idle_timeout_seconds=42.5,  # Explicit value
+            mcp_server_factory=make_noop_mcp_factory(),
         )
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         runner = AgentSessionRunner(
             config=session_config,
             callbacks=SessionCallbacks(),
@@ -2695,6 +2574,7 @@ class TestBuildSessionOutput:
             prompts=make_test_prompts(),
             max_gate_retries=3,
             max_review_retries=2,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.fixture
@@ -2951,7 +2831,7 @@ class TestEmitReviewResultEvents:
         """COMPLETE_SUCCESS should emit on_review_passed event."""
         from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
         from src.infra.clients.review_output_parser import ReviewResult
-        from src.pipeline.agent_session_runner import _emit_review_result_events
+        from src.pipeline.lifecycle_effect_handler import _emit_review_result_events
 
         result = TransitionResult(
             state=LifecycleState.RUNNING_REVIEW, effect=Effect.COMPLETE_SUCCESS
@@ -2982,7 +2862,7 @@ class TestEmitReviewResultEvents:
         """RUN_REVIEW (parse error) should emit on_warning event."""
         from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
         from src.infra.clients.review_output_parser import ReviewResult
-        from src.pipeline.agent_session_runner import _emit_review_result_events
+        from src.pipeline.lifecycle_effect_handler import _emit_review_result_events
 
         result = TransitionResult(
             state=LifecycleState.RUNNING_REVIEW, effect=Effect.RUN_REVIEW
@@ -3015,7 +2895,7 @@ class TestEmitReviewResultEvents:
         """SEND_REVIEW_RETRY should emit on_review_retry with blocking count."""
         from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
         from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
-        from src.pipeline.agent_session_runner import _emit_review_result_events
+        from src.pipeline.lifecycle_effect_handler import _emit_review_result_events
 
         result = TransitionResult(
             state=LifecycleState.RUNNING_REVIEW, effect=Effect.SEND_REVIEW_RETRY
@@ -3080,7 +2960,7 @@ class TestEmitReviewResultEvents:
         """Should not raise when event_sink is None."""
         from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
         from src.infra.clients.review_output_parser import ReviewResult
-        from src.pipeline.agent_session_runner import _emit_review_result_events
+        from src.pipeline.lifecycle_effect_handler import _emit_review_result_events
 
         result = TransitionResult(
             state=LifecycleState.RUNNING_REVIEW, effect=Effect.COMPLETE_SUCCESS
@@ -3100,7 +2980,7 @@ class TestEmitReviewResultEvents:
         """COMPLETE_FAILURE should not emit any events."""
         from src.domain.lifecycle import Effect, LifecycleState, TransitionResult
         from src.infra.clients.review_output_parser import ReviewResult
-        from src.pipeline.agent_session_runner import _emit_review_result_events
+        from src.pipeline.lifecycle_effect_handler import _emit_review_result_events
 
         result = TransitionResult(
             state=LifecycleState.RUNNING_REVIEW, effect=Effect.COMPLETE_FAILURE
@@ -3137,7 +3017,7 @@ class TestEmitGatePassedEvents:
         self, fake_sink: FakeEventSink
     ) -> None:
         """Events should be emitted when review_attempt is 1."""
-        from src.pipeline.agent_session_runner import _emit_gate_passed_events
+        from src.pipeline.lifecycle_effect_handler import _emit_gate_passed_events
 
         _emit_gate_passed_events(fake_sink, "test-123", review_attempt=1)  # type: ignore[arg-type]
 
@@ -3156,7 +3036,7 @@ class TestEmitGatePassedEvents:
         self, fake_sink: FakeEventSink
     ) -> None:
         """No events should be emitted when review_attempt > 1."""
-        from src.pipeline.agent_session_runner import _emit_gate_passed_events
+        from src.pipeline.lifecycle_effect_handler import _emit_gate_passed_events
 
         _emit_gate_passed_events(fake_sink, "test-123", review_attempt=2)  # type: ignore[arg-type]
 
@@ -3165,528 +3045,14 @@ class TestEmitGatePassedEvents:
     @pytest.mark.unit
     def test_no_events_without_event_sink(self) -> None:
         """No errors when event_sink is None."""
-        from src.pipeline.agent_session_runner import _emit_gate_passed_events
+        from src.pipeline.lifecycle_effect_handler import _emit_gate_passed_events
 
         # Should not raise
         _emit_gate_passed_events(None, "test-123", review_attempt=1)
 
 
-class TestHandleGateCheck:
-    """Unit tests for _handle_gate_check helper.
-
-    Tests the gate check handling logic including event emission
-    and retry prompt generation.
-    """
-
-    @pytest.fixture
-    def tmp_log_path(self, tmp_path: Path) -> Path:
-        """Create a temporary log file path."""
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text("")
-        return log_path
-
-    @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
-        """Create a session config for testing."""
-        return AgentSessionConfig(
-            repo_path=tmp_path,
-            timeout_seconds=600,
-            prompts=make_test_prompts(),
-            max_gate_retries=3,
-            max_review_retries=2,
-            review_enabled=False,
-        )
-
-    @pytest.fixture
-    def mock_sdk_client_factory(self) -> MagicMock:
-        """Create a mock SDK client factory (not used but required)."""
-        return MagicMock()
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_handle_gate_check_passed(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-        mock_sdk_client_factory: MagicMock,
-    ) -> None:
-        """_handle_gate_check should emit events and return no retry on pass."""
-        from src.pipeline.agent_session_runner import (
-            SessionExecutionState,
-        )
-        from src.domain.lifecycle import (
-            ImplementerLifecycle,
-            LifecycleConfig,
-            LifecycleContext,
-            LifecycleState,
-        )
-
-        fake_sink = FakeEventSink()
-
-        async def on_gate_check(
-            issue_id: str, log_path: Path, retry_state: RetryState
-        ) -> tuple[GateResult, int]:
-            return (
-                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
-                1000,
-            )
-
-        callbacks = SessionCallbacks(on_gate_check=on_gate_check)
-        runner = AgentSessionRunner(
-            config=session_config,
-            sdk_client_factory=mock_sdk_client_factory,
-            callbacks=callbacks,
-            event_sink=fake_sink,  # type: ignore[arg-type]
-        )
-
-        lifecycle = ImplementerLifecycle(LifecycleConfig(review_enabled=False))
-        lifecycle.start()
-        lifecycle._state = LifecycleState.RUNNING_GATE
-        lifecycle_ctx = LifecycleContext()
-
-        state = SessionExecutionState(
-            lifecycle=lifecycle,
-            lifecycle_ctx=lifecycle_ctx,
-            session_id="session-abc",
-            log_path=tmp_log_path,
-        )
-
-        input_data = AgentSessionInput(issue_id="test-gate", prompt="Test")
-
-        pending_query, _ = await runner._handle_gate_check(
-            input_data, state, lifecycle, lifecycle_ctx
-        )
-
-        # No retry needed
-        assert pending_query is None
-        # Gate passed events emitted
-        event_names = [e[0] for e in fake_sink.events]
-        assert "on_validation_started" in event_names
-        assert "on_gate_started" in event_names
-        assert "on_gate_passed" in event_names
-        assert "on_validation_result" in event_names
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_handle_gate_check_failed_with_retry(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-        mock_sdk_client_factory: MagicMock,
-    ) -> None:
-        """_handle_gate_check should return retry query on failure with retries left."""
-        from src.pipeline.agent_session_runner import (
-            SessionExecutionState,
-        )
-        from src.domain.lifecycle import (
-            ImplementerLifecycle,
-            LifecycleConfig,
-            LifecycleContext,
-            LifecycleState,
-        )
-
-        fake_sink = FakeEventSink()
-
-        async def on_gate_check(
-            issue_id: str, log_path: Path, retry_state: RetryState
-        ) -> tuple[GateResult, int]:
-            return (
-                GateResult(
-                    passed=False,
-                    failure_reasons=["Tests failed"],
-                    commit_hash=None,
-                ),
-                1000,
-            )
-
-        callbacks = SessionCallbacks(on_gate_check=on_gate_check)
-        runner = AgentSessionRunner(
-            config=session_config,
-            sdk_client_factory=mock_sdk_client_factory,
-            callbacks=callbacks,
-            event_sink=fake_sink,  # type: ignore[arg-type]
-        )
-
-        lifecycle = ImplementerLifecycle(LifecycleConfig(max_gate_retries=3))
-        lifecycle.start()
-        lifecycle._state = LifecycleState.RUNNING_GATE
-        lifecycle_ctx = LifecycleContext()
-
-        state = SessionExecutionState(
-            lifecycle=lifecycle,
-            lifecycle_ctx=lifecycle_ctx,
-            session_id="session-retry",
-            log_path=tmp_log_path,
-        )
-
-        input_data = AgentSessionInput(issue_id="test-retry", prompt="Test")
-
-        pending_query, _ = await runner._handle_gate_check(
-            input_data, state, lifecycle, lifecycle_ctx
-        )
-
-        # Retry query should be generated
-        assert pending_query is not None
-        assert "Tests failed" in pending_query
-        # Retry event emitted
-        event_names = [e[0] for e in fake_sink.events]
-        assert "on_gate_retry" in event_names
-        assert "on_validation_result" in event_names
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_handle_gate_check_raises_without_callback(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-        mock_sdk_client_factory: MagicMock,
-    ) -> None:
-        """_handle_gate_check should raise ValueError if callback not set."""
-        from src.pipeline.agent_session_runner import (
-            SessionExecutionState,
-        )
-        from src.domain.lifecycle import (
-            ImplementerLifecycle,
-            LifecycleConfig,
-            LifecycleContext,
-        )
-
-        runner = AgentSessionRunner(
-            config=session_config,
-            sdk_client_factory=mock_sdk_client_factory,
-            callbacks=SessionCallbacks(),  # No on_gate_check
-        )
-
-        lifecycle = ImplementerLifecycle(LifecycleConfig())
-        lifecycle_ctx = LifecycleContext()
-
-        state = SessionExecutionState(
-            lifecycle=lifecycle,
-            lifecycle_ctx=lifecycle_ctx,
-            log_path=tmp_log_path,
-        )
-
-        input_data = AgentSessionInput(issue_id="test-err", prompt="Test")
-
-        with pytest.raises(ValueError, match="on_gate_check callback must be set"):
-            await runner._handle_gate_check(input_data, state, lifecycle, lifecycle_ctx)
-
-
-class TestHandleReviewCheck:
-    """Unit tests for _handle_review_check helper.
-
-    Tests the review check handling logic including event emission
-    and retry prompt generation.
-    """
-
-    @pytest.fixture
-    def tmp_log_path(self, tmp_path: Path) -> Path:
-        """Create a temporary log file path."""
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text("")
-        return log_path
-
-    @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
-        """Create a session config for testing."""
-        return AgentSessionConfig(
-            repo_path=tmp_path,
-            timeout_seconds=600,
-            prompts=make_test_prompts(),
-            max_gate_retries=3,
-            max_review_retries=3,
-            review_enabled=True,
-        )
-
-    @pytest.fixture
-    def mock_sdk_client_factory(self) -> MagicMock:
-        """Create a mock SDK client factory (not used but required)."""
-        return MagicMock()
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_handle_review_check_passed(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-        mock_sdk_client_factory: MagicMock,
-    ) -> None:
-        """_handle_review_check should emit events and return no retry on pass."""
-        from src.pipeline.agent_session_runner import (
-            SessionExecutionState,
-        )
-        from src.domain.lifecycle import (
-            ImplementerLifecycle,
-            LifecycleConfig,
-            LifecycleContext,
-            LifecycleState,
-        )
-        from src.infra.clients.review_output_parser import ReviewResult
-
-        fake_sink = FakeEventSink()
-
-        async def on_review_check(
-            issue_id: str,
-            description: str | None,
-            baseline: str | None,
-            session_id: str | None,
-            retry_state: RetryState,
-        ) -> ReviewResult:
-            return ReviewResult(passed=True, issues=[], parse_error=None)
-
-        callbacks = SessionCallbacks(on_review_check=on_review_check)
-        runner = AgentSessionRunner(
-            config=session_config,
-            sdk_client_factory=mock_sdk_client_factory,
-            callbacks=callbacks,
-            event_sink=fake_sink,  # type: ignore[arg-type]
-        )
-
-        lifecycle = ImplementerLifecycle(
-            LifecycleConfig(review_enabled=True, max_review_retries=3)
-        )
-        lifecycle.start()
-        lifecycle._state = LifecycleState.RUNNING_REVIEW
-        lifecycle_ctx = LifecycleContext()
-        lifecycle_ctx.retry_state.review_attempt = 1
-
-        state = SessionExecutionState(
-            lifecycle=lifecycle,
-            lifecycle_ctx=lifecycle_ctx,
-            session_id="session-review",
-            log_path=tmp_log_path,
-        )
-
-        input_data = AgentSessionInput(issue_id="test-review", prompt="Test")
-
-        pending_query, _ = await runner._handle_review_check(
-            input_data, state, lifecycle, lifecycle_ctx
-        )
-
-        # No retry needed
-        assert pending_query is None
-        # Review passed events emitted
-        event_names = [e[0] for e in fake_sink.events]
-        # First review attempt emits gate_passed
-        assert "on_gate_passed" in event_names
-        assert "on_review_started" in event_names
-        assert "on_review_passed" in event_names
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_handle_review_check_failed_with_retry(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-        mock_sdk_client_factory: MagicMock,
-    ) -> None:
-        """_handle_review_check should return retry query on failure with retries left."""
-        from src.pipeline.agent_session_runner import (
-            SessionExecutionState,
-        )
-        from src.domain.lifecycle import (
-            ImplementerLifecycle,
-            LifecycleConfig,
-            LifecycleContext,
-            LifecycleState,
-        )
-        from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
-
-        fake_sink = FakeEventSink()
-
-        async def on_review_check(
-            issue_id: str,
-            description: str | None,
-            baseline: str | None,
-            session_id: str | None,
-            retry_state: RetryState,
-        ) -> ReviewResult:
-            return ReviewResult(
-                passed=False,
-                issues=[
-                    ReviewIssue(
-                        title="Bug found",
-                        body="A bug was found",
-                        priority=1,  # P1 = blocking
-                        file="test.py",
-                        line_start=10,
-                        line_end=15,
-                        reviewer="gemini",
-                    ),
-                ],
-                parse_error=None,
-            )
-
-        callbacks = SessionCallbacks(on_review_check=on_review_check)
-        runner = AgentSessionRunner(
-            config=session_config,
-            sdk_client_factory=mock_sdk_client_factory,
-            callbacks=callbacks,
-            event_sink=fake_sink,  # type: ignore[arg-type]
-        )
-
-        lifecycle = ImplementerLifecycle(
-            LifecycleConfig(review_enabled=True, max_review_retries=3)
-        )
-        lifecycle.start()
-        lifecycle._state = LifecycleState.RUNNING_REVIEW
-        lifecycle_ctx = LifecycleContext()
-        lifecycle_ctx.retry_state.review_attempt = 1
-
-        state = SessionExecutionState(
-            lifecycle=lifecycle,
-            lifecycle_ctx=lifecycle_ctx,
-            session_id="session-rev-retry",
-            log_path=tmp_log_path,
-        )
-
-        input_data = AgentSessionInput(issue_id="test-rev-retry", prompt="Test")
-
-        pending_query, _ = await runner._handle_review_check(
-            input_data, state, lifecycle, lifecycle_ctx
-        )
-
-        # Retry query should be generated
-        assert pending_query is not None
-        assert "Bug found" in pending_query or "test.py" in pending_query
-        # Retry event emitted
-        event_names = [e[0] for e in fake_sink.events]
-        assert "on_review_retry" in event_names
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_handle_review_check_skips_on_no_progress(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-        mock_sdk_client_factory: MagicMock,
-    ) -> None:
-        """_handle_review_check should skip review on no-progress detection."""
-        from src.pipeline.agent_session_runner import (
-            SessionExecutionState,
-        )
-        from src.domain.lifecycle import (
-            ImplementerLifecycle,
-            LifecycleConfig,
-            LifecycleContext,
-            LifecycleState,
-        )
-        from src.domain.quality_gate import GateResult
-
-        fake_sink = FakeEventSink()
-
-        # on_review_check should NOT be called due to no-progress
-        review_check_called = False
-
-        async def on_review_check(
-            issue_id: str,
-            description: str | None,
-            baseline: str | None,
-            session_id: str | None,
-            retry_state: RetryState,
-        ) -> None:
-            nonlocal review_check_called
-            review_check_called = True
-            raise AssertionError("Should not be called")
-
-        def on_review_no_progress(
-            log_path: Path,
-            log_offset: int,
-            prev_commit: str | None,
-            curr_commit: str | None,
-        ) -> bool:
-            return True  # No progress detected
-
-        callbacks = SessionCallbacks(
-            on_review_check=on_review_check,  # type: ignore[arg-type]
-            on_review_no_progress=on_review_no_progress,
-        )
-        runner = AgentSessionRunner(
-            config=session_config,
-            sdk_client_factory=mock_sdk_client_factory,
-            callbacks=callbacks,
-            event_sink=fake_sink,  # type: ignore[arg-type]
-        )
-
-        lifecycle = ImplementerLifecycle(
-            LifecycleConfig(review_enabled=True, max_review_retries=3)
-        )
-        lifecycle.start()
-        lifecycle._state = LifecycleState.RUNNING_REVIEW
-        lifecycle_ctx = LifecycleContext()
-        lifecycle_ctx.retry_state.review_attempt = 2  # Not first attempt
-        lifecycle_ctx.last_gate_result = GateResult(
-            passed=True, failure_reasons=[], commit_hash="same-commit"
-        )
-
-        state = SessionExecutionState(
-            lifecycle=lifecycle,
-            lifecycle_ctx=lifecycle_ctx,
-            session_id="session-no-progress",
-            log_path=tmp_log_path,
-        )
-
-        input_data = AgentSessionInput(issue_id="test-no-progress", prompt="Test")
-
-        pending_query, _ = await runner._handle_review_check(
-            input_data, state, lifecycle, lifecycle_ctx
-        )
-
-        # on_review_check should not have been called
-        assert not review_check_called
-        # No retry
-        assert pending_query is None
-        # Skip event emitted
-        event_names = [e[0] for e in fake_sink.events]
-        assert "on_review_skipped_no_progress" in event_names
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_handle_review_check_raises_without_callback(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-        mock_sdk_client_factory: MagicMock,
-    ) -> None:
-        """_handle_review_check should raise ValueError if callback not set."""
-        from src.pipeline.agent_session_runner import (
-            SessionExecutionState,
-        )
-        from src.domain.lifecycle import (
-            ImplementerLifecycle,
-            LifecycleConfig,
-            LifecycleContext,
-            LifecycleState,
-        )
-
-        runner = AgentSessionRunner(
-            config=session_config,
-            sdk_client_factory=mock_sdk_client_factory,
-            callbacks=SessionCallbacks(),  # No on_review_check
-        )
-
-        lifecycle = ImplementerLifecycle(LifecycleConfig())
-        lifecycle.start()
-        lifecycle._state = LifecycleState.RUNNING_REVIEW
-        lifecycle_ctx = LifecycleContext()
-        lifecycle_ctx.retry_state.review_attempt = 1
-
-        state = SessionExecutionState(
-            lifecycle=lifecycle,
-            lifecycle_ctx=lifecycle_ctx,
-            log_path=tmp_log_path,
-        )
-
-        input_data = AgentSessionInput(issue_id="test-err", prompt="Test")
-
-        with pytest.raises(ValueError, match="on_review_check callback must be set"):
-            await runner._handle_review_check(
-                input_data, state, lifecycle, lifecycle_ctx
-            )
-
-
 class TestCheckReviewNoProgress:
-    """Unit tests for _check_review_no_progress helper."""
+    """Unit tests for LifecycleEffectHandler.check_review_no_progress."""
 
     @pytest.fixture
     def session_config(self, tmp_path: Path) -> AgentSessionConfig:
@@ -3698,6 +3064,7 @@ class TestCheckReviewNoProgress:
             max_gate_retries=3,
             max_review_retries=3,
             review_enabled=True,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.fixture
@@ -3743,7 +3110,7 @@ class TestCheckReviewNoProgress:
         lifecycle_ctx.retry_state.review_attempt = 1
 
         input_data = AgentSessionInput(issue_id="test-first", prompt="Test")
-        result = runner._check_review_no_progress(
+        result = runner._effect_handler.check_review_no_progress(
             input_data, tmp_log_path, lifecycle, lifecycle_ctx, None
         )
         assert result is None
@@ -3774,7 +3141,7 @@ class TestCheckReviewNoProgress:
         lifecycle_ctx.retry_state.review_attempt = 2
 
         input_data = AgentSessionInput(issue_id="test-no-cb", prompt="Test")
-        result = runner._check_review_no_progress(
+        result = runner._effect_handler.check_review_no_progress(
             input_data, tmp_log_path, lifecycle, lifecycle_ctx, None
         )
         assert result is None
@@ -3816,7 +3183,7 @@ class TestCheckReviewNoProgress:
         )
 
         input_data = AgentSessionInput(issue_id="test-progress", prompt="Test")
-        result = runner._check_review_no_progress(
+        result = runner._effect_handler.check_review_no_progress(
             input_data, tmp_log_path, lifecycle, lifecycle_ctx, None
         )
         assert result is None
@@ -3835,7 +3202,7 @@ class TestCheckReviewNoProgress:
             LifecycleContext,
             LifecycleState,
         )
-        from src.pipeline.agent_session_runner import ReviewEffectResult
+        from src.pipeline.lifecycle_effect_handler import ReviewEffectResult
 
         fake_sink = FakeEventSink()
 
@@ -3862,7 +3229,7 @@ class TestCheckReviewNoProgress:
         )
 
         input_data = AgentSessionInput(issue_id="test-no-progress", prompt="Test")
-        result = runner._check_review_no_progress(
+        result = runner._effect_handler.check_review_no_progress(
             input_data, tmp_log_path, lifecycle, lifecycle_ctx, "/log"
         )
 
@@ -3899,6 +3266,7 @@ class TestRunLifecycleLoop:
             max_gate_retries=3,
             max_review_retries=2,
             review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
     @pytest.mark.asyncio
@@ -3921,7 +3289,7 @@ class TestRunLifecycleLoop:
             LifecycleState,
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -4057,7 +3425,7 @@ class TestRunLifecycleLoop:
             LifecycleContext,
         )
 
-        fake_client = FakeSDKClient()
+        fake_client = FakeSDKClient(result_message=make_result_message())
         fake_factory = FakeSDKClientFactory(fake_client)
         fake_sink = FakeEventSink()
 
@@ -4123,7 +3491,7 @@ class TestBuildReviewRetryPrompt:
     def test_builds_prompt_with_issues(self, tmp_path: Path) -> None:
         """Should build prompt with formatted issues."""
         from src.infra.clients.review_output_parser import ReviewIssue
-        from src.pipeline.agent_session_runner import _build_review_retry_prompt
+        from src.pipeline.lifecycle_effect_handler import _build_review_retry_prompt
 
         # Create a mock review result with issues
         review_result = MagicMock()
@@ -4160,7 +3528,7 @@ class TestBuildReviewRetryPrompt:
     @pytest.mark.unit
     def test_returns_string(self, tmp_path: Path) -> None:
         """Should return a string prompt."""
-        from src.pipeline.agent_session_runner import _build_review_retry_prompt
+        from src.pipeline.lifecycle_effect_handler import _build_review_retry_prompt
 
         review_result = MagicMock()
         review_result.issues = []
@@ -4178,331 +3546,6 @@ class TestBuildReviewRetryPrompt:
 
         assert isinstance(prompt, str)
         assert len(prompt) > 0
-
-
-class TestHandleReviewEffectIntegration:
-    """Integration tests for _handle_review_effect.
-
-    Tests the full review effect flow including event emission,
-    callback invocation, and result processing. Covers success,
-    failure, retry, and no-progress paths.
-    """
-
-    @pytest.fixture
-    def tmp_log_path(self, tmp_path: Path) -> Path:
-        """Create a temporary log file path."""
-        log_path = tmp_path / "session.jsonl"
-        log_path.write_text("")
-        return log_path
-
-    @pytest.fixture
-    def session_config(self, tmp_path: Path) -> AgentSessionConfig:
-        """Create a session config for testing."""
-        return AgentSessionConfig(
-            repo_path=tmp_path,
-            timeout_seconds=600,
-            prompts=make_test_prompts(),
-            max_gate_retries=3,
-            max_review_retries=3,
-            review_enabled=True,
-        )
-
-    @pytest.fixture
-    def mock_sdk_client_factory(self) -> MagicMock:
-        """Create a mock SDK client factory (not used but required)."""
-        return MagicMock()
-
-    @pytest.mark.asyncio
-    async def test_review_effect_success_path(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-        mock_sdk_client_factory: MagicMock,
-    ) -> None:
-        """_handle_review_effect should return success when review passes."""
-        from src.domain.lifecycle import (
-            ImplementerLifecycle,
-            LifecycleConfig,
-            LifecycleContext,
-            LifecycleState,
-        )
-        from src.infra.clients.review_output_parser import ReviewResult
-
-        fake_sink = FakeEventSink()
-
-        async def on_review_check(
-            issue_id: str,
-            description: str | None,
-            baseline: str | None,
-            session_id: str | None,
-            retry_state: RetryState,
-        ) -> ReviewResult:
-            return ReviewResult(passed=True, issues=[], parse_error=None)
-
-        callbacks = SessionCallbacks(on_review_check=on_review_check)
-        runner = AgentSessionRunner(
-            config=session_config,
-            sdk_client_factory=mock_sdk_client_factory,
-            callbacks=callbacks,
-            event_sink=fake_sink,  # type: ignore[arg-type]
-        )
-
-        lifecycle = ImplementerLifecycle(
-            LifecycleConfig(review_enabled=True, max_review_retries=3)
-        )
-        lifecycle.start()
-        lifecycle._state = LifecycleState.RUNNING_REVIEW
-        lifecycle_ctx = LifecycleContext()
-        lifecycle_ctx.retry_state.review_attempt = 1
-
-        input_data = AgentSessionInput(issue_id="integ-success", prompt="Test")
-
-        result = await runner._handle_review_effect(
-            input_data,
-            tmp_log_path,
-            "session-123",
-            lifecycle,
-            lifecycle_ctx,
-        )
-
-        # Should indicate success
-        assert result.should_break is True
-        assert result.pending_query is None
-        # Events should include gate passed and review passed
-        event_names = [e[0] for e in fake_sink.events]
-        assert "on_gate_passed" in event_names
-        assert "on_review_started" in event_names
-        assert "on_review_passed" in event_names
-
-    @pytest.mark.asyncio
-    async def test_review_effect_failure_with_retry(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-        mock_sdk_client_factory: MagicMock,
-    ) -> None:
-        """_handle_review_effect should return retry prompt on failure."""
-        from src.domain.lifecycle import (
-            ImplementerLifecycle,
-            LifecycleConfig,
-            LifecycleContext,
-            LifecycleState,
-        )
-        from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
-
-        fake_sink = FakeEventSink()
-
-        async def on_review_check(
-            issue_id: str,
-            description: str | None,
-            baseline: str | None,
-            session_id: str | None,
-            retry_state: RetryState,
-        ) -> ReviewResult:
-            return ReviewResult(
-                passed=False,
-                issues=[
-                    ReviewIssue(
-                        title="Test bug",
-                        body="A test bug was found",
-                        priority=1,
-                        file="test.py",
-                        line_start=10,
-                        line_end=15,
-                        reviewer="test-reviewer",
-                    ),
-                ],
-                parse_error=None,
-            )
-
-        callbacks = SessionCallbacks(on_review_check=on_review_check)
-        runner = AgentSessionRunner(
-            config=session_config,
-            sdk_client_factory=mock_sdk_client_factory,
-            callbacks=callbacks,
-            event_sink=fake_sink,  # type: ignore[arg-type]
-        )
-
-        lifecycle = ImplementerLifecycle(
-            LifecycleConfig(review_enabled=True, max_review_retries=3)
-        )
-        lifecycle.start()
-        lifecycle._state = LifecycleState.RUNNING_REVIEW
-        lifecycle_ctx = LifecycleContext()
-        lifecycle_ctx.retry_state.review_attempt = 1
-
-        input_data = AgentSessionInput(issue_id="integ-retry", prompt="Test")
-
-        result = await runner._handle_review_effect(
-            input_data,
-            tmp_log_path,
-            "session-456",
-            lifecycle,
-            lifecycle_ctx,
-        )
-
-        # Should request retry
-        assert result.should_break is False
-        assert result.pending_query is not None
-        assert "Test bug" in result.pending_query or "test.py" in result.pending_query
-        # Events should include gate passed, review started, and retry
-        event_names = [e[0] for e in fake_sink.events]
-        assert "on_gate_passed" in event_names
-        assert "on_review_started" in event_names
-        assert "on_review_retry" in event_names
-
-    @pytest.mark.asyncio
-    async def test_review_effect_exhausted_retries(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-        mock_sdk_client_factory: MagicMock,
-    ) -> None:
-        """_handle_review_effect should return failure when retries exhausted."""
-        from src.domain.lifecycle import (
-            ImplementerLifecycle,
-            LifecycleConfig,
-            LifecycleContext,
-            LifecycleState,
-        )
-        from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
-
-        fake_sink = FakeEventSink()
-
-        async def on_review_check(
-            issue_id: str,
-            description: str | None,
-            baseline: str | None,
-            session_id: str | None,
-            retry_state: RetryState,
-        ) -> ReviewResult:
-            return ReviewResult(
-                passed=False,
-                issues=[
-                    ReviewIssue(
-                        title="Persistent bug",
-                        body="Bug persists",
-                        priority=0,
-                        file="main.py",
-                        line_start=1,
-                        line_end=5,
-                        reviewer="reviewer",
-                    ),
-                ],
-                parse_error=None,
-            )
-
-        callbacks = SessionCallbacks(on_review_check=on_review_check)
-        runner = AgentSessionRunner(
-            config=session_config,
-            sdk_client_factory=mock_sdk_client_factory,
-            callbacks=callbacks,
-            event_sink=fake_sink,  # type: ignore[arg-type]
-        )
-
-        lifecycle = ImplementerLifecycle(
-            LifecycleConfig(review_enabled=True, max_review_retries=3)
-        )
-        lifecycle.start()
-        lifecycle._state = LifecycleState.RUNNING_REVIEW
-        lifecycle_ctx = LifecycleContext()
-        # Set to max retries to trigger exhaustion
-        lifecycle_ctx.retry_state.review_attempt = 3
-
-        input_data = AgentSessionInput(issue_id="integ-exhaust", prompt="Test")
-
-        result = await runner._handle_review_effect(
-            input_data,
-            tmp_log_path,
-            "session-789",
-            lifecycle,
-            lifecycle_ctx,
-        )
-
-        # Should indicate failure (exhausted)
-        assert result.should_break is True
-        assert result.pending_query is None
-
-    @pytest.mark.asyncio
-    async def test_review_effect_no_progress_path(
-        self,
-        session_config: AgentSessionConfig,
-        tmp_log_path: Path,
-        mock_sdk_client_factory: MagicMock,
-    ) -> None:
-        """_handle_review_effect should skip review on no-progress detection."""
-        from src.domain.lifecycle import (
-            ImplementerLifecycle,
-            LifecycleConfig,
-            LifecycleContext,
-            LifecycleState,
-        )
-        from src.domain.quality_gate import GateResult
-
-        fake_sink = FakeEventSink()
-        review_called = False
-
-        async def on_review_check(
-            issue_id: str,
-            description: str | None,
-            baseline: str | None,
-            session_id: str | None,
-            retry_state: RetryState,
-        ) -> None:
-            nonlocal review_called
-            review_called = True
-            raise AssertionError("Review should not be called")
-
-        def on_review_no_progress(
-            log_path: Path,
-            log_offset: int,
-            prev_commit: str | None,
-            curr_commit: str | None,
-        ) -> bool:
-            return True  # No progress detected
-
-        callbacks = SessionCallbacks(
-            on_review_check=on_review_check,  # type: ignore[arg-type]
-            on_review_no_progress=on_review_no_progress,
-        )
-        runner = AgentSessionRunner(
-            config=session_config,
-            sdk_client_factory=mock_sdk_client_factory,
-            callbacks=callbacks,
-            event_sink=fake_sink,  # type: ignore[arg-type]
-        )
-
-        lifecycle = ImplementerLifecycle(
-            LifecycleConfig(review_enabled=True, max_review_retries=3)
-        )
-        lifecycle.start()
-        lifecycle._state = LifecycleState.RUNNING_REVIEW
-        lifecycle_ctx = LifecycleContext()
-        lifecycle_ctx.retry_state.review_attempt = (
-            2  # Must be > 1 for no-progress check
-        )
-        lifecycle_ctx.last_gate_result = GateResult(
-            passed=True, failure_reasons=[], commit_hash="same-commit"
-        )
-
-        input_data = AgentSessionInput(issue_id="integ-no-progress", prompt="Test")
-
-        result = await runner._handle_review_effect(
-            input_data,
-            tmp_log_path,
-            "session-no-prog",
-            lifecycle,
-            lifecycle_ctx,
-        )
-
-        # Review should NOT have been called
-        assert not review_called
-        # Should break without retry
-        assert result.should_break is True
-        assert result.pending_query is None
-        # Should emit skip event
-        event_names = [e[0] for e in fake_sink.events]
-        assert "on_review_skipped_no_progress" in event_names
 
 
 class TestSessionRestartLoop:
@@ -4625,6 +3668,7 @@ class TestSessionRestartLoop:
             review_enabled=False,
             context_restart_threshold=0.90,
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         runner = AgentSessionRunner(
@@ -4715,6 +3759,7 @@ class TestSessionRestartLoop:
             review_enabled=False,
             context_restart_threshold=0.90,
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         runner = AgentSessionRunner(
@@ -4812,6 +3857,7 @@ class TestSessionRestartLoop:
             review_enabled=False,
             context_restart_threshold=0.90,
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         runner = AgentSessionRunner(
@@ -4890,6 +3936,7 @@ class TestSessionRestartLoop:
             review_enabled=False,
             context_restart_threshold=0.90,
             context_limit=200_000,
+            mcp_server_factory=make_noop_mcp_factory(),
         )
 
         runner = AgentSessionRunner(

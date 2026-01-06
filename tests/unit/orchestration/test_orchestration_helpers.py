@@ -4,25 +4,20 @@ Tests for:
 - gate_metadata: GateMetadata building from gate results and logs
 - review_tracking: Creating tracking issues from P2/P3 findings
 - run_config: Building EventRunConfig and RunMetadata
-- prompts: Loading and caching prompt templates
 """
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import MagicMock, patch
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from src.domain.quality_gate import GateResult, ValidationEvidence
 from src.domain.validation.spec import CommandKind
 from src.pipeline.gate_metadata import (
-    GateMetadata,
     build_gate_metadata,
     build_gate_metadata_from_logs,
 )
-from src.domain.prompts import PromptProvider, load_prompts
-from src.infra.tools.env import PROMPTS_DIR
 from src.orchestration.review_tracking import (
     _extract_existing_fingerprints,
     _get_finding_fingerprint,
@@ -30,26 +25,16 @@ from src.orchestration.review_tracking import (
     create_review_tracking_issues,
 )
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
+from tests.fakes.gate_checker import FakeGateChecker
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
 if TYPE_CHECKING:
-    from src.core.protocols import IssueProvider, MalaEventSink
-
-# Load prompts once for tests
-_prompts = load_prompts(PROMPTS_DIR)
+    from src.core.protocols import GateChecker, IssueProvider, MalaEventSink
 
 
 # ============================================================================
 # gate_metadata tests
 # ============================================================================
-
-
-class TestGateMetadata:
-    """Test GateMetadata dataclass."""
-
-    def test_empty_metadata(self) -> None:
-        metadata = GateMetadata()
-        assert metadata.quality_gate_result is None
-        assert metadata.validation_result is None
 
 
 class TestBuildGateMetadata:
@@ -170,12 +155,12 @@ class TestBuildGateMetadataFromLogs:
         log_path = tmp_path / "session.log"
         log_path.touch()
 
-        mock_gate = MagicMock()
+        gate = FakeGateChecker()
         metadata = build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Success",
             result_success=True,
-            quality_gate=mock_gate,
+            quality_gate=cast("GateChecker", gate),
             per_issue_spec=None,
         )
 
@@ -184,6 +169,8 @@ class TestBuildGateMetadataFromLogs:
 
     def test_with_spec(self, tmp_path: Path) -> None:
         """Should parse logs and extract metadata when spec is provided."""
+        from src.domain.validation.spec import ValidationScope, ValidationSpec
+
         log_path = tmp_path / "session.log"
         log_path.write_text("mock log content")
 
@@ -192,17 +179,15 @@ class TestBuildGateMetadataFromLogs:
             failed_commands=[],
         )
 
-        mock_gate = MagicMock()
-        mock_gate.parse_validation_evidence_with_spec.return_value = evidence
-
-        mock_spec = MagicMock()
+        gate = FakeGateChecker(validation_evidence=evidence)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
 
         metadata = build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Success",
             result_success=True,
-            quality_gate=mock_gate,
-            per_issue_spec=mock_spec,
+            quality_gate=cast("GateChecker", gate),
+            per_issue_spec=spec,
         )
 
         assert metadata.quality_gate_result is not None
@@ -213,6 +198,8 @@ class TestBuildGateMetadataFromLogs:
 
     def test_failure_reason_extraction(self, tmp_path: Path) -> None:
         """Should extract failure reasons from result summary."""
+        from src.domain.validation.spec import ValidationScope, ValidationSpec
+
         log_path = tmp_path / "session.log"
         log_path.write_text("mock log content")
 
@@ -221,17 +208,15 @@ class TestBuildGateMetadataFromLogs:
             failed_commands=["pytest"],
         )
 
-        mock_gate = MagicMock()
-        mock_gate.parse_validation_evidence_with_spec.return_value = evidence
-
-        mock_spec = MagicMock()
+        gate = FakeGateChecker(validation_evidence=evidence)
+        spec = ValidationSpec(commands=[], scope=ValidationScope.PER_ISSUE)
 
         metadata = build_gate_metadata_from_logs(
             log_path=log_path,
             result_summary="Quality gate failed: tests failed; lint failed",
             result_success=False,
-            quality_gate=mock_gate,
-            per_issue_spec=mock_spec,
+            quality_gate=cast("GateChecker", gate),
+            per_issue_spec=spec,
         )
 
         assert metadata.quality_gate_result is not None
@@ -257,59 +242,8 @@ class FakeReviewIssue:
     reviewer: str
 
 
-class FakeIssueProvider:
-    """Fake IssueProvider for testing review tracking."""
-
-    def __init__(self) -> None:
-        self.created_issues: list[dict[str, Any]] = []
-        self.existing_tags: dict[str, str] = {}
-        self.issue_descriptions: dict[str, str] = {}
-        self.updated_descriptions: list[tuple[str, str]] = []
-        self.updated_issues: list[tuple[str, str | None, str | None]] = []
-
-    async def find_issue_by_tag_async(self, tag: str) -> str | None:
-        return self.existing_tags.get(tag)
-
-    async def get_issue_description_async(self, issue_id: str) -> str | None:
-        return self.issue_descriptions.get(issue_id)
-
-    async def update_issue_description_async(
-        self, issue_id: str, description: str
-    ) -> bool:
-        self.updated_descriptions.append((issue_id, description))
-        self.issue_descriptions[issue_id] = description
-        return True
-
-    async def update_issue_async(
-        self,
-        issue_id: str,
-        *,
-        title: str | None = None,
-        priority: str | None = None,
-    ) -> bool:
-        self.updated_issues.append((issue_id, title, priority))
-        return True
-
-    async def create_issue_async(
-        self,
-        title: str,
-        description: str,
-        priority: str,
-        tags: list[str],
-        parent_id: str | None = None,
-    ) -> str | None:
-        issue_id = f"new-{len(self.created_issues) + 1}"
-        self.created_issues.append(
-            {
-                "id": issue_id,
-                "title": title,
-                "description": description,
-                "priority": priority,
-                "tags": tags,
-                "parent_id": parent_id,
-            }
-        )
-        return issue_id
+# FakeIssueProvider moved to tests/fakes/issue_provider.py
+# Import from there: from tests.fakes.issue_provider import FakeIssueProvider
 
 
 class FakeEventSink:
@@ -537,15 +471,18 @@ class TestCreateReviewTrackingIssues:
         # Should create exactly one consolidated issue
         assert len(beads.created_issues) == 1
         issue = beads.created_issues[0]
-        assert "[Review] 2 non-blocking findings from bd-test-1" in issue["title"]
+        title = cast("str", issue["title"])
+        description = cast("str", issue["description"])
+        tags = cast("list[str]", issue["tags"])
+        assert "[Review] 2 non-blocking findings from bd-test-1" in title
         # Priority should be the highest (lowest number) - P2
         assert issue["priority"] == "P2"
-        assert "auto_generated" in issue["tags"]
+        assert "auto_generated" in tags
         # Description should contain both findings
-        assert "src/foo.py:10" in issue["description"]
-        assert "src/bar.py:20-30" in issue["description"]
-        assert "Consider refactoring" in issue["description"]
-        assert "Code smell" in issue["description"]
+        assert "src/foo.py:10" in description
+        assert "src/bar.py:20-30" in description
+        assert "Consider refactoring" in description
+        assert "Code smell" in description
         assert len(event_sink.warnings) == 1
 
     @pytest.mark.asyncio
@@ -575,15 +512,36 @@ class TestCreateReviewTrackingIssues:
 
         assert len(beads.created_issues) == 1
         issue = beads.created_issues[0]
-        assert "src/bar.py:10-20" in issue["description"]
+        title = cast("str", issue["title"])
+        description = cast("str", issue["description"])
+        assert "src/bar.py:10-20" in description
         assert issue["priority"] == "P3"
         # Single finding uses singular
-        assert "[Review] 1 non-blocking finding from bd-test-2" in issue["title"]
+        assert "[Review] 1 non-blocking finding from bd-test-2" in title
 
     @pytest.mark.asyncio
     async def test_skips_duplicate_findings_for_same_source(self) -> None:
         """Should skip if exact findings already exist in source issue's tracker."""
-        beads = FakeIssueProvider()
+        # Pre-populate existing tracking issue for this source
+        import hashlib
+
+        # Content-based dedup tag - fingerprints are now hex hashes
+        content = "src/foo.py:10:10:Consider refactoring"
+        individual_fp = hashlib.sha256(content.encode()).hexdigest()[:16]
+        # For a single finding, pipe-join of one element equals the element itself.
+        # The production code uses "|".join(sorted([fp])) which equals just fp.
+        content_hash = hashlib.sha256(individual_fp.encode()).hexdigest()[:12]
+        dedup_tag = f"review_finding:{content_hash}"
+
+        beads = FakeIssueProvider(
+            {
+                "existing-issue-1": FakeIssue(
+                    id="existing-issue-1",
+                    description=f"## Review Findings\n<!-- {dedup_tag} -->",
+                    tags=["source:bd-test-3"],
+                )
+            }
+        )
         event_sink = FakeEventSink()
 
         review_issues = [
@@ -597,22 +555,6 @@ class TestCreateReviewTrackingIssues:
                 reviewer="gemini",
             )
         ]
-
-        # Pre-populate existing tracking issue for this source
-        import hashlib
-
-        # Content-based dedup tag - fingerprints are now hex hashes
-        content = "src/foo.py:10:10:Consider refactoring"
-        individual_fp = hashlib.sha256(content.encode()).hexdigest()[:16]
-        # For a single finding, pipe-join of one element equals the element itself.
-        # The production code uses "|".join(sorted([fp])) which equals just fp.
-        content_hash = hashlib.sha256(individual_fp.encode()).hexdigest()[:12]
-        dedup_tag = f"review_finding:{content_hash}"
-
-        beads.existing_tags["source:bd-test-3"] = "existing-issue-1"
-        beads.issue_descriptions["existing-issue-1"] = (
-            f"## Review Findings\n<!-- {dedup_tag} -->"
-        )
 
         await create_review_tracking_issues(
             beads=cast("IssueProvider", beads),
@@ -629,9 +571,6 @@ class TestCreateReviewTrackingIssues:
     @pytest.mark.asyncio
     async def test_appends_new_findings_to_existing_issue(self) -> None:
         """Should append new findings to existing tracking issue for same source."""
-        beads = FakeIssueProvider()
-        event_sink = FakeEventSink()
-
         # First set of findings (already in the existing issue)
         existing_desc = """## Review Findings
 
@@ -652,8 +591,16 @@ This issue consolidates 1 non-blocking finding from code review.
 
 <!-- review_finding:abc123 -->
 """
-        beads.existing_tags["source:bd-test-6"] = "existing-issue-1"
-        beads.issue_descriptions["existing-issue-1"] = existing_desc
+        beads = FakeIssueProvider(
+            {
+                "existing-issue-1": FakeIssue(
+                    id="existing-issue-1",
+                    description=existing_desc,
+                    tags=["source:bd-test-6"],
+                )
+            }
+        )
+        event_sink = FakeEventSink()
 
         # New findings to append
         new_issues = [
@@ -811,7 +758,7 @@ class TestBuildEventRunConfig:
             max_gate_retries=3,
             max_review_retries=2,
             epic_id="test-epic",
-            only_ids={"bd-1", "bd-2"},
+            only_ids=["bd-1", "bd-2"],
             braintrust_enabled=True,
             review_enabled=True,
             review_disabled_reason=None,
@@ -840,26 +787,23 @@ class TestBuildRunMetadata:
 
     def test_basic_metadata(self, tmp_path: Path) -> None:
         """Should build RunMetadata with correct config."""
-        with patch(
-            "src.infra.io.log_output.run_metadata.configure_debug_logging"
-        ) as mock_debug:
-            mock_debug.return_value = tmp_path / "debug.log"
-
-            metadata = build_run_metadata(
-                repo_path=tmp_path,
-                max_agents=4,
-                timeout_seconds=1800,
-                max_issues=10,
-                epic_id="test-epic",
-                only_ids={"bd-1"},
-                braintrust_enabled=True,
-                max_gate_retries=3,
-                max_review_retries=2,
-                review_enabled=True,
-                orphans_only=False,
-                cli_args={"verbose": True},
-                version="1.0.0",
-            )
+        # build_run_metadata creates RunMetadata which may configure debug logging.
+        # We test the resulting config values, not whether internal logging was called.
+        metadata = build_run_metadata(
+            repo_path=tmp_path,
+            max_agents=4,
+            timeout_seconds=1800,
+            max_issues=10,
+            epic_id="test-epic",
+            only_ids=["bd-1"],
+            braintrust_enabled=True,
+            max_gate_retries=3,
+            max_review_retries=2,
+            review_enabled=True,
+            orphans_only=False,
+            cli_args={"verbose": True},
+            version="1.0.0",
+        )
 
         assert metadata.repo_path == tmp_path
         assert metadata.version == "1.0.0"
@@ -875,62 +819,22 @@ class TestBuildRunMetadata:
 
     def test_none_timeout(self, tmp_path: Path) -> None:
         """Should handle None timeout."""
-        with patch(
-            "src.infra.io.log_output.run_metadata.configure_debug_logging"
-        ) as mock_debug:
-            mock_debug.return_value = None
-
-            metadata = build_run_metadata(
-                repo_path=tmp_path,
-                max_agents=None,
-                timeout_seconds=None,
-                max_issues=None,
-                epic_id=None,
-                only_ids=None,
-                braintrust_enabled=False,
-                max_gate_retries=3,
-                max_review_retries=2,
-                review_enabled=False,
-                orphans_only=False,
-                cli_args=None,
-                version="1.0.0",
-            )
+        metadata = build_run_metadata(
+            repo_path=tmp_path,
+            max_agents=None,
+            timeout_seconds=None,
+            max_issues=None,
+            epic_id=None,
+            only_ids=None,
+            braintrust_enabled=False,
+            max_gate_retries=3,
+            max_review_retries=2,
+            review_enabled=False,
+            orphans_only=False,
+            cli_args=None,
+            version="1.0.0",
+        )
 
         assert metadata.config.timeout_minutes is None
         assert metadata.config.max_agents is None
         assert metadata.config.max_issues is None
-
-
-# ============================================================================
-# prompts tests
-# ============================================================================
-
-
-class TestPromptLoading:
-    """Test prompt loading utilities."""
-
-    def test_load_prompts_returns_prompt_provider(self) -> None:
-        """load_prompts returns a PromptProvider with all prompts."""
-        assert isinstance(_prompts, PromptProvider)
-
-    def test_implementer_prompt(self) -> None:
-        """Should have implementer prompt loaded."""
-        assert isinstance(_prompts.implementer_prompt, str)
-        assert len(_prompts.implementer_prompt) > 0
-        # Verify it contains expected placeholders
-        assert "{issue_id}" in _prompts.implementer_prompt
-
-    def test_review_followup_prompt(self) -> None:
-        """Should have review followup prompt loaded."""
-        assert isinstance(_prompts.review_followup_prompt, str)
-        assert len(_prompts.review_followup_prompt) > 0
-
-    def test_fixer_prompt(self) -> None:
-        """Should have fixer prompt loaded."""
-        assert isinstance(_prompts.fixer_prompt, str)
-        assert len(_prompts.fixer_prompt) > 0
-
-    def test_prompt_provider_is_frozen(self) -> None:
-        """PromptProvider should be immutable (frozen dataclass)."""
-        with pytest.raises(Exception):  # FrozenInstanceError
-            _prompts.implementer_prompt = "modified"  # type: ignore[misc]

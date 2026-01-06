@@ -1,658 +1,401 @@
-"""Unit tests for --wip flag prioritization logic and focus mode."""
+"""Unit tests for --wip flag prioritization logic and focus mode.
+
+Tests verify IssueManager methods which are the production logic for
+issue prioritization. FakeIssueProvider uses IssueManager internally,
+so testing IssueManager directly ensures production code is verified.
+
+This includes:
+- merge_wip_issues: Merging WIP issues fetched separately from bd list
+- filter_blocked_wip: Filtering out blocked in_progress issues
+- sort_issues: Sorting with prioritize_wip flag
+"""
 
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
-
-import pytest
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-    from pathlib import Path
-
-    from src.orchestration.orchestrator import MalaOrchestrator
-
-from src.infra.clients.beads_client import BeadsClient
 
 
-def make_subprocess_result(
-    returncode: int = 0, stdout: str = "", stderr: str = ""
-) -> object:
-    """Create a mock subprocess result."""
-    from subprocess import CompletedProcess
-
-    return CompletedProcess(
-        args=[],
-        returncode=returncode,
-        stdout=stdout,
-        stderr=stderr,
-    )
+from src.infra.issue_manager import IssueManager
 
 
-@pytest.fixture
-def orchestrator(
-    tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-) -> MalaOrchestrator:
-    """Create an orchestrator with a temporary repo path."""
-    return make_orchestrator(
-        repo_path=tmp_path,
-        max_agents=2,
-        timeout_minutes=1,
-        max_issues=5,
-    )
+class TestMergeWipIssues:
+    """Test IssueManager.merge_wip_issues - merging WIP into base issues.
+
+    This tests the logic used when BeadsClient fetches in_progress issues
+    separately via `bd list --status in_progress` and merges them with
+    ready issues from `bd ready`.
+    """
+
+    def test_merges_wip_issues_into_base(self) -> None:
+        """WIP issues should be appended to base list."""
+        base = [{"id": "open-1", "status": "open"}]
+        wip = [{"id": "wip-1", "status": "in_progress"}]
+
+        result = IssueManager.merge_wip_issues(base, wip)
+
+        assert len(result) == 2
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["open-1", "wip-1"]
+
+    def test_avoids_duplicate_wip_issues(self) -> None:
+        """WIP issues already in base should not be duplicated."""
+        base = [
+            {"id": "open-1", "status": "open"},
+            {"id": "wip-1", "status": "in_progress"},
+        ]
+        wip = [{"id": "wip-1", "status": "in_progress"}]
+
+        result = IssueManager.merge_wip_issues(base, wip)
+
+        assert len(result) == 2
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["open-1", "wip-1"]
+
+    def test_merges_multiple_wip_issues(self) -> None:
+        """Multiple WIP issues should all be merged."""
+        base = [{"id": "open-1", "status": "open"}]
+        wip = [
+            {"id": "wip-1", "status": "in_progress"},
+            {"id": "wip-2", "status": "in_progress"},
+        ]
+
+        result = IssueManager.merge_wip_issues(base, wip)
+
+        assert len(result) == 3
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["open-1", "wip-1", "wip-2"]
+
+    def test_handles_empty_base(self) -> None:
+        """WIP issues should work with empty base list."""
+        base: list[dict[str, object]] = []
+        wip = [{"id": "wip-1", "status": "in_progress"}]
+
+        result = IssueManager.merge_wip_issues(base, wip)
+
+        assert len(result) == 1
+        assert result[0]["id"] == "wip-1"
+
+    def test_handles_empty_wip(self) -> None:
+        """Empty WIP list should return base unchanged."""
+        base = [{"id": "open-1", "status": "open"}]
+        wip: list[dict[str, object]] = []
+
+        result = IssueManager.merge_wip_issues(base, wip)
+
+        assert len(result) == 1
+        assert result[0]["id"] == "open-1"
+
+
+class TestFilterBlockedWip:
+    """Test IssueManager.filter_blocked_wip - filtering blocked WIP issues.
+
+    This tests the logic used to exclude in_progress issues that are blocked.
+    Only in_progress issues with blocked_by are filtered; open issues are kept.
+    """
+
+    def test_filters_blocked_wip_issues(self) -> None:
+        """Blocked in_progress issues should be filtered out."""
+        issues = [
+            {"id": "open-1", "status": "open"},
+            {"id": "wip-blocked", "status": "in_progress", "blocked_by": "other-issue"},
+            {"id": "wip-ready", "status": "in_progress"},
+        ]
+
+        result = IssueManager.filter_blocked_wip(issues)
+
+        result_ids = [r["id"] for r in result]
+        assert "wip-blocked" not in result_ids
+        assert "wip-ready" in result_ids
+        assert "open-1" in result_ids
+
+    def test_keeps_open_issues_with_blocked_by(self) -> None:
+        """Open issues with blocked_by should NOT be filtered (only WIP)."""
+        issues = [
+            {"id": "open-blocked", "status": "open", "blocked_by": "other-issue"},
+            {"id": "wip-blocked", "status": "in_progress", "blocked_by": "other-issue"},
+        ]
+
+        result = IssueManager.filter_blocked_wip(issues)
+
+        result_ids = [r["id"] for r in result]
+        # Open issues are kept even if blocked (they're handled by bd ready)
+        assert "open-blocked" in result_ids
+        # But in_progress issues with blocked_by are filtered
+        assert "wip-blocked" not in result_ids
+
+    def test_handles_empty_blocked_by(self) -> None:
+        """Issues with empty blocked_by should not be filtered."""
+        issues = [
+            {"id": "wip-1", "status": "in_progress", "blocked_by": ""},
+            {"id": "wip-2", "status": "in_progress", "blocked_by": None},
+        ]
+
+        result = IssueManager.filter_blocked_wip(issues)
+
+        # Empty/None blocked_by is falsy, so issues are kept
+        assert len(result) == 2
 
 
 class TestPrioritizeWipFlag:
-    """Test --wip flag prioritization in get_ready_async."""
+    """Test --wip flag prioritization via IssueManager.sort_issues.
 
-    @pytest.mark.asyncio
-    async def test_prioritize_wip_sorts_in_progress_first(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
+    These tests verify the production sort_issues logic directly, ensuring
+    that prioritize_wip correctly puts in_progress issues before open ones.
+    """
+
+    def test_prioritize_wip_sorts_in_progress_first(self) -> None:
         """When prioritize_wip=True, in_progress issues should come before open."""
-        issues_json = json.dumps(
-            [
-                {"id": "open-1", "priority": 1, "status": "open", "issue_type": "task"},
-                {
-                    "id": "wip-1",
-                    "priority": 2,
-                    "status": "in_progress",
-                    "issue_type": "task",
-                },
-                {"id": "open-2", "priority": 3, "status": "open", "issue_type": "task"},
-            ]
-        )
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout=issues_json),
-        ):
-            result = await orchestrator.beads.get_ready_async(prioritize_wip=True)
+        issues = [
+            {"id": "open-1", "priority": 1, "status": "open"},
+            {"id": "wip-1", "priority": 2, "status": "in_progress"},
+            {"id": "open-2", "priority": 3, "status": "open"},
+        ]
+
+        result = IssueManager.sort_issues(issues, focus=False, prioritize_wip=True)
 
         # in_progress should come first, then open sorted by priority
-        assert result == ["wip-1", "open-1", "open-2"]
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["wip-1", "open-1", "open-2"]
 
-    @pytest.mark.asyncio
-    async def test_prioritize_wip_false_uses_priority_only(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
-        """When prioritize_wip=False (default), sort by priority only."""
-        issues_json = json.dumps(
-            [
-                {
-                    "id": "wip-1",
-                    "priority": 3,
-                    "status": "in_progress",
-                    "issue_type": "task",
-                },
-                {"id": "open-1", "priority": 1, "status": "open", "issue_type": "task"},
-                {"id": "open-2", "priority": 2, "status": "open", "issue_type": "task"},
-            ]
-        )
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout=issues_json),
-        ):
-            result = await orchestrator.beads.get_ready_async(prioritize_wip=False)
+    def test_prioritize_wip_false_uses_priority_only(self) -> None:
+        """When prioritize_wip=False, sort by priority only (WIP issues still sorted)."""
+        issues = [
+            {"id": "wip-1", "priority": 3, "status": "in_progress"},
+            {"id": "open-1", "priority": 1, "status": "open"},
+            {"id": "open-2", "priority": 2, "status": "open"},
+        ]
 
-        # Should sort by priority only: 1, 2, 3
-        assert result == ["open-1", "open-2", "wip-1"]
+        result = IssueManager.sort_issues(issues, focus=False, prioritize_wip=False)
 
-    @pytest.mark.asyncio
-    async def test_prioritize_wip_respects_priority_within_status(
-        self, orchestrator: MalaOrchestrator
-    ) -> None:
+        # Without prioritize_wip, sort purely by priority (all issues remain)
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["open-1", "open-2", "wip-1"]
+
+    def test_prioritize_wip_respects_priority_within_status(self) -> None:
         """Within each status group, issues should still be sorted by priority."""
-        issues_json = json.dumps(
-            [
-                {
-                    "id": "wip-high",
-                    "priority": 1,
-                    "status": "in_progress",
-                    "issue_type": "task",
-                },
-                {
-                    "id": "wip-low",
-                    "priority": 3,
-                    "status": "in_progress",
-                    "issue_type": "task",
-                },
-                {
-                    "id": "open-high",
-                    "priority": 1,
-                    "status": "open",
-                    "issue_type": "task",
-                },
-                {
-                    "id": "open-low",
-                    "priority": 2,
-                    "status": "open",
-                    "issue_type": "task",
-                },
-            ]
-        )
-        with patch.object(
-            orchestrator.beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout=issues_json),
-        ):
-            result = await orchestrator.beads.get_ready_async(prioritize_wip=True)
+        issues = [
+            {"id": "wip-low", "priority": 3, "status": "in_progress"},
+            {"id": "wip-high", "priority": 1, "status": "in_progress"},
+            {"id": "open-low", "priority": 2, "status": "open"},
+            {"id": "open-high", "priority": 1, "status": "open"},
+        ]
+
+        result = IssueManager.sort_issues(issues, focus=False, prioritize_wip=True)
 
         # in_progress first (sorted by priority), then open (sorted by priority)
-        assert result == ["wip-high", "wip-low", "open-high", "open-low"]
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["wip-high", "wip-low", "open-high", "open-low"]
 
-    @pytest.mark.asyncio
-    async def test_prioritize_wip_default_is_false(self, tmp_path: Path) -> None:
-        """Default behavior should not prioritize in_progress issues."""
-        beads = BeadsClient(tmp_path)
-        issues_json = json.dumps(
-            [
-                {
-                    "id": "wip-1",
-                    "priority": 3,
-                    "status": "in_progress",
-                    "issue_type": "task",
-                },
-                {"id": "open-1", "priority": 1, "status": "open", "issue_type": "task"},
-            ]
-        )
-        with patch.object(
-            beads,
-            "_run_subprocess_async",
-            new_callable=AsyncMock,
-            return_value=make_subprocess_result(stdout=issues_json),
-        ):
-            # Don't pass prioritize_wip - should default to False
-            result = await beads.get_ready_async()
+    def test_prioritize_wip_false_preserves_all_issues(self) -> None:
+        """Without prioritize_wip, all issues are sorted by priority regardless of status."""
+        issues = [
+            {"id": "wip-1", "priority": 2, "status": "in_progress"},
+            {"id": "open-1", "priority": 1, "status": "open"},
+        ]
 
-        # Should sort by priority only (default behavior)
-        assert result == ["open-1", "wip-1"]
+        result = IssueManager.sort_issues(issues, focus=False, prioritize_wip=False)
 
-
-class TestWipFetchWorkaround:
-    """Test that in_progress issues are fetched separately from bd ready."""
-
-    @pytest.mark.asyncio
-    async def test_fetches_wip_issues_separately(self, tmp_path: Path) -> None:
-        """in_progress issues should be fetched via bd list when not in bd ready."""
-        beads = BeadsClient(tmp_path)
-
-        # bd ready returns only open issues (simulating the bd bug)
-        ready_json = json.dumps(
-            [{"id": "open-1", "priority": 1, "status": "open", "issue_type": "task"}]
-        )
-        # bd list --status in_progress returns WIP issues
-        wip_json = json.dumps(
-            [
-                {
-                    "id": "wip-1",
-                    "priority": 2,
-                    "status": "in_progress",
-                    "issue_type": "task",
-                    "blocked_by": None,
-                }
-            ]
-        )
-
-        async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json", "-t", "task"]:
-                return make_subprocess_result(stdout=ready_json)
-            elif cmd == [
-                "bd",
-                "list",
-                "--status",
-                "in_progress",
-                "--json",
-                "-t",
-                "task",
-            ]:
-                return make_subprocess_result(stdout=wip_json)
-            return make_subprocess_result(returncode=1)
-
-        with patch.object(beads, "_run_subprocess_async", side_effect=mock_subprocess):
-            result = await beads.get_ready_async(prioritize_wip=True)
-
-        # WIP issue should be included and come first
-        assert result == ["wip-1", "open-1"]
-
-    @pytest.mark.asyncio
-    async def test_excludes_blocked_wip_issues(self, tmp_path: Path) -> None:
-        """Blocked in_progress issues should not be included."""
-        beads = BeadsClient(tmp_path)
-
-        ready_json = json.dumps(
-            [{"id": "open-1", "priority": 1, "status": "open", "issue_type": "task"}]
-        )
-        wip_json = json.dumps(
-            [
-                {
-                    "id": "wip-blocked",
-                    "priority": 2,
-                    "status": "in_progress",
-                    "issue_type": "task",
-                    "blocked_by": ["some-blocker"],
-                }
-            ]
-        )
-
-        async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json", "-t", "task"]:
-                return make_subprocess_result(stdout=ready_json)
-            elif cmd == [
-                "bd",
-                "list",
-                "--status",
-                "in_progress",
-                "--json",
-                "-t",
-                "task",
-            ]:
-                return make_subprocess_result(stdout=wip_json)
-            return make_subprocess_result(returncode=1)
-
-        with patch.object(beads, "_run_subprocess_async", side_effect=mock_subprocess):
-            result = await beads.get_ready_async(prioritize_wip=True)
-
-        # Blocked WIP issue should NOT be included
-        assert result == ["open-1"]
-
-
-class TestOrchestratorPrioritizeWip:
-    """Test orchestrator stores and uses prioritize_wip flag."""
-
-    def test_orchestrator_stores_prioritize_wip(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """Orchestrator should store prioritize_wip parameter."""
-        orch = make_orchestrator(repo_path=tmp_path, prioritize_wip=True)
-        assert orch.prioritize_wip is True
-
-    def test_orchestrator_default_prioritize_wip_is_false(
-        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
-    ) -> None:
-        """Default prioritize_wip should be False."""
-        orch = make_orchestrator(repo_path=tmp_path)
-        assert orch.prioritize_wip is False
+        # Without prioritize_wip, just sort by priority - all issues included
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["open-1", "wip-1"]
 
 
 class TestFocusModeEpicGrouping:
-    """Test focus mode epic-grouped ordering in get_ready_async."""
+    """Test focus mode epic-grouped ordering via IssueManager.
 
-    @pytest.mark.asyncio
-    async def test_focus_groups_tasks_by_epic(self, tmp_path: Path) -> None:
+    These tests verify the production sort_by_epic_groups logic directly.
+    """
+
+    def test_focus_groups_tasks_by_epic(self) -> None:
         """When focus=True, tasks should be grouped by parent epic."""
-        beads = BeadsClient(tmp_path)
-        issues_json = json.dumps(
-            [
-                {
-                    "id": "task-a1",
-                    "priority": 2,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-                {
-                    "id": "task-b1",
-                    "priority": 1,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-                {
-                    "id": "task-a2",
-                    "priority": 1,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-            ]
-        )
+        issues = [
+            {
+                "id": "task-a1",
+                "priority": 2,
+                "status": "open",
+                "parent_epic": "epic-a",
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+            {
+                "id": "task-b1",
+                "priority": 1,
+                "status": "open",
+                "parent_epic": "epic-b",
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+            {
+                "id": "task-a2",
+                "priority": 1,
+                "status": "open",
+                "parent_epic": "epic-a",
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+        ]
 
-        async def mock_get_parent_epics(issue_ids: list[str]) -> dict[str, str | None]:
-            return {
-                "task-a1": "epic-a",
-                "task-a2": "epic-a",
-                "task-b1": "epic-b",
-            }
-
-        async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json", "-t", "task"]:
-                return make_subprocess_result(stdout=issues_json)
-            return make_subprocess_result(returncode=1)
-
-        with (
-            patch.object(beads, "_run_subprocess_async", side_effect=mock_subprocess),
-            patch.object(
-                beads, "get_parent_epics_async", side_effect=mock_get_parent_epics
-            ),
-        ):
-            result = await beads.get_ready_async(focus=True)
+        result = IssueManager.sort_issues(issues, focus=True, prioritize_wip=False)
 
         # epic-a has min_priority=1 (task-a2), epic-b has min_priority=1 (task-b1)
-        # Tie broken by max_updated (same here), so stable order
         # Within epic-a: task-a2 (P1) before task-a1 (P2)
-        # Epic-a comes first because task-a2 is P1 (equal to epic-b's P1)
-        # but epic-a should come first due to grouping preserving order
-        assert result == ["task-a2", "task-a1", "task-b1"]
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["task-a2", "task-a1", "task-b1"]
 
-    @pytest.mark.asyncio
-    async def test_focus_false_uses_priority_only(self, tmp_path: Path) -> None:
+    def test_focus_false_uses_priority_only(self) -> None:
         """When focus=False, tasks should be interleaved by priority."""
-        beads = BeadsClient(tmp_path)
-        issues_json = json.dumps(
-            [
-                {
-                    "id": "task-a1",
-                    "priority": 2,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-                {
-                    "id": "task-b1",
-                    "priority": 1,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-                {
-                    "id": "task-a2",
-                    "priority": 3,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-            ]
-        )
+        issues = [
+            {
+                "id": "task-a1",
+                "priority": 2,
+                "status": "open",
+                "parent_epic": "epic-a",
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+            {
+                "id": "task-b1",
+                "priority": 1,
+                "status": "open",
+                "parent_epic": "epic-b",
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+            {
+                "id": "task-a2",
+                "priority": 3,
+                "status": "open",
+                "parent_epic": "epic-a",
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+        ]
 
-        async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json", "-t", "task"]:
-                return make_subprocess_result(stdout=issues_json)
-            return make_subprocess_result(returncode=1)
-
-        with patch.object(beads, "_run_subprocess_async", side_effect=mock_subprocess):
-            result = await beads.get_ready_async(focus=False)
+        result = IssueManager.sort_issues(issues, focus=False, prioritize_wip=False)
 
         # Should sort by priority only: P1, P2, P3
-        assert result == ["task-b1", "task-a1", "task-a2"]
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["task-b1", "task-a1", "task-a2"]
 
-    @pytest.mark.asyncio
-    async def test_focus_orphan_tasks_form_virtual_group(self, tmp_path: Path) -> None:
+    def test_focus_orphan_tasks_form_virtual_group(self) -> None:
         """Orphan tasks (no parent epic) should form their own virtual group."""
-        beads = BeadsClient(tmp_path)
-        issues_json = json.dumps(
-            [
-                {
-                    "id": "orphan-1",
-                    "priority": 3,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-                {
-                    "id": "task-a1",
-                    "priority": 2,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-                {
-                    "id": "orphan-2",
-                    "priority": 1,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-            ]
-        )
+        issues = [
+            {
+                "id": "orphan-1",
+                "priority": 3,
+                "status": "open",
+                "parent_epic": None,
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+            {
+                "id": "task-a1",
+                "priority": 2,
+                "status": "open",
+                "parent_epic": "epic-a",
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+            {
+                "id": "orphan-2",
+                "priority": 1,
+                "status": "open",
+                "parent_epic": None,
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+        ]
 
-        async def mock_get_parent_epics(issue_ids: list[str]) -> dict[str, str | None]:
-            return {
-                "orphan-1": None,
-                "orphan-2": None,
-                "task-a1": "epic-a",
-            }
-
-        async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json", "-t", "task"]:
-                return make_subprocess_result(stdout=issues_json)
-            return make_subprocess_result(returncode=1)
-
-        with (
-            patch.object(beads, "_run_subprocess_async", side_effect=mock_subprocess),
-            patch.object(
-                beads, "get_parent_epics_async", side_effect=mock_get_parent_epics
-            ),
-        ):
-            result = await beads.get_ready_async(focus=True)
+        result = IssueManager.sort_issues(issues, focus=True, prioritize_wip=False)
 
         # Orphan group has min_priority=1 (orphan-2), epic-a has min_priority=2
         # Orphan group comes first, sorted by priority: orphan-2 (P1), orphan-1 (P3)
         # Then epic-a group: task-a1 (P2)
-        assert result == ["orphan-2", "orphan-1", "task-a1"]
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["orphan-2", "orphan-1", "task-a1"]
 
-    @pytest.mark.asyncio
-    async def test_focus_tiebreaker_uses_updated_at(self, tmp_path: Path) -> None:
+    def test_focus_tiebreaker_uses_updated_at(self) -> None:
         """Equal-priority groups should be ordered by most recently updated."""
-        beads = BeadsClient(tmp_path)
-        issues_json = json.dumps(
-            [
-                {
-                    "id": "task-a1",
-                    "priority": 1,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-                {
-                    "id": "task-b1",
-                    "priority": 1,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-02T10:00:00Z",
-                },
-            ]
-        )
+        issues = [
+            {
+                "id": "task-a1",
+                "priority": 1,
+                "status": "open",
+                "parent_epic": "epic-a",
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+            {
+                "id": "task-b1",
+                "priority": 1,
+                "status": "open",
+                "parent_epic": "epic-b",
+                "updated_at": "2025-01-02T10:00:00Z",
+            },
+        ]
 
-        async def mock_get_parent_epics(issue_ids: list[str]) -> dict[str, str | None]:
-            return {
-                "task-a1": "epic-a",
-                "task-b1": "epic-b",
-            }
-
-        async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json", "-t", "task"]:
-                return make_subprocess_result(stdout=issues_json)
-            return make_subprocess_result(returncode=1)
-
-        with (
-            patch.object(beads, "_run_subprocess_async", side_effect=mock_subprocess),
-            patch.object(
-                beads, "get_parent_epics_async", side_effect=mock_get_parent_epics
-            ),
-        ):
-            result = await beads.get_ready_async(focus=True)
+        result = IssueManager.sort_issues(issues, focus=True, prioritize_wip=False)
 
         # Both epics have P1, but epic-b updated more recently (2025-01-02)
         # So epic-b should come first
-        assert result == ["task-b1", "task-a1"]
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["task-b1", "task-a1"]
 
-    @pytest.mark.asyncio
-    async def test_focus_with_prioritize_wip(self, tmp_path: Path) -> None:
+    def test_focus_with_prioritize_wip(self) -> None:
         """WIP prioritization should still move in_progress to front globally."""
-        beads = BeadsClient(tmp_path)
-        # bd ready returns only open issues
-        ready_json = json.dumps(
-            [
-                {
-                    "id": "task-a1",
-                    "priority": 1,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-                {
-                    "id": "task-b1",
-                    "priority": 2,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-            ]
-        )
-        # bd list --status in_progress returns WIP issues
-        wip_json = json.dumps(
-            [
-                {
-                    "id": "task-b2",
-                    "priority": 3,
-                    "status": "in_progress",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                    "blocked_by": None,
-                }
-            ]
-        )
+        issues = [
+            {
+                "id": "task-a1",
+                "priority": 1,
+                "status": "open",
+                "parent_epic": "epic-a",
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+            {
+                "id": "task-b1",
+                "priority": 2,
+                "status": "open",
+                "parent_epic": "epic-b",
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+            {
+                "id": "task-b2",
+                "priority": 3,
+                "status": "in_progress",
+                "parent_epic": "epic-b",
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+        ]
 
-        async def mock_get_parent_epics(issue_ids: list[str]) -> dict[str, str | None]:
-            return {
-                "task-a1": "epic-a",
-                "task-b1": "epic-b",
-                "task-b2": "epic-b",
-            }
-
-        async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json", "-t", "task"]:
-                return make_subprocess_result(stdout=ready_json)
-            elif cmd == [
-                "bd",
-                "list",
-                "--status",
-                "in_progress",
-                "--json",
-                "-t",
-                "task",
-            ]:
-                return make_subprocess_result(stdout=wip_json)
-            return make_subprocess_result(returncode=1)
-
-        with (
-            patch.object(beads, "_run_subprocess_async", side_effect=mock_subprocess),
-            patch.object(
-                beads, "get_parent_epics_async", side_effect=mock_get_parent_epics
-            ),
-        ):
-            result = await beads.get_ready_async(focus=True, prioritize_wip=True)
+        result = IssueManager.sort_issues(issues, focus=True, prioritize_wip=True)
 
         # WIP issue task-b2 should come first globally
         # Then remaining tasks grouped by epic:
         # epic-a (P1) before epic-b (P2 remaining after task-b2)
-        assert result[0] == "task-b2"
+        result_ids = [r["id"] for r in result]
+        assert result_ids[0] == "task-b2"
         # The rest should be epic-grouped: epic-a (task-a1) then epic-b (task-b1)
-        assert result == ["task-b2", "task-a1", "task-b1"]
+        assert result_ids == ["task-b2", "task-a1", "task-b1"]
 
-    @pytest.mark.asyncio
-    async def test_focus_default_is_true(self, tmp_path: Path) -> None:
-        """Default focus should be True."""
-        beads = BeadsClient(tmp_path)
-        issues_json = json.dumps(
-            [
-                {
-                    "id": "task-a1",
-                    "priority": 2,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-                {
-                    "id": "task-a2",
-                    "priority": 1,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-            ]
-        )
-
-        async def mock_get_parent_epics(issue_ids: list[str]) -> dict[str, str | None]:
-            return {"task-a1": "epic-a", "task-a2": "epic-a"}
-
-        async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json", "-t", "task"]:
-                return make_subprocess_result(stdout=issues_json)
-            return make_subprocess_result(returncode=1)
-
-        with (
-            patch.object(beads, "_run_subprocess_async", side_effect=mock_subprocess),
-            patch.object(
-                beads, "get_parent_epics_async", side_effect=mock_get_parent_epics
-            ),
-        ):
-            # Don't pass focus - should default to True and use epic grouping
-            result = await beads.get_ready_async()
-
-        # Tasks grouped by epic, sorted by priority within
-        assert result == ["task-a2", "task-a1"]
-
-    @pytest.mark.asyncio
-    async def test_focus_within_group_sorts_by_priority_then_updated(
-        self, tmp_path: Path
-    ) -> None:
+    def test_focus_within_group_sorts_by_priority_then_updated(self) -> None:
         """Within an epic group, tasks should sort by priority then updated DESC."""
-        beads = BeadsClient(tmp_path)
-        issues_json = json.dumps(
-            [
-                {
-                    "id": "task-a1",
-                    "priority": 1,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-01T10:00:00Z",
-                },
-                {
-                    "id": "task-a2",
-                    "priority": 1,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-02T10:00:00Z",
-                },
-                {
-                    "id": "task-a3",
-                    "priority": 2,
-                    "status": "open",
-                    "issue_type": "task",
-                    "updated_at": "2025-01-03T10:00:00Z",
-                },
-            ]
-        )
+        issues = [
+            {
+                "id": "task-a1",
+                "priority": 1,
+                "status": "open",
+                "parent_epic": "epic-a",
+                "updated_at": "2025-01-01T10:00:00Z",
+            },
+            {
+                "id": "task-a2",
+                "priority": 1,
+                "status": "open",
+                "parent_epic": "epic-a",
+                "updated_at": "2025-01-02T10:00:00Z",
+            },
+            {
+                "id": "task-a3",
+                "priority": 2,
+                "status": "open",
+                "parent_epic": "epic-a",
+                "updated_at": "2025-01-03T10:00:00Z",
+            },
+        ]
 
-        async def mock_get_parent_epics(issue_ids: list[str]) -> dict[str, str | None]:
-            return {
-                "task-a1": "epic-a",
-                "task-a2": "epic-a",
-                "task-a3": "epic-a",
-            }
-
-        async def mock_subprocess(cmd: list[str]) -> object:
-            if cmd == ["bd", "ready", "--json", "-t", "task"]:
-                return make_subprocess_result(stdout=issues_json)
-            return make_subprocess_result(returncode=1)
-
-        with (
-            patch.object(beads, "_run_subprocess_async", side_effect=mock_subprocess),
-            patch.object(
-                beads, "get_parent_epics_async", side_effect=mock_get_parent_epics
-            ),
-        ):
-            result = await beads.get_ready_async(focus=True)
+        result = IssueManager.sort_issues(issues, focus=True, prioritize_wip=False)
 
         # All in same epic, sorted by (priority, updated DESC)
         # P1 tasks first: task-a2 (2025-01-02) before task-a1 (2025-01-01)
         # Then P2: task-a3
-        assert result == ["task-a2", "task-a1", "task-a3"]
+        result_ids = [r["id"] for r in result]
+        assert result_ids == ["task-a2", "task-a1", "task-a3"]

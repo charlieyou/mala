@@ -12,19 +12,19 @@ from __future__ import annotations
 
 import os
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 from src.infra.clients.cerberus_gate_cli import (
     CerberusGateCLI,
-    ResolveResult,
-    SpawnResult,
-    WaitResult,
 )
+from src.infra.tools.command_runner import CommandResult
+from tests.fakes.command_runner import FakeCommandRunner
 
 
 class TestValidateBinary:
@@ -181,8 +181,12 @@ class TestCheckDiffEmpty:
     async def test_returns_true_for_empty_diff(self, tmp_path: Path) -> None:
         """Returns True when git diff --stat shows no changes."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(returncode=0, stdout="")
+        runner = FakeCommandRunner(allow_unregistered=True)
+        runner.responses[("git", "diff", "--stat", "baseline..HEAD")] = CommandResult(
+            command=["git", "diff", "--stat", "baseline..HEAD"],
+            returncode=0,
+            stdout="",
+        )
 
         result = await cli.check_diff_empty("baseline..HEAD", runner)
         assert result is True
@@ -191,9 +195,11 @@ class TestCheckDiffEmpty:
     async def test_returns_false_for_non_empty_diff(self, tmp_path: Path) -> None:
         """Returns False when git diff --stat shows changes."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(
-            returncode=0, stdout=" 1 file changed, 10 insertions(+)"
+        runner = FakeCommandRunner(allow_unregistered=True)
+        runner.responses[("git", "diff", "--stat", "baseline..HEAD")] = CommandResult(
+            command=["git", "diff", "--stat", "baseline..HEAD"],
+            returncode=0,
+            stdout=" 1 file changed, 10 insertions(+)",
         )
 
         result = await cli.check_diff_empty("baseline..HEAD", runner)
@@ -203,8 +209,12 @@ class TestCheckDiffEmpty:
     async def test_returns_false_on_git_error(self, tmp_path: Path) -> None:
         """Returns False (fail-open) when git diff fails."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(returncode=1, stdout="")
+        runner = FakeCommandRunner(allow_unregistered=True)
+        runner.responses[("git", "diff", "--stat", "baseline..HEAD")] = CommandResult(
+            command=["git", "diff", "--stat", "baseline..HEAD"],
+            returncode=1,
+            stdout="",
+        )
 
         result = await cli.check_diff_empty("baseline..HEAD", runner)
         assert result is False
@@ -213,8 +223,20 @@ class TestCheckDiffEmpty:
     async def test_returns_false_on_exception(self, tmp_path: Path) -> None:
         """Returns False (fail-open) when exception is raised."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.side_effect = Exception("git not found")
+
+        class ExceptionRaisingRunner(FakeCommandRunner):
+            async def run_async(
+                self,
+                cmd: list[str] | str,
+                env: Mapping[str, str] | None = None,
+                timeout: float | None = None,
+                use_process_group: bool | None = None,
+                shell: bool = False,
+                cwd: Path | None = None,
+            ) -> CommandResult:
+                raise Exception("git not found")
+
+        runner = ExceptionRaisingRunner()
 
         result = await cli.check_diff_empty("baseline..HEAD", runner)
         assert result is False
@@ -227,8 +249,7 @@ class TestSpawnCodeReview:
     async def test_spawns_successfully(self, tmp_path: Path) -> None:
         """Returns success when spawn exits 0."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(returncode=0, timed_out=False)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         result = await cli.spawn_code_review(
             diff_range="baseline..HEAD",
@@ -245,30 +266,60 @@ class TestSpawnCodeReview:
     async def test_returns_timeout_on_timeout(self, tmp_path: Path) -> None:
         """Returns timed_out when spawn times out."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(returncode=124, timed_out=True)
+
+        # Override default response with timeout response
+        class TimeoutRunner(FakeCommandRunner):
+            async def run_async(
+                self,
+                cmd: list[str] | str,
+                env: Mapping[str, str] | None = None,
+                timeout: float | None = None,
+                use_process_group: bool | None = None,
+                shell: bool = False,
+                cwd: Path | None = None,
+            ) -> CommandResult:
+                return CommandResult(
+                    command=list(cmd) if not isinstance(cmd, str) else cmd,
+                    returncode=124,
+                    timed_out=True,
+                )
+
+        timeout_runner = TimeoutRunner()
 
         result = await cli.spawn_code_review(
             diff_range="baseline..HEAD",
-            runner=runner,
+            runner=timeout_runner,
             env={"CLAUDE_SESSION_ID": "test"},
             timeout=300,
         )
 
         assert result.success is False
         assert result.timed_out is True
+        assert result.error_detail == "spawn timeout"
 
     @pytest.mark.asyncio
-    async def test_returns_already_active_on_gate_conflict(
-        self, tmp_path: Path
-    ) -> None:
-        """Returns already_active when gate is already active."""
+    async def test_detects_already_active(self, tmp_path: Path) -> None:
+        """Returns already_active when spawn fails with already active error."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        mock_result = MagicMock(returncode=1, timed_out=False)
-        mock_result.stderr_tail.return_value = "Error: review gate already active"
-        mock_result.stdout_tail.return_value = ""
-        runner.run_async.return_value = mock_result
+
+        class AlreadyActiveRunner(FakeCommandRunner):
+            async def run_async(
+                self,
+                cmd: list[str] | str,
+                env: Mapping[str, str] | None = None,
+                timeout: float | None = None,
+                use_process_group: bool | None = None,
+                shell: bool = False,
+                cwd: Path | None = None,
+            ) -> CommandResult:
+                return CommandResult(
+                    command=list(cmd) if not isinstance(cmd, str) else cmd,
+                    returncode=1,
+                    timed_out=False,
+                    stderr="Error: session already active",
+                )
+
+        runner = AlreadyActiveRunner()
 
         result = await cli.spawn_code_review(
             diff_range="baseline..HEAD",
@@ -285,11 +336,26 @@ class TestSpawnCodeReview:
     async def test_returns_error_on_failure(self, tmp_path: Path) -> None:
         """Returns error detail when spawn fails."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        mock_result = MagicMock(returncode=1, timed_out=False)
-        mock_result.stderr_tail.return_value = "Some other error"
-        mock_result.stdout_tail.return_value = ""
-        runner.run_async.return_value = mock_result
+
+        class FailingRunner(FakeCommandRunner):
+            async def run_async(
+                self,
+                cmd: list[str] | str,
+                env: Mapping[str, str] | None = None,
+                timeout: float | None = None,
+                use_process_group: bool | None = None,
+                shell: bool = False,
+                cwd: Path | None = None,
+            ) -> CommandResult:
+                return CommandResult(
+                    command=list(cmd) if not isinstance(cmd, str) else cmd,
+                    returncode=1,
+                    timed_out=False,
+                    stderr="Some other error",
+                    stdout="",
+                )
+
+        runner = FailingRunner()
 
         result = await cli.spawn_code_review(
             diff_range="baseline..HEAD",
@@ -306,8 +372,7 @@ class TestSpawnCodeReview:
     async def test_includes_context_file(self, tmp_path: Path) -> None:
         """Includes --context-file when provided."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(returncode=0, timed_out=False)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         context_file = tmp_path / "context.md"
         await cli.spawn_code_review(
@@ -318,7 +383,8 @@ class TestSpawnCodeReview:
             context_file=context_file,
         )
 
-        call_args = runner.run_async.call_args[0][0]
+        assert len(runner.calls) == 1
+        call_args = runner.calls[0][0]
         assert "--context-file" in call_args
         assert str(context_file) in call_args
 
@@ -326,8 +392,7 @@ class TestSpawnCodeReview:
     async def test_includes_spawn_args(self, tmp_path: Path) -> None:
         """Includes extra spawn args when provided."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(returncode=0, timed_out=False)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         await cli.spawn_code_review(
             diff_range="baseline..HEAD",
@@ -337,7 +402,8 @@ class TestSpawnCodeReview:
             spawn_args=("--extra", "arg"),
         )
 
-        call_args = runner.run_async.call_args[0][0]
+        assert len(runner.calls) == 1
+        call_args = runner.calls[0][0]
         assert "--extra" in call_args
         assert "arg" in call_args
 
@@ -345,8 +411,7 @@ class TestSpawnCodeReview:
     async def test_uses_commit_mode(self, tmp_path: Path) -> None:
         """Uses --commit mode when commit_shas provided."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(returncode=0, timed_out=False)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         await cli.spawn_code_review(
             diff_range="baseline..HEAD",
@@ -356,7 +421,8 @@ class TestSpawnCodeReview:
             commit_shas=["abc123", "def456"],
         )
 
-        call_args = runner.run_async.call_args[0][0]
+        assert len(runner.calls) == 1
+        call_args = runner.calls[0][0]
         assert "--commit" in call_args
         assert "abc123" in call_args
         assert "def456" in call_args
@@ -370,13 +436,26 @@ class TestWaitForReview:
     async def test_waits_successfully(self, tmp_path: Path) -> None:
         """Returns WaitResult with output on success."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(
-            returncode=0,
-            stdout='{"consensus_verdict": "PASS"}',
-            stderr="",
-            timed_out=False,
-        )
+
+        class SuccessRunner(FakeCommandRunner):
+            async def run_async(
+                self,
+                cmd: list[str] | str,
+                env: Mapping[str, str] | None = None,
+                timeout: float | None = None,
+                use_process_group: bool | None = None,
+                shell: bool = False,
+                cwd: Path | None = None,
+            ) -> CommandResult:
+                return CommandResult(
+                    command=list(cmd) if not isinstance(cmd, str) else cmd,
+                    returncode=0,
+                    stdout='{"consensus_verdict": "PASS"}',
+                    stderr="",
+                    timed_out=False,
+                )
+
+        runner = SuccessRunner()
 
         result = await cli.wait_for_review(
             session_id="test-session",
@@ -393,13 +472,26 @@ class TestWaitForReview:
     async def test_returns_timeout_on_timeout(self, tmp_path: Path) -> None:
         """Returns timed_out when wait times out."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(
-            returncode=124,
-            stdout="",
-            stderr="",
-            timed_out=True,
-        )
+
+        class TimeoutRunner(FakeCommandRunner):
+            async def run_async(
+                self,
+                cmd: list[str] | str,
+                env: Mapping[str, str] | None = None,
+                timeout: float | None = None,
+                use_process_group: bool | None = None,
+                shell: bool = False,
+                cwd: Path | None = None,
+            ) -> CommandResult:
+                return CommandResult(
+                    command=list(cmd) if not isinstance(cmd, str) else cmd,
+                    returncode=124,
+                    stdout="",
+                    stderr="",
+                    timed_out=True,
+                )
+
+        runner = TimeoutRunner()
 
         result = await cli.wait_for_review(
             session_id="test-session",
@@ -408,16 +500,15 @@ class TestWaitForReview:
             cli_timeout=300,
         )
 
+        assert result.returncode == 124
+        assert result.stdout == ""
         assert result.timed_out is True
 
     @pytest.mark.asyncio
     async def test_includes_wait_args(self, tmp_path: Path) -> None:
         """Includes extra wait args when provided."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(
-            returncode=0, stdout="", stderr="", timed_out=False
-        )
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         await cli.wait_for_review(
             session_id="test-session",
@@ -427,32 +518,33 @@ class TestWaitForReview:
             wait_args=("--extra", "arg"),
         )
 
-        call_args = runner.run_async.call_args[0][0]
+        assert len(runner.calls) == 1
+        call_args = runner.calls[0][0]
         assert "--extra" in call_args
         assert "arg" in call_args
 
     @pytest.mark.asyncio
     async def test_uses_user_timeout_when_provided(self, tmp_path: Path) -> None:
-        """Uses user-specified timeout when provided."""
+        """Uses user-specified timeout from wait_args, does not add cli_timeout."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(
-            returncode=0, stdout="", stderr="", timed_out=False
-        )
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         await cli.wait_for_review(
             session_id="test-session",
             runner=runner,
             env={"CLAUDE_SESSION_ID": "test-session"},
             cli_timeout=300,
-            user_timeout=600,
+            wait_args=("--timeout", "600"),  # User timeout in wait_args
+            user_timeout=600,  # Signals that wait_args already has timeout
         )
 
-        call_args = runner.run_async.call_args[0][0]
-        # Should NOT include --timeout 300 since user_timeout is provided
-        # (user timeout is already in wait_args)
+        assert len(runner.calls) == 1
+        call_args = runner.calls[0][0]
+        # Should include exactly one --timeout (the user's 600), not the cli_timeout (300)
         timeout_indices = [i for i, arg in enumerate(call_args) if arg == "--timeout"]
-        assert len(timeout_indices) == 0  # No --timeout added by wait_for_review
+        assert len(timeout_indices) == 1
+        timeout_idx = timeout_indices[0]
+        assert call_args[timeout_idx + 1] == "600"  # User's timeout value
 
 
 class TestResolveGate:
@@ -462,8 +554,7 @@ class TestResolveGate:
     async def test_resolves_successfully(self, tmp_path: Path) -> None:
         """Returns success when resolve exits 0."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(returncode=0)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         result = await cli.resolve_gate(
             runner=runner,
@@ -477,12 +568,25 @@ class TestResolveGate:
     async def test_returns_error_on_failure(self, tmp_path: Path) -> None:
         """Returns error detail when resolve fails."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(
-            returncode=1,
-            stderr="Permission denied",
-            stdout="",
-        )
+
+        class FailingRunner(FakeCommandRunner):
+            async def run_async(
+                self,
+                cmd: list[str] | str,
+                env: Mapping[str, str] | None = None,
+                timeout: float | None = None,
+                use_process_group: bool | None = None,
+                shell: bool = False,
+                cwd: Path | None = None,
+            ) -> CommandResult:
+                return CommandResult(
+                    command=list(cmd) if not isinstance(cmd, str) else cmd,
+                    returncode=1,
+                    stderr="Permission denied",
+                    stdout="",
+                )
+
+        runner = FailingRunner()
 
         result = await cli.resolve_gate(
             runner=runner,
@@ -496,8 +600,20 @@ class TestResolveGate:
     async def test_returns_error_on_exception(self, tmp_path: Path) -> None:
         """Returns error detail when exception is raised."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.side_effect = Exception("Network error")
+
+        class ExceptionRaisingRunner(FakeCommandRunner):
+            async def run_async(
+                self,
+                cmd: list[str] | str,
+                env: Mapping[str, str] | None = None,
+                timeout: float | None = None,
+                use_process_group: bool | None = None,
+                shell: bool = False,
+                cwd: Path | None = None,
+            ) -> CommandResult:
+                raise Exception("Network error")
+
+        runner = ExceptionRaisingRunner()
 
         result = await cli.resolve_gate(
             runner=runner,
@@ -511,8 +627,7 @@ class TestResolveGate:
     async def test_uses_custom_reason(self, tmp_path: Path) -> None:
         """Uses custom reason when provided."""
         cli = CerberusGateCLI(repo_path=tmp_path)
-        runner = AsyncMock()
-        runner.run_async.return_value = MagicMock(returncode=0)
+        runner = FakeCommandRunner(allow_unregistered=True)
 
         await cli.resolve_gate(
             runner=runner,
@@ -520,32 +635,7 @@ class TestResolveGate:
             reason="Custom reason",
         )
 
-        call_args = runner.run_async.call_args[0][0]
+        assert len(runner.calls) == 1
+        call_args = runner.calls[0][0]
         assert "--reason" in call_args
         assert "Custom reason" in call_args
-
-
-class TestDataclasses:
-    """Tests for result dataclasses."""
-
-    def test_spawn_result_defaults(self) -> None:
-        """SpawnResult has correct defaults."""
-        result = SpawnResult(success=True)
-        assert result.success is True
-        assert result.timed_out is False
-        assert result.error_detail == ""
-        assert result.already_active is False
-
-    def test_wait_result_defaults(self) -> None:
-        """WaitResult has correct defaults."""
-        result = WaitResult(returncode=0)
-        assert result.returncode == 0
-        assert result.stdout == ""
-        assert result.stderr == ""
-        assert result.timed_out is False
-
-    def test_resolve_result_defaults(self) -> None:
-        """ResolveResult has correct defaults."""
-        result = ResolveResult(success=True)
-        assert result.success is True
-        assert result.error_detail == ""

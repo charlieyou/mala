@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 import time
 import uuid
 from typing import TYPE_CHECKING
@@ -31,6 +32,7 @@ from src.infra.io.log_output.run_metadata import (
 from src.infra.tools.env import (
     EnvConfig,
     PROMPTS_DIR,
+    encode_repo_path,
     get_lock_dir,
     get_runs_dir,
 )
@@ -55,7 +57,6 @@ from src.pipeline.run_coordinator import (
     RunLevelValidationInput,
 )
 from src.orchestration.orchestration_wiring import (
-    WiringDependencies,
     FinalizerCallbackRefs,
     EpicCallbackRefs,
     build_gate_runner,
@@ -66,12 +67,19 @@ from src.orchestration.orchestration_wiring import (
     build_epic_callbacks,
     build_session_callback_factory,
     build_session_config,
+    create_mcp_server_factory,
+)
+from src.orchestration.types import (
+    IssueFilterConfig,
+    PipelineConfig,
+    RuntimeDeps,
 )
 from src.pipeline.issue_result import IssueResult
 from src.orchestration.review_tracking import create_review_tracking_issues
 from src.orchestration.run_config import build_event_run_config, build_run_metadata
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from src.core.protocols import (
@@ -89,6 +97,8 @@ if TYPE_CHECKING:
     from src.pipeline.agent_session_runner import SessionCallbacks
     from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
     from src.pipeline.issue_finalizer import IssueFinalizer
+
+    from src.core.models import RunResult, WatchConfig
 
     from .types import OrchestratorConfig, _DerivedConfig
 
@@ -131,6 +141,8 @@ class MalaOrchestrator:
         _telemetry_provider: TelemetryProvider,
         _event_sink: MalaEventSink,
         _epic_verifier: EpicVerifier | None = None,
+        runs_dir: Path | None = None,
+        lock_releaser: Callable[[list[str]], int] | None = None,
     ):
         self._init_from_factory(
             _config,
@@ -143,6 +155,8 @@ class MalaOrchestrator:
             _telemetry_provider,
             _event_sink,
             _epic_verifier,
+            runs_dir=runs_dir,
+            lock_releaser=lock_releaser,
         )
 
     def _init_from_factory(
@@ -157,8 +171,14 @@ class MalaOrchestrator:
         telemetry_provider: TelemetryProvider,
         event_sink: MalaEventSink,
         epic_verifier: EpicVerifier | None,
+        *,
+        runs_dir: Path | None = None,
+        lock_releaser: Callable[[list[str]], int] | None = None,
     ) -> None:
         """Initialize from factory-provided config and dependencies."""
+        # Store optional DI parameters, defaulting to module functions when None
+        self._runs_dir = runs_dir
+        self._lock_releaser = lock_releaser
         self._mala_config = mala_config
         self.repo_path = orch_config.repo_path.resolve()
         self.max_agents = orch_config.max_agents
@@ -175,8 +195,9 @@ class MalaOrchestrator:
         self.prioritize_wip = orch_config.prioritize_wip
         self.focus = orch_config.focus
         self.orphans_only = orch_config.orphans_only
+        self.order_preference = orch_config.order_preference
         self.cli_args = orch_config.cli_args
-        self.epic_override_ids = orch_config.epic_override_ids or set()
+        self.epic_override_ids = orch_config.epic_override_ids
         self.context_restart_threshold = orch_config.context_restart_threshold
         self.context_limit = orch_config.context_limit
         self.review_disabled_reason = derived.review_disabled_reason
@@ -193,7 +214,10 @@ class MalaOrchestrator:
         self._init_pipeline_runners()
 
     def _init_runtime_state(self) -> None:
-        """Initialize runtime state.
+        """Initialize runtime state during __init__.
+
+        Called once in __init__. OrchestratorState is reset at the start of
+        each run() call to ensure clean per-run state.
 
         Note: active_tasks, failed_issues, abort_run, and abort_reason are
         delegated to issue_coordinator to maintain a single source of truth.
@@ -207,6 +231,7 @@ class MalaOrchestrator:
         """
         self._state = OrchestratorState()
         self._lint_tools: frozenset[str] | None = None
+        self._exit_code: int = 0  # Exit code from last run (0=success, 130=interrupted)
         self._prompt_validation_commands = build_prompt_validation_commands(
             self.repo_path
         )
@@ -221,13 +246,17 @@ class MalaOrchestrator:
 
     def _init_pipeline_runners(self) -> None:
         """Initialize pipeline runner components using wiring functions."""
-        deps = self._build_wiring_dependencies()
+        runtime = self._build_runtime_deps()
+        pipeline = self._build_pipeline_config()
+        filters = self._build_issue_filter_config()
 
         # Build core runners
-        self.gate_runner, self.async_gate_runner = build_gate_runner(deps)
-        self.review_runner = build_review_runner(deps)
-        self.run_coordinator = build_run_coordinator(deps, self._sdk_client_factory)
-        self.issue_coordinator = build_issue_coordinator(deps)
+        self.gate_runner, self.async_gate_runner = build_gate_runner(runtime, pipeline)
+        self.review_runner = build_review_runner(runtime, pipeline)
+        self.run_coordinator = build_run_coordinator(
+            runtime, pipeline, self._sdk_client_factory, create_mcp_server_factory()
+        )
+        self.issue_coordinator = build_issue_coordinator(filters, runtime)
 
         # Build coordinators with callbacks (callbacks need self references)
         self.issue_finalizer = self._build_issue_finalizer()
@@ -235,7 +264,8 @@ class MalaOrchestrator:
 
         # Build session infrastructure
         self.session_callback_factory = build_session_callback_factory(
-            deps,
+            runtime,
+            pipeline,
             self.async_gate_runner,
             self.review_runner,
             lambda: self.log_provider,
@@ -244,7 +274,9 @@ class MalaOrchestrator:
             on_review_log_path=self._on_review_log_path,
         )
         self._session_config = build_session_config(
-            deps, review_enabled=self._is_review_enabled()
+            pipeline,
+            review_enabled=self._is_review_enabled(),
+            mcp_server_factory=create_mcp_server_factory(),
         )
 
         # Wire deadlock handler now that all dependencies are available
@@ -256,20 +288,23 @@ class MalaOrchestrator:
                 )
             )
 
-    def _build_wiring_dependencies(self) -> WiringDependencies:
-        """Build WiringDependencies from orchestrator state."""
-        return WiringDependencies(
-            repo_path=self.repo_path,
+    def _build_runtime_deps(self) -> RuntimeDeps:
+        """Build RuntimeDeps from orchestrator state."""
+        return RuntimeDeps(
             quality_gate=self.quality_gate,
             code_reviewer=self.code_reviewer,
             beads=self.beads,
             event_sink=self.event_sink,
-            mala_config=self._mala_config,
             command_runner=CommandRunner(cwd=self.repo_path),
             env_config=EnvConfig(),
             lock_manager=LockManager(),
-            max_agents=self.max_agents,
-            max_issues=self._max_issues,
+            mala_config=self._mala_config,
+        )
+
+    def _build_pipeline_config(self) -> PipelineConfig:
+        """Build PipelineConfig from orchestrator state."""
+        return PipelineConfig(
+            repo_path=self.repo_path,
             timeout_seconds=self.timeout_seconds,
             max_gate_retries=self.max_gate_retries,
             max_review_retries=self.max_review_retries,
@@ -277,17 +312,25 @@ class MalaOrchestrator:
             disabled_validations=set(self._disabled_validations)
             if self._disabled_validations
             else None,
+            context_restart_threshold=self.context_restart_threshold,
+            context_limit=self.context_limit,
+            prompts=self._prompts,
+            prompt_validation_commands=self._prompt_validation_commands,
+            deadlock_monitor=self.deadlock_monitor,
+        )
+
+    def _build_issue_filter_config(self) -> IssueFilterConfig:
+        """Build IssueFilterConfig from orchestrator state."""
+        return IssueFilterConfig(
+            max_agents=self.max_agents,
+            max_issues=self._max_issues,
             epic_id=self.epic_id,
-            only_ids=set(self.only_ids) if self.only_ids else None,
+            only_ids=self.only_ids,
             prioritize_wip=self.prioritize_wip,
             focus=self.focus,
             orphans_only=self.orphans_only,
             epic_override_ids=self.epic_override_ids,
-            prompt_validation_commands=self._prompt_validation_commands,
-            prompts=self._prompts,
-            context_restart_threshold=self.context_restart_threshold,
-            context_limit=self.context_limit,
-            deadlock_monitor=self.deadlock_monitor,
+            order_preference=self.order_preference,
         )
 
     def _build_issue_finalizer(self) -> IssueFinalizer:
@@ -386,6 +429,7 @@ class MalaOrchestrator:
                     issue_id, summary, log_path=log_path
                 )
             ),
+            reopen_issue=self.beads.reopen_issue_async,
             on_deadlock_detected=self.event_sink.on_deadlock_detected,
             on_locks_cleaned=self.event_sink.on_locks_cleaned,
             on_tasks_aborting=self.event_sink.on_tasks_aborting,
@@ -461,6 +505,19 @@ class MalaOrchestrator:
         if not hasattr(self, "issue_coordinator"):
             return None
         return self.issue_coordinator.abort_reason
+
+    @property
+    def exit_code(self) -> int:
+        """Exit code from the last run.
+
+        Values:
+            0: Success
+            1: Validation failed
+            2: Invalid arguments
+            3: Abort
+            130: Interrupted (SIGINT)
+        """
+        return self._exit_code
 
     def _cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup).
@@ -563,16 +620,26 @@ class MalaOrchestrator:
             # (deferred from run_implementer.finally to keep it available for get_agent_id callback)
             self._state.agent_ids.pop(issue_id, None)
 
-    async def _abort_active_tasks(self, run_metadata: RunMetadata) -> None:
+    async def _abort_active_tasks(
+        self, run_metadata: RunMetadata, *, is_interrupt: bool = False
+    ) -> int:
         """Cancel active tasks and mark them as failed.
 
         Delegates to DeadlockHandler.abort_active_tasks.
+
+        Args:
+            run_metadata: Metadata for the current run.
+            is_interrupt: If True, use "Interrupted" summary instead of "Aborted".
+
+        Returns:
+            Number of tasks that were aborted.
         """
-        await self._deadlock_handler.abort_active_tasks(
+        return await self._deadlock_handler.abort_active_tasks(
             self.active_tasks,
             self.abort_reason,
             self._state,
             run_metadata,
+            is_interrupt=is_interrupt,
         )
 
     def _build_session_callbacks(self, issue_id: str) -> SessionCallbacks:
@@ -696,11 +763,26 @@ class MalaOrchestrator:
         self.event_sink.on_agent_started(issue_id, issue_id)
         return task
 
-    async def _run_main_loop(self, run_metadata: RunMetadata) -> int:
+    async def _run_main_loop(
+        self,
+        run_metadata: RunMetadata,
+        *,
+        watch_config: WatchConfig | None = None,
+        interrupt_event: asyncio.Event | None = None,
+        validation_callback: Callable[[], Awaitable[bool]] | None = None,
+    ) -> RunResult:
         """Run the main agent spawning and completion loop.
 
         Delegates to IssueExecutionCoordinator for the main loop logic.
-        Returns the number of issues spawned.
+
+        Args:
+            run_metadata: Metadata for the current run.
+            watch_config: Watch mode configuration.
+            interrupt_event: Event set to signal graceful shutdown (e.g., SIGINT).
+            validation_callback: Called periodically in watch mode to run validation.
+
+        Returns:
+            RunResult with issues_spawned, exit_code, and exit_reason.
         """
 
         async def finalize_callback(
@@ -733,14 +815,19 @@ class MalaOrchestrator:
             await self._finalize_issue_result(issue_id, result, run_metadata)
             self.issue_coordinator.mark_completed(issue_id)
 
-        async def abort_callback() -> None:
+        async def abort_callback(*, is_interrupt: bool = False) -> int:
             """Abort all active tasks."""
-            await self._abort_active_tasks(run_metadata)
+            return await self._abort_active_tasks(
+                run_metadata, is_interrupt=is_interrupt
+            )
 
         return await self.issue_coordinator.run_loop(
             spawn_callback=self.spawn_agent,
             finalize_callback=finalize_callback,
             abort_callback=abort_callback,
+            watch_config=watch_config,
+            interrupt_event=interrupt_event,
+            validation_callback=validation_callback,
         )
 
     async def _finalize_run(
@@ -775,8 +862,21 @@ class MalaOrchestrator:
             return (0, total)
         return (success_count, total)
 
-    async def run(self) -> tuple[int, int]:
-        """Main orchestration loop. Returns (success_count, total_count)."""
+    async def run(
+        self,
+        *,
+        watch_config: WatchConfig | None = None,
+    ) -> tuple[int, int]:
+        """Main orchestration loop. Returns (success_count, total_count).
+
+        Args:
+            watch_config: Optional watch mode configuration. If provided, enables
+                watch mode with polling and interruptible idle sleep.
+        """
+        # Reset per-run state to ensure clean state if orchestrator is reused
+        self._state = OrchestratorState()
+        self._exit_code = 0
+
         run_config = build_event_run_config(
             repo_path=self.repo_path,
             max_agents=self.max_agents,
@@ -797,7 +897,15 @@ class MalaOrchestrator:
         self.event_sink.on_run_started(run_config)
 
         get_lock_dir().mkdir(parents=True, exist_ok=True)
-        get_runs_dir().mkdir(parents=True, exist_ok=True)
+        base_runs_dir = self._runs_dir if self._runs_dir is not None else get_runs_dir()
+        base_runs_dir.mkdir(parents=True, exist_ok=True)
+        encoded_repo = encode_repo_path(self.repo_path)
+        runs_dir = (
+            base_runs_dir
+            if base_runs_dir.name == encoded_repo
+            else base_runs_dir / encoded_repo
+        )
+        runs_dir.mkdir(parents=True, exist_ok=True)
 
         run_metadata = build_run_metadata(
             repo_path=self.repo_path,
@@ -813,6 +921,7 @@ class MalaOrchestrator:
             orphans_only=self.orphans_only,
             cli_args=self.cli_args,
             version=__version__,
+            runs_dir=runs_dir,
         )
         per_issue_spec = build_validation_spec(
             self.repo_path,
@@ -828,39 +937,116 @@ class MalaOrchestrator:
             max_agents=self.max_agents,
         )
 
+        # Create interrupt event for SIGINT handling
+        interrupt_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        # Install SIGINT handler using call_soon_threadsafe for thread-safety
+        def handle_sigint(sig: int, frame: object) -> None:
+            loop.call_soon_threadsafe(interrupt_event.set)
+
+        original_handler = signal.signal(signal.SIGINT, handle_sigint)
+
+        # Track exit code for propagation to CLI
+        exit_code = 0
+
         try:
+            # Create validation callback wrapping RunCoordinator
+            async def validation_callback() -> bool:
+                success_count = sum(1 for r in self._state.completed if r.success)
+                if success_count == 0 or self.abort_run:
+                    return True
+                validation_input = RunLevelValidationInput(run_metadata=run_metadata)
+                validation_output = await self.run_coordinator.run_validation(
+                    validation_input
+                )
+                return validation_output.passed
+
+            interrupted = False
             try:
-                await self._run_main_loop(run_metadata)
+                loop_result = await self._run_main_loop(
+                    run_metadata,
+                    watch_config=watch_config,
+                    interrupt_event=interrupt_event,
+                    validation_callback=validation_callback,
+                )
+                exit_code = loop_result.exit_code
+            except asyncio.CancelledError:
+                # Only treat as SIGINT if interrupt_event is set; otherwise re-raise
+                if interrupt_event.is_set():
+                    exit_code = 130
+                    interrupted = True
+                else:
+                    raise
             finally:
-                released = release_run_locks(list(self._state.agent_ids.values()))
+                lock_releaser = (
+                    self._lock_releaser
+                    if self._lock_releaser is not None
+                    else release_run_locks
+                )
+                released = lock_releaser(list(self._state.agent_ids.values()))
                 # Only emit event if released is a positive integer
                 # (release_run_locks returns int, but tests may mock it)
                 if isinstance(released, int) and released > 0:
                     self.event_sink.on_locks_released(released)
                 remove_run_marker(run_metadata.run_id)
 
+            # Check if interrupted - use exit_code from loop_result (which may be 1 if
+            # validation failed during interrupt handling, or 130 otherwise)
+            if interrupted or interrupt_event.is_set():
+                self._exit_code = exit_code
+                return await self._finalize_run(run_metadata, exit_code != 1)
+
             # Run-level validation and finalization happen after lock cleanup
             # but before debug log cleanup (so they're captured in the debug log)
             success_count = sum(1 for r in self._state.completed if r.success)
             run_validation_passed = True
             if success_count > 0 and not self.abort_run:
-                validation_input = RunLevelValidationInput(run_metadata=run_metadata)
-                validation_output = await self.run_coordinator.run_validation(
-                    validation_input
-                )
-                run_validation_passed = validation_output.passed
+                try:
+                    validation_input = RunLevelValidationInput(
+                        run_metadata=run_metadata
+                    )
+                    validation_output = await self.run_coordinator.run_validation(
+                        validation_input
+                    )
+                    run_validation_passed = validation_output.passed
+                except asyncio.CancelledError:
+                    # SIGINT during validation - gracefully exit with 130
+                    if interrupt_event.is_set():
+                        self._exit_code = 130
+                        return await self._finalize_run(run_metadata, True)
+                    raise
 
+            # Check if SIGINT occurred during final validation phase
+            # Note: this should rarely be reached since interrupt is handled earlier,
+            # but keep as safety net. Use validation result if available.
+            if interrupt_event.is_set():
+                self._exit_code = 1 if not run_validation_passed else 130
+                return await self._finalize_run(run_metadata, run_validation_passed)
+
+            # Store exit code for CLI access (validation failure overrides to 1)
+            self._exit_code = 1 if not run_validation_passed else exit_code
             return await self._finalize_run(run_metadata, run_validation_passed)
         finally:
+            # Restore original SIGINT handler
+            signal.signal(signal.SIGINT, original_handler)
             # Clean up debug logging handler after all finalization is complete
             # (idempotent - safe to call even if save() is called later)
             run_metadata.cleanup()
 
-    def run_sync(self) -> tuple[int, int]:
+    def run_sync(
+        self,
+        *,
+        watch_config: WatchConfig | None = None,
+    ) -> tuple[int, int]:
         """Synchronous wrapper for run(). Returns (success_count, total_count).
 
         Use this method when calling from synchronous code. It handles event loop
         creation and cleanup automatically.
+
+        Args:
+            watch_config: Optional watch mode configuration. If provided, enables
+                watch mode with polling and interruptible idle sleep.
 
         Raises:
             RuntimeError: If called from within an async context (e.g., inside an
@@ -900,4 +1086,4 @@ class MalaOrchestrator:
             # No running event loop - this is the expected case for sync usage
 
         # Create a new event loop and run
-        return asyncio.run(self.run())
+        return asyncio.run(self.run(watch_config=watch_config))

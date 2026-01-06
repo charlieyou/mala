@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+# Type alias for lock releaser function - defined at runtime to support get_type_hints()
+LockReleaserFunc = Callable[[list[str]], int]
+
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
     from src.core.protocols import (
@@ -16,9 +19,9 @@ if TYPE_CHECKING:
         GateChecker,
         IssueProvider,
         LogProvider,
+        MalaEventSink,
     )
     from src.infra.io.config import MalaConfig
-    from src.core.protocols import MalaEventSink
     from src.infra.telemetry import TelemetryProvider
     from src.orchestration.orchestrator import MalaOrchestrator
 
@@ -43,6 +46,9 @@ def pytest_configure(config: pytest.Config) -> None:
 
     # Redirect run metadata to /tmp to avoid polluting user config
     os.environ["MALA_RUNS_DIR"] = "/tmp/mala-test-runs"
+
+    # Redirect lock directory to /tmp to avoid cross-test interference
+    os.environ["MALA_LOCK_DIR"] = "/tmp/mala-test-locks"
 
     # Redirect Claude SDK logs to /tmp to avoid polluting user Claude config
     os.environ["CLAUDE_CONFIG_DIR"] = "/tmp/mala-test-claude"
@@ -96,7 +102,7 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
         timeout_minutes: int | None = None,
         max_issues: int | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         braintrust_enabled: bool | None = None,
         max_gate_retries: int = 3,
         max_review_retries: int = 3,
@@ -116,6 +122,8 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
         telemetry_provider: TelemetryProvider | None = None,
         event_sink: MalaEventSink | None = None,
         config: MalaConfig | None = None,
+        runs_dir: Path | None = None,
+        lock_releaser: LockReleaserFunc | None = None,
     ) -> MalaOrchestrator:
         """Create an orchestrator using the factory pattern."""
         from src.orchestration.factory import OrchestratorDependencies
@@ -136,7 +144,7 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
             focus=focus,
             orphans_only=orphans_only,
             cli_args=cli_args,
-            epic_override_ids=epic_override_ids,
+            epic_override_ids=epic_override_ids or set(),
             context_restart_threshold=context_restart_threshold,
             context_limit=context_limit,
         )
@@ -148,6 +156,8 @@ def make_orchestrator() -> Callable[..., MalaOrchestrator]:
             log_provider=log_provider,
             telemetry_provider=telemetry_provider,
             event_sink=event_sink,
+            runs_dir=runs_dir,
+            lock_releaser=lock_releaser,
         )
 
         return create_orchestrator(orch_config, mala_config=config, deps=deps)

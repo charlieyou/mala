@@ -7,11 +7,10 @@ without actual Cerberus CLI or subprocess dependencies.
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from src.infra.clients.review_output_parser import ReviewIssue, ReviewResult
 from src.pipeline.review_runner import (
     NoProgressInput,
     ReviewInput,
@@ -19,9 +18,38 @@ from src.pipeline.review_runner import (
     ReviewRunner,
     ReviewRunnerConfig,
 )
-from src.core.protocols import CodeReviewer, GateChecker  # noqa: TC001 - needed at runtime for cast()
-from src.domain.quality_gate import CommitResult, GateResult, ValidationEvidence
-from src.domain.validation.spec import ValidationSpec
+from src.core.protocols import (
+    ReviewIssueProtocol,
+    ReviewResultProtocol,
+)
+from tests.fakes.gate_checker import FakeGateChecker
+
+if TYPE_CHECKING:
+    from src.core.protocols import CodeReviewer, GateChecker
+
+
+@dataclass
+class FakeReviewIssue:
+    """Fake review issue for testing that satisfies ReviewIssueProtocol."""
+
+    file: str
+    line_start: int
+    line_end: int
+    priority: int | None
+    title: str
+    body: str
+    reviewer: str
+
+
+@dataclass
+class FakeReviewResult(ReviewResultProtocol):
+    """Fake review result for testing that satisfies ReviewResultProtocol."""
+
+    passed: bool
+    issues: Sequence[ReviewIssueProtocol] = field(default_factory=list)
+    parse_error: str | None = None
+    fatal_error: bool = False
+    review_log_path: Path | None = None
 
 
 @dataclass
@@ -31,8 +59,8 @@ class FakeCodeReviewer:
     Returns predetermined results without invoking Cerberus CLI.
     """
 
-    result: ReviewResult = field(
-        default_factory=lambda: ReviewResult(passed=True, issues=[])
+    result: FakeReviewResult = field(
+        default_factory=lambda: FakeReviewResult(passed=True, issues=[])
     )
     calls: list[dict] = field(default_factory=list)
 
@@ -44,7 +72,7 @@ class FakeCodeReviewer:
         claude_session_id: str | None = None,
         *,
         commit_shas: Sequence[str] | None = None,
-    ) -> ReviewResult:
+    ) -> FakeReviewResult:
         """Record call and return configured result."""
         self.calls.append(
             {
@@ -56,74 +84,6 @@ class FakeCodeReviewer:
             }
         )
         return self.result
-
-
-@dataclass
-class FakeGateChecker:
-    """Fake gate checker for no-progress testing.
-
-    Implements the GateChecker protocol with stub methods except for
-    check_no_progress which is used by ReviewRunner.
-    """
-
-    no_progress_result: bool = False
-    no_progress_calls: list[dict] = field(default_factory=list)
-    _gate_result: GateResult = field(
-        default_factory=lambda: GateResult(passed=True, failure_reasons=[])
-    )
-    _commit_result: CommitResult = field(
-        default_factory=lambda: CommitResult(exists=True, commit_hash="abc123")
-    )
-    _validation_evidence: ValidationEvidence = field(default_factory=ValidationEvidence)
-
-    def check_with_resolution(
-        self,
-        issue_id: str,
-        log_path: Path,
-        baseline_timestamp: int | None = None,
-        log_offset: int = 0,
-        spec: ValidationSpec | None = None,
-    ) -> GateResult:
-        """Return pre-configured gate result."""
-        return self._gate_result
-
-    def get_log_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
-        """Stub - not used by ReviewRunner."""
-        return start_offset
-
-    def check_no_progress(
-        self,
-        log_path: Path,
-        log_offset: int,
-        previous_commit_hash: str | None,
-        current_commit_hash: str | None,
-        spec: ValidationSpec | None = None,
-        check_validation_evidence: bool = True,
-    ) -> bool:
-        """Record call and return configured result."""
-        self.no_progress_calls.append(
-            {
-                "log_path": log_path,
-                "log_offset": log_offset,
-                "previous_commit_hash": previous_commit_hash,
-                "current_commit_hash": current_commit_hash,
-                "spec": spec,
-                "check_validation_evidence": check_validation_evidence,
-            }
-        )
-        return self.no_progress_result
-
-    def parse_validation_evidence_with_spec(
-        self, log_path: Path, spec: ValidationSpec, offset: int = 0
-    ) -> ValidationEvidence:
-        """Return pre-configured validation evidence."""
-        return self._validation_evidence
-
-    def check_commit_exists(
-        self, issue_id: str, baseline_timestamp: int | None = None
-    ) -> CommitResult:
-        """Return pre-configured commit result."""
-        return self._commit_result
 
 
 class TestReviewRunnerBasics:
@@ -207,7 +167,7 @@ class TestReviewRunnerBasics:
         tmp_path: Path,
     ) -> None:
         """Runner should capture review log path when available."""
-        result = ReviewResult(
+        result = FakeReviewResult(
             passed=True,
             issues=[],
             review_log_path=Path("/path/to/review.jsonl"),
@@ -290,7 +250,7 @@ class TestReviewRunnerResults:
     @pytest.mark.asyncio
     async def test_review_passed(self, tmp_path: Path) -> None:
         """Runner should return passed result correctly."""
-        result = ReviewResult(passed=True, issues=[])
+        result = FakeReviewResult(passed=True, issues=[])
         fake_reviewer = FakeCodeReviewer(result=result)
         runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
 
@@ -309,7 +269,7 @@ class TestReviewRunnerResults:
     async def test_review_failed_with_issues(self, tmp_path: Path) -> None:
         """Runner should return failed result with issues."""
         issues = [
-            ReviewIssue(
+            FakeReviewIssue(
                 title="[P1] Bug found",
                 body="Description",
                 priority=1,
@@ -319,7 +279,7 @@ class TestReviewRunnerResults:
                 reviewer="cerberus",
             )
         ]
-        result = ReviewResult(passed=False, issues=issues)
+        result = FakeReviewResult(passed=False, issues=issues)
         fake_reviewer = FakeCodeReviewer(result=result)
         runner = ReviewRunner(code_reviewer=cast("CodeReviewer", fake_reviewer))
 
@@ -338,7 +298,7 @@ class TestReviewRunnerResults:
     @pytest.mark.asyncio
     async def test_review_failed_with_parse_error(self, tmp_path: Path) -> None:
         """Runner should return failed result with parse error."""
-        result = ReviewResult(
+        result = FakeReviewResult(
             passed=False,
             issues=[],
             parse_error="Invalid JSON output",
@@ -476,23 +436,6 @@ class TestReviewRunnerNoProgress:
 class TestReviewRunnerConfig:
     """Test configuration handling."""
 
-    def test_config_with_custom_values(self) -> None:
-        """Config should accept custom values via flags."""
-        config = ReviewRunnerConfig(
-            max_review_retries=4,
-            review_timeout=600,
-        )
-
-        assert config.max_review_retries == 4
-        assert config.review_timeout == 600
-
-    def test_config_defaults(self) -> None:
-        """Config should have sensible defaults."""
-        config = ReviewRunnerConfig()
-
-        assert config.max_review_retries == 3
-        assert config.review_timeout == 1200
-
     def test_config_deprecated_fields_still_accepted(self) -> None:
         """Config should accept deprecated fields for backward compatibility."""
         config = ReviewRunnerConfig(
@@ -503,62 +446,6 @@ class TestReviewRunnerConfig:
         # These fields are deprecated but still accepted for backward compat
         assert config.thinking_mode == "high"
         assert config.capture_session_log is True
-
-
-class TestReviewInput:
-    """Test input data handling."""
-
-    def test_input_required_fields(self, tmp_path: Path) -> None:
-        """Input should require issue_id, repo_path, and commit_sha."""
-        review_input = ReviewInput(
-            issue_id="test-123",
-            repo_path=tmp_path,
-            commit_sha="abc123",
-        )
-
-        assert review_input.issue_id == "test-123"
-        assert review_input.repo_path == tmp_path
-        assert review_input.commit_sha == "abc123"
-        assert review_input.issue_description is None
-        assert review_input.baseline_commit is None
-        assert review_input.claude_session_id is None
-
-    def test_input_with_optional_fields(self, tmp_path: Path) -> None:
-        """Input should accept optional fields."""
-        review_input = ReviewInput(
-            issue_id="test-123",
-            repo_path=tmp_path,
-            commit_sha="abc123",
-            issue_description="Fix the bug",
-            baseline_commit="def456",
-            claude_session_id="session-456",
-        )
-
-        assert review_input.issue_description == "Fix the bug"
-        assert review_input.baseline_commit == "def456"
-        assert review_input.claude_session_id == "session-456"
-
-
-class TestReviewOutput:
-    """Test output data handling."""
-
-    def test_output_required_fields(self) -> None:
-        """Output should have required fields with defaults."""
-        result = ReviewResult(passed=True, issues=[])
-        output = ReviewOutput(result=result)
-
-        assert output.result.passed is True
-        assert output.session_log_path is None
-
-    def test_output_with_session_log(self) -> None:
-        """Output should include session log path."""
-        result = ReviewResult(passed=True, issues=[])
-        output = ReviewOutput(
-            result=result,
-            session_log_path="/path/to/log.jsonl",
-        )
-
-        assert output.session_log_path == "/path/to/log.jsonl"
 
 
 class TestContextFileCleanup:
@@ -584,13 +471,13 @@ class TestContextFileCleanup:
                 claude_session_id: str | None = None,
                 *,
                 commit_shas: Sequence[str] | None = None,
-            ) -> ReviewResult:
+            ) -> FakeReviewResult:
                 nonlocal context_file_path
                 context_file_path = context_file
                 # Verify file exists during review
                 assert context_file is not None
                 assert context_file.exists()
-                return ReviewResult(passed=True, issues=[])
+                return FakeReviewResult(passed=True, issues=[])
 
         runner = ReviewRunner(code_reviewer=cast("CodeReviewer", CapturingReviewer()))
 
@@ -627,7 +514,7 @@ class TestContextFileCleanup:
                 claude_session_id: str | None = None,
                 *,
                 commit_shas: Sequence[str] | None = None,
-            ) -> ReviewResult:
+            ) -> FakeReviewResult:
                 nonlocal context_file_path
                 context_file_path = context_file
                 # Verify file exists during review

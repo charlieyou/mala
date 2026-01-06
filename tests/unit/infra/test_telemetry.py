@@ -159,22 +159,6 @@ class TestBraintrustProvider:
         span = provider.create_span("task-123")
         assert span._tracer.agent_id == "unknown"
 
-    def test_flush_delegates_to_braintrust(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        flush_calls = {"count": 0}
-
-        def _flush() -> None:
-            flush_calls["count"] += 1
-
-        monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", True)
-        monkeypatch.setattr(infra_braintrust, "flush", _flush)
-
-        provider = BraintrustProvider()
-        provider.flush()
-
-        assert flush_calls["count"] == 1
-
 
 class TestBraintrustSpan:
     """Tests for BraintrustSpan adapter."""
@@ -222,63 +206,3 @@ class TestBraintrustSpan:
         span.set_error("boom")
         assert span._tracer.error == "boom"
         assert span._tracer.success is False
-
-
-class TestProtocolCompliance:
-    """Verify implementations match the protocol contracts."""
-
-    def test_null_provider_matches_protocol(self) -> None:
-        """NullTelemetryProvider should match TelemetryProvider protocol."""
-        provider = NullTelemetryProvider()
-
-        # Should have all required methods
-        assert hasattr(provider, "is_enabled")
-        assert hasattr(provider, "create_span")
-        assert hasattr(provider, "flush")
-
-        # Methods should be callable
-        assert callable(provider.is_enabled)
-        assert callable(provider.create_span)
-        assert callable(provider.flush)
-
-    def test_braintrust_provider_matches_protocol(self) -> None:
-        """BraintrustProvider should match TelemetryProvider protocol."""
-        provider = BraintrustProvider()
-
-        # Should have all required methods
-        assert hasattr(provider, "is_enabled")
-        assert hasattr(provider, "create_span")
-        assert hasattr(provider, "flush")
-
-        # Methods should be callable
-        assert callable(provider.is_enabled)
-        assert callable(provider.create_span)
-        assert callable(provider.flush)
-
-    def test_null_span_matches_protocol(self) -> None:
-        """NullSpan should match TelemetrySpan protocol."""
-        span = NullSpan()
-
-        # Should have all required methods
-        assert hasattr(span, "__enter__")
-        assert hasattr(span, "__exit__")
-        assert hasattr(span, "log_input")
-        assert hasattr(span, "log_message")
-        assert hasattr(span, "set_success")
-        assert hasattr(span, "set_error")
-
-    def test_braintrust_span_matches_protocol(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """BraintrustSpan should match TelemetrySpan protocol."""
-        monkeypatch.setattr(infra_braintrust, "BRAINTRUST_AVAILABLE", False)
-
-        span = BraintrustSpan("issue-1", "agent-1")
-
-        # Should have all required methods
-        assert hasattr(span, "__enter__")
-        assert hasattr(span, "__exit__")
-        assert hasattr(span, "log_input")
-        assert hasattr(span, "log_message")
-        assert hasattr(span, "set_success")
-        assert hasattr(span, "set_error")

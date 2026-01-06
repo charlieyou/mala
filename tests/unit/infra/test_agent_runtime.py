@@ -5,8 +5,7 @@ Tests the centralized agent runtime configuration builder.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -16,57 +15,40 @@ from src.infra.hooks import (
     block_dangerous_commands,
     block_mala_disallowed_tools,
 )
+from tests.fakes import FakeDeadlockMonitor, FakeSDKClientFactory
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
-    from src.core.protocols import SDKClientProtocol
+    from src.core.models import LockEvent
+    from src.core.protocols import McpServerFactory
 
 
-class FakeSDKClientFactory:
-    """Fake SDK client factory for testing."""
+def _create_mcp_server_factory() -> McpServerFactory:
+    """Create a mock MCP server factory for tests.
 
-    def __init__(self) -> None:
-        self.created_options: list[dict] = []
-        self.created_matchers: list[tuple] = []
+    Returns a factory that produces a dict with 'mala-locking' key.
+    """
+    from src.infra.tools.locking_mcp import create_locking_mcp_server
 
-    def create(self, options: object) -> SDKClientProtocol:
-        """Create a mock client (not used in these tests)."""
-        return cast("SDKClientProtocol", MagicMock())
+    def _noop(event: LockEvent) -> None:
+        pass
 
-    def create_options(
-        self,
-        *,
-        cwd: str,
-        permission_mode: str = "bypassPermissions",
-        model: str = "opus",
-        system_prompt: dict[str, str] | None = None,
-        setting_sources: list[str] | None = None,
-        mcp_servers: object | None = None,
-        disallowed_tools: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        hooks: dict[str, list[object]] | None = None,
-    ) -> object:
-        opts = {
-            "cwd": cwd,
-            "permission_mode": permission_mode,
-            "model": model,
-            "mcp_servers": mcp_servers,
-            "disallowed_tools": disallowed_tools,
-            "env": env,
-            "hooks": hooks,
+    def factory(
+        agent_id: str,
+        repo_path: Path,
+        emit_lock_event: Callable[[LockEvent], object] | None,
+    ) -> dict[str, Any]:
+        return {
+            "mala-locking": create_locking_mcp_server(
+                agent_id=agent_id,
+                repo_namespace=str(repo_path),
+                emit_lock_event=emit_lock_event if emit_lock_event else _noop,
+            )
         }
-        self.created_options.append(opts)
-        return opts
 
-    def create_hook_matcher(
-        self,
-        matcher: object | None,
-        hooks: list[object],
-    ) -> object:
-        result = ("matcher", matcher, hooks)
-        self.created_matchers.append(result)
-        return result
+    return factory
 
 
 class TestAgentRuntimeBuilder:
@@ -90,7 +72,7 @@ class TestAgentRuntimeBuilder:
         runtime = (
             AgentRuntimeBuilder(repo_path, "test-agent-123", factory)
             .with_env()
-            .with_mcp()
+            .with_mcp(servers={})  # Explicitly disable locking for test
             .with_disallowed_tools()
             .build()
         )
@@ -108,7 +90,10 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """with_env() includes PATH, LOCK_DIR, AGENT_ID, REPO_NAMESPACE."""
         runtime = (
-            AgentRuntimeBuilder(repo_path, "agent-xyz", factory).with_env().build()
+            AgentRuntimeBuilder(repo_path, "agent-xyz", factory)
+            .with_env()
+            .with_mcp(servers={})  # Explicitly disable locking for test
+            .build()
         )
 
         assert "PATH" in runtime.env
@@ -125,6 +110,7 @@ class TestAgentRuntimeBuilder:
         runtime = (
             AgentRuntimeBuilder(repo_path, "agent-1", factory)
             .with_env(extra={"CUSTOM_VAR": "value123"})
+            .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
 
@@ -144,7 +130,7 @@ class TestAgentRuntimeBuilder:
         result2 = builder.with_env()
         assert result2 is builder
 
-        result3 = builder.with_mcp()
+        result3 = builder.with_mcp(servers={})  # Explicitly disable locking
         assert result3 is builder
 
         result4 = builder.with_disallowed_tools()
@@ -158,7 +144,11 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """Pre-tool hooks are in correct order (order matters for security)."""
-        runtime = AgentRuntimeBuilder(repo_path, "agent-hooks", factory).build()
+        runtime = (
+            AgentRuntimeBuilder(repo_path, "agent-hooks", factory)
+            .with_mcp(servers={})  # Explicitly disable locking for test
+            .build()
+        )
 
         # Should have at least: dangerous_commands, disallowed_tools, lock_enforcement,
         # file_cache, lint_cache
@@ -175,7 +165,11 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """Stop hook is included by default."""
-        runtime = AgentRuntimeBuilder(repo_path, "agent-stop", factory).build()
+        runtime = (
+            AgentRuntimeBuilder(repo_path, "agent-stop", factory)
+            .with_mcp(servers={})  # Explicitly disable locking for test
+            .build()
+        )
 
         assert len(runtime.stop_hooks) == 1
 
@@ -187,6 +181,7 @@ class TestAgentRuntimeBuilder:
         runtime = (
             AgentRuntimeBuilder(repo_path, "agent-no-stop", factory)
             .with_hooks(include_stop_hook=False)
+            .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
 
@@ -197,11 +192,12 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """with_hooks(deadlock_monitor=...) adds lock event hooks."""
-        mock_monitor = MagicMock()
+        monitor = FakeDeadlockMonitor()
 
         runtime = (
             AgentRuntimeBuilder(repo_path, "agent-deadlock", factory)
-            .with_hooks(deadlock_monitor=mock_monitor)
+            .with_hooks(deadlock_monitor=monitor)
+            .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
 
@@ -219,6 +215,7 @@ class TestAgentRuntimeBuilder:
         runtime = (
             AgentRuntimeBuilder(repo_path, "agent-lint", factory)
             .with_lint_tools({"ruff", "mypy"})
+            .with_mcp(servers={})  # Explicitly disable locking for test
             .build()
         )
 
@@ -247,9 +244,12 @@ class TestAgentRuntimeBuilder:
         """with_disallowed_tools(tools) passes tools to options."""
         tools = ["dangerous_tool", "another_tool"]
 
-        AgentRuntimeBuilder(repo_path, "agent-disallow", factory).with_disallowed_tools(
-            tools
-        ).build()
+        (
+            AgentRuntimeBuilder(repo_path, "agent-disallow", factory)
+            .with_disallowed_tools(tools)
+            .with_mcp(servers={})  # Explicitly disable locking for test
+            .build()
+        )
 
         assert len(factory.created_options) == 1
         assert factory.created_options[0]["disallowed_tools"] == tools
@@ -259,7 +259,11 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """Hooks dict has correct structure for SDK."""
-        AgentRuntimeBuilder(repo_path, "agent-struct", factory).build()
+        (
+            AgentRuntimeBuilder(repo_path, "agent-struct", factory)
+            .with_mcp(servers={})  # Explicitly disable locking for test
+            .build()
+        )
 
         assert len(factory.created_options) == 1
         hooks = factory.created_options[0]["hooks"]
@@ -274,7 +278,11 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """build() creates env even if with_env() not called."""
-        runtime = AgentRuntimeBuilder(repo_path, "agent-default", factory).build()
+        runtime = (
+            AgentRuntimeBuilder(repo_path, "agent-default", factory)
+            .with_mcp(servers={})  # Explicitly disable locking for test
+            .build()
+        )
 
         # Should still have env with required vars
         assert "AGENT_ID" in runtime.env
@@ -286,9 +294,12 @@ class TestAgentRuntimeBuilder:
     ) -> None:
         """Locking MCP server is registered even without deadlock monitor."""
         # Build without deadlock monitor (the default)
-        AgentRuntimeBuilder(repo_path, "agent-no-monitor", factory).with_hooks(
-            deadlock_monitor=None
-        ).build()
+        AgentRuntimeBuilder(
+            repo_path,
+            "agent-no-monitor",
+            factory,
+            mcp_server_factory=_create_mcp_server_factory(),
+        ).with_hooks(deadlock_monitor=None).build()
 
         assert len(factory.created_options) == 1
         mcp_servers = factory.created_options[0]["mcp_servers"]
@@ -301,11 +312,14 @@ class TestAgentRuntimeBuilder:
         self, repo_path: Path, factory: FakeSDKClientFactory
     ) -> None:
         """Locking MCP server is registered with deadlock monitor."""
-        mock_monitor = MagicMock()
+        monitor = FakeDeadlockMonitor()
 
-        AgentRuntimeBuilder(repo_path, "agent-with-monitor", factory).with_hooks(
-            deadlock_monitor=mock_monitor
-        ).build()
+        AgentRuntimeBuilder(
+            repo_path,
+            "agent-with-monitor",
+            factory,
+            mcp_server_factory=_create_mcp_server_factory(),
+        ).with_hooks(deadlock_monitor=monitor).build()
 
         assert len(factory.created_options) == 1
         mcp_servers = factory.created_options[0]["mcp_servers"]

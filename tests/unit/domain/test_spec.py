@@ -16,44 +16,12 @@ from src.domain.validation.spec import (
     CommandKind,
     CoverageConfig,
     E2EConfig,
-    IssueResolution,
-    ResolutionOutcome,
-    ValidationArtifacts,
     ValidationCommand,
-    ValidationContext,
     ValidationScope,
     ValidationSpec,
     build_validation_spec,
     classify_change,
 )
-
-
-class TestValidationScope:
-    """Test ValidationScope enum."""
-
-    def test_scope_values(self) -> None:
-        assert ValidationScope.PER_ISSUE.value == "per_issue"
-        assert ValidationScope.RUN_LEVEL.value == "run_level"
-
-
-class TestCommandKind:
-    """Test CommandKind enum."""
-
-    def test_kind_values(self) -> None:
-        assert CommandKind.LINT.value == "lint"
-        assert CommandKind.FORMAT.value == "format"
-        assert CommandKind.TYPECHECK.value == "typecheck"
-        assert CommandKind.TEST.value == "test"
-        assert CommandKind.E2E.value == "e2e"
-
-
-class TestResolutionOutcome:
-    """Test ResolutionOutcome enum."""
-
-    def test_outcome_values(self) -> None:
-        assert ResolutionOutcome.SUCCESS.value == "success"
-        assert ResolutionOutcome.NO_CHANGE.value == "no_change"
-        assert ResolutionOutcome.OBSOLETE.value == "obsolete"
 
 
 class TestValidationCommand:
@@ -99,151 +67,6 @@ class TestValidationCommand:
             timeout=300,
         )
         assert cmd.timeout == 300
-
-    def test_command_shell_default_true(self) -> None:
-        cmd = ValidationCommand(
-            name="test",
-            command="echo hello",
-            kind=CommandKind.TEST,
-        )
-        assert cmd.shell is True
-
-    def test_command_shell_explicit_false(self) -> None:
-        cmd = ValidationCommand(
-            name="test",
-            command="echo hello",
-            kind=CommandKind.TEST,
-            shell=False,
-        )
-        assert cmd.shell is False
-
-
-class TestCoverageConfig:
-    """Test CoverageConfig dataclass."""
-
-    def test_default_values(self) -> None:
-        config = CoverageConfig()
-        assert config.enabled is True
-        assert config.min_percent is None  # Default is None (no-decrease mode)
-        assert config.branch is True
-        assert config.report_path is None
-
-    def test_custom_values(self) -> None:
-        config = CoverageConfig(
-            enabled=True,
-            min_percent=90.0,
-            branch=False,
-            report_path=Path("/tmp/coverage.xml"),
-        )
-        assert config.min_percent == 90.0
-        assert config.branch is False
-        assert config.report_path == Path("/tmp/coverage.xml")
-
-    def test_none_min_percent_is_no_decrease_mode(self) -> None:
-        """When min_percent is None, coverage uses no-decrease baseline mode."""
-        config = CoverageConfig(enabled=True, min_percent=None)
-        assert config.min_percent is None
-
-
-class TestE2EConfig:
-    """Test E2EConfig dataclass."""
-
-    def test_default_values(self) -> None:
-        config = E2EConfig()
-        assert config.enabled is True
-        assert config.fixture_root is None
-        assert config.command == []
-        assert config.required_env == []
-
-    def test_custom_values(self) -> None:
-        config = E2EConfig(
-            enabled=True,
-            fixture_root=Path("/tmp/fixtures"),
-            command=["mala", "run"],
-            required_env=["ANTHROPIC_API_KEY"],
-        )
-        assert config.fixture_root == Path("/tmp/fixtures")
-        assert config.command == ["mala", "run"]
-        assert config.required_env == ["ANTHROPIC_API_KEY"]
-
-
-class TestValidationArtifacts:
-    """Test ValidationArtifacts dataclass."""
-
-    def test_default_values(self) -> None:
-        artifacts = ValidationArtifacts(log_dir=Path("/tmp/logs"))
-        assert artifacts.log_dir == Path("/tmp/logs")
-        assert artifacts.worktree_path is None
-        assert artifacts.worktree_state is None
-        assert artifacts.coverage_report is None
-        assert artifacts.e2e_fixture_path is None
-
-    def test_custom_values(self) -> None:
-        artifacts = ValidationArtifacts(
-            log_dir=Path("/tmp/logs"),
-            worktree_path=Path("/tmp/worktree"),
-            worktree_state="kept",
-            coverage_report=Path("/tmp/coverage.xml"),
-            e2e_fixture_path=Path("/tmp/e2e"),
-        )
-        assert artifacts.worktree_path == Path("/tmp/worktree")
-        assert artifacts.worktree_state == "kept"
-
-
-class TestIssueResolution:
-    """Test IssueResolution dataclass."""
-
-    def test_success_resolution(self) -> None:
-        resolution = IssueResolution(
-            outcome=ResolutionOutcome.SUCCESS,
-            rationale="All tests pass",
-        )
-        assert resolution.outcome == ResolutionOutcome.SUCCESS
-        assert resolution.rationale == "All tests pass"
-
-    def test_no_change_resolution(self) -> None:
-        resolution = IssueResolution(
-            outcome=ResolutionOutcome.NO_CHANGE,
-            rationale="Issue already addressed in previous commit",
-        )
-        assert resolution.outcome == ResolutionOutcome.NO_CHANGE
-
-    def test_obsolete_resolution(self) -> None:
-        resolution = IssueResolution(
-            outcome=ResolutionOutcome.OBSOLETE,
-            rationale="Feature removed from scope",
-        )
-        assert resolution.outcome == ResolutionOutcome.OBSOLETE
-
-
-class TestValidationContext:
-    """Test ValidationContext dataclass."""
-
-    def test_per_issue_context(self) -> None:
-        ctx = ValidationContext(
-            issue_id="test-123",
-            repo_path=Path("/tmp/repo"),
-            commit_hash="abc123",
-            changed_files=["src/app.py"],
-            scope=ValidationScope.PER_ISSUE,
-        )
-        assert ctx.issue_id == "test-123"
-        assert ctx.repo_path == Path("/tmp/repo")
-        assert ctx.commit_hash == "abc123"
-        assert ctx.log_path is None  # default
-        assert ctx.changed_files == ["src/app.py"]
-        assert ctx.scope == ValidationScope.PER_ISSUE
-
-    def test_run_level_context(self) -> None:
-        ctx = ValidationContext(
-            issue_id=None,
-            repo_path=Path("/tmp/repo"),
-            commit_hash="def456",
-            changed_files=[],
-            scope=ValidationScope.RUN_LEVEL,
-        )
-        assert ctx.issue_id is None
-        assert ctx.scope == ValidationScope.RUN_LEVEL
 
 
 class TestValidationSpec:

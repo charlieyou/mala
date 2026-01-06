@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, UTC
 from pathlib import Path
@@ -20,8 +21,14 @@ from src.core.models import (
 )
 from src.infra.tools.env import get_lock_dir, get_repo_runs_dir
 
+# Type aliases for dependency injection in tests
 
-def configure_debug_logging(repo_path: Path, run_id: str) -> Path | None:
+ProcessChecker = Callable[[int], bool]
+
+
+def configure_debug_logging(
+    repo_path: Path, run_id: str, *, runs_dir: Path | None = None
+) -> Path | None:
     """Configure Python logging to write debug logs to a file.
 
     Creates a debug log file alongside run metadata at:
@@ -38,6 +45,8 @@ def configure_debug_logging(repo_path: Path, run_id: str) -> Path | None:
     Args:
         repo_path: Repository path for log directory.
         run_id: Run ID (UUID) for filename.
+        runs_dir: Optional custom runs directory. If None, uses default from
+            get_repo_runs_dir().
 
     Returns:
         Path to the debug log file, or None if logging could not be configured
@@ -48,12 +57,14 @@ def configure_debug_logging(repo_path: Path, run_id: str) -> Path | None:
         return None
 
     try:
-        runs_dir = get_repo_runs_dir(repo_path)
-        runs_dir.mkdir(parents=True, exist_ok=True)
+        effective_runs_dir = (
+            runs_dir if runs_dir is not None else get_repo_runs_dir(repo_path)
+        )
+        effective_runs_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
         short_id = run_id[:8]
-        log_path = runs_dir / f"{timestamp}_{short_id}.debug.log"
+        log_path = effective_runs_dir / f"{timestamp}_{short_id}.debug.log"
 
         # Create file handler for debug logs
         handler = logging.FileHandler(log_path)
@@ -198,6 +209,7 @@ class RunMetadata:
         repo_path: Path,
         config: RunConfig,
         version: str,
+        runs_dir: Path | None = None,
     ):
         self.run_id = str(uuid.uuid4())
         self.started_at = datetime.now(UTC)
@@ -205,12 +217,13 @@ class RunMetadata:
         self.repo_path = repo_path
         self.config = config
         self.version = version
+        self._runs_dir = runs_dir
         self.issues: dict[str, IssueRun] = {}
         # Run-level validation results (from mala-e0i)
         self.run_validation: ValidationResult | None = None
         # Configure debug logging for this run (always enabled)
         self.debug_log_path: Path | None = configure_debug_logging(
-            repo_path, self.run_id
+            repo_path, self.run_id, runs_dir=runs_dir
         )
 
     def record_issue(self, issue: IssueRun) -> None:
@@ -393,6 +406,7 @@ class RunMetadata:
         metadata.repo_path = Path(data["repo_path"])
         metadata.config = config
         metadata.version = data["version"]
+        metadata._runs_dir = None  # Loaded instances use repo_path for save()
 
         # Reconstruct issues
         metadata.issues = {}
@@ -468,8 +482,12 @@ class RunMetadata:
         # Clean up debug logging handler before saving (idempotent)
         self.cleanup()
 
-        # Use repo-specific subdirectory
-        runs_dir = get_repo_runs_dir(self.repo_path)
+        # Use repo-specific subdirectory (or custom runs_dir if provided)
+        runs_dir = (
+            self._runs_dir
+            if self._runs_dir is not None
+            else get_repo_runs_dir(self.repo_path)
+        )
         runs_dir.mkdir(parents=True, exist_ok=True)
 
         # Use timestamp + short UUID for filename
@@ -499,22 +517,26 @@ class RunningInstance:
     issues_in_progress: int = 0
 
 
-def _get_marker_path(run_id: str) -> Path:
+def _get_marker_path(run_id: str, lock_dir: Path | None = None) -> Path:
     """Get the path to a run marker file.
 
     Args:
         run_id: The run ID.
+        lock_dir: Override lock directory (for testing). If None, uses default.
 
     Returns:
         Path to the marker file.
     """
-    return get_lock_dir() / f"run-{run_id}.marker"
+    effective_lock_dir = lock_dir if lock_dir is not None else get_lock_dir()
+    return effective_lock_dir / f"run-{run_id}.marker"
 
 
 def write_run_marker(
     run_id: str,
     repo_path: Path,
     max_agents: int | None = None,
+    *,
+    lock_dir: Path | None = None,
 ) -> Path:
     """Write a run marker file to indicate a running instance.
 
@@ -526,14 +548,15 @@ def write_run_marker(
         run_id: The unique run ID.
         repo_path: Path to the repository being processed.
         max_agents: Maximum number of concurrent agents (optional).
+        lock_dir: Override lock directory (for testing). If None, uses default.
 
     Returns:
         Path to the created marker file.
     """
-    lock_dir = get_lock_dir()
-    lock_dir.mkdir(parents=True, exist_ok=True)
+    effective_lock_dir = lock_dir if lock_dir is not None else get_lock_dir()
+    effective_lock_dir.mkdir(parents=True, exist_ok=True)
 
-    marker_path = _get_marker_path(run_id)
+    marker_path = _get_marker_path(run_id, lock_dir=effective_lock_dir)
     data = {
         "run_id": run_id,
         "repo_path": str(repo_path.resolve()),
@@ -550,49 +573,63 @@ def write_run_marker(
     return marker_path
 
 
-def remove_run_marker(run_id: str) -> bool:
+def remove_run_marker(run_id: str, *, lock_dir: Path | None = None) -> bool:
     """Remove a run marker file.
 
     Called when a run completes (successfully or not).
 
     Args:
         run_id: The run ID whose marker should be removed.
+        lock_dir: Override lock directory (for testing). If None, uses default.
 
     Returns:
         True if the marker was removed, False if it didn't exist.
     """
-    marker_path = _get_marker_path(run_id)
+    marker_path = _get_marker_path(run_id, lock_dir=lock_dir)
     if marker_path.exists():
         marker_path.unlink()
         return True
     return False
 
 
-def get_running_instances() -> list[RunningInstance]:
+def get_running_instances(
+    *,
+    lock_dir: Path | None = None,
+    is_process_running: ProcessChecker | None = None,
+) -> list[RunningInstance]:
     """Get all currently running mala instances.
 
     Reads all run marker files from the lock directory and returns
     information about each running instance. Stale markers (where the
     PID is no longer running) are automatically cleaned up.
 
+    Args:
+        lock_dir: Override lock directory (for testing). If None, uses default.
+        is_process_running: Override process checker (for testing). If None,
+            uses _is_process_running.
+
     Returns:
         List of RunningInstance objects for all active runs.
     """
-    lock_dir = get_lock_dir()
-    if not lock_dir.exists():
+    effective_lock_dir = lock_dir if lock_dir is not None else get_lock_dir()
+    checker = (
+        is_process_running if is_process_running is not None else _is_process_running
+    )
+
+    if not effective_lock_dir.exists():
         return []
 
     instances: list[RunningInstance] = []
     stale_markers: list[Path] = []
 
-    for marker_path in lock_dir.glob("run-*.marker"):
+    for marker_path in effective_lock_dir.glob("run-*.marker"):
         try:
             with open(marker_path) as f:
                 data = json.load(f)
 
             pid = data.get("pid")
             # Check if the process is still running
-            if pid and not _is_process_running(pid):
+            if pid and not checker(pid):
                 stale_markers.append(marker_path)
                 continue
 
@@ -618,7 +655,12 @@ def get_running_instances() -> list[RunningInstance]:
     return instances
 
 
-def get_running_instances_for_dir(directory: Path) -> list[RunningInstance]:
+def get_running_instances_for_dir(
+    directory: Path,
+    *,
+    lock_dir: Path | None = None,
+    is_process_running: ProcessChecker | None = None,
+) -> list[RunningInstance]:
     """Get running mala instances for a specific directory.
 
     Filters running instances to only those whose repo_path matches
@@ -626,6 +668,9 @@ def get_running_instances_for_dir(directory: Path) -> list[RunningInstance]:
 
     Args:
         directory: The directory to filter by.
+        lock_dir: Override lock directory (for testing). If None, uses default.
+        is_process_running: Override process checker (for testing). If None,
+            uses _is_process_running.
 
     Returns:
         List of RunningInstance objects running in the specified directory.
@@ -633,7 +678,9 @@ def get_running_instances_for_dir(directory: Path) -> list[RunningInstance]:
     resolved_dir = directory.resolve()
     return [
         instance
-        for instance in get_running_instances()
+        for instance in get_running_instances(
+            lock_dir=lock_dir, is_process_running=is_process_running
+        )
         if instance.repo_path.resolve() == resolved_dir
     ]
 

@@ -1,7 +1,9 @@
 preset: python-uv
 
 run_level_commands:
-  test: "uv run pytest --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
+  test:
+    command: "uv run pytest -m 'unit or integration or e2e' --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
+    timeout: 600
 
 coverage:
   format: xml

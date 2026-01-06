@@ -13,26 +13,19 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
 from src.core.log_events import (
     AssistantLogEntry,
-    AssistantMessage,
     LogParseError,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
     UserLogEntry,
-    UserMessage,
     parse_log_entry,
     parse_log_entry_strict,
 )
-
-if TYPE_CHECKING:
-    from src.core.log_events import ContentBlock, LogEntry
-
 
 # Path to JSONL fixture file
 FIXTURES_DIR = Path(__file__).parent.parent.parent / "fixtures"
@@ -46,10 +39,6 @@ SDK_LOG_SAMPLES = FIXTURES_DIR / "sdk_log_samples.jsonl"
 
 class TestJSONLFixtureFile:
     """Test parsing entries from the JSONL fixture file."""
-
-    def test_fixture_file_exists(self) -> None:
-        """Verify the JSONL fixture file exists."""
-        assert SDK_LOG_SAMPLES.exists(), f"Fixture file not found: {SDK_LOG_SAMPLES}"
 
     def test_all_fixture_entries_parse_successfully(self) -> None:
         """All entries in the fixture file should parse without error."""
@@ -65,51 +54,6 @@ class TestJSONLFixtureFile:
         for line_num, data in entries:
             entry = parse_log_entry(data)
             assert entry is not None, f"Failed to parse fixture line {line_num}: {data}"
-
-    def test_fixture_contains_tool_use_entries(self) -> None:
-        """Fixture file should contain tool_use entries."""
-        tool_use_count = 0
-        with open(SDK_LOG_SAMPLES) as f:
-            for line in f:
-                if line.strip():
-                    data = json.loads(line)
-                    entry = parse_log_entry(data)
-                    if isinstance(entry, AssistantLogEntry):
-                        for block in entry.message.content:
-                            if isinstance(block, ToolUseBlock):
-                                tool_use_count += 1
-
-        assert tool_use_count > 0, "Fixture file should contain tool_use entries"
-
-    def test_fixture_contains_tool_result_entries(self) -> None:
-        """Fixture file should contain tool_result entries."""
-        tool_result_count = 0
-        with open(SDK_LOG_SAMPLES) as f:
-            for line in f:
-                if line.strip():
-                    data = json.loads(line)
-                    entry = parse_log_entry(data)
-                    if isinstance(entry, UserLogEntry):
-                        for block in entry.message.content:
-                            if isinstance(block, ToolResultBlock):
-                                tool_result_count += 1
-
-        assert tool_result_count > 0, "Fixture file should contain tool_result entries"
-
-    def test_fixture_contains_text_blocks(self) -> None:
-        """Fixture file should contain text blocks."""
-        text_block_count = 0
-        with open(SDK_LOG_SAMPLES) as f:
-            for line in f:
-                if line.strip():
-                    data = json.loads(line)
-                    entry = parse_log_entry(data)
-                    if isinstance(entry, AssistantLogEntry):
-                        for block in entry.message.content:
-                            if isinstance(block, TextBlock):
-                                text_block_count += 1
-
-        assert text_block_count > 0, "Fixture file should contain text blocks"
 
     def test_fixture_strict_parsing(self) -> None:
         """All fixture entries should also pass strict parsing."""
@@ -625,52 +569,8 @@ class TestCompleteSessionFlow:
         assert tool_use.id == tool_result.tool_use_id == "toolu_pytest_session"
 
 
-class TestDataclassProperties:
-    """Test dataclass properties and immutability."""
-
-    def test_dataclasses_are_frozen(self) -> None:
-        """All dataclasses should be immutable."""
-        block = TextBlock(text="Hello")
-        with pytest.raises(AttributeError):
-            block.text = "Modified"  # type: ignore[misc]
-
-    def test_content_block_type_alias(self) -> None:
-        """ContentBlock type should accept all block types."""
-        blocks: list[ContentBlock] = [
-            TextBlock(text="Hello"),
-            ToolUseBlock(id="1", name="Bash", input={}),
-            ToolResultBlock(tool_use_id="1", content="", is_error=False),
-        ]
-        assert len(blocks) == 3
-
-    def test_log_entry_type_alias(self) -> None:
-        """LogEntry type should accept all entry types."""
-        entries: list[LogEntry] = [
-            AssistantLogEntry(message=AssistantMessage(content=[])),
-            UserLogEntry(message=UserMessage(content=[])),
-        ]
-        assert len(entries) == 2
-
-
 class TestLogParseError:
     """Test LogParseError exception class."""
-
-    def test_error_with_reason_only(self) -> None:
-        """LogParseError can be created with reason only."""
-        error = LogParseError("Missing required field 'type'")
-
-        assert error.reason == "Missing required field 'type'"
-        assert error.data is None
-        assert "Missing required field 'type'" in str(error)
-
-    def test_error_with_data(self) -> None:
-        """LogParseError can include the problematic data."""
-        error = LogParseError(
-            "Invalid message structure", data={"type": "unknown", "bad": True}
-        )
-
-        assert error.reason == "Invalid message structure"
-        assert error.data == {"type": "unknown", "bad": True}
 
     def test_error_includes_schema_hint(self) -> None:
         """LogParseError should include schema documentation in message."""

@@ -154,7 +154,7 @@ def setup_workspace(
     if context.commit_hash:
         worktree_config = WorktreeConfig(
             base_dir=log_dir / "worktrees",
-            keep_on_failure=True,  # Keep for debugging
+            keep_on_failure=False,  # Always clean up worktrees
         )
         worktree_ctx = create_worktree(
             repo_path=context.repo_path,

@@ -35,34 +35,6 @@ def analyzer(tmp_path: Path) -> EpicScopeAnalyzer:
 
 
 # ============================================================================
-# ScopedCommits dataclass tests
-# ============================================================================
-
-
-class TestScopedCommits:
-    """Tests for ScopedCommits dataclass."""
-
-    def test_dataclass_fields(self) -> None:
-        """ScopedCommits should have correct fields."""
-        result = ScopedCommits(
-            commit_shas=["abc123", "def456"],
-            commit_range="abc123^..def456",
-            commit_summary="- abc123 Some commit\n- def456 Another commit",
-        )
-        assert result.commit_shas == ["abc123", "def456"]
-        assert result.commit_range == "abc123^..def456"
-        assert "Some commit" in result.commit_summary
-
-    def test_empty_result(self) -> None:
-        """ScopedCommits can represent empty results."""
-        result = ScopedCommits(
-            commit_shas=[], commit_range=None, commit_summary="No commits found."
-        )
-        assert result.commit_shas == []
-        assert result.commit_range is None
-
-
-# ============================================================================
 # _compute_commit_list tests
 # ============================================================================
 

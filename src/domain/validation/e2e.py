@@ -12,7 +12,9 @@ Key types:
 
 from __future__ import annotations
 
+import os
 import shutil
+import sys
 import tempfile
 import time
 import uuid
@@ -288,8 +290,20 @@ class E2ERunner:
 
         # Convert timeout from seconds to minutes for CLI (which expects minutes)
         timeout_minutes = max(1, int(self.config.timeout_seconds // 60))
+
+        # Prefer invoking the local module to avoid mismatched global installs.
+        # Ensure the repo root is on PYTHONPATH so src.cli.main is importable.
+        repo_root = Path(__file__).resolve().parents[3]
+        pythonpath = child_env.get("PYTHONPATH", "")
+        if str(repo_root) not in pythonpath.split(os.pathsep):
+            child_env["PYTHONPATH"] = (
+                f"{repo_root}{os.pathsep}{pythonpath}" if pythonpath else str(repo_root)
+            )
+
         cmd = [
-            "mala",
+            sys.executable,
+            "-m",
+            "src.cli.main",
             "run",
             str(fixture_path),
             "--max-agents",

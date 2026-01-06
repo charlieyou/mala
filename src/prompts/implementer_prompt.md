@@ -199,10 +199,12 @@ After outputting a marker, skip to step 8 (Release Locks).
 If you made code changes:
 ```bash
 git status             # Review changes
-git add <files>        # Stage YOUR code files only
-git commit -m "bd-{issue_id}: <summary>"
+git add <files> && git commit -m "bd-{issue_id}: <summary>"
 ```
 
+**CRITICAL GIT RULES:**
+- **ONLY commit files YOU touched**: List each file explicitly in `git add`. NEVER use `git add .`, `git add -A`, or `git commit -a`. Committing another agent's staged changes will corrupt the repository.
+- **Atomic add+commit is MANDATORY**: ALWAYS chain `git add <files> && git commit` in a single command. Separate commands allow other agents to interleave their staging, causing you to commit their files.
 - Do NOT push - only commit locally
 - Do NOT close the issue - orchestrator handles that
 - Only release locks AFTER successful commit

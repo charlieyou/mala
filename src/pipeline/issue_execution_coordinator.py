@@ -13,10 +13,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from src.core.models import OrderPreference, RunResult, WatchState
+
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from src.core.models import WatchConfig
     from src.core.protocols import IssueProvider, MalaEventSink
 
 logger = logging.getLogger(__name__)
@@ -48,8 +54,15 @@ class FinalizeCallback(Protocol):
 class AbortCallback(Protocol):
     """Callback for aborting active tasks."""
 
-    async def __call__(self) -> None:
-        """Abort all active tasks."""
+    async def __call__(self, *, is_interrupt: bool = False) -> int:
+        """Abort all active tasks.
+
+        Args:
+            is_interrupt: If True, use "Interrupted" summary instead of "Aborted".
+
+        Returns:
+            Number of tasks that were aborted.
+        """
         ...
 
 
@@ -61,19 +74,21 @@ class CoordinatorConfig:
         max_agents: Maximum concurrent agents (None = unlimited).
         max_issues: Maximum issues to process (None = unlimited).
         epic_id: Only process tasks under this epic.
-        only_ids: Set of issue IDs to process exclusively.
+        only_ids: List of issue IDs to process exclusively.
         prioritize_wip: Prioritize in_progress issues before open issues.
         focus: Group tasks by epic for focused work.
         orphans_only: Only process issues with no parent epic.
+        order_preference: Issue ordering preference (focus, priority, or input).
     """
 
     max_agents: int | None = None
     max_issues: int | None = None
     epic_id: str | None = None
-    only_ids: set[str] | None = None
+    only_ids: list[str] | None = None
     prioritize_wip: bool = False
     focus: bool = True
     orphans_only: bool = False
+    order_preference: OrderPreference = OrderPreference.FOCUS
 
 
 class IssueExecutionCoordinator:
@@ -139,12 +154,45 @@ class IssueExecutionCoordinator:
         logger.warning("Abort requested: reason=%s", reason)
         self.event_sink.on_abort_requested(reason)
 
+    async def _handle_interrupt(
+        self,
+        abort_callback: AbortCallback,
+        validation_callback: Callable[[], Awaitable[bool]] | None,
+        watch_state: WatchState,
+        issues_spawned: int,
+        watch_enabled: bool,
+    ) -> RunResult:
+        """Handle SIGINT by aborting active tasks, running final validation, and returning.
+
+        Note: abort_callback awaits all tasks before returning to ensure orderly shutdown.
+        It also updates watch_state.completed_count for aborted tasks.
+        """
+        aborted_count = await abort_callback(is_interrupt=True)
+        if not isinstance(aborted_count, int):
+            aborted_count = 0
+        # Recompute completed_count from completed_ids to avoid polluted state
+        watch_state.completed_count = len(self.completed_ids) + aborted_count
+        exit_code = 130
+        if not isinstance(watch_state.last_validation_at, int):
+            watch_state.last_validation_at = 0
+        if watch_state.completed_count > watch_state.last_validation_at:
+            if watch_enabled and validation_callback:
+                validation_passed = await validation_callback()
+                watch_state.last_validation_at = watch_state.completed_count
+                if not validation_passed:
+                    exit_code = 1
+        return RunResult(issues_spawned, exit_code=exit_code, exit_reason="interrupted")
+
     async def run_loop(
         self,
         spawn_callback: SpawnCallback,
         finalize_callback: FinalizeCallback,
         abort_callback: AbortCallback,
-    ) -> int:
+        watch_config: WatchConfig | None = None,
+        interrupt_event: asyncio.Event | None = None,
+        validation_callback: Callable[[], Awaitable[bool]] | None = None,
+        sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> RunResult:
         """Run the main agent spawning and completion loop.
 
         Args:
@@ -155,103 +203,395 @@ class IssueExecutionCoordinator:
                 Receives issue_id and the completed task.
             abort_callback: Called when abort is triggered.
                 Should cancel and finalize all active tasks.
+            watch_config: Watch mode configuration. If None or not enabled,
+                loop exits when no work remains.
+            interrupt_event: Event set to signal graceful shutdown (e.g., SIGINT).
+            validation_callback: Called periodically in watch mode to run validation.
+                Returns True if validation passed, False otherwise.
+            sleep_fn: Async sleep function, injectable for testing.
 
         Returns:
-            Number of issues spawned.
+            RunResult with issues_spawned, exit_code, and exit_reason.
         """
         issues_spawned = 0
 
-        while True:
-            logger.debug(
-                "Loop iteration: active=%d completed=%d",
-                len(self.active_tasks),
-                len(self.completed_ids),
+        # Initialize watch state from config (used in T004-T006)
+        watch_state = WatchState(
+            next_validation_threshold=(
+                watch_config.validate_every if watch_config else 10
             )
-            # Check for abort
-            if self.abort_run:
-                await abort_callback()
-                break
+        )
+        watch_enabled = bool(watch_config and watch_config.enabled)
 
-            # Check if we've hit the issue limit
-            limit_reached = (
-                self.config.max_issues is not None
-                and issues_spawned >= self.config.max_issues
-            )
+        # Track interrupt_task outside the loop to ensure cleanup on any exit path
+        interrupt_task: asyncio.Task[object] | None = None
 
-            # Build suppress_warn_ids for only_ids mode
-            suppress_warn_ids = None
-            if self.config.only_ids:
-                suppress_warn_ids = (
-                    self.failed_issues
-                    | set(self.active_tasks.keys())
-                    | self.completed_ids
+        async def _cleanup_interrupt_task() -> None:
+            """Cancel interrupt_task if it exists and is pending."""
+            nonlocal interrupt_task
+            if interrupt_task is not None and not interrupt_task.done():
+                interrupt_task.cancel()
+                try:
+                    await interrupt_task
+                except asyncio.CancelledError:
+                    # Only suppress if this is from our cancelled interrupt_task,
+                    # not from the current task being cancelled externally
+                    current = asyncio.current_task()
+                    if current is not None and current.cancelling() > 0:
+                        raise
+                    # Otherwise suppress - expected when we cancel interrupt_task
+
+        try:
+            while True:
+                logger.debug(
+                    "Loop iteration: active=%d completed=%d",
+                    len(self.active_tasks),
+                    len(self.completed_ids),
+                )
+                # Check for interrupt (SIGINT)
+                if interrupt_event and interrupt_event.is_set():
+                    return await self._handle_interrupt(
+                        abort_callback,
+                        validation_callback,
+                        watch_state,
+                        issues_spawned,
+                        watch_enabled,
+                    )
+
+                # Check for abort
+                if self.abort_run:
+                    await abort_callback()
+                    return RunResult(
+                        issues_spawned=issues_spawned,
+                        exit_code=3,
+                        exit_reason="abort",
+                    )
+
+                # Check if we've hit the issue limit (using completed_count, not spawned)
+                limit_reached = (
+                    self.config.max_issues is not None
+                    and watch_state.completed_count >= self.config.max_issues
                 )
 
-            # Fetch ready issues (unless we've hit the limit)
-            ready = (
-                await self.beads.get_ready_async(
-                    self.failed_issues,
-                    epic_id=self.config.epic_id,
-                    only_ids=self.config.only_ids,
-                    suppress_warn_ids=suppress_warn_ids,
-                    prioritize_wip=self.config.prioritize_wip,
-                    focus=self.config.focus,
-                    orphans_only=self.config.orphans_only,
+                # Build suppress_warn_ids for only_ids mode
+                suppress_warn_ids = None
+                if self.config.only_ids:
+                    suppress_warn_ids = (
+                        self.failed_issues
+                        | set(self.active_tasks.keys())
+                        | self.completed_ids
+                    )
+
+                # Fetch ready issues (unless we've hit the limit)
+                if limit_reached:
+                    ready: list[str] = []
+                else:
+                    try:
+                        ready = await self.beads.get_ready_async(
+                            self.failed_issues,
+                            epic_id=self.config.epic_id,
+                            only_ids=self.config.only_ids,
+                            suppress_warn_ids=suppress_warn_ids,
+                            prioritize_wip=self.config.prioritize_wip,
+                            focus=self.config.focus,
+                            orphans_only=self.config.orphans_only,
+                            order_preference=self.config.order_preference,
+                        )
+                        watch_state.consecutive_poll_failures = 0  # Reset on success
+                    except Exception:
+                        logger.exception("Poll failed")
+                        watch_state.consecutive_poll_failures += 1
+
+                        if watch_state.consecutive_poll_failures >= 3:
+                            # Wait for remaining active agents before aborting
+                            if self.active_tasks:
+                                await asyncio.gather(
+                                    *self.active_tasks.values(), return_exceptions=True
+                                )
+                                # Finalize any tasks that completed during gather
+                                for issue_id, t in list(self.active_tasks.items()):
+                                    if t.done():
+                                        await finalize_callback(issue_id, t)
+                                        watch_state.completed_count += 1
+                            # Abort any active tasks before returning
+                            await abort_callback()
+                            # Run final validation if any issues completed
+                            if (
+                                watch_enabled
+                                and watch_state.completed_count
+                                > watch_state.last_validation_at
+                                and validation_callback
+                            ):
+                                valid = await validation_callback()
+                                watch_state.last_validation_at = (
+                                    watch_state.completed_count
+                                )
+                                if not valid:
+                                    return RunResult(
+                                        issues_spawned,
+                                        exit_code=1,
+                                        exit_reason="validation_failed",
+                                    )
+                            return RunResult(
+                                issues_spawned,
+                                exit_code=3,
+                                exit_reason="poll_failed",
+                            )
+
+                        # Interruptible wait before retry
+                        poll_interval = (
+                            watch_config.poll_interval_seconds if watch_config else 60.0
+                        )
+                        if interrupt_event:
+                            try:
+                                await asyncio.wait_for(
+                                    interrupt_event.wait(),
+                                    timeout=poll_interval,
+                                )
+                                # Interrupted during poll retry wait
+                                return await self._handle_interrupt(
+                                    abort_callback,
+                                    validation_callback,
+                                    watch_state,
+                                    issues_spawned,
+                                    watch_enabled,
+                                )
+                            except TimeoutError:
+                                pass  # Normal timeout, retry poll
+                        else:
+                            await sleep_fn(poll_interval)
+
+                        # Retry poll immediately after sleep (don't block on task completion)
+                        continue
+
+                if ready:
+                    self.event_sink.on_ready_issues(list(ready))
+
+                # Spawn agents while we have capacity, ready issues, and haven't hit limit
+                # Note: max_issues counts terminal states (completed_count), not spawn attempts
+                # Once limit_reached, stop spawning but let active tasks complete
+                # Also limit spawns to max_issues to prevent over-spawning on first iteration
+                spawn_limit_reached = (
+                    self.config.max_issues is not None
+                    and issues_spawned >= self.config.max_issues
                 )
-                if not limit_reached
-                else []
-            )
+                while (
+                    not limit_reached
+                    and not spawn_limit_reached
+                    and (
+                        self.config.max_agents is None
+                        or len(self.active_tasks) < self.config.max_agents
+                    )
+                    and ready
+                ):
+                    issue_id = ready.pop(0)
+                    if issue_id not in self.active_tasks:
+                        task = await spawn_callback(issue_id)
+                        if task is not None:
+                            self.register_task(issue_id, task)
+                            issues_spawned += 1
+                            # Update spawn limit check for next iteration
+                            spawn_limit_reached = (
+                                self.config.max_issues is not None
+                                and issues_spawned >= self.config.max_issues
+                            )
 
-            if ready:
-                self.event_sink.on_ready_issues(list(ready))
+                # Exit if no active work
+                if not self.active_tasks:
+                    if limit_reached:
+                        self.event_sink.on_no_more_issues(
+                            f"limit_reached ({self.config.max_issues})"
+                        )
+                        # Run final validation if needed
+                        if watch_state.completed_count > watch_state.last_validation_at:
+                            if watch_enabled and validation_callback:
+                                validation_passed = await validation_callback()
+                                watch_state.last_validation_at = (
+                                    watch_state.completed_count
+                                )
+                                if not validation_passed:
+                                    return RunResult(
+                                        issues_spawned=issues_spawned,
+                                        exit_code=1,
+                                        exit_reason="validation_failed",
+                                    )
+                        return RunResult(
+                            issues_spawned=issues_spawned,
+                            exit_code=0,
+                            exit_reason="limit_reached",
+                        )
+                    elif not ready:
+                        # Idle: no ready issues AND no active agents
+                        if watch_config and watch_config.enabled:
+                            # Detect transition to idle and rate-limit logging
+                            # Use monotonic clock to avoid NTP/clock change issues
+                            now = time.monotonic()
+                            if not watch_state.was_idle:
+                                watch_state.was_idle = True
+                                watch_state.last_idle_log_time = now
+                                blocked_count = (
+                                    await self.beads.get_blocked_count_async()
+                                )
+                                self.event_sink.on_watch_idle(
+                                    watch_config.poll_interval_seconds, blocked_count
+                                )
+                            elif now - watch_state.last_idle_log_time >= 300:
+                                watch_state.last_idle_log_time = now
+                                blocked_count = (
+                                    await self.beads.get_blocked_count_async()
+                                )
+                                self.event_sink.on_watch_idle(
+                                    watch_config.poll_interval_seconds, blocked_count
+                                )
 
-            # Spawn agents while we have capacity and ready issues
-            while (
-                self.config.max_agents is None
-                or len(self.active_tasks) < self.config.max_agents
-            ) and ready:
-                issue_id = ready.pop(0)
-                if issue_id not in self.active_tasks:
-                    task = await spawn_callback(issue_id)
-                    if task is not None:
-                        self.register_task(issue_id, task)
-                        issues_spawned += 1
-                        if (
-                            self.config.max_issues is not None
-                            and issues_spawned >= self.config.max_issues
-                        ):
+                            # Interruptible sleep - respond to SIGINT immediately
+                            if interrupt_event:
+                                try:
+                                    await asyncio.wait_for(
+                                        interrupt_event.wait(),
+                                        timeout=watch_config.poll_interval_seconds,
+                                    )
+                                    # Event was set - SIGINT received during idle
+                                    return await self._handle_interrupt(
+                                        abort_callback,
+                                        validation_callback,
+                                        watch_state,
+                                        issues_spawned,
+                                        watch_enabled,
+                                    )
+                                except TimeoutError:
+                                    pass  # Normal timeout, continue loop
+                            else:
+                                await sleep_fn(watch_config.poll_interval_seconds)
+                            continue  # Re-poll
+                        else:
+                            # Watch mode not enabled: exit immediately
+                            self.event_sink.on_no_more_issues("none_ready")
+                            # Run final validation if any issues completed
+                            if (
+                                watch_state.completed_count
+                                > watch_state.last_validation_at
+                            ):
+                                if watch_enabled and validation_callback:
+                                    validation_passed = await validation_callback()
+                                    watch_state.last_validation_at = (
+                                        watch_state.completed_count
+                                    )
+                                    if not validation_passed:
+                                        return RunResult(
+                                            issues_spawned=issues_spawned,
+                                            exit_code=1,
+                                            exit_reason="validation_failed",
+                                        )
+                            return RunResult(
+                                issues_spawned=issues_spawned,
+                                exit_code=0,
+                                exit_reason="success",
+                            )
+                    else:
+                        # Ready issues exist but spawn returned None for all
+                        # (e.g., already in-progress). Clear idle state and re-poll.
+                        watch_state.was_idle = False
+                        continue
+
+                # Clear idle state when there's active work
+                if ready or self.active_tasks:
+                    watch_state.was_idle = False
+
+                # Wait for at least one task to complete, interruptible by SIGINT
+                self.event_sink.on_waiting_for_agents(len(self.active_tasks))
+                wait_tasks: set[asyncio.Task[object]] = set(self.active_tasks.values())
+                # Reuse or create interrupt_task (created once, reused across iterations)
+                if interrupt_event:
+                    if interrupt_task is None or interrupt_task.done():
+                        interrupt_task = asyncio.create_task(interrupt_event.wait())
+                    wait_tasks.add(interrupt_task)
+
+                done, _ = await asyncio.wait(
+                    wait_tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                # Note: interrupt_task is NOT cancelled here - it's reused across
+                # iterations. Cleanup happens in the finally block when the loop exits.
+
+                # Remove interrupt task from done set for processing
+                done_agent_tasks = done - {interrupt_task} if interrupt_task else done
+
+                # Finalize completed tasks
+                for task in done_agent_tasks:
+                    for issue_id, t in list(self.active_tasks.items()):
+                        if t is task:
+                            await finalize_callback(issue_id, task)
+                            watch_state.completed_count += 1
                             break
 
-            # Exit if no active work
-            if not self.active_tasks:
-                if limit_reached:
-                    self.event_sink.on_no_more_issues(
-                        f"limit_reached ({self.config.max_issues})"
+                # Check for abort after processing completions
+                if self.abort_run:
+                    await abort_callback()
+                    return RunResult(
+                        issues_spawned=issues_spawned,
+                        exit_code=3,
+                        exit_reason="abort",
                     )
-                elif not ready:
-                    self.event_sink.on_no_more_issues("none_ready")
-                break
 
-            # Wait for at least one task to complete
-            self.event_sink.on_waiting_for_agents(len(self.active_tasks))
-            done, _ = await asyncio.wait(
-                self.active_tasks.values(),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+                # Check for interrupt after processing completions
+                if interrupt_event and interrupt_event.is_set():
+                    return await self._handle_interrupt(
+                        abort_callback,
+                        validation_callback,
+                        watch_state,
+                        issues_spawned,
+                        watch_enabled,
+                    )
 
-            # Finalize completed tasks
-            for task in done:
-                for issue_id, t in list(self.active_tasks.items()):
-                    if t is task:
-                        await finalize_callback(issue_id, task)
-                        break
+                # Check if validation threshold crossed
+                if (
+                    watch_config
+                    and watch_config.enabled
+                    and watch_state.completed_count
+                    >= watch_state.next_validation_threshold
+                ):
+                    # Wait for all active agents to finish (blocking validation)
+                    if self.active_tasks:
+                        await asyncio.gather(
+                            *self.active_tasks.values(), return_exceptions=True
+                        )
+                        # Finalize any additional completed tasks
+                        for issue_id, t in list(self.active_tasks.items()):
+                            if t.done():
+                                await finalize_callback(issue_id, t)
+                                watch_state.completed_count += 1
 
-            # Check for abort after processing completions
-            if self.abort_run:
-                await abort_callback()
-                break
+                    # Run validation
+                    if validation_callback:
+                        validation_passed = await validation_callback()
+                        if not validation_passed:
+                            return RunResult(
+                                issues_spawned,
+                                exit_code=1,
+                                exit_reason="validation_failed",
+                            )
 
-        return issues_spawned
+                    # Advance threshold to next future threshold beyond completed_count
+                    # This handles cases where completed_count jumps past multiple thresholds
+                    watch_state.last_validation_at = watch_state.completed_count
+                    while (
+                        watch_state.next_validation_threshold
+                        <= watch_state.completed_count
+                    ):
+                        watch_state.next_validation_threshold += (
+                            watch_config.validate_every
+                        )
+
+        finally:
+            # Clean up interrupt_task when exiting the loop (any return path)
+            await _cleanup_interrupt_task()
+
+        # This should not be reached; included for type safety
+        return RunResult(
+            issues_spawned=issues_spawned, exit_code=0, exit_reason="success"
+        )
 
     def register_task(self, issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
         """Register an active task for an issue.

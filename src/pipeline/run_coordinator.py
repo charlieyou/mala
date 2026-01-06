@@ -34,20 +34,23 @@ from src.domain.validation.spec import extract_lint_tools_from_spec
 from src.domain.validation.spec_runner import SpecValidationRunner
 
 if TYPE_CHECKING:
-    from src.core.protocols import MalaEventSink, SDKClientFactoryProtocol
-    from src.infra.io.log_output.run_metadata import (
-        RunMetadata,
-        ValidationResult as MetaValidationResult,
-    )
+    from pathlib import Path
+
     from src.core.protocols import (
         CommandRunnerPort,
         EnvConfigPort,
         GateChecker,
         LockManagerPort,
+        MalaEventSink,
+        McpServerFactory,
+        SDKClientFactoryProtocol,
     )
     from src.domain.validation.result import ValidationResult
     from src.domain.validation.spec import ValidationSpec
-    from pathlib import Path
+    from src.infra.io.log_output.run_metadata import (
+        RunMetadata,
+        ValidationResult as MetaValidationResult,
+    )
 
 
 class _FixerPromptNotSet:
@@ -85,6 +88,7 @@ class RunCoordinatorConfig:
     disable_validations: set[str] | None = None
     coverage_threshold: float | None = None
     fixer_prompt: str | _FixerPromptNotSet = _FIXER_PROMPT_NOT_SET
+    mcp_server_factory: McpServerFactory | None = None
 
 
 @dataclass
@@ -400,7 +404,12 @@ class RunCoordinator:
         # Note: include_mala_disallowed_tools_hook=False matches original fixer behavior
         lint_tools = extract_lint_tools_from_spec(spec)
         runtime = (
-            AgentRuntimeBuilder(fixer_cwd, agent_id, self.sdk_client_factory)
+            AgentRuntimeBuilder(
+                fixer_cwd,
+                agent_id,
+                self.sdk_client_factory,
+                mcp_server_factory=self.config.mcp_server_factory,
+            )
             .with_hooks(
                 deadlock_monitor=None,
                 include_stop_hook=True,

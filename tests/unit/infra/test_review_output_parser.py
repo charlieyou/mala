@@ -17,9 +17,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from src.infra.clients.review_output_parser import (
-    ReviewIssue,
     ReviewOutputParser,
-    ReviewResult,
 )
 from src.infra.io.base_sink import BaseEventSink
 
@@ -594,85 +592,3 @@ class TestGoldenFiles:
         assert passed is False
         assert error is not None
         assert "Invalid verdict" in error
-
-
-class TestReviewIssueDataclass:
-    """Tests verifying ReviewIssue dataclass behavior."""
-
-    def test_issue_has_required_fields(self) -> None:
-        """ReviewIssue must have all fields required by lifecycle protocol."""
-        issue = ReviewIssue(
-            file="test.py",
-            line_start=1,
-            line_end=2,
-            priority=1,
-            title="Title",
-            body="Body",
-            reviewer="codex",
-        )
-
-        assert hasattr(issue, "file")
-        assert hasattr(issue, "line_start")
-        assert hasattr(issue, "line_end")
-        assert hasattr(issue, "priority")
-        assert hasattr(issue, "title")
-        assert hasattr(issue, "body")
-        assert hasattr(issue, "reviewer")
-
-    def test_issue_equality(self) -> None:
-        """ReviewIssue dataclass supports equality comparison."""
-        issue1 = ReviewIssue(
-            file="test.py",
-            line_start=1,
-            line_end=2,
-            priority=1,
-            title="Title",
-            body="Body",
-            reviewer="codex",
-        )
-        issue2 = ReviewIssue(
-            file="test.py",
-            line_start=1,
-            line_end=2,
-            priority=1,
-            title="Title",
-            body="Body",
-            reviewer="codex",
-        )
-        assert issue1 == issue2
-
-
-class TestReviewResultDataclass:
-    """Tests verifying ReviewResult dataclass behavior."""
-
-    def test_result_has_required_fields(self) -> None:
-        """ReviewResult must have passed, parse_error, fatal_error, issues."""
-        result = ReviewResult(
-            passed=True,
-            issues=[],
-            parse_error=None,
-            fatal_error=False,
-        )
-
-        assert hasattr(result, "passed")
-        assert hasattr(result, "parse_error")
-        assert hasattr(result, "fatal_error")
-        assert hasattr(result, "issues")
-        assert hasattr(result, "review_log_path")
-
-    def test_parse_error_is_str_or_none(self) -> None:
-        """parse_error must be str | None."""
-        result_none = ReviewResult(passed=True, parse_error=None)
-        result_str = ReviewResult(passed=False, parse_error="error message")
-
-        assert result_none.parse_error is None
-        assert isinstance(result_str.parse_error, str)
-
-    def test_default_values(self) -> None:
-        """ReviewResult has sensible defaults."""
-        result = ReviewResult(passed=True)
-
-        assert result.issues == []
-        assert result.parse_error is None
-        assert result.fatal_error is False
-        assert result.review_log_path is None

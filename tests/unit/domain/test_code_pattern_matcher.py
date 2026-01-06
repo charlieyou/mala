@@ -1,9 +1,9 @@
 """Tests for code_pattern_matcher module."""
 
-import re
-from unittest.mock import patch
+from typing import TYPE_CHECKING
 
-import pytest
+if TYPE_CHECKING:
+    import pytest
 
 from src.domain.validation.code_pattern_matcher import (
     filter_matching_files,
@@ -50,36 +50,6 @@ class TestGlobToRegex:
         assert regex.match("file[1].py")
         assert not regex.match("file1.py")
 
-    def test_invalid_pattern_treated_as_literal(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Test that re.error during compilation falls back to literal matching."""
-        # Mock re.compile to raise re.error on first call, simulating an invalid regex
-        original_compile = re.compile
-        call_count = 0
-
-        def mock_compile(
-            pattern: str, *args: object, **kwargs: object
-        ) -> re.Pattern[str]:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                # First call (the constructed regex) raises error
-                raise re.error("mock regex error")
-            # Second call (the escaped fallback) succeeds
-            return original_compile(pattern, *args, **kwargs)
-
-        with patch("re.compile", side_effect=mock_compile):
-            regex = glob_to_regex("test_pattern")
-
-        # Should have logged a warning
-        assert "Invalid glob pattern" in caplog.text
-        assert "mock regex error" in caplog.text
-
-        # The fallback regex should match the literal pattern
-        assert regex.match("test_pattern")
-        assert not regex.match("other_pattern")
-
     def test_doublestar_slash_requires_directory_boundary(self) -> None:
         """Test that **/ only matches at directory boundaries, not within filenames.
 
@@ -106,6 +76,44 @@ class TestGlobToRegex:
 
         regex2 = glob_to_regex("src/**/bar.py")
         assert regex2.pattern == "^src/(?:.*/)?bar\\.py$"
+
+    def test_invalid_pattern_treated_as_literal(
+        self, monkeypatch: "pytest.MonkeyPatch", caplog: "pytest.LogCaptureFixture"
+    ) -> None:
+        """Invalid regex patterns fall back to literal matching with warning.
+
+        When the generated regex would be invalid, glob_to_regex logs a warning
+        and returns a pattern that matches the input literally.
+        """
+        import re
+
+        from src.domain.validation import code_pattern_matcher
+
+        # Force re.compile to fail on first call only (the glob-generated pattern),
+        # then succeed on second call (the literal fallback pattern)
+        original_compile = re.compile
+        call_count = 0
+
+        def mock_compile(
+            pattern: str, *args: object, **kwargs: object
+        ) -> re.Pattern[str]:
+            nonlocal call_count
+            call_count += 1
+            # Only fail on first call (the glob pattern), not the fallback
+            if call_count == 1:
+                raise re.error("mock error")
+            return original_compile(pattern, *args, **kwargs)
+
+        monkeypatch.setattr(re, "compile", mock_compile)
+
+        # Pattern should trigger the fallback
+        regex = code_pattern_matcher.glob_to_regex("test*.py")
+
+        # Fallback should escape the pattern and match literally
+        assert regex.match("test*.py")
+        assert not regex.match("testfoo.py")
+        # Warning should be logged
+        assert "Invalid glob pattern" in caplog.text
 
 
 class TestMatchesPattern:

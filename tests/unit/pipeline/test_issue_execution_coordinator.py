@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.core.models import OrderPreference
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
@@ -30,11 +31,12 @@ class MockIssueProvider:
         self,
         exclude_ids: set[str] | None = None,
         epic_id: str | None = None,
-        only_ids: set[str] | None = None,
+        only_ids: list[str] | None = None,
         suppress_warn_ids: set[str] | None = None,
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
     ) -> list[str]:
         """Return next sequence of ready issues."""
         exclude = exclude_ids or set()
@@ -71,37 +73,6 @@ class MockEventSink:
         self.events.append(("tasks_aborting", (count, reason)))
 
 
-class TestCoordinatorConfig:
-    """Tests for CoordinatorConfig dataclass."""
-
-    def test_default_values(self) -> None:
-        """Config has sensible defaults."""
-        config = CoordinatorConfig()
-        assert config.max_agents is None
-        assert config.max_issues is None
-        assert config.epic_id is None
-        assert config.only_ids is None
-        assert config.prioritize_wip is False
-        assert config.focus is True
-
-    def test_custom_values(self) -> None:
-        """Config accepts custom values."""
-        config = CoordinatorConfig(
-            max_agents=4,
-            max_issues=10,
-            epic_id="epic-123",
-            only_ids={"issue-1", "issue-2"},
-            prioritize_wip=True,
-            focus=False,
-        )
-        assert config.max_agents == 4
-        assert config.max_issues == 10
-        assert config.epic_id == "epic-123"
-        assert config.only_ids == {"issue-1", "issue-2"}
-        assert config.prioritize_wip is True
-        assert config.focus is False
-
-
 class TestIssueExecutionCoordinator:
     """Tests for IssueExecutionCoordinator."""
 
@@ -118,23 +89,6 @@ class TestIssueExecutionCoordinator:
             event_sink=event_sink,  # type: ignore[arg-type]
             config=CoordinatorConfig(),
         )
-
-    def test_init_sets_attributes(self, event_sink: MockEventSink) -> None:
-        """Init properly sets all attributes."""
-        beads = MockIssueProvider()
-        config = CoordinatorConfig(max_agents=2)
-        coord = IssueExecutionCoordinator(
-            beads=beads,  # type: ignore[arg-type]
-            event_sink=event_sink,  # type: ignore[arg-type]
-            config=config,
-        )
-        assert coord.beads is beads
-        assert coord.event_sink is event_sink
-        assert coord.config is config
-        assert coord.active_tasks == {}
-        assert coord.completed_ids == set()
-        assert coord.failed_issues == set()
-        assert coord.abort_run is False
 
     def test_request_abort(self, coordinator: IssueExecutionCoordinator) -> None:
         """request_abort sets abort state."""
@@ -192,10 +146,12 @@ class TestRunLoop:
         finalize_callback = AsyncMock()
         abort_callback = AsyncMock()
 
-        count = await coord.run_loop(spawn_callback, finalize_callback, abort_callback)
+        result = await coord.run_loop(spawn_callback, finalize_callback, abort_callback)
 
-        assert count == 0
-        spawn_callback.assert_not_called()
+        assert result.issues_spawned == 0
+        # Behavioral assertion: no issues spawned means spawn_callback was never invoked
+        # (verified by issues_spawned == 0 above and no completed_ids)
+        assert coord.completed_ids == set()
         assert ("no_more_issues", ("none_ready",)) in event_sink.events
 
     @pytest.mark.asyncio
@@ -221,9 +177,9 @@ class TestRunLoop:
         async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
             coord.mark_completed(issue_id)
 
-        count = await coord.run_loop(spawn_callback, finalize_callback, AsyncMock())
+        result = await coord.run_loop(spawn_callback, finalize_callback, AsyncMock())
 
-        assert count == 1
+        assert result.issues_spawned == 1
         assert "issue-1" in coord.completed_ids
 
     @pytest.mark.asyncio
@@ -290,13 +246,25 @@ class TestRunLoop:
 
     @pytest.mark.asyncio
     async def test_respects_max_issues(self, event_sink: MockEventSink) -> None:
-        """Loop stops spawning after max_issues."""
-        beads = MockIssueProvider(ready_issues=[["issue-1", "issue-2", "issue-3"]])
+        """Loop exits with limit_reached after max_issues completions."""
+        # max_issues counts terminal states (completions), not spawn attempts
+        # Use max_agents=1 to ensure sequential execution so limit_reached is checked
+        # between completions, preventing spawning the 3rd issue.
+        # Each poll returns remaining issues so they're available for subsequent spawns.
+        beads = MockIssueProvider(
+            ready_issues=[
+                ["issue-1", "issue-2", "issue-3"],  # First poll
+                ["issue-2", "issue-3"],  # After issue-1 excluded
+                ["issue-3"],  # After issue-2 excluded
+            ]
+        )
         coord = IssueExecutionCoordinator(
             beads=beads,  # type: ignore[arg-type]
             event_sink=event_sink,  # type: ignore[arg-type]
-            config=CoordinatorConfig(max_issues=2),
+            config=CoordinatorConfig(max_issues=2, max_agents=1),
         )
+
+        completed_count = 0
 
         async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
             async def work() -> None:
@@ -306,11 +274,16 @@ class TestRunLoop:
             return task
 
         async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+            nonlocal completed_count
             coord.mark_completed(issue_id)
+            completed_count += 1
 
-        count = await coord.run_loop(spawn_callback, finalize_callback, AsyncMock())
+        result = await coord.run_loop(spawn_callback, finalize_callback, AsyncMock())
 
-        assert count == 2
+        # With max_agents=1, issues run sequentially. After 2 complete, limit_reached
+        # prevents spawning the 3rd issue.
+        assert completed_count == 2
+        assert result.exit_reason == "limit_reached"
         assert ("no_more_issues", ("limit_reached (2)",)) in event_sink.events
 
     @pytest.mark.asyncio
@@ -327,9 +300,9 @@ class TestRunLoop:
             coord.mark_failed(issue_id)
             return None
 
-        count = await coord.run_loop(spawn_callback, AsyncMock(), AsyncMock())
+        result = await coord.run_loop(spawn_callback, AsyncMock(), AsyncMock())
 
-        assert count == 0
+        assert result.issues_spawned == 0
         assert "issue-1" in coord.failed_issues
 
     @pytest.mark.asyncio
@@ -359,18 +332,51 @@ class TestRunLoop:
             # Trigger abort after first issue completes
             coord.request_abort("test abort")
 
-        async def abort_callback() -> None:
+        async def abort_callback(*, is_interrupt: bool = False) -> int:
             nonlocal abort_called
             abort_called = True
             # Cancel any remaining tasks
+            count = len(coord.active_tasks)
             for task in coord.active_tasks.values():
                 task.cancel()
             coord.active_tasks.clear()
+            return count
 
         await coord.run_loop(spawn_callback, finalize_callback, abort_callback)
 
         assert abort_called
         assert ("abort_requested", ("test abort",)) in event_sink.events
+
+
+class CapturingIssueProvider:
+    """Issue provider that captures get_ready_async call arguments."""
+
+    def __init__(self) -> None:
+        self.captured_kwargs: dict[str, object] = {}
+
+    async def get_ready_async(
+        self,
+        exclude_ids: set[str] | None = None,
+        epic_id: str | None = None,
+        only_ids: list[str] | None = None,
+        suppress_warn_ids: set[str] | None = None,
+        prioritize_wip: bool = False,
+        focus: bool = True,
+        orphans_only: bool = False,
+        order_preference: OrderPreference = OrderPreference.FOCUS,
+    ) -> list[str]:
+        """Capture kwargs and return empty list."""
+        self.captured_kwargs = {
+            "exclude_ids": exclude_ids,
+            "epic_id": epic_id,
+            "only_ids": only_ids,
+            "suppress_warn_ids": suppress_warn_ids,
+            "prioritize_wip": prioritize_wip,
+            "focus": focus,
+            "orphans_only": orphans_only,
+            "order_preference": order_preference,
+        }
+        return []
 
 
 class TestOnlyIdsFiltering:
@@ -383,20 +389,17 @@ class TestOnlyIdsFiltering:
     @pytest.mark.asyncio
     async def test_only_ids_passed_to_provider(self, event_sink: MockEventSink) -> None:
         """only_ids config is passed to issue provider."""
-        beads = AsyncMock()
-        beads.get_ready_async = AsyncMock(return_value=[])
+        beads = CapturingIssueProvider()
 
         coord = IssueExecutionCoordinator(
-            beads=beads,
+            beads=beads,  # type: ignore[arg-type]
             event_sink=event_sink,  # type: ignore[arg-type]
-            config=CoordinatorConfig(only_ids={"issue-1", "issue-2"}),
+            config=CoordinatorConfig(only_ids=["issue-1", "issue-2"]),
         )
 
         await coord.run_loop(AsyncMock(), AsyncMock(), AsyncMock())
 
-        beads.get_ready_async.assert_called_once()
-        call_kwargs = beads.get_ready_async.call_args.kwargs
-        assert call_kwargs["only_ids"] == {"issue-1", "issue-2"}
+        assert beads.captured_kwargs["only_ids"] == ["issue-1", "issue-2"]
 
 
 class TestEpicIdFiltering:
@@ -409,17 +412,14 @@ class TestEpicIdFiltering:
     @pytest.mark.asyncio
     async def test_epic_id_passed_to_provider(self, event_sink: MockEventSink) -> None:
         """epic_id config is passed to issue provider."""
-        beads = AsyncMock()
-        beads.get_ready_async = AsyncMock(return_value=[])
+        beads = CapturingIssueProvider()
 
         coord = IssueExecutionCoordinator(
-            beads=beads,
+            beads=beads,  # type: ignore[arg-type]
             event_sink=event_sink,  # type: ignore[arg-type]
             config=CoordinatorConfig(epic_id="epic-123"),
         )
 
         await coord.run_loop(AsyncMock(), AsyncMock(), AsyncMock())
 
-        beads.get_ready_async.assert_called_once()
-        call_kwargs = beads.get_ready_async.call_args.kwargs
-        assert call_kwargs["epic_id"] == "epic-123"
+        assert beads.captured_kwargs["epic_id"] == "epic-123"

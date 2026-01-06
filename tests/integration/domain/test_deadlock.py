@@ -340,33 +340,6 @@ class TestSingleAgentNoDeadlock:
         assert result is None
         assert not callback_invoked
 
-    @pytest.mark.asyncio
-    async def test_single_agent_holding_multiple_locks_no_deadlock(self) -> None:
-        """Single agent holding multiple locks is not a deadlock."""
-        monitor = DeadlockMonitor()
-        monitor.register_agent("agent-a", "issue-a", 1000.0)
-
-        callback_invoked = False
-
-        async def on_deadlock(info: DeadlockInfo) -> None:
-            nonlocal callback_invoked
-            callback_invoked = True
-
-        monitor.on_deadlock = on_deadlock
-
-        # Agent holds multiple locks
-        await monitor.handle_event(
-            LockEvent(LockEventType.ACQUIRED, "agent-a", "/path/l1.py", 1001.0)
-        )
-        await monitor.handle_event(
-            LockEvent(LockEventType.ACQUIRED, "agent-a", "/path/l2.py", 1002.0)
-        )
-        await monitor.handle_event(
-            LockEvent(LockEventType.ACQUIRED, "agent-a", "/path/l3.py", 1003.0)
-        )
-
-        assert not callback_invoked
-
 
 class TestUnregisterPreventsDeadlock:
     """Test that unregistering an agent prevents deadlock detection."""

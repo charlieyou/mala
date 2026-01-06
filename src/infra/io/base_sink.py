@@ -343,6 +343,9 @@ class BaseEventSink:
     def on_deadlock_detected(self, info: DeadlockInfoProtocol) -> None:
         pass
 
+    def on_watch_idle(self, wait_seconds: float, issues_blocked: int | None) -> None:
+        pass
+
 
 class NullEventSink(BaseEventSink):
     """No-op event sink for testing.

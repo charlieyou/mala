@@ -10,11 +10,10 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from src.core.protocols import CommandResultProtocol, CommandRunnerPort
 
 
@@ -264,6 +263,10 @@ def remove_worktree(
             else:
                 git_error = f"Directory cleanup failed: {e}"
 
+    # Clean up empty parent directories up to base_dir
+    if not dir_cleanup_failed:
+        _cleanup_empty_parents(ctx.path, ctx.config.base_dir)
+
     # Prune the worktree list to clean up stale git metadata
     command_runner.run(
         ["git", "worktree", "prune"],
@@ -322,6 +325,43 @@ def cleanup_stale_worktrees(
     )
 
     return cleaned
+
+
+def _cleanup_empty_parents(worktree_path: Path, base_dir: Path) -> None:
+    """Remove empty parent directories between worktree_path and base_dir.
+
+    Walks up from worktree_path.parent, removing each empty directory,
+    stopping at base_dir (which is not removed).
+
+    Args:
+        worktree_path: The removed worktree path.
+        base_dir: Stop directory (not removed).
+    """
+    try:
+        base = base_dir.resolve()
+        current = worktree_path.resolve().parent
+
+        # Safety: only proceed if current is inside base
+        if not current.is_relative_to(base):
+            return
+
+        while current != base and current.is_relative_to(base):
+            if not current.exists():
+                current = current.parent
+                continue
+            if not current.is_dir():
+                break
+            # Check if empty
+            try:
+                next(current.iterdir())
+                break  # Not empty
+            except StopIteration:
+                pass  # Empty, continue
+            # Remove empty directory
+            current.rmdir()
+            current = current.parent
+    except (OSError, ValueError):
+        pass  # Ignore errors - cleanup is best-effort
 
 
 def _cleanup_run_dir(

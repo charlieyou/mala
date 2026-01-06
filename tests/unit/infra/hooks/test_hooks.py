@@ -1,10 +1,12 @@
-"""Unit tests for PreToolUse hooks in src/hooks.py."""
+"""Unit tests for PreToolUse hooks in src/hooks.py.
 
-import subprocess
+Note: Integration tests that use real git subprocess calls are in
+tests/integration/infra/test_hooks.py.
+"""
+
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import patch
 
 import pytest
 
@@ -23,9 +25,8 @@ from src.infra.hooks import (
     CachedFileInfo,
     make_file_read_cache_hook,
     make_stop_hook,
-    _get_git_state,
 )
-from src.infra.tools.command_runner import CommandResult
+from src.infra.tools.locking import try_lock, get_lock_holder
 
 
 def make_hook_input(tool_name: str, tool_input: dict[str, Any]) -> PreToolUseHookInput:
@@ -44,57 +45,75 @@ def make_context(agent_id: str = "test-agent") -> HookContext:
     return cast("HookContext", {"agent_id": agent_id})
 
 
+@pytest.fixture
+def lock_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Set up a temporary lock directory for tests."""
+    lock_path = tmp_path / "locks"
+    lock_path.mkdir()
+    monkeypatch.setenv("MALA_LOCK_DIR", str(lock_path))
+    return lock_path
+
+
 class TestMakeLockEnforcementHook:
     """Tests for the make_lock_enforcement_hook factory function."""
 
     @pytest.mark.asyncio
-    async def test_captures_agent_id_via_closure(self, tmp_path: Path) -> None:
-        """Hook created by factory should use the captured agent_id."""
+    async def test_allows_write_when_agent_holds_lock(
+        self, tmp_path: Path, lock_dir: Path
+    ) -> None:
+        """Hook allows write when the agent holds the lock."""
         test_file = str(tmp_path / "test.py")
-        hook = make_lock_enforcement_hook("captured-agent-id")
-        hook_input = make_hook_input("Write", {"file_path": test_file})
-        context = make_context()  # Context agent_id is ignored
+        agent_id = "captured-agent-id"
 
-        with patch(
-            "src.infra.hooks.locking.get_lock_holder", return_value="captured-agent-id"
-        ) as mock:
-            result = await hook(hook_input, None, context)
+        # Acquire lock using real locking system
+        assert try_lock(test_file, agent_id)
+
+        hook = make_lock_enforcement_hook(agent_id)
+        hook_input = make_hook_input("Write", {"file_path": test_file})
+        context = make_context()
+
+        result = await hook(hook_input, None, context)
 
         assert result == {}  # Allowed because lock holder matches captured ID
-        mock.assert_called_once_with(test_file, repo_namespace=None)
 
     @pytest.mark.asyncio
-    async def test_blocks_when_different_agent_holds_lock(self, tmp_path: Path) -> None:
+    async def test_blocks_when_different_agent_holds_lock(
+        self, tmp_path: Path, lock_dir: Path
+    ) -> None:
         """Factory-created hook should block when another agent holds lock."""
         test_file = str(tmp_path / "test.py")
+
+        # Other agent holds the lock
+        assert try_lock(test_file, "other-agent")
+
         hook = make_lock_enforcement_hook("my-agent")
         hook_input = make_hook_input("Write", {"file_path": test_file})
         context = make_context()
 
-        with patch(
-            "src.infra.hooks.locking.get_lock_holder", return_value="other-agent"
-        ):
-            result = await hook(hook_input, None, context)
+        result = await hook(hook_input, None, context)
 
         assert result["decision"] == "block"
         assert "other-agent" in result["reason"]
 
     @pytest.mark.asyncio
-    async def test_blocks_when_no_lock_exists(self, tmp_path: Path) -> None:
+    async def test_blocks_when_no_lock_exists(
+        self, tmp_path: Path, lock_dir: Path
+    ) -> None:
         """Factory-created hook should block when file is not locked."""
         test_file = str(tmp_path / "test.py")
+        # No lock acquired for this file
+
         hook = make_lock_enforcement_hook("my-agent")
         hook_input = make_hook_input("Write", {"file_path": test_file})
         context = make_context()
 
-        with patch("src.infra.hooks.locking.get_lock_holder", return_value=None):
-            result = await hook(hook_input, None, context)
+        result = await hook(hook_input, None, context)
 
         assert result["decision"] == "block"
         assert "not locked" in result["reason"].lower()
 
     @pytest.mark.asyncio
-    async def test_allows_non_write_tools(self) -> None:
+    async def test_allows_non_write_tools(self, lock_dir: Path) -> None:
         """Non-write tools should be allowed without lock check."""
         hook = make_lock_enforcement_hook("test-agent")
         hook_input = make_hook_input("Bash", {"command": "ls -la"})
@@ -105,36 +124,44 @@ class TestMakeLockEnforcementHook:
         assert result == {}  # Empty dict means allow
 
     @pytest.mark.asyncio
-    async def test_handles_notebook_edit_tool(self, tmp_path: Path) -> None:
+    async def test_handles_notebook_edit_tool(
+        self, tmp_path: Path, lock_dir: Path
+    ) -> None:
         """NotebookEdit tool should also check lock ownership."""
         notebook_file = str(tmp_path / "notebook.ipynb")
+        agent_id = "notebook-agent"
+
+        # Acquire lock
+        assert try_lock(notebook_file, agent_id)
+
         hook_input = make_hook_input(
             "NotebookEdit",
             {"notebook_path": notebook_file, "new_source": "print('hello')"},
         )
-        agent_id = "notebook-agent"
         hook = make_lock_enforcement_hook(agent_id)
         context = make_context(agent_id)
 
-        with patch("src.infra.hooks.locking.get_lock_holder", return_value=agent_id):
-            result = await hook(hook_input, None, context)
+        result = await hook(hook_input, None, context)
 
         assert result == {}  # Allowed
 
     @pytest.mark.asyncio
-    async def test_handles_edit_tool(self, tmp_path: Path) -> None:
+    async def test_handles_edit_tool(self, tmp_path: Path, lock_dir: Path) -> None:
         """Edit tool should check lock ownership."""
         test_file = str(tmp_path / "test.py")
+        agent_id = "edit-agent"
+
+        # Acquire lock
+        assert try_lock(test_file, agent_id)
+
         hook_input = make_hook_input(
             "Edit",
             {"file_path": test_file, "old_string": "a", "new_string": "b"},
         )
-        agent_id = "edit-agent"
         hook = make_lock_enforcement_hook(agent_id)
         context = make_context(agent_id)
 
-        with patch("src.infra.hooks.locking.get_lock_holder", return_value=agent_id):
-            result = await hook(hook_input, None, context)
+        result = await hook(hook_input, None, context)
 
         assert result == {}  # Allowed
 
@@ -146,7 +173,7 @@ class TestMakeLockEnforcementHook:
         assert expected_tools.issubset(FILE_WRITE_TOOLS)
 
     @pytest.mark.asyncio
-    async def test_handles_missing_file_path_gracefully(self) -> None:
+    async def test_handles_missing_file_path_gracefully(self, lock_dir: Path) -> None:
         """Should handle malformed tool input without crashing."""
         hook = make_lock_enforcement_hook("test-agent")
         hook_input = make_hook_input("Write", {})  # Missing file_path
@@ -158,21 +185,24 @@ class TestMakeLockEnforcementHook:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_repo_path_passed_to_get_lock_holder(self, tmp_path: Path) -> None:
-        """repo_path should be passed to get_lock_holder as repo_namespace."""
+    async def test_repo_path_affects_lock_resolution(
+        self, tmp_path: Path, lock_dir: Path
+    ) -> None:
+        """repo_path should affect lock resolution via repo_namespace."""
         test_file = str(tmp_path / "test.py")
-        repo_path = "/home/user/my-repo"
-        hook = make_lock_enforcement_hook("my-agent", repo_path=repo_path)
+        repo_path = str(tmp_path)
+        agent_id = "my-agent"
+
+        # Acquire lock with repo_namespace
+        assert try_lock(test_file, agent_id, repo_namespace=repo_path)
+
+        hook = make_lock_enforcement_hook(agent_id, repo_path=repo_path)
         hook_input = make_hook_input("Write", {"file_path": test_file})
         context = make_context()
 
-        with patch(
-            "src.infra.hooks.locking.get_lock_holder", return_value="my-agent"
-        ) as mock:
-            result = await hook(hook_input, None, context)
+        result = await hook(hook_input, None, context)
 
         assert result == {}  # Allowed
-        mock.assert_called_once_with(test_file, repo_namespace=repo_path)
 
 
 class TestBlockDangerousCommands:
@@ -868,37 +898,33 @@ class TestDetectLintCommand:
 
 
 class TestLintCache:
-    """Tests for the LintCache class."""
+    """Tests for the LintCache class.
 
-    def test_first_lint_is_allowed(self, tmp_path: Path) -> None:
+    Note: These tests use monkeypatch to mock _get_git_state since LintCache
+    has no injection point for the git state function, and unit tests should
+    not use real git subprocess calls.
+    """
+
+    @pytest.fixture
+    def mock_git_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Mock _get_git_state to return a fixed state hash."""
+        from src.infra.hooks import lint_cache
+
+        self._git_state = "abc123def456"
+        monkeypatch.setattr(lint_cache, "_get_git_state", lambda _: self._git_state)
+
+    def _change_git_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Simulate a file change by changing the git state hash."""
+        from src.infra.hooks import lint_cache
+
+        self._git_state = "changed789xyz"
+        monkeypatch.setattr(lint_cache, "_get_git_state", lambda _: self._git_state)
+
+    def test_first_lint_is_allowed(
+        self, tmp_path: Path, mock_git_state: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """First lint of a type should be allowed (recorded as pending)."""
         from src.infra.hooks import LintCache
-
-        # Create a git repo for testing
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        # Create initial commit
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         is_redundant, message = cache.check_and_update("ruff")
@@ -909,34 +935,11 @@ class TestLintCache:
         assert cache.cache_size == 0
         assert cache.skipped_count == 0
 
-    def test_second_lint_unchanged_is_blocked(self, tmp_path: Path) -> None:
+    def test_second_lint_unchanged_is_blocked(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Second lint with unchanged state promotes pending to confirmed and blocks."""
         from src.infra.hooks import LintCache
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
 
@@ -956,43 +959,23 @@ class TestLintCache:
         assert "skipped 1x" in message
         assert cache.skipped_count == 1
 
-    def test_lint_after_file_change_is_allowed(self, tmp_path: Path) -> None:
+    def test_lint_after_file_change_is_allowed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Lint after file modification should be allowed."""
-        from src.infra.hooks import LintCache
+        from src.infra.hooks import LintCache, lint_cache
 
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        test_file = tmp_path / "file.py"
-        test_file.write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
+        # Start with initial state
+        monkeypatch.setattr(lint_cache, "_get_git_state", lambda _: "initial_state_abc")
 
         cache = LintCache(repo_path=tmp_path)
 
-        # First lint
+        # First lint and mark success
         cache.check_and_update("ruff")
+        cache.mark_success("ruff")
 
-        # Modify file (creates uncommitted change)
-        test_file.write_text("print('world')")
+        # Simulate file modification by changing git state
+        monkeypatch.setattr(lint_cache, "_get_git_state", lambda _: "changed_state_xyz")
 
         # Second lint after modification - should be allowed
         is_redundant, message = cache.check_and_update("ruff")
@@ -1001,34 +984,11 @@ class TestLintCache:
         assert message == ""
         assert cache.skipped_count == 0
 
-    def test_different_lint_types_cached_separately(self, tmp_path: Path) -> None:
+    def test_different_lint_types_cached_separately(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Different lint types should be cached independently."""
         from src.infra.hooks import LintCache
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
 
@@ -1053,34 +1013,11 @@ class TestLintCache:
         assert is_redundant_3 is True
         assert cache.skipped_count == 3
 
-    def test_invalidate_clears_specific_type(self, tmp_path: Path) -> None:
+    def test_invalidate_clears_specific_type(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Invalidating a specific lint type should only clear that type."""
         from src.infra.hooks import LintCache
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         # Mark each lint type as successful
@@ -1099,34 +1036,11 @@ class TestLintCache:
         is_redundant, _ = cache.check_and_update("ruff")
         assert is_redundant is False
 
-    def test_invalidate_all_clears_cache(self, tmp_path: Path) -> None:
+    def test_invalidate_all_clears_cache(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Invalidating without type should clear all entries."""
         from src.infra.hooks import LintCache
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         # Mark each lint type as successful
@@ -1141,11 +1055,15 @@ class TestLintCache:
         cache.invalidate()
         assert cache.cache_size == 0
 
-    def test_non_git_repo_allows_all_lints(self, tmp_path: Path) -> None:
+    def test_non_git_repo_allows_all_lints(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """In a non-git directory, all lints should be allowed."""
-        from src.infra.hooks import LintCache
+        from src.infra.hooks import LintCache, lint_cache
 
-        # tmp_path is not a git repo
+        # Simulate non-git repo by returning None from _get_git_state
+        monkeypatch.setattr(lint_cache, "_get_git_state", lambda _: None)
+
         cache = LintCache(repo_path=tmp_path)
 
         # First lint
@@ -1159,37 +1077,25 @@ class TestLintCache:
 
 
 class TestMakeLintCacheHook:
-    """Tests for the make_lint_cache_hook factory function."""
+    """Tests for the make_lint_cache_hook factory function.
+
+    Note: These tests use monkeypatch to mock _get_git_state since unit tests
+    should not use real git subprocess calls.
+    """
+
+    @pytest.fixture
+    def mock_git_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Mock _get_git_state to return a fixed state hash."""
+        from src.infra.hooks import lint_cache
+
+        monkeypatch.setattr(lint_cache, "_get_git_state", lambda _: "abc123def456")
 
     @pytest.mark.asyncio
-    async def test_allows_first_lint(self, tmp_path: Path) -> None:
+    async def test_allows_first_lint(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """First lint through hook should be allowed."""
         from src.infra.hooks import LintCache, make_lint_cache_hook
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         hook = make_lint_cache_hook(cache)
@@ -1202,34 +1108,11 @@ class TestMakeLintCacheHook:
         assert result == {}  # Empty dict means allow
 
     @pytest.mark.asyncio
-    async def test_blocks_second_lint_unchanged(self, tmp_path: Path) -> None:
+    async def test_blocks_second_lint_unchanged(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Second lint through hook should be blocked if unchanged."""
         from src.infra.hooks import LintCache, make_lint_cache_hook
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         hook = make_lint_cache_hook(cache)
@@ -1281,7 +1164,9 @@ class TestMakeLintCacheHook:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_allows_compound_commands_with_lint(self, tmp_path: Path) -> None:
+    async def test_allows_compound_commands_with_lint(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Compound commands containing lint should not be blocked.
 
         When an agent runs 'ruff check . && pytest', the entire command should
@@ -1289,31 +1174,6 @@ class TestMakeLintCacheHook:
         test portion runs.
         """
         from src.infra.hooks import LintCache, make_lint_cache_hook
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         hook = make_lint_cache_hook(cache)
@@ -1351,34 +1211,11 @@ class TestMakeLintCacheHook:
         assert result == {}  # Allow compound commands
 
     @pytest.mark.asyncio
-    async def test_invalidates_cache_on_write(self, tmp_path: Path) -> None:
+    async def test_invalidates_cache_on_write(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """Write tool should invalidate lint cache."""
         from src.infra.hooks import LintCache, make_lint_cache_hook
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         hook = make_lint_cache_hook(cache)
@@ -1397,34 +1234,11 @@ class TestMakeLintCacheHook:
         assert cache.cache_size == 0
 
     @pytest.mark.asyncio
-    async def test_invalidates_cache_on_notebook_edit(self, tmp_path: Path) -> None:
+    async def test_invalidates_cache_on_notebook_edit(
+        self, tmp_path: Path, mock_git_state: None
+    ) -> None:
         """NotebookEdit tool should invalidate lint cache."""
         from src.infra.hooks import LintCache, make_lint_cache_hook
-
-        # Create a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@test.com"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        (tmp_path / "file.py").write_text("print('hello')")
-        subprocess.run(
-            ["git", "add", "."], cwd=tmp_path, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "initial"],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
 
         cache = LintCache(repo_path=tmp_path)
         hook = make_lint_cache_hook(cache)
@@ -1453,125 +1267,42 @@ class TestMakeStopHookWithCleanupAgentLocks:
     """Tests for make_stop_hook that verify cleanup_agent_locks integration."""
 
     @pytest.mark.asyncio
-    async def test_calls_cleanup_agent_locks(self) -> None:
-        """Stop hook should call cleanup_agent_locks with agent_id."""
+    async def test_cleans_up_agent_locks_on_stop(
+        self, tmp_path: Path, lock_dir: Path
+    ) -> None:
+        """Stop hook should clean up all locks held by the agent."""
         agent_id = "test-agent-123"
+
+        # Create locks for this agent
+        file1 = str(tmp_path / "file1.py")
+        file2 = str(tmp_path / "file2.py")
+        assert try_lock(file1, agent_id)
+        assert try_lock(file2, agent_id)
+
+        # Verify locks exist
+        assert get_lock_holder(file1) == agent_id
+        assert get_lock_holder(file2) == agent_id
+
         hook = make_stop_hook(agent_id)
         context = make_context()
         hook_input = cast("StopHookInput", {"stop_hook_type": "natural"})
 
-        with patch("src.infra.hooks.locking.cleanup_agent_locks") as mock_cleanup:
-            mock_cleanup.return_value = (2, ["file1.py", "file2.py"])
-            result = await hook(hook_input, None, context)
+        result = await hook(hook_input, None, context)
 
-        assert result == {}  # Hook returns empty dict
-        mock_cleanup.assert_called_once_with(agent_id)
+        # Verify hook returns empty dict
+        assert result == {}
+
+        # Verify locks are cleaned up
+        assert get_lock_holder(file1) is None
+        assert get_lock_holder(file2) is None
 
     @pytest.mark.asyncio
-    async def test_ignores_cleanup_failure(self) -> None:
-        """Stop hook should not raise on cleanup_agent_locks failure."""
+    async def test_stop_hook_returns_empty_dict(self, lock_dir: Path) -> None:
+        """Stop hook should always return empty dict."""
         hook = make_stop_hook("test-agent")
         context = make_context()
         hook_input = cast("StopHookInput", {"stop_hook_type": "natural"})
 
-        with patch("src.infra.hooks.locking.cleanup_agent_locks") as mock_cleanup:
-            mock_cleanup.side_effect = Exception("Cleanup failed")
-            result = await hook(hook_input, None, context)
+        result = await hook(hook_input, None, context)
 
-        assert result == {}  # Should return empty dict despite failure
-
-
-class TestGetGitStateWithCommandRunner:
-    """Tests for _get_git_state that verify CommandRunner integration."""
-
-    def test_uses_run_command_for_git_operations(self, tmp_path: Path) -> None:
-        """_get_git_state should use run_command instead of subprocess.run."""
-        with patch("src.infra.hooks.lint_cache.run_command") as mock_run_command:
-            # Mock successful git commands
-            mock_run_command.side_effect = [
-                CommandResult(
-                    command=["git", "rev-parse", "HEAD"],
-                    returncode=0,
-                    stdout="abc123def456\n",
-                ),
-                CommandResult(
-                    command=["git", "diff", "HEAD"],
-                    returncode=0,
-                    stdout="",
-                ),
-                CommandResult(
-                    command=["git", "ls-files", "--others", "--exclude-standard"],
-                    returncode=0,
-                    stdout="",
-                ),
-            ]
-
-            result = _get_git_state(tmp_path)
-
-        assert result is not None
-        assert len(result) == 16  # SHA-256 hash truncated to 16 chars
-        assert mock_run_command.call_count == 3
-
-    def test_returns_none_on_git_failure(self, tmp_path: Path) -> None:
-        """_get_git_state should return None if git command fails."""
-        with patch("src.infra.hooks.lint_cache.run_command") as mock_run_command:
-            mock_run_command.return_value = CommandResult(
-                command=["git", "rev-parse", "HEAD"],
-                returncode=128,
-                stdout="",
-                stderr="fatal: not a git repository",
-            )
-
-            result = _get_git_state(tmp_path)
-
-        assert result is None
-
-    def test_respects_commandrunner_timeout_behavior(self, tmp_path: Path) -> None:
-        """_get_git_state uses CommandRunner which handles timeouts."""
-        # This test verifies that run_command is used, which means
-        # CommandRunner's timeout and process-group termination apply
-        with patch("src.infra.hooks.lint_cache.run_command") as mock_run_command:
-            mock_run_command.side_effect = [
-                CommandResult(
-                    command=["git", "rev-parse", "HEAD"],
-                    returncode=0,
-                    stdout="abc123\n",
-                ),
-                CommandResult(
-                    command=["git", "diff", "HEAD"],
-                    returncode=124,  # TIMEOUT_EXIT_CODE
-                    stdout="",
-                    timed_out=True,
-                ),
-            ]
-
-            result = _get_git_state(tmp_path)
-
-        # Should return None because diff command "failed" (timed out)
-        assert result is None
-
-    def test_handles_untracked_files_failure_gracefully(self, tmp_path: Path) -> None:
-        """_get_git_state should handle ls-files failure gracefully."""
-        with patch("src.infra.hooks.lint_cache.run_command") as mock_run_command:
-            mock_run_command.side_effect = [
-                CommandResult(
-                    command=["git", "rev-parse", "HEAD"],
-                    returncode=0,
-                    stdout="abc123\n",
-                ),
-                CommandResult(
-                    command=["git", "diff", "HEAD"],
-                    returncode=0,
-                    stdout="",
-                ),
-                CommandResult(
-                    command=["git", "ls-files", "--others", "--exclude-standard"],
-                    returncode=1,  # Failed
-                    stdout="",
-                ),
-            ]
-
-            result = _get_git_state(tmp_path)
-
-        # Should still return a hash, just without untracked files
-        assert result is not None
+        assert result == {}

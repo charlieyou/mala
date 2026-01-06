@@ -26,8 +26,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from claude_agent_sdk.types import McpSdkServerConfig
-
     from src.core.models import LockEvent
     from src.infra.tools.locking_mcp import LockingToolHandlers
 
@@ -622,117 +620,6 @@ class TestEmptyFilepathsRejection:
         content = json.loads(result["content"][0]["text"])
         assert "error" in content
         assert "non-empty" in content["error"]
-
-
-class TestAgentRuntimeBuilderIntegration:
-    """Test AgentRuntimeBuilder.build() includes locking MCP server."""
-
-    def test_build_includes_locking_server_with_monitor(
-        self, lock_dir: Path, tmp_path: Path
-    ) -> None:
-        """Runtime includes locking MCP when deadlock monitor is configured."""
-        from src.infra.agent_runtime import AgentRuntimeBuilder
-
-        # Create mock SDK factory
-        mock_factory = MagicMock()
-        mock_factory.create_hook_matcher.return_value = MagicMock()
-        mock_factory.create_options.return_value = {"mcp_servers": {}}
-
-        # Create mock deadlock monitor
-        mock_monitor = MagicMock()
-        mock_monitor.handle_event = MagicMock(return_value=None)
-
-        _ = (
-            AgentRuntimeBuilder(tmp_path, "test-agent", mock_factory)
-            .with_hooks(deadlock_monitor=mock_monitor)
-            .with_env()
-            .build()
-        )
-
-        # Verify create_options was called with MCP servers
-        call_kwargs = mock_factory.create_options.call_args.kwargs
-        assert "mcp_servers" in call_kwargs
-        mcp_servers = call_kwargs["mcp_servers"]
-        assert "mala-locking" in mcp_servers
-
-    def test_build_includes_locking_server_without_monitor(
-        self, lock_dir: Path, tmp_path: Path
-    ) -> None:
-        """Runtime includes locking MCP even without deadlock monitor.
-
-        Locking tools are available for file coordination, but events
-        are not tracked for deadlock detection.
-        """
-        from src.infra.agent_runtime import AgentRuntimeBuilder
-
-        mock_factory = MagicMock()
-        mock_factory.create_hook_matcher.return_value = MagicMock()
-        mock_factory.create_options.return_value = {}
-
-        _ = AgentRuntimeBuilder(tmp_path, "test-agent", mock_factory).with_env().build()
-
-        call_kwargs = mock_factory.create_options.call_args.kwargs
-        mcp_servers = call_kwargs.get("mcp_servers", {})
-        # Locking server included even without monitor (uses no-op handler)
-        assert "mala-locking" in mcp_servers
-
-    def test_runtime_has_all_components(self, lock_dir: Path, tmp_path: Path) -> None:
-        """AgentRuntime has all expected components."""
-        from src.infra.agent_runtime import AgentRuntimeBuilder
-
-        mock_factory = MagicMock()
-        mock_factory.create_hook_matcher.return_value = MagicMock()
-        mock_factory.create_options.return_value = {}
-
-        mock_monitor = MagicMock()
-        mock_monitor.handle_event = MagicMock(return_value=None)
-
-        runtime = (
-            AgentRuntimeBuilder(tmp_path, "test-agent", mock_factory)
-            .with_hooks(deadlock_monitor=mock_monitor)
-            .with_env()
-            .with_disallowed_tools()
-            .build()
-        )
-
-        # Check all components exist
-        assert runtime.options is not None
-        assert runtime.file_read_cache is not None
-        assert runtime.lint_cache is not None
-        assert runtime.env is not None
-        assert len(runtime.pre_tool_hooks) > 0
-        assert len(runtime.post_tool_hooks) > 0  # Should have lock event hook
-        assert len(runtime.stop_hooks) > 0
-
-
-class TestLockingMCPServerConfig:
-    """Test MCP server configuration."""
-
-    def test_server_config_has_correct_name(self, lock_dir: Path) -> None:
-        """MCP server has expected name."""
-        from src.infra.tools.locking_mcp import create_locking_mcp_server
-
-        result = create_locking_mcp_server(
-            agent_id="config-test",
-            repo_namespace=str(lock_dir),
-            emit_lock_event=lambda e: None,
-        )
-        # Without _return_handlers, returns McpSdkServerConfig dict
-        config: McpSdkServerConfig = result  # type: ignore[assignment]
-        assert config["name"] == "mala-locking"
-        assert config["type"] == "sdk"
-
-    def test_server_has_instance(self, lock_dir: Path) -> None:
-        """MCP server has instance for SDK."""
-        from src.infra.tools.locking_mcp import create_locking_mcp_server
-
-        result = create_locking_mcp_server(
-            agent_id="instance-test",
-            repo_namespace=str(lock_dir),
-            emit_lock_event=lambda e: None,
-        )
-        config: McpSdkServerConfig = result  # type: ignore[assignment]
-        assert "instance" in config
 
 
 class TestConcurrentOperations:

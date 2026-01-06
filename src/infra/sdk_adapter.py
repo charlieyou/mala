@@ -63,6 +63,7 @@ class SDKClientFactory:
         disallowed_tools: list[str] | None = None,
         env: dict[str, str] | None = None,
         hooks: dict[str, list[object]] | None = None,
+        resume: str | None = None,
     ) -> object:
         """Create SDK options without requiring SDK import in caller.
 
@@ -79,6 +80,10 @@ class SDKClientFactory:
             disallowed_tools: List of tools to disallow.
             env: Environment variables for the agent.
             hooks: Hook configurations keyed by event type.
+            resume: Session ID to resume from. When set, the SDK loads
+                the prior conversation context before processing the query.
+                This is different from session_id on query() which only
+                tags messages for multiplexing.
 
         Returns:
             ClaudeAgentOptions instance.
@@ -95,6 +100,7 @@ class SDKClientFactory:
             disallowed_tools=disallowed_tools,  # type: ignore[arg-type]
             env=env,  # type: ignore[arg-type]
             hooks=hooks,  # type: ignore[arg-type]
+            resume=resume,  # type: ignore[arg-type]
         )
 
     def create_hook_matcher(
@@ -114,3 +120,31 @@ class SDKClientFactory:
         from claude_agent_sdk.types import HookMatcher
 
         return HookMatcher(matcher=matcher, hooks=hooks)  # type: ignore[arg-type]
+
+    def with_resume(self, options: object, resume: str | None) -> object:
+        """Create a copy of options with a different resume session ID.
+
+        This is used to resume a prior session when retrying after idle timeout
+        or review failures. The SDK's resume feature loads the prior conversation
+        context before processing the next query.
+
+        Args:
+            options: Existing ClaudeAgentOptions to clone.
+            resume: Session ID to resume from, or None to start fresh.
+
+        Returns:
+            New ClaudeAgentOptions with the resume field set.
+        """
+        from claude_agent_sdk import ClaudeAgentOptions
+        from dataclasses import fields
+
+        # ClaudeAgentOptions is a dataclass - extract all field values
+        opts = options
+        if not isinstance(opts, ClaudeAgentOptions):
+            raise TypeError(f"Expected ClaudeAgentOptions, got {type(opts)}")
+
+        # Build kwargs from existing options, overriding resume
+        kwargs = {f.name: getattr(opts, f.name) for f in fields(opts)}
+        kwargs["resume"] = resume
+
+        return ClaudeAgentOptions(**kwargs)  # type: ignore[arg-type]

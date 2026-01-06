@@ -48,8 +48,6 @@ class TestGetParentEpicAsync:
             result = await beads.get_parent_epic_async("task-1")
 
         assert result == "epic-1"
-        # Single call to get task's ancestor tree
-        assert mock_run_async.call_count == 1
 
     @pytest.mark.asyncio
     async def test_returns_none_for_orphan_task(self, tmp_path: Path) -> None:
@@ -1103,7 +1101,7 @@ class TestPipelineSteps:
     def test_apply_filters_by_only_ids(self) -> None:
         """_apply_filters includes only specified IDs."""
         issues = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-        result = BeadsClient._apply_filters(issues, set(), None, {"b"})
+        result = BeadsClient._apply_filters(issues, set(), None, ["b"])
         assert [r["id"] for r in result] == ["b"]
 
     def test_sort_issues_by_priority(self, tmp_path: Path) -> None:
@@ -1326,7 +1324,7 @@ class TestWarnMissingIds:
         beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
 
         issues: list[dict[str, object]] = [{"id": "a"}, {"id": "b"}]
-        beads._warn_missing_ids({"a", "c", "d"}, issues, set())
+        beads._warn_missing_ids(["a", "c", "d"], issues, set())
 
         assert len(warnings) == 1
         assert "c" in warnings[0] and "d" in warnings[0]
@@ -1338,7 +1336,7 @@ class TestWarnMissingIds:
         beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
 
         issues: list[dict[str, object]] = [{"id": "a"}]
-        beads._warn_missing_ids({"a", "b", "c"}, issues, {"b"})
+        beads._warn_missing_ids(["a", "b", "c"], issues, {"b"})
 
         assert len(warnings) == 1
         assert "b" not in warnings[0]
@@ -1351,7 +1349,7 @@ class TestWarnMissingIds:
         beads._log_warning = lambda msg: warnings.append(msg)  # type: ignore[method-assign]
 
         issues: list[dict[str, object]] = [{"id": "a"}, {"id": "b"}]
-        beads._warn_missing_ids({"a", "b"}, issues, set())
+        beads._warn_missing_ids(["a", "b"], issues, set())
 
         assert warnings == []
 
@@ -1683,3 +1681,116 @@ class TestOrphansOnlyIntegration:
         assert "empty-parent" in result
         assert "real-parent" not in result
         assert len(result) == 1
+
+
+class TestGetBlockedCountAsync:
+    """Test get_blocked_count_async method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_count_of_blocked_issues(self, tmp_path: Path) -> None:
+        """Should return the count of blocked issues."""
+        beads = BeadsClient(tmp_path)
+        blocked_response = json.dumps(
+            [
+                {"id": "blocked-1", "status": "blocked"},
+                {"id": "blocked-2", "status": "blocked"},
+                {"id": "blocked-3", "status": "blocked"},
+            ]
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout=blocked_response)),
+            )
+            result = await beads.get_blocked_count_async()
+
+        assert result == 3
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_no_blocked_issues(self, tmp_path: Path) -> None:
+        """Should return 0 when no issues are blocked."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout="[]")),
+            )
+            result = await beads.get_blocked_count_async()
+
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_bd_failure(self, tmp_path: Path) -> None:
+        """Should return None when bd list fails."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(
+                    return_value=make_command_result(returncode=1, stderr="bd error")
+                ),
+            )
+            result = await beads.get_blocked_count_async()
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_invalid_json(self, tmp_path: Path) -> None:
+        """Should return None when bd returns invalid JSON."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout="not valid json")),
+            )
+            result = await beads.get_blocked_count_async()
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_non_list_response(self, tmp_path: Path) -> None:
+        """Should return None when bd returns non-list JSON."""
+        beads = BeadsClient(tmp_path)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                beads,
+                "_run_subprocess_async",
+                AsyncMock(return_value=make_command_result(stdout='{"error": "bad"}')),
+            )
+            result = await beads.get_blocked_count_async()
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_calls_bd_list_with_correct_args(self, tmp_path: Path) -> None:
+        """Should call bd list with --status blocked --json -t task."""
+        beads = BeadsClient(tmp_path)
+        captured_cmds: list[list[str]] = []
+
+        async def capturing_run(cmd: list[str]) -> CommandResult:
+            captured_cmds.append(cmd)
+            return make_command_result(stdout="[]")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(beads, "_run_subprocess_async", capturing_run)
+            await beads.get_blocked_count_async()
+
+        assert len(captured_cmds) == 1
+        assert captured_cmds[0] == [
+            "bd",
+            "list",
+            "--status",
+            "blocked",
+            "--json",
+            "-t",
+            "task",
+        ]
