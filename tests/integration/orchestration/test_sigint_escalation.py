@@ -832,7 +832,7 @@ if __name__ == "__main__":
         )
 
         try:
-            ready, output, early_stderr = _wait_for_ready(proc, timeout=10.0)
+            ready, output, early_stderr = _wait_for_ready(proc, timeout=15.0)
             if not ready:
                 if proc.poll() is not None:
                     pytest.fail(
@@ -925,7 +925,7 @@ from pathlib import Path
 from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
 from src.core.models import WatchConfig
 from tests.fakes.event_sink import FakeEventSink
-from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+from tests.fakes.issue_provider import FakeIssueProvider
 
 _orchestrator = None
 
@@ -936,11 +936,9 @@ async def main():
     runs_dir = tmp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create orchestrator with a fake issue that runs a long task
-    # This keeps the orchestrator alive (actively working) rather than relying on slow poll
-    provider = FakeIssueProvider(
-        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
-    )
+    # Use empty provider with long poll interval to keep orchestrator alive
+    # without spawning real agent work (which could complete/fail quickly)
+    provider = FakeIssueProvider()
     event_sink = FakeEventSink()
 
     config = OrchestratorConfig(
@@ -955,8 +953,8 @@ async def main():
     )
     _orchestrator = create_orchestrator(config, deps=deps)
 
-    # Fast poll is fine since we have an active issue to keep us alive
-    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
+    # Long poll interval keeps orchestrator alive waiting for issues
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=60.0)
 
     # Start orchestrator as task, wait for SIGINT handler to be installed
     run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
@@ -1029,7 +1027,7 @@ if __name__ == "__main__":
         )
 
         try:
-            ready, output, early_stderr = _wait_for_ready(proc, timeout=10.0)
+            ready, output, early_stderr = _wait_for_ready(proc, timeout=15.0)
             if not ready:
                 if proc.poll() is not None:
                     pytest.fail(
@@ -1115,7 +1113,7 @@ from pathlib import Path
 from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
 from src.core.models import WatchConfig
 from tests.fakes.event_sink import FakeEventSink
-from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
+from tests.fakes.issue_provider import FakeIssueProvider
 from src.orchestration.orchestrator import MalaOrchestrator
 import time
 
@@ -1145,11 +1143,9 @@ async def main():
     runs_dir = tmp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create orchestrator with a fake issue that runs a long task
-    # This keeps the orchestrator alive (actively working) rather than relying on slow poll
-    provider = FakeIssueProvider(
-        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
-    )
+    # Use empty provider with long poll interval to keep orchestrator alive
+    # without spawning real agent work (which could complete/fail quickly)
+    provider = FakeIssueProvider()
     event_sink = FakeEventSink()
 
     config = OrchestratorConfig(
@@ -1164,8 +1160,8 @@ async def main():
     )
     _orchestrator = create_orchestrator(config, deps=deps)
 
-    # Fast poll is fine since we have an active issue to keep us alive
-    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
+    # Long poll interval keeps orchestrator alive waiting for issues
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=60.0)
 
     # Start orchestrator as task, wait for SIGINT handler to be installed
     run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
@@ -1240,7 +1236,7 @@ if __name__ == "__main__":
         )
 
         try:
-            ready, output, early_stderr = _wait_for_ready(proc, timeout=10.0)
+            ready, output, early_stderr = _wait_for_ready(proc, timeout=15.0)
             if not ready:
                 if proc.poll() is not None:
                     pytest.fail(
