@@ -461,7 +461,15 @@ class CommandsConfig:
 
         # Identify custom command keys (preserving YAML order via data iteration)
         reserved_keys = set(valid_kinds) | {"_clear_customs"}
-        custom_keys_ordered = [k for k in data if k not in reserved_keys]
+        custom_keys_ordered: list[str] = []
+        for k in data:
+            if k in reserved_keys:
+                continue
+            if not isinstance(k, str):
+                raise ConfigError(
+                    f"Command key must be a string, got {type(k).__name__}: {k!r}"
+                )
+            custom_keys_ordered.append(k)
 
         # Parse custom commands from unknown keys
         custom_commands: dict[str, CustomCommandConfig] = {}

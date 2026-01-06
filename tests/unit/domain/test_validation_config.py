@@ -291,6 +291,11 @@ class TestCommandsConfig:
         with pytest.raises(ConfigError, match="cannot be empty string"):
             CommandsConfig.from_dict({"test": ""})
 
+    def test_from_dict_non_string_key_raises_error(self) -> None:
+        """Non-string command key raises ConfigError."""
+        with pytest.raises(ConfigError, match="Command key must be a string"):
+            CommandsConfig.from_dict({1: "some command"})  # type: ignore[dict-item]
+
     def test_default_custom_commands_and_override_mode(self) -> None:
         """CommandsConfig defaults: empty custom_commands and INHERIT mode."""
         config = CommandsConfig.from_dict(None)
