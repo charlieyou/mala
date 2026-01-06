@@ -180,6 +180,10 @@ def merge_configs(
         user.setup_files if setup_files_explicitly_set else preset.setup_files
     )
 
+    # custom_commands: user always takes precedence (presets cannot define them)
+    # No merging needed - just use user's custom_commands
+    merged_custom_commands = user.custom_commands
+
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
@@ -188,6 +192,7 @@ def merge_configs(
         code_patterns=merged_code_patterns,
         config_files=merged_config_files,
         setup_files=merged_setup_files,
+        custom_commands=merged_custom_commands,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 

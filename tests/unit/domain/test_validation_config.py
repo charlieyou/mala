@@ -14,6 +14,7 @@ from src.domain.validation.config import (
     CommandConfig,
     CommandsConfig,
     ConfigError,
+    CustomCommandConfig,
     PresetNotFoundError,
     PromptValidationCommands,
     ValidationConfig,
@@ -385,6 +386,43 @@ class TestValidationConfig:
         assert isinstance(config.code_patterns, tuple)
         assert isinstance(config.config_files, tuple)
         assert isinstance(config.setup_files, tuple)
+
+    @pytest.mark.xfail(reason="T002 not yet implemented")
+    def test_config_loader_parses_custom_commands(self) -> None:
+        """Custom commands are parsed from dict into CustomCommandConfig instances."""
+        config = ValidationConfig.from_dict(
+            {
+                "custom_commands": {
+                    "security": {"command": "bandit -r src/", "allow_fail": True},
+                    "docs": "mkdocs build --strict",
+                }
+            }
+        )
+        assert len(config.custom_commands) == 2
+        assert "security" in config.custom_commands
+        assert "docs" in config.custom_commands
+
+        security = config.custom_commands["security"]
+        assert isinstance(security, CustomCommandConfig)
+        assert security.command == "bandit -r src/"
+        assert security.allow_fail is True
+
+        docs = config.custom_commands["docs"]
+        assert isinstance(docs, CustomCommandConfig)
+        assert docs.command == "mkdocs build --strict"
+        assert docs.allow_fail is False
+
+    def test_config_loader_custom_commands_empty_dict(self) -> None:
+        """Empty custom_commands dict results in empty dict."""
+        config = ValidationConfig.from_dict({"custom_commands": {}})
+        assert config.custom_commands == {}
+        assert "custom_commands" in config._fields_set
+
+    def test_config_loader_custom_commands_not_present(self) -> None:
+        """Missing custom_commands key results in empty dict without field tracking."""
+        config = ValidationConfig.from_dict({})
+        assert config.custom_commands == {}
+        assert "custom_commands" not in config._fields_set
 
 
 class TestPresetNotFoundError:

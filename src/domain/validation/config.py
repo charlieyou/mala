@@ -497,13 +497,14 @@ class ValidationConfig:
                         "custom_commands must be an object, "
                         f"got {type(custom_commands_data).__name__}"
                     )
-                # Stub: just validate structure, don't parse individual commands yet
-                # (T002 will implement CustomCommandConfig.from_value)
-                for name in custom_commands_data:
+                for name, value in custom_commands_data.items():
                     if not isinstance(name, str):
                         raise ConfigError(
                             f"custom_commands key must be a string, got {type(name).__name__}"
                         )
+                    custom_commands[name] = CustomCommandConfig.from_value(
+                        cast("str | dict[str, object]", value)
+                    )
 
         return cls(
             preset=preset,

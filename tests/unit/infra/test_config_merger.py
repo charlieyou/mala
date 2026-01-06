@@ -5,6 +5,7 @@ from __future__ import annotations
 from src.domain.validation.config import (
     CommandConfig,
     CommandsConfig,
+    CustomCommandConfig,
     ValidationConfig,
     YamlCoverageConfig,
 )
@@ -1298,3 +1299,81 @@ class TestRunLevelCommandsFieldsSetPreservation:
         assert result.run_level_commands.test is None
         # _fields_set should be empty
         assert result.run_level_commands._fields_set == frozenset()
+
+
+class TestMergeConfigsCustomCommands:
+    """Tests for merge_configs handling of custom_commands."""
+
+    def test_merge_configs_preserves_user_custom_commands(self) -> None:
+        """User custom_commands are preserved when merging with preset."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+            ),
+        )
+        user = ValidationConfig(
+            custom_commands={
+                "security": CustomCommandConfig(
+                    command="bandit -r src/", allow_fail=True
+                ),
+                "docs": CustomCommandConfig(command="mkdocs build --strict"),
+            },
+        )
+
+        result = merge_configs(preset, user)
+
+        assert len(result.custom_commands) == 2
+        assert "security" in result.custom_commands
+        assert result.custom_commands["security"].command == "bandit -r src/"
+        assert result.custom_commands["security"].allow_fail is True
+        assert "docs" in result.custom_commands
+        assert result.custom_commands["docs"].command == "mkdocs build --strict"
+
+    def test_merge_configs_preset_without_custom_commands(self) -> None:
+        """Preset without custom_commands doesn't affect user's custom_commands."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+                lint=CommandConfig(command="ruff check ."),
+            ),
+        )
+        user = ValidationConfig(
+            custom_commands={
+                "mycheck": CustomCommandConfig(command="mycheck run"),
+            },
+        )
+
+        result = merge_configs(preset, user)
+
+        # User's custom_commands preserved
+        assert len(result.custom_commands) == 1
+        assert result.custom_commands["mycheck"].command == "mycheck run"
+        # Preset commands inherited
+        assert result.commands.test is not None
+        assert result.commands.test.command == "pytest"
+
+    def test_merge_configs_user_empty_custom_commands(self) -> None:
+        """User with no custom_commands results in empty dict."""
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+            ),
+        )
+        user = ValidationConfig()  # No custom_commands
+
+        result = merge_configs(preset, user)
+
+        assert result.custom_commands == {}
+
+    def test_merge_configs_no_preset_with_custom_commands(self) -> None:
+        """User custom_commands preserved when no preset."""
+        user = ValidationConfig(
+            custom_commands={
+                "custom1": CustomCommandConfig(command="cmd1"),
+            },
+        )
+
+        result = merge_configs(None, user)
+
+        assert result is user  # No preset means user returned as-is
+        assert len(result.custom_commands) == 1
