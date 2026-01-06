@@ -762,12 +762,21 @@ async def main():
     run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
 
     # Wait for SIGINT handler to be installed (not default handler)
-    # Use timeout and check run_task for early failure detection
-    deadline = time.monotonic() + 5.0
+    # Use 15s timeout (generous for slow/loaded CI) and check run_task for early failure
+    deadline = time.monotonic() + 15.0
     while signal.getsignal(signal.SIGINT) is signal.default_int_handler:
         if run_task.done():
-            if run_task.exception():
-                print(f"STARTUP_ERROR: {run_task.exception()}", file=sys.stderr, flush=True)
+            # Extract exception safely - exception() raises CancelledError if task was cancelled
+            try:
+                exc = run_task.exception()
+            except asyncio.CancelledError:
+                exc = None
+            if exc:
+                print(f"STARTUP_ERROR: {exc}", file=sys.stderr, flush=True)
+            elif run_task.cancelled():
+                print("STARTUP_CANCELLED", file=sys.stderr, flush=True)
+            else:
+                print("STARTUP_EXITED", file=sys.stderr, flush=True)
             sys.exit(1)
         if time.monotonic() > deadline:
             print("TIMEOUT: SIGINT handler not installed", file=sys.stderr, flush=True)
@@ -894,8 +903,8 @@ if __name__ == "__main__":
         Verifies Stage 2 behavior: two SIGINTs cause the orchestrator to
         set _abort_mode_active and exit with code 130.
 
-        Uses a slow poll interval and watch mode to keep the orchestrator
-        alive long enough to receive two SIGINTs.
+        Uses a fake issue with a long-running task to keep the orchestrator
+        alive long enough to receive multiple SIGINTs.
         """
         script = tmp_path / "orchestrator_abort_test.py"
         script.write_text(
@@ -910,7 +919,7 @@ from pathlib import Path
 from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
 from src.core.models import WatchConfig
 from tests.fakes.event_sink import FakeEventSink
-from tests.fakes.issue_provider import FakeIssueProvider
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
 _orchestrator = None
 
@@ -921,10 +930,11 @@ async def main():
     runs_dir = tmp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create orchestrator with empty provider - watch mode with slow poll keeps it alive
-    # The slow poll_interval_seconds ensures the orchestrator stays in its main loop
-    # waiting for issues, rather than immediately exiting after drain completes
-    provider = FakeIssueProvider()
+    # Create orchestrator with a fake issue that runs a long task
+    # This keeps the orchestrator alive (actively working) rather than relying on slow poll
+    provider = FakeIssueProvider(
+        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
+    )
     event_sink = FakeEventSink()
 
     config = OrchestratorConfig(
@@ -939,20 +949,28 @@ async def main():
     )
     _orchestrator = create_orchestrator(config, deps=deps)
 
-    # Use slow poll interval so orchestrator stays alive waiting for issues
-    # This keeps the process alive long enough to receive multiple SIGINTs
-    watch_config = WatchConfig(enabled=True, poll_interval_seconds=10.0)
+    # Fast poll is fine since we have an active issue to keep us alive
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
 
     # Start orchestrator as task, wait for SIGINT handler to be installed
     run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
 
     # Wait for SIGINT handler to be installed
-    # Use timeout and check run_task for early failure detection
-    deadline = time.monotonic() + 5.0
+    # Use 15s timeout (generous for slow/loaded CI) and check run_task for early failure
+    deadline = time.monotonic() + 15.0
     while signal.getsignal(signal.SIGINT) is signal.default_int_handler:
         if run_task.done():
-            if run_task.exception():
-                print(f"STARTUP_ERROR: {run_task.exception()}", file=sys.stderr, flush=True)
+            # Extract exception safely - exception() raises CancelledError if task was cancelled
+            try:
+                exc = run_task.exception()
+            except asyncio.CancelledError:
+                exc = None
+            if exc:
+                print(f"STARTUP_ERROR: {exc}", file=sys.stderr, flush=True)
+            elif run_task.cancelled():
+                print("STARTUP_CANCELLED", file=sys.stderr, flush=True)
+            else:
+                print("STARTUP_EXITED", file=sys.stderr, flush=True)
             sys.exit(1)
         if time.monotonic() > deadline:
             print("TIMEOUT: SIGINT handler not installed", file=sys.stderr, flush=True)
@@ -1088,7 +1106,7 @@ from pathlib import Path
 from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
 from src.core.models import WatchConfig
 from tests.fakes.event_sink import FakeEventSink
-from tests.fakes.issue_provider import FakeIssueProvider
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 from src.orchestration.orchestrator import MalaOrchestrator
 import time
 
@@ -1118,9 +1136,11 @@ async def main():
     runs_dir = tmp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Empty provider - avoids spawning real agent work (SDK, git, review)
-    # Watch mode + slow poll keeps orchestrator alive for signal testing
-    provider = FakeIssueProvider()
+    # Create orchestrator with a fake issue that runs a long task
+    # This keeps the orchestrator alive (actively working) rather than relying on slow poll
+    provider = FakeIssueProvider(
+        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
+    )
     event_sink = FakeEventSink()
 
     config = OrchestratorConfig(
@@ -1135,20 +1155,28 @@ async def main():
     )
     _orchestrator = create_orchestrator(config, deps=deps)
 
-    # Slow poll interval keeps orchestrator alive in watch mode
-    # This keeps the process alive long enough to receive multiple SIGINTs
-    watch_config = WatchConfig(enabled=True, poll_interval_seconds=10.0)
+    # Fast poll is fine since we have an active issue to keep us alive
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
 
     # Start orchestrator as task, wait for SIGINT handler to be installed
     run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
 
     # Wait for SIGINT handler to be installed
-    # Use timeout and check run_task for early failure detection
-    deadline = time.monotonic() + 5.0
+    # Use 15s timeout (generous for slow/loaded CI) and check run_task for early failure
+    deadline = time.monotonic() + 15.0
     while signal.getsignal(signal.SIGINT) is signal.default_int_handler:
         if run_task.done():
-            if run_task.exception():
-                print(f"STARTUP_ERROR: {run_task.exception()}", file=sys.stderr, flush=True)
+            # Extract exception safely - exception() raises CancelledError if task was cancelled
+            try:
+                exc = run_task.exception()
+            except asyncio.CancelledError:
+                exc = None
+            if exc:
+                print(f"STARTUP_ERROR: {exc}", file=sys.stderr, flush=True)
+            elif run_task.cancelled():
+                print("STARTUP_CANCELLED", file=sys.stderr, flush=True)
+            else:
+                print("STARTUP_EXITED", file=sys.stderr, flush=True)
             sys.exit(1)
         if time.monotonic() > deadline:
             print("TIMEOUT: SIGINT handler not installed", file=sys.stderr, flush=True)
