@@ -486,11 +486,31 @@ class ValidationConfig:
         config_files = parse_string_list("config_files")
         setup_files = parse_string_list("setup_files")
 
+        # Parse custom_commands - track if explicitly present (even if empty)
+        custom_commands: dict[str, CustomCommandConfig] = {}
+        if "custom_commands" in data:
+            fields_set.add("custom_commands")
+            custom_commands_data = data.get("custom_commands")
+            if custom_commands_data is not None:
+                if not isinstance(custom_commands_data, dict):
+                    raise ConfigError(
+                        "custom_commands must be an object, "
+                        f"got {type(custom_commands_data).__name__}"
+                    )
+                # Stub: just validate structure, don't parse individual commands yet
+                # (T002 will implement CustomCommandConfig.from_value)
+                for name in custom_commands_data:
+                    if not isinstance(name, str):
+                        raise ConfigError(
+                            f"custom_commands key must be a string, got {type(name).__name__}"
+                        )
+
         return cls(
             preset=preset,
             commands=commands,
             run_level_commands=run_level_commands,
             coverage=coverage,
+            custom_commands=custom_commands,
             code_patterns=code_patterns,
             config_files=config_files,
             setup_files=setup_files,
