@@ -503,6 +503,20 @@ class ValidationConfig:
         Raises:
             ConfigError: If any field is invalid.
         """
+        # Check for deprecated top-level keys and provide migration hints
+        if "custom_commands" in data:
+            raise ConfigError(
+                "'custom_commands' is no longer supported. Move custom commands "
+                "into the 'commands' section using '+command_name' keys for "
+                "additive merge. See plans/2026-01-06-custom-validation-commands-spec.md"
+            )
+        if "run_level_custom_commands" in data:
+            raise ConfigError(
+                "'run_level_custom_commands' is no longer supported. Move custom "
+                "commands into the 'run_level_commands' section with '+' prefix "
+                "for additive merge. See plans/2026-01-06-custom-validation-commands-spec.md"
+            )
+
         # Track which fields were explicitly present in the source dict
         fields_set: set[str] = set()
 

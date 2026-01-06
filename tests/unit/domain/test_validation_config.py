@@ -363,6 +363,51 @@ class TestValidationConfig:
         with pytest.raises(ConfigError, match=r"code_patterns\[0\] must be a string"):
             ValidationConfig.from_dict({"code_patterns": [123]})
 
+    def test_deprecated_custom_commands_key_raises_error(self) -> None:
+        """Top-level 'custom_commands' key raises ConfigError with migration hint."""
+        with pytest.raises(
+            ConfigError,
+            match=r"'custom_commands' is no longer supported.*'commands' section",
+        ):
+            ValidationConfig.from_dict({"custom_commands": {"my_check": "echo test"}})
+
+    def test_deprecated_custom_commands_error_references_spec(self) -> None:
+        """custom_commands error message references the spec document."""
+        with pytest.raises(
+            ConfigError,
+            match=r"plans/2026-01-06-custom-validation-commands-spec\.md",
+        ):
+            ValidationConfig.from_dict({"custom_commands": {}})
+
+    def test_deprecated_run_level_custom_commands_key_raises_error(self) -> None:
+        """Top-level 'run_level_custom_commands' key raises ConfigError with migration hint."""
+        with pytest.raises(
+            ConfigError,
+            match=r"'run_level_custom_commands' is no longer supported.*'run_level_commands' section",
+        ):
+            ValidationConfig.from_dict(
+                {"run_level_custom_commands": {"my_check": "echo test"}}
+            )
+
+    def test_deprecated_run_level_custom_commands_error_references_spec(self) -> None:
+        """run_level_custom_commands error message references the spec document."""
+        with pytest.raises(
+            ConfigError,
+            match=r"plans/2026-01-06-custom-validation-commands-spec\.md",
+        ):
+            ValidationConfig.from_dict({"run_level_custom_commands": {}})
+
+    def test_deprecated_both_custom_commands_keys_raises_first_error(self) -> None:
+        """Both deprecated keys present raises error for custom_commands first."""
+        # custom_commands is checked first, so its error is raised
+        with pytest.raises(ConfigError, match=r"'custom_commands' is no longer"):
+            ValidationConfig.from_dict(
+                {
+                    "custom_commands": {"a": "cmd a"},
+                    "run_level_custom_commands": {"b": "cmd b"},
+                }
+            )
+
     def test_has_any_command_true(self) -> None:
         """has_any_command returns True when at least one command defined."""
         config = ValidationConfig.from_dict({"commands": {"test": "pytest"}})
@@ -387,15 +432,16 @@ class TestValidationConfig:
         assert isinstance(config.config_files, tuple)
         assert isinstance(config.setup_files, tuple)
 
-    def test_config_loader_parses_custom_commands(self) -> None:
-        """Custom commands are parsed from dict into CustomCommandConfig instances."""
-        config = ValidationConfig.from_dict(
-            {
-                "custom_commands": {
-                    "security": {"command": "bandit -r src/", "allow_fail": True},
-                    "docs": "mkdocs build --strict",
-                }
-            }
+    def test_custom_commands_field_populated_directly(self) -> None:
+        """Custom commands field can be populated directly on ValidationConfig."""
+        # Note: from_dict no longer supports top-level custom_commands (deprecated).
+        # This test verifies the field works when set directly via constructor.
+        security_cmd = CustomCommandConfig.from_value(
+            "security", {"command": "bandit -r src/", "allow_fail": True}
+        )
+        docs_cmd = CustomCommandConfig.from_value("docs", "mkdocs build --strict")
+        config = ValidationConfig(
+            custom_commands={"security": security_cmd, "docs": docs_cmd}
         )
         assert len(config.custom_commands) == 2
         assert "security" in config.custom_commands
@@ -411,16 +457,19 @@ class TestValidationConfig:
         assert docs.command == "mkdocs build --strict"
         assert docs.allow_fail is False
 
-    def test_config_loader_custom_commands_empty_dict(self) -> None:
-        """Empty custom_commands dict results in empty dict."""
-        config = ValidationConfig.from_dict({"custom_commands": {}})
-        assert config.custom_commands == {}
-        assert "custom_commands" in config._fields_set
-
-    def test_config_loader_custom_commands_not_present(self) -> None:
-        """Missing custom_commands key results in empty dict without field tracking."""
+    def test_custom_commands_default_empty(self) -> None:
+        """Default custom_commands is empty dict."""
         config = ValidationConfig.from_dict({})
         assert config.custom_commands == {}
+
+    def test_custom_commands_not_tracked_in_fields_set(self) -> None:
+        """custom_commands is not tracked in _fields_set when parsed via from_dict.
+
+        Note: The deprecated top-level 'custom_commands' key now raises an error.
+        The field is only populated when using inline +prefix commands (future)
+        or setting directly on the constructor.
+        """
+        config = ValidationConfig.from_dict({})
         assert "custom_commands" not in config._fields_set
 
 
@@ -494,18 +543,18 @@ class TestPromptValidationCommands:
 
     def test_prompt_validation_commands_includes_custom_commands(self) -> None:
         """Custom commands are populated as (name, command, timeout, allow_fail) tuples."""
-        config = ValidationConfig.from_dict(
-            {
-                "commands": {"test": "pytest"},
-                "custom_commands": {
-                    "check_types": "mypy .",
-                    "slow_check": {
-                        "command": "slow-cmd",
-                        "timeout": 300,
-                        "allow_fail": True,
-                    },
-                },
-            }
+        # Build ValidationConfig with custom_commands directly (from_dict deprecated)
+        check_types_cmd = CustomCommandConfig.from_value("check_types", "mypy .")
+        slow_check_cmd = CustomCommandConfig.from_value(
+            "slow_check",
+            {"command": "slow-cmd", "timeout": 300, "allow_fail": True},
+        )
+        config = ValidationConfig(
+            commands=CommandsConfig(test=CommandConfig(command="pytest")),
+            custom_commands={
+                "check_types": check_types_cmd,
+                "slow_check": slow_check_cmd,
+            },
         )
         prompt_cmds = PromptValidationCommands.from_validation_config(config)
 
