@@ -46,6 +46,7 @@ DESTRUCTIVE_GIT_PATTERNS = [
     # Hard reset - discards uncommitted changes silently
     "git reset --hard",
     "git reset --mixed",
+    "git reset --soft",
     # Soft reset that unstages files
     "git reset HEAD",
     # Clean - removes untracked files
@@ -66,6 +67,8 @@ DESTRUCTIVE_GIT_PATTERNS = [
     "git branch -d -f",
     # Stash - hides changes that other agents cannot see
     "git stash",
+    # Amend - rewrites history
+    "git commit --amend",
     # Abort operations - may discard other agents' work in progress
     "git merge --abort",
     "git rebase --abort",
@@ -81,6 +84,7 @@ SAFE_GIT_ALTERNATIVES: dict[str, str] = {
     "git stash": "commit changes instead: git add . && git commit -m 'WIP: ...'",
     "git reset --hard": "commit first, or use git diff to review changes before discarding",
     "git reset --mixed": "commit staged changes first",
+    "git reset --soft": "create a new commit instead of rewriting history",
     "git reset HEAD": "commit staged changes first",
     "git rebase": "use git merge instead, or coordinate with other agents",
     "git checkout --": "commit changes first, or use git diff to review before discarding",
@@ -93,6 +97,7 @@ SAFE_GIT_ALTERNATIVES: dict[str, str] = {
     "git cherry-pick --abort": "resolve cherry-pick conflicts instead of aborting",
     "git worktree remove": "commit changes in worktree first",
     "git submodule deinit -f": "use git submodule deinit without -f",
+    "git commit --amend": "create a new commit instead of amending history",
 }
 
 # Tool names that should be treated as bash (case-insensitive matching)
@@ -142,6 +147,29 @@ async def block_dangerous_commands(
             return {
                 "decision": "block",
                 "reason": reason,
+            }
+
+    # Enforce atomic add+commit and explicit staging (no -a/--all).
+    command_lower = command.lower()
+    if "git commit" in command_lower:
+        if " --all" in command_lower or "git commit -a" in command_lower:
+            return {
+                "decision": "block",
+                "reason": (
+                    "Blocked git commit -a/--all. "
+                    'Stage explicit files: git add <files> && git commit -m "...".'
+                ),
+            }
+
+        commit_index = command_lower.find("git commit")
+        add_index = command_lower.find("git add")
+        if add_index == -1 or add_index > commit_index:
+            return {
+                "decision": "block",
+                "reason": (
+                    "Atomic add+commit required. "
+                    'Use `git add <files> && git commit -m "..."`.'
+                ),
             }
 
     # Block force push to ALL branches (--force-with-lease is allowed as safer alternative)

@@ -303,6 +303,7 @@ class AgentRuntimeBuilder:
             LintCache,
             block_dangerous_commands,
             block_mala_disallowed_tools,
+            make_commit_guard_hook,
             make_file_read_cache_hook,
             make_lint_cache_hook,
             make_lock_enforcement_hook,
@@ -320,6 +321,7 @@ class AgentRuntimeBuilder:
         # Build pre-tool hooks (order matters)
         pre_tool_hooks: list[object] = [
             block_dangerous_commands,
+            make_commit_guard_hook(self._agent_id, str(self._repo_path)),
             make_file_read_cache_hook(file_read_cache),
             make_lint_cache_hook(lint_cache),
         ]

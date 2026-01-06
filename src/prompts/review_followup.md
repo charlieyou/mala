@@ -14,6 +14,6 @@ The external reviewers found the following issues:
    - `uvx ruff check .`
    - `uvx ruff format .`
    - `uvx ty check`
-4. Commit your changes with message: `bd-{issue_id}: <description>`
+4. Commit your changes with message: `bd-{issue_id}: <description>` (multiple commits allowed; use the prefix on each)
 
 Note: The orchestrator will re-run both the quality gate and external review after your fixes.
