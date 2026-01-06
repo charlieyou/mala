@@ -67,12 +67,16 @@ class DummyOrchestrator:
     last_orch_config: Any = None
     last_mala_config: Any = None
     last_watch_config: Any = None
+    last_validation_config: Any = None
 
     def __init__(self, **kwargs: object) -> None:
         self._exit_code = 0
 
-    async def run(self, *, watch_config: object = None) -> tuple[int, int]:
+    async def run(
+        self, *, watch_config: object = None, validation_config: object = None
+    ) -> tuple[int, int]:
         DummyOrchestrator.last_watch_config = watch_config
+        DummyOrchestrator.last_validation_config = validation_config
         return (1, 1)
 
     @property
