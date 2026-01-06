@@ -925,9 +925,20 @@ from pathlib import Path
 from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
 from src.core.models import WatchConfig
 from tests.fakes.event_sink import FakeEventSink
-from tests.fakes.issue_provider import FakeIssueProvider
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
 _orchestrator = None
+
+
+async def long_running_agent(issue_id: str):
+    '''Mock agent that sleeps until cancelled - keeps active_tasks populated.'''
+    try:
+        await asyncio.sleep(3600)  # Sleep for 1 hour (will be cancelled by SIGINT)
+    except asyncio.CancelledError:
+        pass
+    # Return a minimal IssueResult
+    from src.core.models import IssueResult
+    return IssueResult(issue_id=issue_id, agent_id="mock", success=False, summary="Cancelled")
 
 
 async def main():
@@ -936,9 +947,10 @@ async def main():
     runs_dir = tmp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Use empty provider with long poll interval to keep orchestrator alive
-    # without spawning real agent work (which could complete/fail quickly)
-    provider = FakeIssueProvider()
+    # Provide a fake issue so the orchestrator has work to spawn
+    provider = FakeIssueProvider(
+        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
+    )
     event_sink = FakeEventSink()
 
     config = OrchestratorConfig(
@@ -953,8 +965,12 @@ async def main():
     )
     _orchestrator = create_orchestrator(config, deps=deps)
 
-    # Long poll interval keeps orchestrator alive waiting for issues
-    watch_config = WatchConfig(enabled=True, poll_interval_seconds=60.0)
+    # Mock run_implementer to be a long-running task that keeps active_tasks populated
+    # This avoids real agent work while ensuring orchestrator stays alive for multiple SIGINTs
+    _orchestrator.run_implementer = long_running_agent
+
+    # Short poll interval so drain check happens quickly after SIGINT
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
 
     # Start orchestrator as task, wait for SIGINT handler to be installed
     run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
@@ -1113,7 +1129,7 @@ from pathlib import Path
 from src.orchestration.factory import OrchestratorConfig, OrchestratorDependencies, create_orchestrator
 from src.core.models import WatchConfig
 from tests.fakes.event_sink import FakeEventSink
-from tests.fakes.issue_provider import FakeIssueProvider
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 from src.orchestration.orchestrator import MalaOrchestrator
 import time
 
@@ -1137,15 +1153,27 @@ def _slow_handle_sigint(self, loop, drain_event, interrupt_event):
 MalaOrchestrator._handle_sigint = _slow_handle_sigint
 
 
+async def long_running_agent(issue_id: str):
+    '''Mock agent that sleeps until cancelled - keeps active_tasks populated.'''
+    try:
+        await asyncio.sleep(3600)  # Sleep for 1 hour (will be cancelled by SIGINT)
+    except asyncio.CancelledError:
+        pass
+    # Return a minimal IssueResult
+    from src.core.models import IssueResult
+    return IssueResult(issue_id=issue_id, agent_id="mock", success=False, summary="Cancelled")
+
+
 async def main():
     global _orchestrator
     tmp_dir = Path(sys.argv[1])
     runs_dir = tmp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Use empty provider with long poll interval to keep orchestrator alive
-    # without spawning real agent work (which could complete/fail quickly)
-    provider = FakeIssueProvider()
+    # Provide a fake issue so the orchestrator has work to spawn
+    provider = FakeIssueProvider(
+        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
+    )
     event_sink = FakeEventSink()
 
     config = OrchestratorConfig(
@@ -1160,8 +1188,12 @@ async def main():
     )
     _orchestrator = create_orchestrator(config, deps=deps)
 
-    # Long poll interval keeps orchestrator alive waiting for issues
-    watch_config = WatchConfig(enabled=True, poll_interval_seconds=60.0)
+    # Mock run_implementer to be a long-running task that keeps active_tasks populated
+    # This avoids real agent work while ensuring orchestrator stays alive for multiple SIGINTs
+    _orchestrator.run_implementer = long_running_agent
+
+    # Short poll interval so drain check happens quickly after SIGINT
+    watch_config = WatchConfig(enabled=True, poll_interval_seconds=0.1)
 
     # Start orchestrator as task, wait for SIGINT handler to be installed
     run_task = asyncio.create_task(_orchestrator.run(watch_config=watch_config))
