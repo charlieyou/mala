@@ -548,8 +548,8 @@ class TestValidationConfig:
         """custom_commands is not tracked in _fields_set when parsed via from_dict.
 
         Note: The deprecated top-level 'custom_commands' key now raises an error.
-        The field is only populated when using inline +prefix commands (future)
-        or setting directly on the constructor.
+        Custom commands are now defined inline in the 'commands' section and parsed
+        into CommandsConfig.custom_commands (not ValidationConfig.custom_commands).
         """
         config = ValidationConfig.from_dict({})
         assert "custom_commands" not in config._fields_set
