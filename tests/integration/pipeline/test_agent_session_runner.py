@@ -4132,3 +4132,85 @@ class TestResumeSessionId:
             assert resume_ids_seen[1] is None
             # Session should succeed after retry
             assert output.success is True
+
+    @pytest.mark.asyncio
+    async def test_stale_session_strict_mode_fails_without_retry(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """Stale session error with strict_resume=True should fail without retry.
+
+        When strict_resume is enabled and the session is stale, run_session
+        should fail immediately instead of retrying with a fresh session.
+        """
+        init_call_count = [0]
+
+        fake_client = FakeSDKClient(result_message=make_result_message())
+        factory = FakeSDKClientFactory(fake_client)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=120,
+            prompts=make_test_prompts(),
+            review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
+            strict_resume=True,  # Enable strict mode
+        )
+
+        runner = AgentSessionRunner(
+            config=config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        original_init = runner._initialize_session
+
+        def mock_init(input: AgentSessionInput, agent_id: str) -> tuple:
+            init_call_count[0] += 1
+            return original_init(input, agent_id)
+
+        async def mock_lifecycle(
+            input: AgentSessionInput,
+            session_cfg: SessionConfig,
+            state: SessionExecutionState,
+            tracer: object,
+        ) -> None:
+            # Always raise stale session error
+            raise Exception("Session stale-session-id not found (404)")
+
+        with (
+            patch.object(runner, "_initialize_session", mock_init),
+            patch.object(runner, "_run_lifecycle_loop", mock_lifecycle),
+        ):
+            input_data = AgentSessionInput(
+                issue_id="test-stale-strict",
+                prompt="Test prompt",
+                resume_session_id="stale-session-id",
+            )
+
+            output = await runner.run_session(input_data)
+
+            # Should have initialized only once (no retry in strict mode)
+            assert init_call_count[0] == 1, (
+                f"Expected 1 init call (no retry), got {init_call_count[0]}"
+            )
+            # Session should fail
+            assert output.success is False
+            assert "strict mode" in output.summary.lower()

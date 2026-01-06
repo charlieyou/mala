@@ -284,6 +284,7 @@ class MalaOrchestrator:
             pipeline,
             review_enabled=self._is_review_enabled(),
             mcp_server_factory=create_mcp_server_factory(),
+            strict_resume=self.strict_resume,
         )
 
         # Wire deadlock handler now that all dependencies are available

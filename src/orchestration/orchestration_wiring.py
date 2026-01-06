@@ -232,6 +232,7 @@ def build_session_config(
     pipeline: PipelineConfig,
     review_enabled: bool,
     mcp_server_factory: Callable | None = None,
+    strict_resume: bool = False,
 ) -> AgentSessionConfig:
     """Build AgentSessionConfig for agent sessions."""
     prompts = SessionPrompts(
@@ -254,6 +255,7 @@ def build_session_config(
         context_limit=pipeline.context_limit,
         deadlock_monitor=pipeline.deadlock_monitor,
         mcp_server_factory=mcp_server_factory,
+        strict_resume=strict_resume,
     )
 
 

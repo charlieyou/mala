@@ -228,6 +228,8 @@ class AgentSessionConfig:
         context_restart_threshold: Ratio (0.0-1.0) at which to raise
             ContextPressureError. Default 0.90 (90% of context_limit).
         context_limit: Maximum context tokens. Default 200K for Claude.
+        strict_resume: When True and session resumption fails (stale session),
+            fail the session instead of retrying with a fresh session.
     """
 
     repo_path: Path
@@ -246,6 +248,7 @@ class AgentSessionConfig:
     context_limit: int = 200_000
     deadlock_monitor: DeadlockMonitor | None = None
     mcp_server_factory: McpServerFactory | None = None
+    strict_resume: bool = False
 
 
 @dataclass
@@ -910,13 +913,27 @@ class AgentSessionRunner:
                 state.final_result = state.lifecycle_ctx.final_result
                 break
             except Exception as e:
-                # Handle stale session errors when resuming - retry without resume
+                # Handle stale session errors when resuming
                 if (
                     session_input.resume_session_id
                     and not stale_session_retried
                     and _is_stale_session_error(e)
                 ):
-                    # Stale session on first attempt - clear resume and retry once
+                    # Stale session on first attempt
+                    if self.config.strict_resume:
+                        # Strict mode: fail instead of retrying
+                        logger.warning(
+                            "Stale session %s for %s in strict mode, failing: %s",
+                            session_input.resume_session_id,
+                            input.issue_id,
+                            e,
+                        )
+                        state.lifecycle.on_error(state.lifecycle_ctx, e)
+                        state.final_result = (
+                            f"Session resumption failed (strict mode): {e}"
+                        )
+                        break
+                    # Lenient mode: clear resume and retry once
                     logger.warning(
                         "Stale session %s for %s, retrying without resume: %s",
                         session_input.resume_session_id,
