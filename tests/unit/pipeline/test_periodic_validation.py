@@ -28,18 +28,15 @@ class TestPeriodicValidationThresholds:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "validate_every,completions,expected_validations",
+        "validate_every,completions,expected_trigger_points",
         [
-            # Note: +1 for final validation on exit when completed > last_validation_at
-            (
-                1,
-                3,
-                3,
-            ),  # Validate after each issue (no extra final - 3 == last validation)
-            (2, 4, 2),  # Validate at 2, 4 (no extra final - 4 == last validation)
-            (3, 9, 3),  # Validate at 3, 6, 9 (no extra final - 9 == last validation)
-            (3, 8, 3),  # Validate at 3, 6, plus final at 8 (8 > 6)
-            (5, 5, 1),  # Validate at 5 (no extra final - 5 == last validation)
+            # Validation triggers at N, 2N, 3N... intervals
+            # Final validation at exit when completed > last_validation_at
+            (1, 3, [1, 2, 3]),  # Validate after each issue
+            (2, 4, [2, 4]),  # Validate at 2, 4 (no extra final - 4 == last validation)
+            (3, 9, [3, 6, 9]),  # Validate at 3, 6, 9 (no extra final)
+            (3, 8, [3, 6, 8]),  # Validate at 3, 6, plus final at 8 (8 > 6)
+            (5, 5, [5]),  # Validate at 5 (no extra final - 5 == last validation)
         ],
     )
     async def test_periodic_validation_thresholds(
@@ -47,29 +44,27 @@ class TestPeriodicValidationThresholds:
         event_sink: FakeEventSink,
         validate_every: int,
         completions: int,
-        expected_validations: int,
+        expected_trigger_points: list[int],
     ) -> None:
         """Validation triggers at N, 2N, 3N intervals."""
         provider = FakeIssueProvider(
             issues={
-                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="open")
                 for i in range(completions)
             }
         )
-        # No watch mode - validation works independently
         validation_config = PeriodicValidationConfig(validate_every=validate_every)
-        validation_call_count = 0
-
-        async def validation_callback() -> bool:
-            nonlocal validation_call_count
-            validation_call_count += 1
-            return True
+        validation_trigger_points: list[int] = []
 
         coord = IssueExecutionCoordinator(
             beads=provider,
             event_sink=event_sink,
             config=CoordinatorConfig(max_agents=1),
         )
+
+        async def validation_callback() -> bool:
+            validation_trigger_points.append(len(coord.completed_ids))
+            return True
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
@@ -78,16 +73,9 @@ class TestPeriodicValidationThresholds:
             return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            # Mark issue as claimed so FakeIssueProvider excludes it from get_ready
+            provider.issues[issue_id].status = "closed"
             coord.mark_completed(issue_id)
-
-        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
-            return [
-                f"issue-{i}"
-                for i in range(completions)
-                if f"issue-{i}" not in coord.completed_ids
-            ]
-
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -102,9 +90,9 @@ class TestPeriodicValidationThresholds:
 
         assert result.exit_code == 0
         assert result.exit_reason == "success"
-        assert validation_call_count == expected_validations, (
-            f"Expected {expected_validations} validations for validate_every={validate_every} "
-            f"with {completions} completions, got {validation_call_count}"
+        assert validation_trigger_points == expected_trigger_points, (
+            f"Expected validation at {expected_trigger_points} for validate_every={validate_every} "
+            f"with {completions} completions, got {validation_trigger_points}"
         )
 
 
@@ -123,25 +111,23 @@ class TestValidationWithoutWatchMode:
         """Validation works when watch_config.enabled=False."""
         provider = FakeIssueProvider(
             issues={
-                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="open")
                 for i in range(6)
             }
         )
-        # Explicitly disable watch mode
         watch_config = WatchConfig(enabled=False)
         validation_config = PeriodicValidationConfig(validate_every=3)
-        validation_call_count = 0
-
-        async def validation_callback() -> bool:
-            nonlocal validation_call_count
-            validation_call_count += 1
-            return True
+        validation_trigger_points: list[int] = []
 
         coord = IssueExecutionCoordinator(
             beads=provider,
             event_sink=event_sink,
             config=CoordinatorConfig(max_agents=1),
         )
+
+        async def validation_callback() -> bool:
+            validation_trigger_points.append(len(coord.completed_ids))
+            return True
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
@@ -150,16 +136,8 @@ class TestValidationWithoutWatchMode:
             return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            provider.issues[issue_id].status = "closed"
             coord.mark_completed(issue_id)
-
-        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
-            return [
-                f"issue-{i}"
-                for i in range(6)
-                if f"issue-{i}" not in coord.completed_ids
-            ]
-
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -176,7 +154,7 @@ class TestValidationWithoutWatchMode:
         assert result.exit_code == 0
         assert result.exit_reason == "success"
         # Should validate at 3 and 6 completions
-        assert validation_call_count == 2
+        assert validation_trigger_points == [3, 6]
 
 
 class TestNoValidationWhenConfigNone:
@@ -198,12 +176,11 @@ class TestNoValidationWhenConfigNone:
         """
         provider = FakeIssueProvider(
             issues={
-                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="open")
                 for i in range(5)
             }
         )
-        validation_call_count = 0
-        validation_completed_counts: list[int] = []
+        validation_trigger_points: list[int] = []
 
         coord = IssueExecutionCoordinator(
             beads=provider,
@@ -212,9 +189,7 @@ class TestNoValidationWhenConfigNone:
         )
 
         async def validation_callback() -> bool:
-            nonlocal validation_call_count
-            validation_call_count += 1
-            validation_completed_counts.append(len(coord.completed_ids))
+            validation_trigger_points.append(len(coord.completed_ids))
             return True
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
@@ -224,16 +199,8 @@ class TestNoValidationWhenConfigNone:
             return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            provider.issues[issue_id].status = "closed"
             coord.mark_completed(issue_id)
-
-        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
-            return [
-                f"issue-{i}"
-                for i in range(5)
-                if f"issue-{i}" not in coord.completed_ids
-            ]
-
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -249,8 +216,7 @@ class TestNoValidationWhenConfigNone:
         assert result.exit_code == 0
         assert result.exit_reason == "success"
         # Only final validation should have occurred (at 5 completions), not periodic
-        assert validation_call_count == 1
-        assert validation_completed_counts == [5]  # Only at exit
+        assert validation_trigger_points == [5]
 
 
 class TestExactBoundaryValidation:
@@ -268,23 +234,22 @@ class TestExactBoundaryValidation:
         """Validate at exact threshold (e.g., 5 issues with validate_every=5)."""
         provider = FakeIssueProvider(
             issues={
-                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="open")
                 for i in range(5)
             }
         )
         validation_config = PeriodicValidationConfig(validate_every=5)
-        validation_call_count = 0
-
-        async def validation_callback() -> bool:
-            nonlocal validation_call_count
-            validation_call_count += 1
-            return True
+        validation_trigger_points: list[int] = []
 
         coord = IssueExecutionCoordinator(
             beads=provider,
             event_sink=event_sink,
             config=CoordinatorConfig(max_agents=1),
         )
+
+        async def validation_callback() -> bool:
+            validation_trigger_points.append(len(coord.completed_ids))
+            return True
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
@@ -293,16 +258,8 @@ class TestExactBoundaryValidation:
             return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            provider.issues[issue_id].status = "closed"
             coord.mark_completed(issue_id)
-
-        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
-            return [
-                f"issue-{i}"
-                for i in range(5)
-                if f"issue-{i}" not in coord.completed_ids
-            ]
-
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -318,7 +275,7 @@ class TestExactBoundaryValidation:
         assert result.exit_code == 0
         assert result.exit_reason == "success"
         # Should validate exactly once at the 5-completion boundary
-        assert validation_call_count == 1
+        assert validation_trigger_points == [5]
 
     @pytest.mark.asyncio
     async def test_validation_at_multiples_of_threshold(
@@ -332,23 +289,22 @@ class TestExactBoundaryValidation:
         """
         provider = FakeIssueProvider(
             issues={
-                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="open")
                 for i in range(20)
             }
         )
         validation_config = PeriodicValidationConfig(validate_every=10)
-        validation_call_count = 0
-
-        async def validation_callback() -> bool:
-            nonlocal validation_call_count
-            validation_call_count += 1
-            return True
+        validation_trigger_points: list[int] = []
 
         coord = IssueExecutionCoordinator(
             beads=provider,
             event_sink=event_sink,
             config=CoordinatorConfig(max_agents=1),
         )
+
+        async def validation_callback() -> bool:
+            validation_trigger_points.append(len(coord.completed_ids))
+            return True
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
@@ -357,16 +313,8 @@ class TestExactBoundaryValidation:
             return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            provider.issues[issue_id].status = "closed"
             coord.mark_completed(issue_id)
-
-        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
-            return [
-                f"issue-{i}"
-                for i in range(20)
-                if f"issue-{i}" not in coord.completed_ids
-            ]
-
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -382,7 +330,7 @@ class TestExactBoundaryValidation:
         assert result.exit_code == 0
         assert result.exit_reason == "success"
         # Should validate at 10 and 20 (no extra final since 20 == last_validation_at)
-        assert validation_call_count == 2
+        assert validation_trigger_points == [10, 20]
 
 
 class TestValidationFailureInNonWatchMode:
@@ -400,17 +348,22 @@ class TestValidationFailureInNonWatchMode:
         """Validation failure should return exit_code=1 in non-watch mode."""
         provider = FakeIssueProvider(
             issues={
-                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="open")
                 for i in range(5)
             }
         )
         validation_config = PeriodicValidationConfig(validate_every=3)
+        validation_trigger_points: list[int] = []
 
         coord = IssueExecutionCoordinator(
             beads=provider,
             event_sink=event_sink,
             config=CoordinatorConfig(max_agents=1),
         )
+
+        async def validation_callback() -> bool:
+            validation_trigger_points.append(len(coord.completed_ids))
+            return False  # Validation fails
 
         async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
             async def complete_immediately() -> None:
@@ -419,16 +372,8 @@ class TestValidationFailureInNonWatchMode:
             return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            provider.issues[issue_id].status = "closed"
             coord.mark_completed(issue_id)
-
-        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
-            return [
-                f"issue-{i}"
-                for i in range(5)
-                if f"issue-{i}" not in coord.completed_ids
-            ]
-
-        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
 
         result = await asyncio.wait_for(
             coord.run_loop(
@@ -436,7 +381,7 @@ class TestValidationFailureInNonWatchMode:
                 finalize_callback=finalize_callback,
                 abort_callback=AsyncMock(return_value=AbortResult(aborted_count=0)),
                 validation_config=validation_config,
-                validation_callback=AsyncMock(return_value=False),  # Validation fails
+                validation_callback=validation_callback,
             ),
             timeout=5.0,
         )
@@ -444,4 +389,5 @@ class TestValidationFailureInNonWatchMode:
         assert result.exit_code == 1
         assert result.exit_reason == "validation_failed"
         # Should have stopped at 3 completions when validation failed
+        assert validation_trigger_points == [3]
         assert len(coord.completed_ids) == 3
