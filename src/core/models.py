@@ -217,13 +217,13 @@ class WatchState:
         completed_count: Total issues completed in this watch session.
         last_validation_at: Completed count at last validation.
         next_validation_threshold: Run validation when completed_count reaches this.
-            Must be initialized from ValidationConfig.validate_every to stay in sync.
+            Must be initialized from PeriodicValidationConfig.validate_every to stay in sync.
         consecutive_poll_failures: Count of consecutive poll failures.
         last_idle_log_time: Timestamp of last idle log message.
         was_idle: Whether the previous poll found no ready issues.
     """
 
-    # No default - must be explicitly set from ValidationConfig.validate_every
+    # No default - must be explicitly set from PeriodicValidationConfig.validate_every
     next_validation_threshold: int
     completed_count: int = 0
     last_validation_at: int = 0
