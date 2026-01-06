@@ -950,13 +950,13 @@ class MalaOrchestrator:
             self._abort_mode_active = True
             self._abort_exit_code = 1 if self._validation_failed else 130
             loop.call_soon_threadsafe(interrupt_event.set)
-            CommandRunner.forward_sigint()
+            loop.call_soon_threadsafe(CommandRunner.forward_sigint)
             loop.call_soon_threadsafe(self.event_sink.on_abort_started)
         else:
             # Stage 3: Hard Abort - always exit 130 regardless of validation state
             self._shutdown_requested = True
             self._abort_exit_code = 130  # Hard abort always uses 130
-            CommandRunner.kill_active_process_groups()
+            loop.call_soon_threadsafe(CommandRunner.kill_active_process_groups)
             loop.call_soon_threadsafe(self.event_sink.on_force_abort)
             if self._run_task:
                 loop.call_soon_threadsafe(self._run_task.cancel)

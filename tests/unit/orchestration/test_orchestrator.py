@@ -3336,17 +3336,16 @@ class TestSigintEscalation:
         orchestrator._handle_sigint(loop, drain_event, interrupt_event)
 
         # Second SIGINT
-        with patch.object(CommandRunner, "forward_sigint") as mock_forward:
-            orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
 
-            assert orchestrator._sigint_count == 2
-            assert orchestrator._abort_mode_active is True
-            assert orchestrator._abort_exit_code == 130  # No validation failure
-            loop.call_soon_threadsafe.assert_any_call(interrupt_event.set)
-            mock_forward.assert_called_once()
-            loop.call_soon_threadsafe.assert_any_call(
-                orchestrator.event_sink.on_abort_started
-            )
+        assert orchestrator._sigint_count == 2
+        assert orchestrator._abort_mode_active is True
+        assert orchestrator._abort_exit_code == 130  # No validation failure
+        loop.call_soon_threadsafe.assert_any_call(interrupt_event.set)
+        loop.call_soon_threadsafe.assert_any_call(CommandRunner.forward_sigint)
+        loop.call_soon_threadsafe.assert_any_call(
+            orchestrator.event_sink.on_abort_started
+        )
 
     def test_handle_sigint_stage3_force_abort(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
@@ -3363,21 +3362,21 @@ class TestSigintEscalation:
         orchestrator._run_task = run_task
 
         # First two SIGINTs
-        with patch.object(CommandRunner, "forward_sigint"):
-            orchestrator._handle_sigint(loop, drain_event, interrupt_event)
-            orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
 
         # Third SIGINT
-        with patch.object(CommandRunner, "kill_active_process_groups") as mock_kill:
-            orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
 
-            assert orchestrator._sigint_count == 3
-            assert orchestrator._shutdown_requested is True
-            mock_kill.assert_called_once()
-            loop.call_soon_threadsafe.assert_any_call(
-                orchestrator.event_sink.on_force_abort
-            )
-            loop.call_soon_threadsafe.assert_any_call(run_task.cancel)
+        assert orchestrator._sigint_count == 3
+        assert orchestrator._shutdown_requested is True
+        loop.call_soon_threadsafe.assert_any_call(
+            CommandRunner.kill_active_process_groups
+        )
+        loop.call_soon_threadsafe.assert_any_call(
+            orchestrator.event_sink.on_force_abort
+        )
+        loop.call_soon_threadsafe.assert_any_call(run_task.cancel)
 
     def test_handle_sigint_exit_code_with_validation_failure(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
@@ -3396,10 +3395,9 @@ class TestSigintEscalation:
         orchestrator._handle_sigint(loop, drain_event, interrupt_event)
 
         # Second SIGINT - should snapshot exit code as 1
-        with patch.object(CommandRunner, "forward_sigint"):
-            orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
 
-            assert orchestrator._abort_exit_code == 1
+        assert orchestrator._abort_exit_code == 1
 
     def test_handle_sigint_escalation_window_resets_when_idle(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
@@ -3445,12 +3443,11 @@ class TestSigintEscalation:
         orchestrator._sigint_last_at = time.monotonic() - ESCALATION_WINDOW_SECONDS - 1
 
         # Second SIGINT should still escalate (not reset) since in drain mode
-        with patch.object(CommandRunner, "forward_sigint"):
-            orchestrator._handle_sigint(loop, drain_event, interrupt_event)
+        orchestrator._handle_sigint(loop, drain_event, interrupt_event)
 
-            # Should escalate to abort mode, not reset
-            assert orchestrator._sigint_count == 2
-            assert orchestrator._abort_mode_active is True
+        # Should escalate to abort mode, not reset
+        assert orchestrator._sigint_count == 2
+        assert orchestrator._abort_mode_active is True
 
     def test_sigint_state_reset_per_run(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
