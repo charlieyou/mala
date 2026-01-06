@@ -496,7 +496,7 @@ class FileSystemLogProvider:
     def extract_tool_result_content(
         self, entry: JsonlEntryProtocol
     ) -> list[tuple[str, str]]:
-        """Extract tool_result content from Bash tool results.
+        """Extract textual content from all tool_result blocks.
 
         Delegates to SessionLogParser.extract_tool_result_content().
 
@@ -504,6 +504,6 @@ class FileSystemLogProvider:
             entry: A JsonlEntryProtocol from iter_events.
 
         Returns:
-            List of (tool_use_id, content) tuples for Bash tool_result blocks.
+            List of (tool_use_id, content) tuples for all tool_result blocks.
         """
         return self._parser.extract_tool_result_content(entry)

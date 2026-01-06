@@ -563,10 +563,10 @@ class TestCustomCommandConfig:
         with pytest.raises(ConfigError, match="Invalid custom command name '123abc'"):
             CustomCommandConfig.from_value("123abc", "some cmd")
 
-    def test_invalid_name_contains_hyphen(self) -> None:
-        """Name containing hyphen raises ConfigError."""
-        with pytest.raises(ConfigError, match="Invalid custom command name 'cmd-name'"):
-            CustomCommandConfig.from_value("cmd-name", "some cmd")
+    def test_valid_name_contains_hyphen(self) -> None:
+        """Name containing hyphen is valid."""
+        config = CustomCommandConfig.from_value("cmd-name", "some cmd")
+        assert config.command == "some cmd"
 
     def test_invalid_name_contains_dot(self) -> None:
         """Name containing dot raises ConfigError."""

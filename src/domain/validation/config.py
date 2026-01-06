@@ -22,8 +22,8 @@ from dataclasses import dataclass, field
 from typing import cast
 
 # Regex for valid custom command names: starts with letter or underscore,
-# followed by letters, digits, or underscores
-CUSTOM_COMMAND_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# followed by letters, digits, underscores, or hyphens
+CUSTOM_COMMAND_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
 
 class ConfigError(Exception):
@@ -174,7 +174,7 @@ class CustomCommandConfig:
             raise ConfigError(
                 f"Invalid custom command name '{name}'. "
                 "Names must start with a letter or underscore, "
-                "followed by letters, digits, or underscores."
+                "followed by letters, digits, underscores, or hyphens."
             )
 
         # Reject null values

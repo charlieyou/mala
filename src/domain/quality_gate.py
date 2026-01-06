@@ -413,8 +413,9 @@ class QualityGate:
         Updates state in-place to track marker occurrences. For each command name,
         tracks whether a start marker was seen and the latest terminal marker.
 
-        Latest terminal marker wins: if a command is retried and succeeds, the
-        final "pass" marker overrides earlier "fail" markers.
+        A new `start` marker resets the terminal state to None, so incomplete
+        retries (start without terminal) are correctly treated as failures.
+        Latest terminal marker wins within a single attempt.
 
         Args:
             content: Tool result content to scan for markers.
@@ -428,7 +429,9 @@ class QualityGate:
             has_start, terminal = state.get(name, (False, None))
 
             if marker_type == "start":
+                # New attempt: reset terminal state so incomplete retry is detected
                 has_start = True
+                terminal = None
             else:
                 # Terminal marker: pass, fail exit=N, timeout
                 # Latest wins (allows retries to override earlier failures)

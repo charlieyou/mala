@@ -4611,6 +4611,39 @@ class TestCustomCommandMarkerParsing:
         assert evidence.custom_commands_ran.get("import_lint") is True
         assert evidence.custom_commands_failed.get("import_lint", False) is False
 
+    def test_parse_custom_marker_incomplete_retry_is_failure(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Incomplete retry (pass then start-only) is treated as failure."""
+        log_path = tmp_path / "session.jsonl"
+        # First attempt passes, second attempt starts but never completes
+        entries = [
+            self._make_tool_result_entry(
+                "toolu_1",
+                "[custom:import_lint:start]\n[custom:import_lint:pass]",
+                is_error=False,
+            ),
+            self._make_tool_result_entry(
+                "toolu_2",
+                "[custom:import_lint:start]\n... command crashed ...",
+                is_error=True,
+            ),
+        ]
+        log_path.write_text("\n".join(entries) + "\n")
+
+        spec = self._make_custom_spec(
+            [("import_lint", "python scripts/lint.py", False)]
+        )
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        # Latest attempt was incomplete (start-only) so should be marked as failed
+        assert evidence.custom_commands_ran.get("import_lint") is True
+        assert evidence.custom_commands_failed.get("import_lint") is True
+
     def test_gate_advisory_failure_passes(
         self,
         tmp_path: Path,
