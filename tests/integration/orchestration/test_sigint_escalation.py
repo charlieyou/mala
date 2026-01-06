@@ -1025,22 +1025,27 @@ from src.orchestration.factory import OrchestratorConfig, OrchestratorDependenci
 from src.core.models import WatchConfig
 from tests.fakes.event_sink import FakeEventSink
 from tests.fakes.issue_provider import FakeIssueProvider
-from src.pipeline.issue_execution_coordinator import IssueExecutionCoordinator
+from src.orchestration.orchestrator import MalaOrchestrator
+import time
 
 # Globals to check state after signal handling
 _orchestrator = None
 
-# Monkey-patch the coordinator to have a slow interrupt handler
-_original_handle_interrupt = IssueExecutionCoordinator._handle_interrupt
+# Monkey-patch the orchestrator's _handle_sigint to add delay after Stage 2
+# This ensures the process stays alive long enough for Stage 3 SIGINT to arrive
+_original_handle_sigint = MalaOrchestrator._handle_sigint
 
 
-async def _slow_handle_interrupt(self, abort_callback, watch_state, issues_spawned):
-    # Sleep long enough for Stage 3 SIGINT to arrive
-    await asyncio.sleep(2.0)
-    return await _original_handle_interrupt(self, abort_callback, watch_state, issues_spawned)
+def _slow_handle_sigint(self, loop, drain_event, interrupt_event):
+    # Call original handler first
+    _original_handle_sigint(self, loop, drain_event, interrupt_event)
+    # If Stage 2 was just entered, sleep to allow Stage 3 SIGINT to arrive
+    # (signal handlers run synchronously, so time.sleep works here)
+    if self._abort_mode_active and not self._shutdown_requested:
+        time.sleep(1.0)
 
 
-IssueExecutionCoordinator._handle_interrupt = _slow_handle_interrupt
+MalaOrchestrator._handle_sigint = _slow_handle_sigint
 
 
 async def main():
