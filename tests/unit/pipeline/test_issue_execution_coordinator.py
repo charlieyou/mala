@@ -671,7 +671,7 @@ class TestDrainMode:
 
         result = await loop_task
 
-        assert result.exit_reason == "drained"
+        assert result.exit_reason == "validation_failed"
         assert result.exit_code == 1
 
     @pytest.mark.asyncio
@@ -703,8 +703,10 @@ class TestDrainMode:
         async def abort_callback(*, is_interrupt: bool = False) -> int:
             nonlocal abort_called
             abort_called = True
-            for task in coord.active_tasks.values():
+            tasks = list(coord.active_tasks.values())
+            for task in tasks:
                 task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             coord.active_tasks.clear()
             return 1
 

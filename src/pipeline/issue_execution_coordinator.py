@@ -278,56 +278,24 @@ class IssueExecutionCoordinator:
                     )
 
                 # Check for drain mode (Stage 1 SIGINT - stop spawning, let active complete)
-                if drain_event and drain_event.is_set():
-                    if not self.active_tasks:
-                        # All drained - trigger validation if in watch mode
-                        exit_code = 0
-                        if watch_enabled and validation_callback:
-                            if (
-                                watch_state.completed_count
-                                > watch_state.last_validation_at
-                            ):
-                                validation_passed = await validation_callback()
-                                watch_state.last_validation_at = (
-                                    watch_state.completed_count
+                is_draining = drain_event is not None and drain_event.is_set()
+                if is_draining and not self.active_tasks:
+                    # All drained - trigger validation if in watch mode
+                    if watch_enabled and validation_callback:
+                        if watch_state.completed_count > watch_state.last_validation_at:
+                            validation_passed = await validation_callback()
+                            watch_state.last_validation_at = watch_state.completed_count
+                            if not validation_passed:
+                                return RunResult(
+                                    issues_spawned=issues_spawned,
+                                    exit_code=1,
+                                    exit_reason="validation_failed",
                                 )
-                                if not validation_passed:
-                                    exit_code = 1
-                        return RunResult(
-                            issues_spawned=issues_spawned,
-                            exit_code=exit_code,
-                            exit_reason="drained",
-                        )
-                    # Active tasks exist - skip to waiting for them (no spawning)
-                    # Jump directly to task wait section
-                    self.event_sink.on_waiting_for_agents(len(self.active_tasks))
-                    wait_tasks: set[asyncio.Task[object]] = set(
-                        self.active_tasks.values()
+                    return RunResult(
+                        issues_spawned=issues_spawned,
+                        exit_code=0,
+                        exit_reason="drained",
                     )
-                    if interrupt_event:
-                        if interrupt_task is None or interrupt_task.done():
-                            interrupt_task = asyncio.create_task(interrupt_event.wait())
-                        wait_tasks.add(interrupt_task)
-
-                    done, _ = await asyncio.wait(
-                        wait_tasks,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-
-                    done_agent_tasks = (
-                        done - {interrupt_task} if interrupt_task else done
-                    )
-
-                    # Finalize completed tasks
-                    for task in done_agent_tasks:
-                        for issue_id, t in list(self.active_tasks.items()):
-                            if t is task:
-                                await finalize_callback(issue_id, task)
-                                watch_state.completed_count += 1
-                                break
-
-                    # Loop back to check drain completion or interrupt
-                    continue
 
                 # Check if we've hit the issue limit (using completed_count, not spawned)
                 limit_reached = (
@@ -345,7 +313,7 @@ class IssueExecutionCoordinator:
                     )
 
                 # Fetch ready issues (unless we've hit the limit or draining)
-                if limit_reached:
+                if limit_reached or is_draining:
                     ready: list[str] = []
                 else:
                     try:
