@@ -40,6 +40,10 @@ if TYPE_CHECKING:
 
     from src.core.protocols import McpServerFactory, SDKClientProtocol
     from src.domain.lifecycle import RetryState
+    from src.pipeline.agent_session_runner import (
+        SessionConfig,
+        SessionExecutionState,
+    )
 
 
 def make_noop_mcp_factory() -> McpServerFactory:
@@ -4097,15 +4101,15 @@ class TestResumeSessionId:
 
         async def mock_lifecycle(
             input: AgentSessionInput,
-            session_cfg: object,
-            state: object,
+            session_cfg: SessionConfig,
+            state: SessionExecutionState,
             tracer: object,
         ) -> None:
             # First call with resume - raise stale session error
             if input.resume_session_id:
                 raise Exception("Session stale-session-id not found (404)")
             # Second call (without resume) - call original
-            await original_lifecycle(input, session_cfg, state, tracer)
+            await original_lifecycle(input, session_cfg, state, tracer)  # type: ignore[arg-type]
 
         with (
             patch.object(runner, "_initialize_session", mock_init),

@@ -58,7 +58,7 @@ def mock_prompt_validation_commands() -> PromptValidationCommands:
         format="echo format",
         typecheck="echo typecheck",
         test="echo test",
-        custom_commands=[],
+        custom_commands=(),
     )
 
 

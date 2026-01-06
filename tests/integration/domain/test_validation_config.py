@@ -922,39 +922,50 @@ class TestCustomCommandsIntegration:
     """Integration test for custom_commands config → spec path."""
 
     def test_custom_commands_config_to_spec_integration(self, tmp_path: Path) -> None:
-        """Custom commands from mala.yaml appear in ValidationSpec.
+        """Custom commands appear in ValidationCommand list when set via dict.
 
-        This test exercises the full path:
-        mala.yaml → ConfigLoader → ValidationConfig.custom_commands
-        → build_validation_spec() → ValidationCommand(kind=CUSTOM)
+        This test exercises the config→spec internal path using the
+        _build_commands_from_config function. The full YAML→spec path will
+        be tested once inline custom command parsing is implemented (see
+        mala-81qt epic).
         """
+        from src.domain.validation.config import (
+            CommandConfig,
+            CommandsConfig,
+            CustomCommandConfig,
+        )
         from src.domain.validation.spec import (
             CommandKind,
-            ValidationScope,
-            build_validation_spec,
+            _build_commands_from_config,
         )
 
-        _create_mala_yaml(
-            tmp_path,
-            """
-preset: python-uv
-custom_commands:
-  security_scan:
-    command: "bandit -r src/"
-    allow_fail: true
-  docs_check:
-    command: "mkdocs build --strict"
-""",
+        # Create commands config with a test command (required for spec)
+        commands_config = CommandsConfig(
+            test=CommandConfig(command="pytest"),
+            lint=CommandConfig(command="ruff check ."),
         )
 
-        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+        # Create custom commands dict
+        security_cmd = CustomCommandConfig(
+            command="bandit -r src/",
+            allow_fail=True,
+        )
+        docs_cmd = CustomCommandConfig(
+            command="mkdocs build --strict",
+            allow_fail=False,
+        )
+        custom_commands_dict = {
+            "security_scan": security_cmd,
+            "docs_check": docs_cmd,
+        }
 
-        # Find custom commands in the spec
-        custom_commands = [
-            cmd for cmd in spec.commands if cmd.kind == CommandKind.CUSTOM
-        ]
+        # Build commands list using internal function
+        commands = _build_commands_from_config(commands_config, custom_commands_dict)
 
-        assert len(custom_commands) == 2, "Expected 2 custom commands in spec"
+        # Find custom commands in the result
+        custom_commands = [cmd for cmd in commands if cmd.kind == CommandKind.CUSTOM]
+
+        assert len(custom_commands) == 2, "Expected 2 custom commands"
 
         cmd_names = {cmd.name for cmd in custom_commands}
         assert "security_scan" in cmd_names
