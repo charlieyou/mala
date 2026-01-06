@@ -4130,6 +4130,20 @@ class TestLogProviderInjection:
             def get_end_offset(self, log_path: Path, start_offset: int = 0) -> int:
                 return 42  # Return known value to verify delegation
 
+            def extract_bash_commands(self, entry: JsonlEntry) -> list[tuple[str, str]]:
+                return []
+
+            def extract_tool_results(self, entry: JsonlEntry) -> list[tuple[str, bool]]:
+                return []
+
+            def extract_assistant_text_blocks(self, entry: JsonlEntry) -> list[str]:
+                return []
+
+            def extract_tool_result_content(
+                self, entry: JsonlEntry
+            ) -> list[tuple[str, str]]:
+                return []
+
         mock_provider = MockLogProvider()
         fake_cmd_runner = FakeCommandRunner(allow_unregistered=True)
         gate = QualityGate(
