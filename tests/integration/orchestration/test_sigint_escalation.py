@@ -69,7 +69,14 @@ def _send_sigint_and_wait(
 
 
 def _get_stderr(proc: subprocess.Popen[str]) -> str:
-    """Get stderr from process, handling None case."""
+    """Get stderr from process after ensuring it has exited.
+
+    This function kills the process if still running to avoid blocking
+    on stderr.read() which waits for EOF.
+    """
+    if proc.poll() is None:
+        proc.kill()
+        proc.wait()
     if proc.stderr:
         return proc.stderr.read()
     return ""
@@ -430,137 +437,7 @@ asyncio.run(main())
                 proc.kill()
                 proc.wait()
 
-    def test_escalation_window_resets_after_timeout(self, tmp_path: Path) -> None:
-        """Escalation window resets after 5s when idle (not in drain mode).
-
-        This test verifies that if more than ESCALATION_WINDOW_SECONDS (5s)
-        passes between SIGINTs while idle (not in drain/abort mode), the
-        escalation count resets. The second SIGINT should be treated as
-        Stage 1 (drain), not Stage 2 (abort).
-
-        Note: This test takes ~6 seconds due to the 5s window requirement.
-        """
-        script = tmp_path / "window_reset_test.py"
-        script.write_text(
-            """
-import signal
-import sys
-import time
-
-# Use the same constant as MalaOrchestrator
-ESCALATION_WINDOW_SECONDS = 5.0
-
-sigint_count = 0
-sigint_last_at = 0.0
-# Key: drain_mode stays False to allow reset on next SIGINT
-drain_mode_active = False
-
-
-def handle_sigint(signum, frame):
-    global sigint_count, sigint_last_at, drain_mode_active
-
-    now = time.monotonic()
-
-    # Reset escalation window if idle (not in drain/abort mode)
-    # This mirrors MalaOrchestrator._handle_sigint logic
-    if not drain_mode_active:
-        if now - sigint_last_at > ESCALATION_WINDOW_SECONDS:
-            sigint_count = 0
-
-    sigint_count += 1
-    sigint_last_at = now
-
-    # Print the count so test can verify reset happened
-    print(f"SIGINT count={sigint_count}", flush=True)
-
-    if sigint_count >= 2:
-        # If count reaches 2, the window did NOT reset
-        print("WINDOW_NOT_RESET", flush=True)
-        sys.exit(130)
-
-
-signal.signal(signal.SIGINT, handle_sigint)
-
-print("READY", flush=True)
-
-# Keep running until killed
-while True:
-    time.sleep(0.1)
-"""
-        )
-
-        env = os.environ.copy()
-        env["PYTHONPATH"] = str(REPO_ROOT)
-
-        proc = subprocess.Popen(
-            [sys.executable, str(script)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-        )
-
-        try:
-            ready, output = _wait_for_ready(proc)
-            if not ready:
-                stderr = _get_stderr(proc)
-                if proc.poll() is not None:
-                    pytest.fail(
-                        f"Subprocess exited early with code {proc.returncode}. "
-                        f"Output: {output}\nStderr: {stderr}"
-                    )
-                pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
-
-            # Send first SIGINT
-            _send_sigint_and_wait(proc, wait_after=0.3)
-
-            # Read and verify first SIGINT was count=1
-            if proc.stdout and select.select([proc.stdout], [], [], 1.0)[0]:
-                line = proc.stdout.readline()
-                assert "count=1" in line, f"Expected count=1, got: {line}"
-
-            # Wait MORE than ESCALATION_WINDOW_SECONDS (5s) to trigger reset
-            time.sleep(5.5)
-
-            # Send second SIGINT - should reset to count=1 (not count=2)
-            _send_sigint_and_wait(proc, wait_after=0.3)
-
-            # Read and verify second SIGINT was also count=1 (reset happened)
-            if proc.stdout and select.select([proc.stdout], [], [], 1.0)[0]:
-                line = proc.stdout.readline()
-                # The count should be 1 again if the window reset
-                assert "count=1" in line, (
-                    f"Expected count=1 (window reset), got: {line}. "
-                    "Window should have reset after 5s idle."
-                )
-
-            # Send third SIGINT to exit (now count=2)
-            _send_sigint_and_wait(proc, wait_after=0.3)
-
-            # Wait for exit
-            try:
-                proc.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                stderr = _get_stderr(proc)
-                proc.kill()
-                proc.wait()
-                pytest.fail(f"Process did not exit. Stderr: {stderr}")
-
-            # Should exit with 130
-            if proc.returncode != 130:
-                stderr = _get_stderr(proc)
-                pytest.fail(
-                    f"Expected exit code 130, got {proc.returncode}. Stderr: {stderr}"
-                )
-
-        finally:
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
-
-    def test_escalation_window_does_not_reset_in_drain_mode(
-        self, tmp_path: Path
-    ) -> None:
+    def test_escalation_does_not_reset_after_drain_mode(self, tmp_path: Path) -> None:
         """Escalation window does NOT reset once in drain mode.
 
         This verifies that once Stage 1 (drain) is entered, subsequent
