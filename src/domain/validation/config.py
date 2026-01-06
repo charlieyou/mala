@@ -421,8 +421,7 @@ class CommandsConfig:
             data: Dict with optional command fields. Each can be a string,
                 command object, or null.
             is_run_level: If True, this is for run_level_commands section.
-                Affects how +prefix custom commands are interpreted.
-                (Currently unused - stub for future implementation.)
+                Enables _clear_customs validation and +prefix custom command parsing.
 
         Returns:
             CommandsConfig instance.
