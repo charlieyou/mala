@@ -2090,3 +2090,98 @@ class TestParseScope:
         with pytest.raises(typer.Exit) as excinfo:
             parse_scope("unknown")
         assert excinfo.value.exit_code == 1
+
+
+class TestValidateEveryEnablement:
+    """Tests for --validate-every enablement logic."""
+
+    def test_validate_every_explicit_without_watch(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """--validate-every N without --watch creates PeriodicValidationConfig(N)."""
+        cli = _reload_cli(monkeypatch)
+
+        config_dir = tmp_path / "config"
+        monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+        import src.orchestration.factory
+
+        monkeypatch.setattr(
+            src.orchestration.factory,
+            "create_orchestrator",
+            _make_dummy_create_orchestrator(),
+        )
+
+        with pytest.raises(typer.Exit):
+            cli.run(repo_path=tmp_path, watch=False, validate_every=5)
+
+        validation_config = DummyOrchestrator.last_validation_config
+        assert validation_config is not None
+        assert validation_config.validate_every == 5
+
+    def test_watch_without_validate_every_uses_default(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """--watch without --validate-every creates PeriodicValidationConfig(10)."""
+        cli = _reload_cli(monkeypatch)
+
+        config_dir = tmp_path / "config"
+        monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+        import src.orchestration.factory
+
+        monkeypatch.setattr(
+            src.orchestration.factory,
+            "create_orchestrator",
+            _make_dummy_create_orchestrator(),
+        )
+
+        with pytest.raises(typer.Exit):
+            cli.run(repo_path=tmp_path, watch=True)
+
+        validation_config = DummyOrchestrator.last_validation_config
+        assert validation_config is not None
+        assert validation_config.validate_every == 10
+
+    def test_no_flags_disables_periodic_validation(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """No --watch, no --validate-every passes validation_config=None."""
+        cli = _reload_cli(monkeypatch)
+
+        config_dir = tmp_path / "config"
+        monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+        import src.orchestration.factory
+
+        monkeypatch.setattr(
+            src.orchestration.factory,
+            "create_orchestrator",
+            _make_dummy_create_orchestrator(),
+        )
+
+        with pytest.raises(typer.Exit):
+            cli.run(repo_path=tmp_path)
+
+        validation_config = DummyOrchestrator.last_validation_config
+        assert validation_config is None
+
+    def test_watch_with_explicit_validate_every_uses_explicit(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """--watch with --validate-every N uses explicit N, not default 10."""
+        cli = _reload_cli(monkeypatch)
+
+        config_dir = tmp_path / "config"
+        monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+        import src.orchestration.factory
+
+        monkeypatch.setattr(
+            src.orchestration.factory,
+            "create_orchestrator",
+            _make_dummy_create_orchestrator(),
+        )
+
+        with pytest.raises(typer.Exit):
+            cli.run(repo_path=tmp_path, watch=True, validate_every=3)
+
+        validation_config = DummyOrchestrator.last_validation_config
+        assert validation_config is not None
+        assert validation_config.validate_every == 3

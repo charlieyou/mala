@@ -387,7 +387,7 @@ def _build_cli_args_metadata(
     epic_override: list[str] | None,
     resolved: ResolvedConfig,
     watch: bool,
-    validate_every: int,
+    validate_every: int | None,
 ) -> dict[str, object]:
     """Build the cli_args metadata dictionary for logging and OrchestratorConfig.
 
@@ -764,13 +764,13 @@ def run(
         ),
     ] = False,
     validate_every: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--validate-every",
             min=1,
-            help="Run validation after every N issues complete (default: 10, only in watch mode)",
+            help="Run validation after every N issues complete (default: 10 in watch mode)",
         ),
-    ] = 10,
+    ] = None,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -907,9 +907,25 @@ def run(
         orch_config, mala_config=override_result.updated_config
     )
 
+    # Derive effective validate_every: explicit > watch default (10) > disabled (None)
+    effective_validate_every: int | None
+    if validate_every is not None:
+        # User explicitly specified --validate-every N
+        effective_validate_every = validate_every
+    elif watch:
+        # Watch mode enabled, use default 10
+        effective_validate_every = 10
+    else:
+        # No watch, no explicit --validate-every → disabled
+        effective_validate_every = None
+
     # Build WatchConfig and PeriodicValidationConfig, then run orchestrator
     watch_config = _lazy("WatchConfig")(enabled=watch)
-    validation_config = _lazy("PeriodicValidationConfig")(validate_every=validate_every)
+    validation_config = (
+        _lazy("PeriodicValidationConfig")(validate_every=effective_validate_every)
+        if effective_validate_every is not None
+        else None
+    )
     success_count, total = asyncio.run(
         orchestrator.run(watch_config=watch_config, validation_config=validation_config)
     )
