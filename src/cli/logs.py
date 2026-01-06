@@ -512,7 +512,7 @@ def _find_matching_runs(
 
     Search strategy:
     1. Fast path: match by filename prefix (first 8 chars of search_id)
-    2. Fallback: always scan non-conforming files for run_id field match
+    2. Fallback: scan non-conforming files for run_id field match
 
     Args:
         search_id: Full UUID or prefix (any length >= 1) to search for.
@@ -528,8 +528,6 @@ def _find_matching_runs(
         return [], []
 
     files = list(repo_runs_dir.glob("*.json"))
-    # Treat as prefix search if <= 8 chars, otherwise full UUID
-    is_prefix_search = len(search_id) <= 8
 
     matches: list[tuple[Path, dict[str, Any]]] = []
     corrupt_files: list[Path] = []
@@ -549,9 +547,9 @@ def _find_matching_runs(
                 corrupt_files.append(path)
                 continue
 
-            # For prefix search (exactly 8 chars): filename match is sufficient
-            # For full UUID: verify run_id field matches exactly
-            if is_prefix_search or data.get("run_id") == search_id:
+            # Match if run_id starts with search_id (handles any prefix length)
+            run_id_field = data.get("run_id", "")
+            if isinstance(run_id_field, str) and run_id_field.startswith(search_id):
                 matches.append((path, data))
 
     # Fallback: scan files not covered by fast path for run_id field match
@@ -638,7 +636,7 @@ def show(
     if len(matches) > 1 or (
         is_prefix_search and total_candidates > 1 and corrupt_files
     ):
-        match_ids = sorted([m[1]["run_id"] for m in matches])
+        match_ids = sorted([m[1].get("run_id", "unknown") for m in matches])
         corrupt_note = (
             f" ({len(corrupt_files)} additional corrupt file(s))"
             if corrupt_files

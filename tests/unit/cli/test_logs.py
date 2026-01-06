@@ -1325,3 +1325,23 @@ class TestFindMatchingRunsFallback:
         assert output["error"] == "not_found"
         # Should mention corrupt files as a note
         assert "corrupt" in output["message"].lower()
+
+    def test_medium_prefix_9_to_35_chars(self, tmp_path: Path) -> None:
+        """Verify prefixes between 9-35 chars work correctly."""
+        from src.cli.logs import _find_matching_runs
+
+        run_data = {
+            "run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        (tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json").write_text(
+            json.dumps(run_data)
+        )
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            # Search with 12-char prefix (between 8 and full UUID)
+            matches, _corrupt = _find_matching_runs("a1b2c3d4-e5f")
+
+        assert len(matches) == 1
+        assert matches[0][1]["run_id"] == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
