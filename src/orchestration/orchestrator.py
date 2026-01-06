@@ -98,7 +98,7 @@ if TYPE_CHECKING:
     from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
     from src.pipeline.issue_finalizer import IssueFinalizer
 
-    from src.core.models import RunResult, WatchConfig
+    from src.core.models import RunResult, ValidationConfig, WatchConfig
 
     from .types import OrchestratorConfig, _DerivedConfig
 
@@ -754,6 +754,7 @@ class MalaOrchestrator:
         run_metadata: RunMetadata,
         *,
         watch_config: WatchConfig | None = None,
+        validation_config: ValidationConfig | None = None,
         interrupt_event: asyncio.Event | None = None,
         validation_callback: Callable[[], Awaitable[bool]] | None = None,
     ) -> RunResult:
@@ -764,6 +765,7 @@ class MalaOrchestrator:
         Args:
             run_metadata: Metadata for the current run.
             watch_config: Watch mode configuration.
+            validation_config: Periodic validation configuration.
             interrupt_event: Event set to signal graceful shutdown (e.g., SIGINT).
             validation_callback: Called periodically in watch mode to run validation.
 
@@ -812,6 +814,7 @@ class MalaOrchestrator:
             finalize_callback=finalize_callback,
             abort_callback=abort_callback,
             watch_config=watch_config,
+            validation_config=validation_config,
             interrupt_event=interrupt_event,
             validation_callback=validation_callback,
         )
@@ -852,12 +855,15 @@ class MalaOrchestrator:
         self,
         *,
         watch_config: WatchConfig | None = None,
+        validation_config: ValidationConfig | None = None,
     ) -> tuple[int, int]:
         """Main orchestration loop. Returns (success_count, total_count).
 
         Args:
             watch_config: Optional watch mode configuration. If provided, enables
                 watch mode with polling and interruptible idle sleep.
+            validation_config: Optional periodic validation configuration. If provided
+                with a validate_every value, enables periodic validation triggering.
         """
         # Reset per-run state to ensure clean state if orchestrator is reused
         self._state = OrchestratorState()
@@ -935,22 +941,30 @@ class MalaOrchestrator:
         exit_code = 0
 
         try:
-            # Create validation callback wrapping RunCoordinator
-            async def validation_callback() -> bool:
-                success_count = sum(1 for r in self._state.completed if r.success)
-                if success_count == 0 or self.abort_run:
-                    return True
-                validation_input = RunLevelValidationInput(run_metadata=run_metadata)
-                validation_output = await self.run_coordinator.run_validation(
-                    validation_input
-                )
-                return validation_output.passed
+            # Create validation callback only if validation is configured
+            validation_callback = None
+            if validation_config and validation_config.validate_every is not None:
+
+                async def _validation_callback() -> bool:
+                    success_count = sum(1 for r in self._state.completed if r.success)
+                    if success_count == 0 or self.abort_run:
+                        return True
+                    validation_input = RunLevelValidationInput(
+                        run_metadata=run_metadata
+                    )
+                    validation_output = await self.run_coordinator.run_validation(
+                        validation_input
+                    )
+                    return validation_output.passed
+
+                validation_callback = _validation_callback
 
             interrupted = False
             try:
                 loop_result = await self._run_main_loop(
                     run_metadata,
                     watch_config=watch_config,
+                    validation_config=validation_config,
                     interrupt_event=interrupt_event,
                     validation_callback=validation_callback,
                 )

@@ -186,17 +186,27 @@ class RetryConfig:
 
 @dataclass
 class WatchConfig:
-    """Configuration for watch mode behavior.
+    """Configuration for watch mode polling behavior.
 
     Attributes:
         enabled: Whether watch mode is active.
-        validate_every: Run validation after this many issues complete.
         poll_interval_seconds: Seconds between poll cycles (internal, not CLI-exposed).
     """
 
     enabled: bool = False
-    validate_every: int = 10
     poll_interval_seconds: float = 60.0
+
+
+@dataclass
+class ValidationConfig:
+    """Configuration for periodic validation triggering.
+
+    Attributes:
+        validate_every: Run validation after this many issues complete.
+            None means disabled.
+    """
+
+    validate_every: int | None = None
 
 
 @dataclass
@@ -207,13 +217,13 @@ class WatchState:
         completed_count: Total issues completed in this watch session.
         last_validation_at: Completed count at last validation.
         next_validation_threshold: Run validation when completed_count reaches this.
-            Must be initialized from WatchConfig.validate_every to stay in sync.
+            Must be initialized from ValidationConfig.validate_every to stay in sync.
         consecutive_poll_failures: Count of consecutive poll failures.
         last_idle_log_time: Timestamp of last idle log message.
         was_idle: Whether the previous poll found no ready issues.
     """
 
-    # No default - must be explicitly set from WatchConfig.validate_every
+    # No default - must be explicitly set from ValidationConfig.validate_every
     next_validation_threshold: int
     completed_count: int = 0
     last_validation_at: int = 0

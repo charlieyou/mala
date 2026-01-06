@@ -22,7 +22,7 @@ from src.core.models import OrderPreference, RunResult, WatchState
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from src.core.models import WatchConfig
+    from src.core.models import ValidationConfig, WatchConfig
     from src.core.protocols import IssueProvider, MalaEventSink
 
 logger = logging.getLogger(__name__)
@@ -189,6 +189,7 @@ class IssueExecutionCoordinator:
         finalize_callback: FinalizeCallback,
         abort_callback: AbortCallback,
         watch_config: WatchConfig | None = None,
+        validation_config: ValidationConfig | None = None,
         interrupt_event: asyncio.Event | None = None,
         validation_callback: Callable[[], Awaitable[bool]] | None = None,
         sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -206,8 +207,10 @@ class IssueExecutionCoordinator:
                 Should cancel and finalize all active tasks.
             watch_config: Watch mode configuration. If None or not enabled,
                 loop exits when no work remains.
+            validation_config: Periodic validation configuration. Controls when
+                validation_callback is triggered based on completed issue count.
             interrupt_event: Event set to signal graceful shutdown (e.g., SIGINT).
-            validation_callback: Called periodically in watch mode to run validation.
+            validation_callback: Called periodically to run validation.
                 Returns True if validation passed, False otherwise.
             sleep_fn: Async sleep function, injectable for testing.
             drain_event: Event set to enter drain mode. In drain mode, no new issues
@@ -223,7 +226,9 @@ class IssueExecutionCoordinator:
         # Initialize watch state from config (used in T004-T006)
         watch_state = WatchState(
             next_validation_threshold=(
-                watch_config.validate_every if watch_config else 10
+                validation_config.validate_every
+                if validation_config and validation_config.validate_every is not None
+                else 10
             )
         )
         watch_enabled = bool(watch_config and watch_config.enabled)
@@ -633,13 +638,18 @@ class IssueExecutionCoordinator:
                     # Advance threshold to next future threshold beyond completed_count
                     # This handles cases where completed_count jumps past multiple thresholds
                     watch_state.last_validation_at = watch_state.completed_count
+                    # validate_every is guaranteed non-None when we reach here
+                    # (threshold crossing requires validation to be configured)
+                    validate_every = (
+                        validation_config.validate_every
+                        if validation_config and validation_config.validate_every
+                        else 10
+                    )
                     while (
                         watch_state.next_validation_threshold
                         <= watch_state.completed_count
                     ):
-                        watch_state.next_validation_threshold += (
-                            watch_config.validate_every
-                        )
+                        watch_state.next_validation_threshold += validate_every
 
         finally:
             # Clean up interrupt_task when exiting the loop (any return path)

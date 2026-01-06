@@ -39,6 +39,7 @@ _LAZY_NAMES = frozenset(
         "MalaOrchestrator",
         "OrderPreference",
         "OrchestratorConfig",
+        "ValidationConfig",
         "WatchConfig",
         "create_orchestrator",
         "get_all_locks",
@@ -906,12 +907,12 @@ def run(
         orch_config, mala_config=override_result.updated_config
     )
 
-    # Build WatchConfig and run orchestrator
-    watch_config = _lazy("WatchConfig")(
-        enabled=watch,
-        validate_every=validate_every,
+    # Build WatchConfig and ValidationConfig, then run orchestrator
+    watch_config = _lazy("WatchConfig")(enabled=watch)
+    validation_config = _lazy("ValidationConfig")(validate_every=validate_every)
+    success_count, total = asyncio.run(
+        orchestrator.run(watch_config=watch_config, validation_config=validation_config)
     )
-    success_count, total = asyncio.run(orchestrator.run(watch_config=watch_config))
 
     # Determine exit code:
     # - Use orchestrator.exit_code for interrupt (130), validation failure (1), abort (3)
@@ -1266,6 +1267,10 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from ..orchestration.types import OrchestratorConfig
 
         _lazy_modules[name] = OrchestratorConfig
+    elif name == "ValidationConfig":
+        from ..core.models import ValidationConfig
+
+        _lazy_modules[name] = ValidationConfig
     elif name == "WatchConfig":
         from ..core.models import WatchConfig
 

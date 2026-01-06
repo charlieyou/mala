@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.core.models import WatchConfig
+from src.core.models import ValidationConfig, WatchConfig
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
@@ -55,6 +55,7 @@ class TestWatchModeSleeps:
         """
         provider = FakeIssueProvider()  # No issues
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=30.0)
+        validation_config = ValidationConfig(validate_every=10)
 
         coord = IssueExecutionCoordinator(
             beads=provider,
@@ -75,6 +76,7 @@ class TestWatchModeSleeps:
                 finalize_callback=AsyncMock(),
                 abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
+                validation_config=validation_config,
                 sleep_fn=sleep_fn,
                 # No interrupt_event - uses sleep_fn directly
             ),
@@ -103,6 +105,7 @@ class TestWatchModeInterrupt:
         """When interrupt_event is set, watch mode should exit gracefully."""
         provider = FakeIssueProvider()  # No issues
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=60.0)
+        validation_config = ValidationConfig(validate_every=10)
         interrupt_event = asyncio.Event()
         interrupt_event.set()  # Set immediately
 
@@ -117,6 +120,7 @@ class TestWatchModeInterrupt:
             finalize_callback=AsyncMock(),
             abort_callback=AsyncMock(return_value=0),
             watch_config=watch_config,
+            validation_config=validation_config,
             interrupt_event=interrupt_event,
         )
 
@@ -145,7 +149,8 @@ class TestWatchModeValidation:
                 for i in range(5)
             }
         )
-        watch_config = WatchConfig(enabled=True, validate_every=3)
+        watch_config = WatchConfig(enabled=True)
+        validation_config = ValidationConfig(validate_every=3)
         validation_callback = AsyncMock(return_value=True)
 
         coord = IssueExecutionCoordinator(
@@ -188,6 +193,7 @@ class TestWatchModeValidation:
                 finalize_callback=finalize_callback,
                 abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
+                validation_config=validation_config,
                 validation_callback=validation_callback,
                 interrupt_event=interrupt_event,
             ),
@@ -209,7 +215,8 @@ class TestWatchModeValidation:
                 for i in range(25)
             }
         )
-        watch_config = WatchConfig(enabled=True, validate_every=10)
+        watch_config = WatchConfig(enabled=True)
+        validation_config = ValidationConfig(validate_every=10)
         validation_callback = AsyncMock(return_value=True)
 
         coord = IssueExecutionCoordinator(
@@ -247,6 +254,7 @@ class TestWatchModeValidation:
                 finalize_callback=finalize_callback,
                 abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
+                validation_config=validation_config,
                 validation_callback=validation_callback,
                 interrupt_event=interrupt_event,
             ),
@@ -268,7 +276,8 @@ class TestWatchModeValidation:
                 for i in range(12)
             }
         )
-        watch_config = WatchConfig(enabled=True, validate_every=10)
+        watch_config = WatchConfig(enabled=True)
+        validation_config = ValidationConfig(validate_every=10)
         validation_callback = AsyncMock(return_value=True)
 
         coord = IssueExecutionCoordinator(
@@ -306,6 +315,7 @@ class TestWatchModeValidation:
                 finalize_callback=finalize_callback,
                 abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
+                validation_config=validation_config,
                 validation_callback=validation_callback,
                 interrupt_event=interrupt_event,
             ),
@@ -326,7 +336,8 @@ class TestWatchModeValidation:
                 for i in range(5)
             }
         )
-        watch_config = WatchConfig(enabled=True, validate_every=3)
+        watch_config = WatchConfig(enabled=True)
+        validation_config = ValidationConfig(validate_every=3)
         validation_callback = AsyncMock(return_value=False)  # Validation fails
 
         coord = IssueExecutionCoordinator(
@@ -359,6 +370,7 @@ class TestWatchModeValidation:
                 finalize_callback=finalize_callback,
                 abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
+                validation_config=validation_config,
                 validation_callback=validation_callback,
             ),
             timeout=5.0,
@@ -482,7 +494,8 @@ class TestWatchModeValidation:
                 for i in range(10)
             }
         )
-        watch_config = WatchConfig(enabled=True, validate_every=10)
+        watch_config = WatchConfig(enabled=True)
+        validation_config = ValidationConfig(validate_every=10)
         validation_callback = AsyncMock(return_value=True)
         interrupt_event = asyncio.Event()
 
@@ -519,6 +532,7 @@ class TestWatchModeValidation:
                 finalize_callback=finalize_callback,
                 abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
+                validation_config=validation_config,
                 validation_callback=validation_callback,
                 interrupt_event=interrupt_event,
             ),
@@ -1107,9 +1121,8 @@ class TestWatchModeIdleBehavior:
             }
         )
         # Set validate_every=5, so validation should NOT trigger after only 3 completions
-        watch_config = WatchConfig(
-            enabled=True, validate_every=5, poll_interval_seconds=10.0
-        )
+        watch_config = WatchConfig(enabled=True, poll_interval_seconds=10.0)
+        validation_config = ValidationConfig(validate_every=5)
         interrupt_event = asyncio.Event()
         validation_callback = AsyncMock(return_value=True)
 
@@ -1149,6 +1162,7 @@ class TestWatchModeIdleBehavior:
                 finalize_callback=finalize_callback,
                 abort_callback=AsyncMock(return_value=0),
                 watch_config=watch_config,
+                validation_config=validation_config,
                 interrupt_event=interrupt_event,
                 validation_callback=validation_callback,
             ),

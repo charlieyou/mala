@@ -15,10 +15,11 @@ import signal
 import subprocess
 import sys
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 
-from src.core.models import WatchConfig
+from src.core.models import ValidationConfig, WatchConfig
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
@@ -350,9 +351,11 @@ class TestValidationTriggers:
         event_sink = FakeEventSink()
         watch_config = WatchConfig(
             enabled=True,
-            validate_every=2,  # Trigger at 2 completions
             poll_interval_seconds=0.1,
         )
+        validation_config = ValidationConfig(
+            validate_every=2
+        )  # Trigger at 2 completions
         validation_calls: list[int] = []  # Record completed count at each call
 
         coord = IssueExecutionCoordinator(
@@ -383,6 +386,7 @@ class TestValidationTriggers:
                 finalize_callback=finalize_callback,
                 abort_callback=FakeAbortCallback(),
                 watch_config=watch_config,
+                validation_config=validation_config,
                 validation_callback=validation_callback,
             )
 
@@ -411,9 +415,9 @@ class TestValidationTriggers:
         event_sink = FakeEventSink()
         watch_config = WatchConfig(
             enabled=True,
-            validate_every=2,
             poll_interval_seconds=0.1,
         )
+        validation_config = ValidationConfig(validate_every=2)
 
         coord = IssueExecutionCoordinator(
             beads=provider,
@@ -441,6 +445,7 @@ class TestValidationTriggers:
                 finalize_callback=finalize_callback,
                 abort_callback=FakeAbortCallback(),
                 watch_config=watch_config,
+                validation_config=validation_config,
                 validation_callback=validation_callback,
             )
 
@@ -563,7 +568,7 @@ import asyncio
 import sys
 import signal
 
-from src.core.models import WatchConfig
+from src.core.models import ValidationConfig, WatchConfig
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
@@ -661,3 +666,92 @@ asyncio.run(main())
             if proc.poll() is None:
                 proc.kill()
                 proc.wait()
+
+
+@pytest.mark.integration
+class TestPeriodicValidationWithoutWatch:
+    """Integration tests for periodic validation without watch mode.
+
+    These tests verify that --validate-every works independently of --watch.
+    They are expected to FAIL until T003 removes the watch_enabled guards.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        reason="T003 not implemented: watch_enabled guards still prevent validation",
+        strict=True,
+    )
+    async def test_periodic_validation_without_watch_mode(self) -> None:
+        """Verify periodic validation triggers in non-watch mode.
+
+        This test verifies that when watch_config.enabled=False but
+        validation_config.validate_every is set, validation still triggers.
+
+        Expected to FAIL until T003 removes watch_enabled guards.
+        The test will PASS (unexpectedly) once T003 is implemented.
+        """
+        # Set up issues that will complete
+        provider = FakeIssueProvider(
+            issues={
+                f"issue-{i}": FakeIssue(id=f"issue-{i}", status="ready")
+                for i in range(5)
+            }
+        )
+        event_sink = FakeEventSink()
+        # Watch mode disabled, but validation enabled
+        watch_config = WatchConfig(enabled=False)
+        validation_config = ValidationConfig(validate_every=2)
+
+        # Track validation callback invocations
+        validation_calls: list[bool] = []
+
+        async def validation_callback() -> bool:
+            validation_calls.append(True)
+            return True
+
+        coord = IssueExecutionCoordinator(
+            beads=provider,
+            event_sink=event_sink,
+            config=CoordinatorConfig(max_agents=1),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task[None]:
+            async def complete_immediately() -> None:
+                pass
+
+            return asyncio.create_task(complete_immediately())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
+            coord.mark_completed(issue_id)
+
+        async def get_ready_side_effect(*args: object, **kwargs: object) -> list[str]:
+            return [
+                f"issue-{i}"
+                for i in range(5)
+                if f"issue-{i}" not in coord.completed_ids
+            ]
+
+        provider.get_ready_async = AsyncMock(side_effect=get_ready_side_effect)  # type: ignore[method-assign]
+
+        result = await asyncio.wait_for(
+            coord.run_loop(
+                spawn_callback=spawn_callback,
+                finalize_callback=finalize_callback,
+                abort_callback=FakeAbortCallback(),
+                watch_config=watch_config,
+                validation_config=validation_config,
+                validation_callback=validation_callback,
+            ),
+            timeout=5.0,
+        )
+
+        # Should complete successfully (no watch mode = exits when no more issues)
+        assert result.exit_code == 0
+
+        # Validation callback should have been called at least once
+        # (completes 5 issues with validate_every=2, so should trigger at 2, 4)
+        assert len(validation_calls) >= 1, (
+            "Expected validation_callback to be called at least once "
+            "but it was never called. This fails because watch_enabled guards "
+            "(T003) are still present."
+        )
