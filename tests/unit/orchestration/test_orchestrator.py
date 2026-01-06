@@ -3454,40 +3454,31 @@ class TestSigintEscalation:
     def test_sigint_state_reset_per_run(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
     ) -> None:
-        """SIGINT state is reset at the start of each run()."""
+        """SIGINT state is reset by _reset_sigint_state()."""
         orchestrator = make_orchestrator(repo_path=tmp_path)
 
-        # Simulate previous run's state
+        # Simulate previous run's dirty state
         orchestrator._sigint_count = 2
+        orchestrator._sigint_last_at = 123.456
         orchestrator._drain_mode_active = True
         orchestrator._abort_mode_active = True
+        orchestrator._abort_exit_code = 1
         orchestrator._validation_failed = True
         orchestrator._shutdown_requested = True
+        orchestrator._run_task = MagicMock()
 
-        # Call _init_runtime_state to simulate run() reset
-        # (We don't call run() directly as it requires full setup)
-        # Instead verify the reset happens at run() start by checking the code
-        # We can verify by calling _init_runtime_state which is called in __init__
-        # but run() also resets these explicitly
+        # Call the reset helper (used by run())
+        orchestrator._reset_sigint_state()
 
-        # Directly test the reset logic that run() performs
-        orchestrator._state = MagicMock()  # Fake the state object
-        orchestrator._exit_code = 0
-        orchestrator._sigint_count = 0
-        orchestrator._sigint_last_at = 0.0
-        orchestrator._drain_mode_active = False
-        orchestrator._abort_mode_active = False
-        orchestrator._abort_exit_code = 130
-        orchestrator._validation_failed = False
-        orchestrator._shutdown_requested = False
-        orchestrator._run_task = None
-
-        # After reset, all SIGINT state should be clean
+        # Verify all SIGINT state is clean
         assert orchestrator._sigint_count == 0
+        assert orchestrator._sigint_last_at == 0.0
         assert orchestrator._drain_mode_active is False
         assert orchestrator._abort_mode_active is False
+        assert orchestrator._abort_exit_code == 130
         assert orchestrator._validation_failed is False
         assert orchestrator._shutdown_requested is False
+        assert orchestrator._run_task is None
 
     def test_handle_sigint_on_drain_started_receives_active_count(
         self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]

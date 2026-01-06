@@ -232,7 +232,7 @@ class MalaOrchestrator:
         self._state = OrchestratorState()
         self._lint_tools: frozenset[str] | None = None
         self._exit_code: int = 0  # Exit code from last run (0=success, 130=interrupted)
-        # SIGINT escalation state (reset per-run in run())
+        # SIGINT escalation state (initialized here, reset per-run via _reset_sigint_state)
         self._sigint_count: int = 0
         self._sigint_last_at: float = 0.0
         self._drain_mode_active: bool = False
@@ -866,6 +866,17 @@ class MalaOrchestrator:
             return (0, total)
         return (success_count, total)
 
+    def _reset_sigint_state(self) -> None:
+        """Reset SIGINT escalation state for a new run."""
+        self._sigint_count = 0
+        self._sigint_last_at = 0.0
+        self._drain_mode_active = False
+        self._abort_mode_active = False
+        self._abort_exit_code = 130
+        self._validation_failed = False
+        self._shutdown_requested = False
+        self._run_task = None
+
     def _handle_sigint(
         self,
         loop: asyncio.AbstractEventLoop,
@@ -906,8 +917,9 @@ class MalaOrchestrator:
             CommandRunner.forward_sigint()
             loop.call_soon_threadsafe(self.event_sink.on_abort_started)
         else:
-            # Stage 3: Hard Abort
+            # Stage 3: Hard Abort - always exit 130 regardless of validation state
             self._shutdown_requested = True
+            self._abort_exit_code = 130  # Hard abort always uses 130
             CommandRunner.kill_active_process_groups()
             loop.call_soon_threadsafe(self.event_sink.on_force_abort)
             if self._run_task:
@@ -930,15 +942,7 @@ class MalaOrchestrator:
         # Reset per-run state to ensure clean state if orchestrator is reused
         self._state = OrchestratorState()
         self._exit_code = 0
-        # Reset SIGINT escalation state per-run
-        self._sigint_count = 0
-        self._sigint_last_at = 0.0
-        self._drain_mode_active = False
-        self._abort_mode_active = False
-        self._abort_exit_code = 130
-        self._validation_failed = False
-        self._shutdown_requested = False
-        self._run_task = None
+        self._reset_sigint_state()
 
         run_config = build_event_run_config(
             repo_path=self.repo_path,
@@ -1026,20 +1030,27 @@ class MalaOrchestrator:
                     validation_output = await self.run_coordinator.run_validation(
                         validation_input
                     )
+                    # Update _validation_failed so SIGINT handler can snapshot it
+                    if not validation_output.passed:
+                        self._validation_failed = True
                     return validation_output.passed
 
                 validation_callback = _validation_callback
 
             interrupted = False
             try:
-                loop_result = await self._run_main_loop(
-                    run_metadata,
-                    watch_config=watch_config,
-                    validation_config=validation_config,
-                    drain_event=drain_event,
-                    interrupt_event=interrupt_event,
-                    validation_callback=validation_callback,
+                # Create task and store it so Stage 3 can cancel it
+                self._run_task = asyncio.create_task(
+                    self._run_main_loop(
+                        run_metadata,
+                        watch_config=watch_config,
+                        validation_config=validation_config,
+                        drain_event=drain_event,
+                        interrupt_event=interrupt_event,
+                        validation_callback=validation_callback,
+                    )
                 )
+                loop_result = await self._run_task
                 exit_code = loop_result.exit_code
             except asyncio.CancelledError:
                 # Only treat as SIGINT if interrupt_event is set or shutdown requested

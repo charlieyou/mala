@@ -257,25 +257,36 @@ class DeadlockHandler:
             f"Interrupted: {reason}" if is_interrupt else f"Aborted: {reason}"
         )
         for issue_id, task in tasks_snapshot:
-            try:
-                result = task.result()
-            except asyncio.CancelledError:
+            # Handle tasks still pending after timeout (didn't respond to cancel)
+            if not task.done():
                 aborted_count += 1
                 result = IssueResult(
                     issue_id=issue_id,
                     agent_id=state.agent_ids.get(issue_id, "unknown"),
                     success=False,
-                    summary=abort_summary,
+                    summary=f"{abort_summary} (task unresponsive)",
                     session_log_path=state.active_session_log_paths.get(issue_id),
                 )
-            except Exception as e:
-                result = IssueResult(
-                    issue_id=issue_id,
-                    agent_id=state.agent_ids.get(issue_id, "unknown"),
-                    success=False,
-                    summary=str(e),
-                    session_log_path=state.active_session_log_paths.get(issue_id),
-                )
+            else:
+                try:
+                    result = task.result()
+                except asyncio.CancelledError:
+                    aborted_count += 1
+                    result = IssueResult(
+                        issue_id=issue_id,
+                        agent_id=state.agent_ids.get(issue_id, "unknown"),
+                        success=False,
+                        summary=abort_summary,
+                        session_log_path=state.active_session_log_paths.get(issue_id),
+                    )
+                except Exception as e:
+                    result = IssueResult(
+                        issue_id=issue_id,
+                        agent_id=state.agent_ids.get(issue_id, "unknown"),
+                        success=False,
+                        summary=str(e),
+                        session_log_path=state.active_session_log_paths.get(issue_id),
+                    )
             await self._callbacks.finalize_issue_result(issue_id, result, run_metadata)
             # Mark completed in coordinator to keep state consistent
             self._callbacks.mark_completed(issue_id)
