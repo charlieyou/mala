@@ -130,11 +130,9 @@ def _is_stale_session_error(exc: Exception) -> bool:
     - HTTP 404/410 response errors wrapped in SDK exceptions
     - Any error with "session" + "not found"/"invalid"/"expired" in message
 
-    Does NOT catch:
-    - Rate limit errors (429)
-    - Network timeouts
-    - Authentication failures
-    - Generic server errors (500)
+    Note: This heuristic may catch some auth-related errors if they mention
+    "session expired". This is acceptable as the fallback behavior (retry
+    without resume) is safe for both stale sessions and auth issues.
     """
     exc_name = type(exc).__name__
     # Check for SDK-specific error types
