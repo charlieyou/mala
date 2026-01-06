@@ -871,6 +871,18 @@ def run(
     assert override_result.resolved is not None
     assert override_result.updated_config is not None
 
+    # Derive effective validate_every: explicit > watch default (10) > disabled (None)
+    effective_validate_every: int | None
+    if validate_every is not None:
+        # User explicitly specified --validate-every N
+        effective_validate_every = validate_every
+    elif watch:
+        # Watch mode enabled, use default 10
+        effective_validate_every = 10
+    else:
+        # No watch, no explicit --validate-every → disabled
+        effective_validate_every = None
+
     # Build cli_args metadata for logging
     cli_args = _build_cli_args_metadata(
         disable=disable,
@@ -881,7 +893,7 @@ def run(
         epic_override=epic_override,
         resolved=override_result.resolved,
         watch=watch,
-        validate_every=validate_every,
+        validate_every=effective_validate_every,
     )
 
     # Build OrchestratorConfig and run
@@ -906,18 +918,6 @@ def run(
     orchestrator = _lazy("create_orchestrator")(
         orch_config, mala_config=override_result.updated_config
     )
-
-    # Derive effective validate_every: explicit > watch default (10) > disabled (None)
-    effective_validate_every: int | None
-    if validate_every is not None:
-        # User explicitly specified --validate-every N
-        effective_validate_every = validate_every
-    elif watch:
-        # Watch mode enabled, use default 10
-        effective_validate_every = 10
-    else:
-        # No watch, no explicit --validate-every → disabled
-        effective_validate_every = None
 
     # Build WatchConfig and PeriodicValidationConfig, then run orchestrator
     watch_config = _lazy("WatchConfig")(enabled=watch)
