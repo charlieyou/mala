@@ -58,28 +58,31 @@ class TestLogsSubcommandRegistration:
 
 
 class TestLogsListCommand:
-    """Tests for 'mala logs list' command (expected to fail until T003)."""
+    """Tests for 'mala logs list' command."""
 
     def test_list_basic_invocation(self) -> None:
         """Test basic 'mala logs list' invocation."""
         result = runner.invoke(app, ["logs", "list"])
-        if isinstance(result.exception, NotImplementedError):
-            pytest.xfail("Stub raises NotImplementedError - T003")
-        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
+        assert result.exit_code == 0
+        # Empty runs is valid - shows "No runs found" message
+        assert result.exception is None
 
     def test_list_with_json_flag(self) -> None:
-        """Test 'mala logs list --json' produces valid output."""
+        """Test 'mala logs list --json' produces valid JSON output."""
         result = runner.invoke(app, ["logs", "list", "--json"])
-        if isinstance(result.exception, NotImplementedError):
-            pytest.xfail("Stub raises NotImplementedError - T003")
-        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
+        assert result.exit_code == 0
+        assert result.exception is None
+        # Output should be valid JSON (either [] or list of runs)
+        import json
+
+        parsed = json.loads(result.output)
+        assert isinstance(parsed, list)
 
     def test_list_with_all_flag(self) -> None:
         """Test 'mala logs list --all' shows all runs."""
         result = runner.invoke(app, ["logs", "list", "--all"])
-        if isinstance(result.exception, NotImplementedError):
-            pytest.xfail("Stub raises NotImplementedError - T003")
-        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
+        assert result.exit_code == 0
+        assert result.exception is None
 
 
 class TestLogsSessionsCommand:
