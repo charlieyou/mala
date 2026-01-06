@@ -26,7 +26,6 @@
 | `--disable`, `--disable-validations` | - | Repeatable list of validations to skip (see below) |
 | `--coverage-threshold` | - | Minimum coverage percentage (0-100); if not set, uses 'no decrease' mode |
 | `--dry-run`, `-d` | false | Preview task order without processing |
-| `--fail-on-empty` | false | Exit with code 1 if no issues to process |
 | `--watch` | false | Keep running and poll for new issues instead of exiting when idle |
 | `--validate-every` | 10 | Run validation after every N issues (watch mode only) |
 | `--verbose`, `-v` | false | Enable verbose output; shows full tool arguments |

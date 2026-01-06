@@ -234,13 +234,9 @@ class MalaOrchestrator:
             self.repo_path
         )
         self._prompts: PromptProvider = load_prompts(PROMPTS_DIR)
-        # Deadlock detection (T007: gate on config flag)
-        if self._mala_config.deadlock_detection_enabled:
-            self.deadlock_monitor: DeadlockMonitor | None = DeadlockMonitor()
-            logger.info("Deadlock detection enabled")
-        else:
-            self.deadlock_monitor = None
-            logger.info("Deadlock detection disabled by config")
+        # Deadlock detection is always enabled
+        self.deadlock_monitor: DeadlockMonitor = DeadlockMonitor()
+        logger.info("Deadlock detection enabled")
 
     def _init_pipeline_runners(self) -> None:
         """Initialize pipeline runner components using wiring functions."""
@@ -279,12 +275,11 @@ class MalaOrchestrator:
 
         # Wire deadlock handler now that all dependencies are available
         self._deadlock_handler = self._build_deadlock_handler()
-        if self.deadlock_monitor is not None:
-            self.deadlock_monitor.on_deadlock = (
-                lambda info: self._deadlock_handler.handle_deadlock(
-                    info, self._state, self.active_tasks
-                )
+        self.deadlock_monitor.on_deadlock = (
+            lambda info: self._deadlock_handler.handle_deadlock(
+                info, self._state, self.active_tasks
             )
+        )
 
     def _build_runtime_deps(self) -> RuntimeDeps:
         """Build RuntimeDeps from orchestrator state."""
@@ -432,11 +427,7 @@ class MalaOrchestrator:
             on_locks_cleaned=self.event_sink.on_locks_cleaned,
             on_tasks_aborting=self.event_sink.on_tasks_aborting,
             do_cleanup_agent_locks=cleanup_agent_locks,
-            unregister_agent=(
-                self.deadlock_monitor.unregister_agent
-                if self.deadlock_monitor is not None
-                else None
-            ),
+            unregister_agent=self.deadlock_monitor.unregister_agent,
             finalize_issue_result=self._finalize_issue_result,
             mark_completed=lambda issue_id: self.issue_coordinator.mark_completed(
                 issue_id
@@ -665,12 +656,11 @@ class MalaOrchestrator:
         self._state.agent_ids[issue_id] = temp_agent_id
 
         # Register with deadlock monitor
-        if self.deadlock_monitor is not None:
-            self.deadlock_monitor.register_agent(
-                agent_id=temp_agent_id,
-                issue_id=issue_id,
-                start_time=time.time(),
-            )
+        self.deadlock_monitor.register_agent(
+            agent_id=temp_agent_id,
+            issue_id=issue_id,
+            start_time=time.time(),
+        )
 
         # Prepare session inputs
         issue_description = await self.beads.get_issue_description_async(issue_id)

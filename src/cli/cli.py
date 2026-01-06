@@ -486,7 +486,6 @@ def _handle_dry_run(
     scope_config: ScopeConfig | None,
     resume: bool,
     order_preference: OrderPreference,
-    fail_on_empty: bool = False,
 ) -> Never:
     """Execute dry-run mode: display task order and exit.
 
@@ -495,17 +494,16 @@ def _handle_dry_run(
         scope_config: Parsed scope configuration (epic, ids, orphans, or all).
         resume: Whether to prioritize WIP issues (--resume flag).
         order_preference: Issue ordering preference (OrderPreference enum).
-        fail_on_empty: If True, exit with code 1 when no issues found.
 
     Raises:
-        typer.Exit: Exits with code 0 (or 1 if fail_on_empty and no issues).
+        typer.Exit: Always exits with code 0.
     """
     epic_id = scope_config.epic_id if scope_config else None
     only_ids = scope_config.ids if scope_config else None
     orphans_only = scope_config.scope_type == "orphans" if scope_config else False
     focus = order_preference == _lazy("OrderPreference").FOCUS
 
-    async def _dry_run() -> int:
+    async def _dry_run() -> None:
         beads = _lazy("BeadsClient")(repo_path)
         issues = await beads.get_ready_issues_async(
             epic_id=epic_id,
@@ -516,11 +514,9 @@ def _handle_dry_run(
             order_preference=order_preference,
         )
         display_dry_run_tasks(issues, focus=focus)
-        return len(issues)
 
-    issue_count = asyncio.run(_dry_run())
-    exit_code = 1 if fail_on_empty and issue_count == 0 else 0
-    raise typer.Exit(exit_code)
+    asyncio.run(_dry_run())
+    raise typer.Exit(0)
 
 
 def _normalize_repeatable_option(values: list[str] | None) -> list[str]:
@@ -806,14 +802,6 @@ def run(
             help="Run validation after every N issues complete (default: 10, only in watch mode)",
         ),
     ] = 10,
-    fail_on_empty: Annotated[
-        bool,
-        typer.Option(
-            "--fail-on-empty",
-            help="Exit with code 1 if no issues to process (default: exit 0)",
-            rich_help_panel="Debugging",
-        ),
-    ] = False,
 ) -> Never:
     """Run parallel issue processing."""
     # Apply verbose setting
@@ -886,7 +874,6 @@ def run(
             scope_config=scope_config,
             resume=resume,
             order_preference=order_preference,
-            fail_on_empty=fail_on_empty,
         )
 
     # Build and configure MalaConfig from environment
@@ -960,12 +947,10 @@ def run(
     # Determine exit code:
     # - Use orchestrator.exit_code for interrupt (130), validation failure (1), abort (3)
     # - Otherwise: exit 0 if no issues to process or at least one succeeded
-    # - Exit 1 only if issues were processed but all failed, or --fail-on-empty and no issues
+    # - Exit 1 only if issues were processed but all failed
     orch_exit = orchestrator.exit_code
     if orch_exit != 0:
         raise typer.Exit(orch_exit)
-    if fail_on_empty and total == 0:
-        raise typer.Exit(1)
     raise typer.Exit(0 if success_count > 0 or total == 0 else 1)
 
 
