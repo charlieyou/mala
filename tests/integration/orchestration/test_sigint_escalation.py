@@ -999,6 +999,8 @@ async def main():
 
     # Wait for agent task to be spawned (active_tasks non-empty)
     # This ensures drain mode won't exit immediately due to zero active tasks
+    # Use fresh deadline - handler installation may have consumed most of the previous one
+    spawn_deadline = time.monotonic() + 15.0
     while not _orchestrator.issue_coordinator.active_tasks:
         if run_task.done():
             try:
@@ -1010,7 +1012,7 @@ async def main():
             else:
                 print("AGENT_SPAWN_EXITED", file=sys.stderr, flush=True)
             sys.exit(1)
-        if time.monotonic() > deadline:
+        if time.monotonic() > spawn_deadline:
             print("TIMEOUT: Agent task not spawned", file=sys.stderr, flush=True)
             sys.exit(1)
         await asyncio.sleep(0.01)
@@ -1239,6 +1241,8 @@ async def main():
 
     # Wait for agent task to be spawned (active_tasks non-empty)
     # This ensures drain mode won't exit immediately due to zero active tasks
+    # Use fresh deadline - handler installation may have consumed most of the previous one
+    spawn_deadline = time.monotonic() + 15.0
     while not _orchestrator.issue_coordinator.active_tasks:
         if run_task.done():
             try:
@@ -1250,7 +1254,7 @@ async def main():
             else:
                 print("AGENT_SPAWN_EXITED", file=sys.stderr, flush=True)
             sys.exit(1)
-        if time.monotonic() > deadline:
+        if time.monotonic() > spawn_deadline:
             print("TIMEOUT: Agent task not spawned", file=sys.stderr, flush=True)
             sys.exit(1)
         await asyncio.sleep(0.01)
