@@ -460,13 +460,76 @@ class CommandsConfig:
                 )
             custom_override_mode = CustomOverrideMode.CLEAR
 
-        # For now, reject unknown keys (custom commands parsing in future task)
-        unknown_kinds = set(data.keys()) - set(valid_kinds) - {"_clear_customs"}
-        if unknown_kinds:
-            raise ConfigError(
-                f"Unknown command kind(s): {', '.join(sorted(unknown_kinds))}. "
-                f"Valid kinds: {', '.join(valid_kinds)}"
-            )
+        # Collect unknown keys as custom commands
+        unknown_keys = set(data.keys()) - set(valid_kinds) - {"_clear_customs"}
+
+        # Parse custom commands from unknown keys
+        custom_commands: dict[str, CustomCommandConfig] = {}
+        if unknown_keys:
+            # Count +prefixed vs unprefixed keys
+            plus_prefixed = {k for k in unknown_keys if k.startswith("+")}
+            unprefixed = unknown_keys - plus_prefixed
+
+            if is_run_level:
+                # At run-level: detect mode based on prefix pattern
+                if plus_prefixed and unprefixed:
+                    # Mixed prefixes not allowed
+                    raise ConfigError(
+                        "Cannot mix +prefixed and unprefixed custom commands "
+                        "in run_level_commands. Use all +prefix for additive mode "
+                        "or all unprefixed for replace mode."
+                    )
+                if plus_prefixed:
+                    # All +prefixed: ADDITIVE mode
+                    custom_override_mode = CustomOverrideMode.ADDITIVE
+                    for key in plus_prefixed:
+                        # Strip + prefix for the stored name
+                        name = key[1:]
+                        # Validate stripped name against built-in collision
+                        if name in valid_kinds:
+                            raise ConfigError(
+                                f"Custom command '+{name}' conflicts with built-in "
+                                f"command '{name}'. Use a different name."
+                            )
+                        value = data[key]
+                        custom_commands[name] = CustomCommandConfig.from_value(
+                            name, cast("str | dict[str, object] | None", value)
+                        )
+                else:
+                    # All unprefixed: REPLACE mode
+                    custom_override_mode = CustomOverrideMode.REPLACE
+                    for key in unprefixed:
+                        # Validate name against built-in collision
+                        if key in valid_kinds:
+                            raise ConfigError(
+                                f"Custom command '{key}' conflicts with built-in "
+                                f"command '{key}'. Use a different name."
+                            )
+                        value = data[key]
+                        custom_commands[key] = CustomCommandConfig.from_value(
+                            key, cast("str | dict[str, object] | None", value)
+                        )
+            else:
+                # At repo-level: +prefix not allowed
+                if plus_prefixed:
+                    first_prefixed = sorted(plus_prefixed)[0]
+                    raise ConfigError(
+                        f"Plus-prefixed custom command '{first_prefixed}' is only "
+                        "allowed in run_level_commands. Remove the '+' prefix or "
+                        "move to run_level_commands section."
+                    )
+                # Parse unprefixed as custom commands
+                for key in unprefixed:
+                    # Validate name against built-in collision
+                    if key in valid_kinds:
+                        raise ConfigError(
+                            f"Custom command '{key}' conflicts with built-in "
+                            f"command '{key}'. Use a different name."
+                        )
+                    value = data[key]
+                    custom_commands[key] = CustomCommandConfig.from_value(
+                        key, cast("str | dict[str, object] | None", value)
+                    )
 
         # Track which fields were explicitly present in the source dict
         fields_set: set[str] = set()
@@ -491,6 +554,7 @@ class CommandsConfig:
             format=parse_command("format"),
             typecheck=parse_command("typecheck"),
             e2e=parse_command("e2e"),
+            custom_commands=custom_commands,
             custom_override_mode=custom_override_mode,
             _fields_set=frozenset(fields_set),
         )

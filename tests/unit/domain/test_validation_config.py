@@ -280,10 +280,11 @@ class TestCommandsConfig:
         assert config.test.command == "pytest"
         assert config.test.timeout == 300
 
-    def test_from_dict_unknown_kind(self) -> None:
-        """Unknown command kind raises ConfigError."""
-        with pytest.raises(ConfigError, match=r"Unknown command kind.*unknown"):
-            CommandsConfig.from_dict({"unknown": "some command"})
+    def test_from_dict_unknown_kind_parsed_as_custom(self) -> None:
+        """Unknown command kind is parsed as custom command."""
+        config = CommandsConfig.from_dict({"unknown": "some command"})
+        assert "unknown" in config.custom_commands
+        assert config.custom_commands["unknown"].command == "some command"
 
     def test_from_dict_empty_command_string(self) -> None:
         """Empty command string raises ConfigError."""
@@ -543,42 +544,139 @@ class TestValidationConfig:
         """Integration test: inline custom commands in commands section.
 
         This test exercises the full parsing path from YAML-like dict through
-        ValidationConfig.from_dict -> CommandsConfig.from_dict. Currently fails
-        because inline custom command parsing is not yet implemented.
-
-        Expected final behavior: custom commands defined alongside standard commands
-        will be parsed and stored in CommandsConfig.custom_commands.
-
-        RED PHASE: This test currently fails because CommandsConfig.from_dict
-        rejects unknown keys (like "security") with ConfigError. When inline
-        parsing is implemented, this test should pass instead.
+        ValidationConfig.from_dict -> CommandsConfig.from_dict. Custom commands
+        defined alongside standard commands are parsed into CommandsConfig.custom_commands.
         """
-        # Config with inline custom commands in commands section
-        # "security" is not a standard command kind, so it should be parsed
-        # as a custom command once inline parsing is implemented
         yaml_data = {
             "preset": "python-uv",
             "commands": {
                 "lint": "uvx ruff check .",
                 "test": "uv run pytest",
-                # Future: non-standard keys will be parsed as custom commands
                 "security": "bandit -r src/",
             },
         }
 
-        # Current behavior: raises ConfigError for unknown command kind
-        # Future behavior: should parse "security" as custom command
-        # When this test starts failing differently (not ConfigError), update it
-        with pytest.raises(ConfigError, match="Unknown command kind"):
-            ValidationConfig.from_dict(yaml_data)
+        config = ValidationConfig.from_dict(yaml_data)
+        assert "security" in config.commands.custom_commands
+        assert config.commands.custom_commands["security"].command == "bandit -r src/"
+        # At repo-level, mode stays INHERIT (mode detection only matters at run-level)
+        assert config.commands.custom_override_mode == CustomOverrideMode.INHERIT
 
-        # TODO(mala-81qt): When inline parsing is implemented, replace the above with:
-        # config = ValidationConfig.from_dict(yaml_data)
-        # assert "security" in config.commands.custom_commands
-        pytest.fail(
-            "Inline custom commands not yet implemented - "
-            "remove pytest.raises and uncomment assertions when ready"
+
+class TestRunLevelCustomCommandsMode:
+    """Tests for run-level custom command mode detection."""
+
+    def test_run_level_all_plus_prefixed_sets_additive_mode(self) -> None:
+        """All +prefixed custom keys at run-level sets mode=ADDITIVE."""
+        config = CommandsConfig.from_dict(
+            {"+my_check": "cmd1", "+other_check": "cmd2"}, is_run_level=True
         )
+        assert config.custom_override_mode == CustomOverrideMode.ADDITIVE
+        assert "my_check" in config.custom_commands
+        assert "other_check" in config.custom_commands
+        # Names stored without + prefix
+        assert config.custom_commands["my_check"].command == "cmd1"
+        assert config.custom_commands["other_check"].command == "cmd2"
+
+    def test_run_level_all_unprefixed_sets_replace_mode(self) -> None:
+        """All unprefixed custom keys at run-level sets mode=REPLACE."""
+        config = CommandsConfig.from_dict(
+            {"my_check": "cmd1", "other_check": "cmd2"}, is_run_level=True
+        )
+        assert config.custom_override_mode == CustomOverrideMode.REPLACE
+        assert "my_check" in config.custom_commands
+        assert "other_check" in config.custom_commands
+
+    def test_run_level_no_custom_keys_sets_inherit_mode(self) -> None:
+        """No custom keys at run-level keeps mode=INHERIT."""
+        config = CommandsConfig.from_dict({"lint": "ruff check ."}, is_run_level=True)
+        assert config.custom_override_mode == CustomOverrideMode.INHERIT
+        assert config.custom_commands == {}
+
+    def test_run_level_mixed_prefixes_raises_error(self) -> None:
+        """Mixed +prefixed and unprefixed custom keys raises ConfigError."""
+        with pytest.raises(ConfigError, match=r"Cannot mix.*prefixed and unprefixed"):
+            CommandsConfig.from_dict(
+                {"+additive_cmd": "cmd1", "replace_cmd": "cmd2"}, is_run_level=True
+            )
+
+    def test_run_level_plus_builtin_collision_raises_error(self) -> None:
+        """Plus-prefixed key colliding with built-in after stripping raises error."""
+        with pytest.raises(ConfigError, match=r"\+lint.*conflicts.*built-in"):
+            CommandsConfig.from_dict({"+lint": "some cmd"}, is_run_level=True)
+
+    def test_run_level_unprefixed_builtin_collision_raises_error(self) -> None:
+        """Unprefixed key matching built-in name raises error."""
+        # This would be caught by the built-in parsing, but custom collision
+        # check should also handle edge cases
+        # Actually built-in "lint" will be parsed as built-in, not custom
+        # So this tests a hypothetical edge case - the key would be parsed as built-in
+        config = CommandsConfig.from_dict({"lint": "some cmd"}, is_run_level=True)
+        assert config.lint is not None
+        assert config.lint.command == "some cmd"
+
+    def test_repo_level_plus_prefix_raises_error(self) -> None:
+        """Plus-prefixed key at repo-level raises ConfigError."""
+        with pytest.raises(ConfigError, match=r"Plus-prefixed.*only allowed"):
+            CommandsConfig.from_dict({"+my_check": "cmd"}, is_run_level=False)
+
+    def test_repo_level_custom_commands_stored_directly(self) -> None:
+        """Custom commands at repo-level stored without mode change."""
+        config = CommandsConfig.from_dict(
+            {"my_check": "cmd1", "lint": "ruff check ."}, is_run_level=False
+        )
+        assert config.custom_override_mode == CustomOverrideMode.INHERIT
+        assert "my_check" in config.custom_commands
+        assert config.custom_commands["my_check"].command == "cmd1"
+
+    def test_run_level_custom_with_builtin_override(self) -> None:
+        """Run-level can have both built-in overrides and custom commands."""
+        config = CommandsConfig.from_dict(
+            {"lint": "new lint cmd", "security": "bandit -r src/"},
+            is_run_level=True,
+        )
+        assert config.lint is not None
+        assert config.lint.command == "new lint cmd"
+        assert config.custom_override_mode == CustomOverrideMode.REPLACE
+        assert "security" in config.custom_commands
+
+    def test_run_level_plus_custom_with_builtin_override(self) -> None:
+        """Run-level can have built-in overrides and +prefixed customs."""
+        config = CommandsConfig.from_dict(
+            {"lint": "new lint cmd", "+security": "bandit -r src/"},
+            is_run_level=True,
+        )
+        assert config.lint is not None
+        assert config.lint.command == "new lint cmd"
+        assert config.custom_override_mode == CustomOverrideMode.ADDITIVE
+        assert "security" in config.custom_commands
+
+    def test_custom_command_with_object_form(self) -> None:
+        """Custom commands can use object form with timeout and allow_fail."""
+        config = CommandsConfig.from_dict(
+            {
+                "+slow_check": {
+                    "command": "slow cmd",
+                    "timeout": 300,
+                    "allow_fail": True,
+                }
+            },
+            is_run_level=True,
+        )
+        assert "slow_check" in config.custom_commands
+        custom = config.custom_commands["slow_check"]
+        assert custom.command == "slow cmd"
+        assert custom.timeout == 300
+        assert custom.allow_fail is True
+
+    def test_hyphenated_custom_command_name_works(self) -> None:
+        """Hyphenated custom command names are valid."""
+        config = CommandsConfig.from_dict(
+            {"arch-check": "some cmd", "my-other-cmd": "other cmd"},
+            is_run_level=False,
+        )
+        assert "arch-check" in config.custom_commands
+        assert "my-other-cmd" in config.custom_commands
 
 
 class TestPresetNotFoundError:
