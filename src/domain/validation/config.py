@@ -458,6 +458,9 @@ class ValidationConfig:
         run_level_commands: Optional overrides for run-level validation commands.
         coverage: Coverage configuration. None means coverage is disabled.
         custom_commands: User-defined custom validation commands.
+        run_level_custom_commands: Optional run-level override for custom commands.
+            None means use repo-level custom_commands. Empty dict {} disables all
+            custom commands. Non-empty dict fully replaces (not merges) repo-level.
         code_patterns: Glob patterns for code files that trigger validation.
         config_files: Tool config files that invalidate lint/format cache.
         setup_files: Lock/dependency files that invalidate setup cache.
@@ -470,6 +473,7 @@ class ValidationConfig:
     preset: str | None = None
     coverage: YamlCoverageConfig | None = None
     custom_commands: dict[str, CustomCommandConfig] = field(default_factory=dict)
+    run_level_custom_commands: dict[str, CustomCommandConfig] | None = None
     code_patterns: tuple[str, ...] = field(default_factory=tuple)
     config_files: tuple[str, ...] = field(default_factory=tuple)
     setup_files: tuple[str, ...] = field(default_factory=tuple)
@@ -593,12 +597,36 @@ class ValidationConfig:
                         name, cast("str | dict[str, object] | None", value)
                     )
 
+        # Parse run_level_custom_commands - track if explicitly present
+        # None = not set (use repo-level), {} = explicitly empty (disable all)
+        run_level_custom_commands: dict[str, CustomCommandConfig] | None = None
+        if "run_level_custom_commands" in data:
+            fields_set.add("run_level_custom_commands")
+            rlcc_data = data.get("run_level_custom_commands")
+            if rlcc_data is not None:
+                if not isinstance(rlcc_data, dict):
+                    raise ConfigError(
+                        "run_level_custom_commands must be an object, "
+                        f"got {type(rlcc_data).__name__}"
+                    )
+                run_level_custom_commands = {}
+                for name, value in rlcc_data.items():
+                    if not isinstance(name, str):
+                        raise ConfigError(
+                            f"run_level_custom_commands key must be a string, "
+                            f"got {type(name).__name__}"
+                        )
+                    run_level_custom_commands[name] = CustomCommandConfig.from_value(
+                        name, cast("str | dict[str, object] | None", value)
+                    )
+
         return cls(
             preset=preset,
             commands=commands,
             run_level_commands=run_level_commands,
             coverage=coverage,
             custom_commands=custom_commands,
+            run_level_custom_commands=run_level_custom_commands,
             code_patterns=code_patterns,
             config_files=config_files,
             setup_files=setup_files,

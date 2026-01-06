@@ -30,7 +30,11 @@ from src.domain.validation.config import CommandsConfig
 if TYPE_CHECKING:
     from re import Pattern
 
-    from src.domain.validation.config import CommandConfig, YamlCoverageConfig
+    from src.domain.validation.config import (
+        CommandConfig,
+        CustomCommandConfig,
+        YamlCoverageConfig,
+    )
 
 
 class ValidationScope(Enum):
@@ -337,6 +341,14 @@ def build_validation_spec(
             merged_config.commands, merged_config.run_level_commands
         )
 
+    # Resolve custom_commands for scope (run-level full-replace semantics)
+    custom_commands = _apply_custom_commands_override(
+        merged_config.custom_commands,
+        merged_config.run_level_custom_commands,
+        merged_config._fields_set,
+        scope,
+    )
+
     # Coverage requires a test command in the effective commands_config
     # This check must happen after _apply_command_overrides to catch cases where
     # run_level_commands.test is explicitly null (disabling the base test command)
@@ -358,7 +370,7 @@ def build_validation_spec(
     commands: list[ValidationCommand] = []
 
     if not skip_tests:
-        commands = _build_commands_from_config(commands_config)
+        commands = _build_commands_from_config(commands_config, custom_commands)
 
     # Determine if coverage is enabled
     # Coverage is disabled for PER_ISSUE scope when run_level_commands.test provides
@@ -449,11 +461,62 @@ def _apply_command_overrides(
     )
 
 
-def _build_commands_from_config(config: CommandsConfig) -> list[ValidationCommand]:
+def _apply_custom_commands_override(
+    base: dict[str, CustomCommandConfig],
+    override: dict[str, CustomCommandConfig] | None,
+    fields_set: frozenset[str],
+    scope: ValidationScope,
+) -> dict[str, CustomCommandConfig]:
+    """Apply run-level custom_commands override with full-replace semantics.
+
+    Run-level override behavior:
+    - If run_level_custom_commands not in fields_set: use base (repo-level)
+    - If run_level_custom_commands is explicitly set to {} (empty dict): no custom commands
+    - If run_level_custom_commands is explicitly set to {cmd_a: ...}: only run cmd_a
+      (does NOT inherit cmd_b from base - full replace, not merge)
+    - If run_level_custom_commands is explicitly set to null: same as not set (use base)
+
+    For PER_ISSUE scope, always use base (run-level override only applies to RUN_LEVEL).
+
+    Args:
+        base: Repo-level custom_commands dict.
+        override: Run-level custom_commands dict (None if not set or explicitly null).
+        fields_set: Set of field names explicitly set in config.
+        scope: The validation scope.
+
+    Returns:
+        The effective custom_commands dict for this scope.
+    """
+    # For PER_ISSUE scope, always use repo-level custom_commands
+    if scope == ValidationScope.PER_ISSUE:
+        return base
+
+    # For RUN_LEVEL scope, check if run_level_custom_commands was explicitly set
+    if "run_level_custom_commands" not in fields_set:
+        # Not set - use repo-level
+        return base
+
+    # Explicitly set - could be {} (empty), null, or {cmd_a: ...}
+    # If override is None, it means explicitly null - treat as "use base"
+    # If override is {} (empty dict), it means disable all custom commands
+    # If override is {cmd_a: ...}, use only those commands (full replace)
+    if override is None:
+        return base
+
+    return override
+
+
+def _build_commands_from_config(
+    config: CommandsConfig,
+    custom_commands: dict[str, CustomCommandConfig] | None = None,
+) -> list[ValidationCommand]:
     """Build ValidationCommand list from a CommandsConfig.
+
+    Pipeline order: setup → format → lint → typecheck → custom_a → custom_b → test → e2e
 
     Args:
         config: The command configuration.
+        custom_commands: Optional dict of custom commands to insert after typecheck.
 
     Returns:
         List of ValidationCommand instances.
@@ -522,6 +585,24 @@ def _build_commands_from_config(config: CommandsConfig) -> list[ValidationComman
                 ),
             )
         )
+
+    # Custom commands (inserted after typecheck, before test)
+    # Dict iteration order is preserved in Python 3.7+
+    if custom_commands:
+        for name, custom_cmd in custom_commands.items():
+            commands.append(
+                ValidationCommand(
+                    name=name,
+                    command=custom_cmd.command,
+                    kind=CommandKind.CUSTOM,
+                    timeout=custom_cmd.timeout or DEFAULT_COMMAND_TIMEOUT,
+                    allow_fail=custom_cmd.allow_fail,
+                    detection_pattern=re.compile(
+                        _tool_name_to_pattern(extract_tool_name(custom_cmd.command)),
+                        re.IGNORECASE,
+                    ),
+                )
+            )
 
     # Test command
     if cmds.test is not None:

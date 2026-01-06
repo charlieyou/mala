@@ -790,3 +790,240 @@ coverage:
         # Per-issue should still check coverage (run-level test is disabled, not moved)
         assert per_issue_spec.coverage.enabled is True
         assert any(cmd.name == "test" for cmd in per_issue_spec.commands)
+
+
+class TestBuildValidationSpecCustomCommands:
+    """Test custom commands in build_validation_spec."""
+
+    def test_build_validation_spec_custom_commands_pipeline_order(
+        self, tmp_path: Path
+    ) -> None:
+        """Custom commands appear after typecheck, before test in pipeline order."""
+        config_content = """
+commands:
+  format: "uvx ruff format --check ."
+  lint: "uvx ruff check ."
+  typecheck: "uvx ty check"
+  test: "uv run pytest"
+custom_commands:
+  security_scan:
+    command: "bandit -r src/"
+  docs_check:
+    command: "mkdocs build --strict"
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+
+        # Get command names in order
+        cmd_names = [cmd.name for cmd in spec.commands]
+
+        # Verify pipeline order: format → lint → typecheck → custom → test
+        format_idx = cmd_names.index("format")
+        lint_idx = cmd_names.index("lint")
+        typecheck_idx = cmd_names.index("typecheck")
+        security_idx = cmd_names.index("security_scan")
+        docs_idx = cmd_names.index("docs_check")
+        test_idx = cmd_names.index("test")
+
+        assert format_idx < lint_idx < typecheck_idx
+        assert typecheck_idx < security_idx < test_idx
+        assert typecheck_idx < docs_idx < test_idx
+
+    def test_build_validation_spec_custom_commands_insertion_order(
+        self, tmp_path: Path
+    ) -> None:
+        """Custom commands preserve dict insertion order (YAML order)."""
+        config_content = """
+commands:
+  test: "pytest"
+custom_commands:
+  cmd_a: "echo a"
+  cmd_b: "echo b"
+  cmd_c: "echo c"
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        spec = build_validation_spec(tmp_path)
+
+        # Find custom commands in order
+        custom_cmds = [cmd for cmd in spec.commands if cmd.kind == CommandKind.CUSTOM]
+
+        assert len(custom_cmds) == 3
+        assert custom_cmds[0].name == "cmd_a"
+        assert custom_cmds[1].name == "cmd_b"
+        assert custom_cmds[2].name == "cmd_c"
+
+    def test_build_validation_spec_custom_commands_attributes(
+        self, tmp_path: Path
+    ) -> None:
+        """Custom commands have correct attributes (kind, allow_fail, timeout)."""
+        config_content = """
+commands:
+  test: "pytest"
+custom_commands:
+  security_scan:
+    command: "bandit -r src/"
+    allow_fail: true
+    timeout: 300
+  docs_check:
+    command: "mkdocs build --strict"
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        spec = build_validation_spec(tmp_path)
+
+        custom_cmds = {
+            cmd.name: cmd for cmd in spec.commands if cmd.kind == CommandKind.CUSTOM
+        }
+
+        assert len(custom_cmds) == 2
+
+        security = custom_cmds["security_scan"]
+        assert security.kind == CommandKind.CUSTOM
+        assert security.command == "bandit -r src/"
+        assert security.allow_fail is True
+        assert security.timeout == 300
+
+        docs = custom_cmds["docs_check"]
+        assert docs.kind == CommandKind.CUSTOM
+        assert docs.command == "mkdocs build --strict"
+        assert docs.allow_fail is False
+        assert docs.timeout == DEFAULT_COMMAND_TIMEOUT
+
+
+class TestApplyCommandOverridesCustomCommands:
+    """Test run-level custom_commands override with full-replace semantics."""
+
+    def test_apply_command_overrides_custom_commands_full_replace(
+        self, tmp_path: Path
+    ) -> None:
+        """Run-level custom_commands fully replaces repo-level (no inheritance)."""
+        config_content = """
+commands:
+  test: "pytest"
+custom_commands:
+  cmd_a: "echo a"
+  cmd_b: "echo b"
+run_level_custom_commands:
+  cmd_a: "echo new_a"
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        # PER_ISSUE should have both cmd_a and cmd_b
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+        per_issue_custom = [
+            cmd for cmd in per_issue_spec.commands if cmd.kind == CommandKind.CUSTOM
+        ]
+        assert len(per_issue_custom) == 2
+        assert {c.name for c in per_issue_custom} == {"cmd_a", "cmd_b"}
+
+        # RUN_LEVEL should have ONLY cmd_a (cmd_b not inherited)
+        run_level_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.RUN_LEVEL
+        )
+        run_level_custom = [
+            cmd for cmd in run_level_spec.commands if cmd.kind == CommandKind.CUSTOM
+        ]
+        assert len(run_level_custom) == 1
+        assert run_level_custom[0].name == "cmd_a"
+        assert run_level_custom[0].command == "echo new_a"
+
+    def test_apply_command_overrides_custom_commands_empty_dict_disables(
+        self, tmp_path: Path
+    ) -> None:
+        """Run-level custom_commands: {} disables all custom commands."""
+        config_content = """
+commands:
+  test: "pytest"
+custom_commands:
+  cmd_a: "echo a"
+  cmd_b: "echo b"
+run_level_custom_commands: {}
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        # PER_ISSUE should have both cmd_a and cmd_b
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+        per_issue_custom = [
+            cmd for cmd in per_issue_spec.commands if cmd.kind == CommandKind.CUSTOM
+        ]
+        assert len(per_issue_custom) == 2
+
+        # RUN_LEVEL should have NO custom commands
+        run_level_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.RUN_LEVEL
+        )
+        run_level_custom = [
+            cmd for cmd in run_level_spec.commands if cmd.kind == CommandKind.CUSTOM
+        ]
+        assert len(run_level_custom) == 0
+
+    def test_apply_command_overrides_custom_commands_null_uses_repo_level(
+        self, tmp_path: Path
+    ) -> None:
+        """Run-level custom_commands: null uses repo-level commands."""
+        config_content = """
+commands:
+  test: "pytest"
+custom_commands:
+  cmd_a: "echo a"
+  cmd_b: "echo b"
+run_level_custom_commands: null
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        # Both scopes should have cmd_a and cmd_b (null = use repo-level)
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+        run_level_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.RUN_LEVEL
+        )
+
+        per_issue_custom = [
+            cmd for cmd in per_issue_spec.commands if cmd.kind == CommandKind.CUSTOM
+        ]
+        run_level_custom = [
+            cmd for cmd in run_level_spec.commands if cmd.kind == CommandKind.CUSTOM
+        ]
+
+        assert len(per_issue_custom) == 2
+        assert len(run_level_custom) == 2
+        assert {c.name for c in per_issue_custom} == {"cmd_a", "cmd_b"}
+        assert {c.name for c in run_level_custom} == {"cmd_a", "cmd_b"}
+
+    def test_apply_command_overrides_custom_commands_omitted_uses_repo_level(
+        self, tmp_path: Path
+    ) -> None:
+        """Omitted run_level_custom_commands uses repo-level commands."""
+        config_content = """
+commands:
+  test: "pytest"
+custom_commands:
+  cmd_a: "echo a"
+  cmd_b: "echo b"
+"""
+        (tmp_path / "mala.yaml").write_text(config_content)
+
+        # Both scopes should have cmd_a and cmd_b
+        per_issue_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.PER_ISSUE
+        )
+        run_level_spec = build_validation_spec(
+            tmp_path, scope=ValidationScope.RUN_LEVEL
+        )
+
+        per_issue_custom = [
+            cmd for cmd in per_issue_spec.commands if cmd.kind == CommandKind.CUSTOM
+        ]
+        run_level_custom = [
+            cmd for cmd in run_level_spec.commands if cmd.kind == CommandKind.CUSTOM
+        ]
+
+        assert len(per_issue_custom) == 2
+        assert len(run_level_custom) == 2

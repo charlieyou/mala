@@ -921,7 +921,6 @@ config_files:
 class TestCustomCommandsIntegration:
     """Integration test for custom_commands config → spec path."""
 
-    @pytest.mark.xfail(reason="T002-T003 not yet implemented")
     def test_custom_commands_config_to_spec_integration(self, tmp_path: Path) -> None:
         """Custom commands from mala.yaml appear in ValidationSpec.
 
@@ -940,10 +939,10 @@ class TestCustomCommandsIntegration:
             """
 preset: python-uv
 custom_commands:
-  security-scan:
+  security_scan:
     command: "bandit -r src/"
     allow_fail: true
-  docs-check:
+  docs_check:
     command: "mkdocs build --strict"
 """,
         )
@@ -955,18 +954,17 @@ custom_commands:
             cmd for cmd in spec.commands if cmd.kind == CommandKind.CUSTOM
         ]
 
-        # These assertions will fail until custom_commands parsing is implemented
         assert len(custom_commands) == 2, "Expected 2 custom commands in spec"
 
         cmd_names = {cmd.name for cmd in custom_commands}
-        assert "security-scan" in cmd_names
-        assert "docs-check" in cmd_names
+        assert "security_scan" in cmd_names
+        assert "docs_check" in cmd_names
 
         # Verify allow_fail is propagated
-        security_scan = next(c for c in custom_commands if c.name == "security-scan")
+        security_scan = next(c for c in custom_commands if c.name == "security_scan")
         assert security_scan.allow_fail is True
         assert security_scan.command == "bandit -r src/"
 
-        docs_check = next(c for c in custom_commands if c.name == "docs-check")
+        docs_check = next(c for c in custom_commands if c.name == "docs_check")
         assert docs_check.allow_fail is False
         assert docs_check.command == "mkdocs build --strict"

@@ -54,6 +54,7 @@ _ALLOWED_TOP_LEVEL_FIELDS = frozenset(
         "config_files",
         "setup_files",
         "custom_commands",
+        "run_level_custom_commands",
     }
 )
 

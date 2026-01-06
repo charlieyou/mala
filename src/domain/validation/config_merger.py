@@ -184,6 +184,14 @@ def merge_configs(
     # No merging needed - copy user's custom_commands to avoid aliasing
     merged_custom_commands = dict(user.custom_commands)
 
+    # run_level_custom_commands: user always takes precedence (presets cannot define)
+    # Copy if set, otherwise None (not set = use repo-level at runtime)
+    merged_run_level_custom_commands = (
+        dict(user.run_level_custom_commands)
+        if user.run_level_custom_commands is not None
+        else None
+    )
+
     return ValidationConfig(
         preset=user.preset,  # Keep user's preset reference
         commands=merged_commands,
@@ -193,6 +201,7 @@ def merge_configs(
         config_files=merged_config_files,
         setup_files=merged_setup_files,
         custom_commands=merged_custom_commands,
+        run_level_custom_commands=merged_run_level_custom_commands,
         _fields_set=user._fields_set,  # Preserve user's fields_set
     )
 
