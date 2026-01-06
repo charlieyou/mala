@@ -196,7 +196,7 @@ Existing modules updated:
 - Expected evidence is derived from ValidationSpec by scope:
   - Per-issue EvidenceGate expects per-issue commands only (no E2E).
   - Run-level E2E evidence is only required at run-level validation.
-- Must honor CLI opt-outs (e.g., `--disable slow-tests`).
+- Must honor CLI opt-outs (e.g., `--disable integration-tests`).
 - No-op / obsolete issue path (no commit required):
   - Agent logs an explicit marker: `ISSUE_NO_CHANGE` or `ISSUE_OBSOLETE`.
   - Include a short rationale in the log line.
@@ -239,10 +239,10 @@ Defaults:
 - codex review: ON
 
 Disable list (repeatable or comma-separated):
-- `--disable <value>` (repeatable, e.g., `--disable slow-tests --disable coverage`)
-- `--disable <csv>` (comma-separated, e.g., `--disable "slow-tests,coverage"`)
-  - values: `post-validate`, `run-level-validate`, `slow-tests`, `coverage`,
-    `e2e`, `codex-review`, `followup-on-run-validate-fail`
+- `--disable <value>` (repeatable, e.g., `--disable integration-tests --disable coverage`)
+- `--disable <csv>` (comma-separated, e.g., `--disable "integration-tests,coverage"`)
+  - values: `post-validate`, `run-level-validate`, `integration-tests`, `coverage`,
+    `e2e`, `review`, `followup-on-run-validate-fail`
 
 Other flags:
 - `--keep-worktrees`
@@ -322,7 +322,7 @@ If enabled and a change is classified as docs-only:
 - Run-level validation still runs the full suite unless explicitly disabled.
 
 ### EvidenceGate opt-out mapping
-- `--disable slow-tests` => EvidenceGate expects non-slow pytest only.
+- `--disable integration-tests` => EvidenceGate expects non-slow pytest only.
 - `--disable coverage` => coverage evidence not required.
 - `--disable e2e` => E2E evidence not required.
 
