@@ -535,44 +535,86 @@ while True:
                 proc.wait()
 
     def test_abort_with_validation_failed(self, tmp_path: Path) -> None:
-        """When validation failed before Stage 2, abort exits with code 1.
+        """When validation fails during interrupt handling, abort exits with code 1.
 
-        This tests the interaction between validation state and SIGINT handling:
-        if _validation_failed is True when Stage 2 is entered, the exit code
-        should be 1 (validation failure) instead of 130 (interrupted).
+        This tests the real IssueExecutionCoordinator._handle_interrupt path:
+        after tasks are aborted, the coordinator runs validation_callback.
+        If validation fails, exit_code becomes 1 instead of 130.
         """
         script = tmp_path / "validation_failed_abort_test.py"
         script.write_text(
             """
+import asyncio
 import signal
 import sys
-import time
 
-sigint_count = 0
-validation_failed = True  # Simulate validation having failed before SIGINT
-
-
-def sigint_handler(signum, frame):
-    global sigint_count
-    sigint_count += 1
-    print(f"SIGINT count={sigint_count}", flush=True)
-    if sigint_count == 1:
-        # Stage 1: Drain mode - continue running
-        print("DRAIN_MODE", flush=True)
-    elif sigint_count >= 2:
-        # Stage 2: Abort mode - exit with 1 if validation failed, else 130
-        exit_code = 1 if validation_failed else 130
-        print(f"ABORT_MODE exit_code={exit_code}", flush=True)
-        sys.exit(exit_code)
+from src.core.models import WatchConfig
+from src.pipeline.issue_execution_coordinator import (
+    AbortResult,
+    CoordinatorConfig,
+    IssueExecutionCoordinator,
+)
+from tests.fakes.event_sink import FakeEventSink
+from tests.fakes.issue_provider import FakeIssue, FakeIssueProvider
 
 
-signal.signal(signal.SIGINT, sigint_handler)
+async def main():
+    # Create a provider with one issue so the coordinator has work
+    provider = FakeIssueProvider(
+        issues={"test-issue": FakeIssue(id="test-issue", status="open")}
+    )
+    event_sink = FakeEventSink()
+    drain_event = asyncio.Event()
+    interrupt_event = asyncio.Event()
 
-print("READY", flush=True)
+    # Get the running loop for signal handler to use
+    loop = asyncio.get_running_loop()
 
-# Simulate active work
-while True:
-    time.sleep(0.1)
+    def sigint_handler(signum, frame):
+        # Use call_soon_threadsafe to properly wake the event loop
+        # (signal handlers run outside the event loop context)
+        loop.call_soon_threadsafe(interrupt_event.set)
+
+    signal.signal(signal.SIGINT, sigint_handler)
+
+    async def spawn_callback(issue_id: str) -> asyncio.Task:
+        async def long_running():
+            await asyncio.sleep(60.0)
+        return asyncio.create_task(long_running())
+
+    async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:
+        pass
+
+    async def abort_callback(*, is_interrupt: bool = False):
+        return AbortResult(aborted_count=1, has_unresponsive_tasks=False)
+
+    async def validation_callback() -> bool:
+        # Validation fails - this should cause exit_code=1
+        print("VALIDATION_FAILED", flush=True)
+        return False
+
+    coord = IssueExecutionCoordinator(
+        beads=provider,
+        event_sink=event_sink,
+        config=CoordinatorConfig(max_agents=1),
+    )
+
+    print("READY", flush=True)
+
+    result = await coord.run_loop(
+        spawn_callback=spawn_callback,
+        finalize_callback=finalize_callback,
+        abort_callback=abort_callback,
+        watch_config=WatchConfig(enabled=True, poll_interval_seconds=0.1),
+        interrupt_event=interrupt_event,
+        drain_event=drain_event,
+        validation_callback=validation_callback,
+    )
+
+    sys.exit(result.exit_code)
+
+
+asyncio.run(main())
 """
         )
 
@@ -598,12 +640,11 @@ while True:
                     )
                 pytest.fail(f"Subprocess never sent READY signal. Stderr: {stderr}")
 
-            # Wait briefly for task to start
+            # Wait for task to start
             time.sleep(0.3)
 
-            # Send two SIGINTs for abort mode
-            _send_sigint_and_wait(proc, wait_after=0.2)
-            _send_sigint_and_wait(proc, wait_after=0.2)
+            # Send SIGINT to trigger interrupt handling with validation
+            _send_sigint_and_wait(proc, wait_after=0.5)
 
             # Wait for exit
             try:
@@ -612,15 +653,13 @@ while True:
                 stderr = _get_stderr(proc)
                 proc.kill()
                 proc.wait()
-                pytest.fail(
-                    f"Process did not exit after double SIGINT. Stderr: {stderr}"
-                )
+                pytest.fail(f"Process did not exit after SIGINT. Stderr: {stderr}")
 
-            # When validation failed, abort should exit with 1 (not 130)
+            # When validation fails during interrupt, exit code should be 1
             if proc.returncode != 1:
                 stderr = _get_stderr(proc)
                 pytest.fail(
-                    f"Expected exit code 1 (validation failed + abort), "
+                    f"Expected exit code 1 (validation failed during abort), "
                     f"got {proc.returncode}. Stderr: {stderr}"
                 )
 
