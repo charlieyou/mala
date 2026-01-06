@@ -491,8 +491,8 @@ class ConsoleEventSink(BaseEventSink):
     def on_fixer_text(self, attempt: int, text: str) -> None:
         # Strip ANSI codes for cleaner output
         clean_text = re.sub(r"\x1b\[[0-9;]*m", "", text)
-        truncated = truncate_text(clean_text, 100)
-        log_agent_text(f"[{attempt}] {truncated}", f"fixer-{attempt}")
+        # log_agent_text handles truncation; agent_id already contains attempt number
+        log_agent_text(clean_text, f"fixer-{attempt}")
 
     def on_fixer_tool_use(
         self,
