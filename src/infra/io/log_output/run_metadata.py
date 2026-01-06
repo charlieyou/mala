@@ -725,12 +725,27 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
         return None
 
     # Sort files by filename descending (newest first based on timestamp prefix)
+    # This enables early-exit optimization: once we find a match, we can stop
+    # when the current file's timestamp prefix is older than our best match.
     json_files = sorted(runs_dir.glob("*.json"), key=lambda p: p.name, reverse=True)
 
-    # Collect all (started_at, run_id, session_id) tuples for this issue
-    candidates: list[tuple[float, str, str]] = []
+    # Track best match: (started_at, run_id, session_id)
+    best: tuple[float, str, str] | None = None
 
     for json_path in json_files:
+        # Early-exit: if we have a match and current file's timestamp prefix
+        # is older than our best, we can stop (files are sorted newest-first)
+        if best is not None:
+            # Extract timestamp prefix from filename (format: YYYYMMDD_HHMMSS_*)
+            name = json_path.name
+            if len(name) >= 15:  # "20260106_123456" = 15 chars
+                try:
+                    file_ts = datetime.strptime(name[:15], "%Y%m%d_%H%M%S")
+                    if file_ts.timestamp() < best[0]:
+                        break  # All remaining files are older
+                except ValueError:
+                    pass  # Non-standard filename, continue scanning
+
         try:
             with json_path.open() as f:
                 data = json.load(f)
@@ -754,17 +769,21 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
             continue
 
         # Parse started_at for sorting, use run_id as secondary key for ties
-        started_at = data.get("started_at", "")
-        run_id = data.get("run_id", "")
+        # Use `or ""` to handle both missing keys AND explicit null values
+        started_at = data.get("started_at") or ""
+        run_id = data.get("run_id") or ""
         timestamp = parse_timestamp(started_at)
-        candidates.append((timestamp, run_id, session_id))
 
-    if not candidates:
-        return None
+        # Update best if this is newer, or same timestamp with smaller run_id
+        # (smaller run_id wins for determinism when timestamps tie)
+        if (
+            best is None
+            or timestamp > best[0]
+            or (timestamp == best[0] and run_id < best[1])
+        ):
+            best = (timestamp, run_id, session_id)
 
-    # Sort by timestamp descending, then run_id ascending for determinism
-    candidates.sort(key=lambda x: (-x[0], x[1]))
-    return candidates[0][2]
+    return best[2] if best else None
 
 
 def parse_timestamp(ts: str) -> float:
