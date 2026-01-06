@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from src.infra.clients.cerberus_review import DefaultReviewer
-from src.infra.io.config import _find_cerberus_bin_path
+from src.infra.tools.cerberus import find_cerberus_bin_path
 
 pytestmark = [pytest.mark.e2e]
 
@@ -20,7 +20,7 @@ pytestmark = [pytest.mark.e2e]
 def _find_review_gate_bin() -> Path | None:
     """Find the real review-gate binary from Claude's plugin cache."""
     claude_config = Path.home() / ".claude"
-    return _find_cerberus_bin_path(claude_config)
+    return find_cerberus_bin_path(claude_config)
 
 
 def _setup_git_repo(repo_path: Path) -> str:

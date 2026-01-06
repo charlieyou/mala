@@ -185,6 +185,6 @@ class EnvConfig:
         Returns:
             Path to cerberus bin directory, or None if not found.
         """
-        from src.infra.io.config import _find_cerberus_bin_path
+        from src.infra.tools.cerberus import find_cerberus_bin_path
 
-        return _find_cerberus_bin_path(get_claude_config_dir())
+        return find_cerberus_bin_path(get_claude_config_dir())
