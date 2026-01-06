@@ -7,7 +7,7 @@ import logging
 import signal
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src.domain.validation.spec import (
     ValidationScope,
@@ -115,6 +115,9 @@ logger = logging.getLogger(__name__)
 # 60s allows time for Claude SDK to flush logs, especially under load.
 LOG_FILE_WAIT_TIMEOUT = 60
 LOG_FILE_POLL_INTERVAL = 0.5
+
+# SIGINT escalation timing constant (5s window for counting consecutive Ctrl-C)
+ESCALATION_WINDOW_SECONDS = 5.0
 
 
 class MalaOrchestrator:
@@ -229,6 +232,15 @@ class MalaOrchestrator:
         self._state = OrchestratorState()
         self._lint_tools: frozenset[str] | None = None
         self._exit_code: int = 0  # Exit code from last run (0=success, 130=interrupted)
+        # SIGINT escalation state (reset per-run in run())
+        self._sigint_count: int = 0
+        self._sigint_last_at: float = 0.0
+        self._drain_mode_active: bool = False
+        self._abort_mode_active: bool = False
+        self._abort_exit_code: int = 130
+        self._validation_failed: bool = False
+        self._shutdown_requested: bool = False
+        self._run_task: asyncio.Task[Any] | None = None
         self._prompt_validation_commands = build_prompt_validation_commands(
             self.repo_path
         )
@@ -755,6 +767,7 @@ class MalaOrchestrator:
         *,
         watch_config: WatchConfig | None = None,
         validation_config: ValidationConfig | None = None,
+        drain_event: asyncio.Event | None = None,
         interrupt_event: asyncio.Event | None = None,
         validation_callback: Callable[[], Awaitable[bool]] | None = None,
     ) -> RunResult:
@@ -766,6 +779,7 @@ class MalaOrchestrator:
             run_metadata: Metadata for the current run.
             watch_config: Watch mode configuration.
             validation_config: Periodic validation configuration.
+            drain_event: Event set to enter drain mode (1st Ctrl-C).
             interrupt_event: Event set to signal graceful shutdown (e.g., SIGINT).
             validation_callback: Called periodically in watch mode to run validation.
 
@@ -815,6 +829,7 @@ class MalaOrchestrator:
             abort_callback=abort_callback,
             watch_config=watch_config,
             validation_config=validation_config,
+            drain_event=drain_event,
             interrupt_event=interrupt_event,
             validation_callback=validation_callback,
         )
@@ -851,6 +866,53 @@ class MalaOrchestrator:
             return (0, total)
         return (success_count, total)
 
+    def _handle_sigint(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        drain_event: asyncio.Event,
+        interrupt_event: asyncio.Event,
+    ) -> None:
+        """Handle SIGINT with three-stage escalation.
+
+        Stage 1 (1st Ctrl-C): Drain mode - stop accepting new issues, finish current
+        Stage 2 (2nd Ctrl-C): Graceful abort - cancel tasks, forward SIGINT
+        Stage 3 (3rd Ctrl-C): Hard abort - SIGKILL all processes, cancel run task
+
+        The escalation window (5s) resets only when idle (not in drain/abort mode).
+        """
+        now = time.monotonic()
+        # Reset escalation window if idle (not in drain/abort mode)
+        if not self._drain_mode_active and not self._abort_mode_active:
+            if now - self._sigint_last_at > ESCALATION_WINDOW_SECONDS:
+                self._sigint_count = 0
+
+        self._sigint_count += 1
+        self._sigint_last_at = now
+
+        if self._sigint_count == 1:
+            # Stage 1: Drain
+            self._drain_mode_active = True
+            loop.call_soon_threadsafe(drain_event.set)
+            # Get active task count from coordinator (capture before lambda)
+            active_count = len(self.issue_coordinator.active_tasks)
+            loop.call_soon_threadsafe(
+                lambda: self.event_sink.on_drain_started(active_count)
+            )
+        elif self._sigint_count == 2:
+            # Stage 2: Graceful Abort
+            self._abort_mode_active = True
+            self._abort_exit_code = 1 if self._validation_failed else 130
+            loop.call_soon_threadsafe(interrupt_event.set)
+            CommandRunner.forward_sigint()
+            loop.call_soon_threadsafe(self.event_sink.on_abort_started)
+        else:
+            # Stage 3: Hard Abort
+            self._shutdown_requested = True
+            CommandRunner.kill_active_process_groups()
+            loop.call_soon_threadsafe(self.event_sink.on_force_abort)
+            if self._run_task:
+                loop.call_soon_threadsafe(self._run_task.cancel)
+
     async def run(
         self,
         *,
@@ -868,6 +930,15 @@ class MalaOrchestrator:
         # Reset per-run state to ensure clean state if orchestrator is reused
         self._state = OrchestratorState()
         self._exit_code = 0
+        # Reset SIGINT escalation state per-run
+        self._sigint_count = 0
+        self._sigint_last_at = 0.0
+        self._drain_mode_active = False
+        self._abort_mode_active = False
+        self._abort_exit_code = 130
+        self._validation_failed = False
+        self._shutdown_requested = False
+        self._run_task = None
 
         run_config = build_event_run_config(
             repo_path=self.repo_path,
@@ -926,14 +997,14 @@ class MalaOrchestrator:
             max_agents=self.max_agents,
         )
 
-        # Create interrupt event for SIGINT handling
+        # Create events for SIGINT handling
+        drain_event = asyncio.Event()
         interrupt_event = asyncio.Event()
         loop = asyncio.get_running_loop()
 
-        # Install SIGINT handler using call_soon_threadsafe for thread-safety
+        # Install SIGINT handler using _handle_sigint for three-stage escalation
         def handle_sigint(sig: int, frame: object) -> None:
-            loop.call_soon_threadsafe(interrupt_event.set)
-            CommandRunner.forward_sigint()
+            self._handle_sigint(loop, drain_event, interrupt_event)
 
         original_handler = signal.signal(signal.SIGINT, handle_sigint)
 
@@ -965,14 +1036,18 @@ class MalaOrchestrator:
                     run_metadata,
                     watch_config=watch_config,
                     validation_config=validation_config,
+                    drain_event=drain_event,
                     interrupt_event=interrupt_event,
                     validation_callback=validation_callback,
                 )
                 exit_code = loop_result.exit_code
             except asyncio.CancelledError:
-                # Only treat as SIGINT if interrupt_event is set; otherwise re-raise
-                if interrupt_event.is_set():
-                    exit_code = 130
+                # Only treat as SIGINT if interrupt_event is set or shutdown requested
+                if interrupt_event.is_set() or self._shutdown_requested:
+                    # Use abort_exit_code for Stage 2/3 (set by _handle_sigint)
+                    exit_code = (
+                        self._abort_exit_code if self._abort_mode_active else 130
+                    )
                     interrupted = True
                 else:
                     raise

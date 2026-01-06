@@ -13,6 +13,11 @@ from typing import TYPE_CHECKING
 
 from src.pipeline.issue_result import IssueResult
 
+# Stage 2 abort grace period (seconds) - how long to wait for tasks to finish
+# before allowing Stage 3 (force kill). Defined here to avoid circular import
+# with orchestrator.py.
+ABORT_GRACE_SECONDS = 10.0
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
@@ -231,10 +236,20 @@ class DeadlockHandler:
             if not task.done():
                 task.cancel()
 
-        # Await all tasks to ensure orderly shutdown before finalization
-        await asyncio.gather(
-            *[task for _, task in tasks_snapshot], return_exceptions=True
-        )
+        # Await with bounded timeout (Stage 2 grace period)
+        # This prevents Stage 2 abort from waiting indefinitely for tasks to finish.
+        # If tasks don't complete within the grace period, Stage 3 (force kill)
+        # is still available via another Ctrl-C.
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    *[task for _, task in tasks_snapshot], return_exceptions=True
+                ),
+                timeout=ABORT_GRACE_SECONDS,
+            )
+        except TimeoutError:
+            # Tasks still running after grace period - continue with finalization
+            pass
 
         # Finalize each issue - use real result if completed, abort summary if cancelled
         aborted_count = 0
