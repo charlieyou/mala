@@ -736,12 +736,14 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
         # Early-exit: if we have a match and current file's timestamp prefix
         # is older than our best, we can stop (files are sorted newest-first)
         if best is not None:
-            # Extract timestamp prefix from filename (format: YYYYMMDD_HHMMSS_*)
+            # Extract timestamp prefix from filename (format: YYYY-MM-DDTHH-MM-SS_*)
             name = json_path.name
-            if len(name) >= 15:  # "20260106_123456" = 15 chars
+            if len(name) >= 19:  # "2026-01-06T16-00-25" = 19 chars
                 try:
-                    file_ts = datetime.strptime(name[:15], "%Y%m%d_%H%M%S")
-                    if file_ts.timestamp() < best[0]:
+                    file_ts = datetime.strptime(name[:19], "%Y-%m-%dT%H-%M-%S")
+                    # Compare at second granularity: best[0] may have sub-second
+                    # precision while filename only has seconds
+                    if file_ts.timestamp() < int(best[0]):
                         break  # All remaining files are older
                 except ValueError:
                     pass  # Non-standard filename, continue scanning
