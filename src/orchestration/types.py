@@ -91,6 +91,8 @@ class OrchestratorConfig:
     # Context exhaustion handling thresholds
     context_restart_threshold: float = 0.90
     context_limit: int = 200_000
+    # Session resume strict mode: fail issue if no prior session found
+    strict_resume: bool = False
 
 
 @dataclass

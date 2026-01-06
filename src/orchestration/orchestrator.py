@@ -26,6 +26,7 @@ from src.infra.git_utils import (
 )
 from src.infra.clients.cerberus_review import DefaultReviewer
 from src.infra.io.log_output.run_metadata import (
+    lookup_prior_session,
     remove_run_marker,
     write_run_marker,
 )
@@ -195,6 +196,7 @@ class MalaOrchestrator:
         self.disable_validations = orch_config.disable_validations
         self._disabled_validations = derived.disabled_validations
         self.prioritize_wip = orch_config.prioritize_wip
+        self.strict_resume = orch_config.strict_resume
         self.focus = orch_config.focus
         self.orphans_only = orch_config.orphans_only
         self.order_preference = orch_config.order_preference
@@ -688,12 +690,42 @@ class MalaOrchestrator:
             lock_dir=get_lock_dir(),
         )
 
+        # Look up prior session for resumption when prioritize_wip is enabled
+        resume_session_id: str | None = None
+        if self.prioritize_wip:
+            resume_session_id = lookup_prior_session(self.repo_path, issue_id)
+            if resume_session_id:
+                logger.debug(
+                    "Resuming session %s for issue %s",
+                    resume_session_id,
+                    issue_id,
+                )
+            elif self.strict_resume:
+                # Strict mode: fail issue if no prior session found
+                logger.warning(
+                    "No prior session found for issue %s in strict mode",
+                    issue_id,
+                )
+                return IssueResult(
+                    issue_id=issue_id,
+                    agent_id=temp_agent_id,
+                    success=False,
+                    summary="No prior session found for resume (strict mode)",
+                    duration_seconds=0.0,
+                    session_id=None,
+                    gate_attempts=0,
+                    review_attempts=0,
+                    resolution=None,
+                    session_log_path=None,
+                )
+
         session_input = AgentSessionInput(
             issue_id=issue_id,
             prompt=prompt,
             baseline_commit=baseline_commit,
             issue_description=issue_description,
             agent_id=temp_agent_id,
+            resume_session_id=resume_session_id,
         )
 
         runner = AgentSessionRunner(

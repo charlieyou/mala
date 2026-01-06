@@ -3515,3 +3515,213 @@ class TestSigintEscalation:
                 break
 
         mock_on_drain_started.assert_called_once_with(2)
+
+
+class TestSessionResume:
+    """Tests for session resume functionality when prioritize_wip is enabled."""
+
+    @pytest.mark.asyncio
+    async def test_resume_calls_lookup_for_wip_issues(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """When prioritize_wip=True, lookup_prior_session should be called."""
+        fake_issues = FakeIssueProvider(
+            {"test-issue": FakeIssue(id="test-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "test-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+            prioritize_wip=True,
+            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
+        )
+
+        # Create mock SDK client
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="test-session",
+                result="ISSUE_NO_CHANGE: Already implemented",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        with (
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="abc123",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_baseline_for_issue",
+                return_value="baseline123",
+            ),
+            patch.object(
+                orchestrator.beads,
+                "get_issue_description_async",
+                return_value="Test issue",
+            ),
+            patch(
+                "src.orchestration.orchestrator.lookup_prior_session",
+                return_value="prior-session-id",
+            ) as mock_lookup,
+        ):
+            await orchestrator.run_implementer("test-issue")
+
+            # Verify lookup_prior_session was called with correct args
+            mock_lookup.assert_called_once_with(tmp_path, "test-issue")
+
+    @pytest.mark.asyncio
+    async def test_strict_mode_fails_issue_when_no_session(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """When strict_resume=True and no prior session, issue should fail."""
+        fake_issues = FakeIssueProvider(
+            {"test-issue": FakeIssue(id="test-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+            prioritize_wip=True,
+            strict_resume=True,
+        )
+
+        with (
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="abc123",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_baseline_for_issue",
+                return_value="baseline123",
+            ),
+            patch.object(
+                orchestrator.beads,
+                "get_issue_description_async",
+                return_value="Test issue",
+            ),
+            patch(
+                "src.orchestration.orchestrator.lookup_prior_session",
+                return_value=None,  # No prior session
+            ),
+        ):
+            result = await orchestrator.run_implementer("test-issue")
+
+            assert result.success is False
+            assert "No prior session found" in result.summary
+            assert "strict mode" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_lenient_mode_fallback_on_no_session(
+        self, tmp_path: Path, make_orchestrator: Callable[..., MalaOrchestrator]
+    ) -> None:
+        """When strict_resume=False (default) and no prior session, run proceeds."""
+        fake_issues = FakeIssueProvider(
+            {"test-issue": FakeIssue(id="test-issue", priority=1)}
+        )
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        log_dir = tmp_path / ".claude" / "projects" / tmp_path.name
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "test-session.jsonl"
+        log_file.write_text('{"type": "result"}\n')
+
+        orchestrator = make_orchestrator(
+            repo_path=tmp_path,
+            max_agents=1,
+            issue_provider=fake_issues,
+            runs_dir=runs_dir,
+            lock_releaser=lambda _: 0,
+            prioritize_wip=True,
+            strict_resume=False,  # Default lenient mode
+            log_provider=_make_mock_log_provider(log_file),  # type: ignore[arg-type]
+        )
+
+        # Create mock SDK client
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.query = AsyncMock()
+
+        async def mock_receive_response() -> AsyncGenerator[ResultMessage, None]:
+            yield ResultMessage(
+                subtype="result",
+                session_id="new-session",
+                result="ISSUE_NO_CHANGE: Done",
+                duration_ms=1000,
+                duration_api_ms=800,
+                is_error=False,
+                num_turns=1,
+                total_cost_usd=0.01,
+                usage=None,
+            )
+
+        mock_client.receive_response = mock_receive_response
+
+        with (
+            patch("claude_agent_sdk.ClaudeSDKClient", return_value=mock_client),
+            patch(
+                "src.orchestration.orchestrator.get_git_branch_async",
+                return_value="main",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_git_commit_async",
+                return_value="abc123",
+            ),
+            patch(
+                "src.orchestration.orchestrator.get_baseline_for_issue",
+                return_value="baseline123",
+            ),
+            patch.object(
+                orchestrator.beads,
+                "get_issue_description_async",
+                return_value="Test issue",
+            ),
+            patch(
+                "src.orchestration.orchestrator.lookup_prior_session",
+                return_value=None,  # No prior session
+            ),
+        ):
+            result = await orchestrator.run_implementer("test-issue")
+
+            # Should NOT fail early due to missing session (lenient mode)
+            # The session ran (even if gate failed later for unrelated reasons)
+            assert "No prior session found" not in result.summary
+            # Session ran - we have a session_id from the SDK
+            assert result.session_id is not None

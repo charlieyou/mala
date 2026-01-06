@@ -435,9 +435,16 @@ class AgentSessionRunner:
         if idle_timeout_seconds <= 0:
             idle_timeout_seconds = None
 
+        # Apply session resumption if resume_session_id is set
+        options = runtime.options
+        if input.resume_session_id:
+            options = self.sdk_client_factory.with_resume(
+                options, input.resume_session_id
+            )
+
         session_config = SessionConfig(
             agent_id=agent_id,
-            options=runtime.options,
+            options=options,
             lint_cache=runtime.lint_cache,
             log_file_wait_timeout=self.config.log_file_wait_timeout,
             log_file_poll_interval=0.5,
@@ -833,6 +840,7 @@ class AgentSessionRunner:
                 prompt=current_prompt,
                 baseline_commit=input.baseline_commit,
                 issue_description=input.issue_description,
+                resume_session_id=input.resume_session_id,
             )
             session_cfg, state = self._initialize_session(session_input, agent_id)
 
