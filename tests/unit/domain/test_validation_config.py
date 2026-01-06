@@ -519,6 +519,13 @@ class TestCustomCommandConfig:
         assert config.timeout == 120  # default
         assert config.allow_fail is False  # default
 
+    def test_explicit_null_timeout_uses_default(self) -> None:
+        """Explicit timeout: null uses default (120), not None."""
+        config = CustomCommandConfig.from_value(
+            "my_cmd", {"command": "uvx cmd", "timeout": None}
+        )
+        assert config.timeout == 120
+
     def test_invalid_name_starts_with_digit(self) -> None:
         """Name starting with digit raises ConfigError."""
         with pytest.raises(ConfigError, match="Invalid custom command name '123abc'"):

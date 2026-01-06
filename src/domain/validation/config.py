@@ -215,8 +215,10 @@ class CustomCommandConfig:
                     "Provide a command string."
                 )
 
-            timeout = value.get("timeout", 120)
-            if timeout is not None:
+            timeout = value.get("timeout")
+            if timeout is None:
+                timeout = 120
+            else:
                 # Reject booleans explicitly (bool is subclass of int)
                 if isinstance(timeout, bool) or not isinstance(timeout, int):
                     raise ConfigError(
