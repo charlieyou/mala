@@ -4710,3 +4710,64 @@ class TestCustomCommandMarkerParsing:
         # Should detect marker even when content is a list
         assert evidence.custom_commands_ran.get("test_cmd") is True
         assert evidence.custom_commands_failed.get("test_cmd", False) is False
+
+    def test_parse_custom_marker_hyphenated_name(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Hyphenated command names (valid YAML keys) are parsed correctly."""
+        log_path = tmp_path / "session.jsonl"
+        log_path.write_text(
+            self._make_tool_result_entry(
+                "toolu_1",
+                "[custom:docs-check:pass]",
+                is_error=False,
+            )
+            + "\n"
+        )
+
+        spec = self._make_custom_spec([("docs-check", "python docs_check.py", False)])
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        assert evidence.custom_commands_ran.get("docs-check") is True
+        assert evidence.custom_commands_failed.get("docs-check", False) is False
+
+    def test_extract_tool_result_content_dict_blocks(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """Content as list of dicts with 'text' key is extracted correctly."""
+        log_path = tmp_path / "session.jsonl"
+        # Content as a list of content block dicts (Anthropic API format)
+        entry = json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_1",
+                            "content": [
+                                {"type": "text", "text": "Running...\n"},
+                                {"type": "text", "text": "[custom:test_cmd:pass]\n"},
+                            ],
+                            "is_error": False,
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(entry + "\n")
+
+        spec = self._make_custom_spec([("test_cmd", "python test.py", False)])
+        gate = QualityGate(tmp_path, log_provider, mock_command_runner)
+        evidence = gate.parse_validation_evidence_with_spec(log_path, spec)
+
+        # Should detect marker even when content is a list of dicts
+        assert evidence.custom_commands_ran.get("test_cmd") is True
+        assert evidence.custom_commands_failed.get("test_cmd", False) is False

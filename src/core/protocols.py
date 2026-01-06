@@ -455,18 +455,19 @@ class LogProvider(Protocol):
     def extract_tool_result_content(
         self, entry: JsonlEntryProtocol
     ) -> list[tuple[str, str]]:
-        """Extract tool_result content from Bash tool results.
+        """Extract textual content from all tool_result blocks.
 
-        Used for marker detection in custom validation commands. Extracts the
-        textual content from tool_result blocks that correspond to Bash tool uses.
+        Used for marker detection in custom validation commands. Returns content
+        from all tool results (not just Bash) since custom command markers have
+        a specific format `[custom:<name>:<status>]` that avoids false positives.
 
         Args:
             entry: A JsonlEntryProtocol from iter_events.
 
         Returns:
-            List of (tool_use_id, content) tuples for Bash tool_result blocks.
-            Content is concatenated if the result contains multiple text items.
-            Returns empty list if entry is not a user message or has no Bash results.
+            List of (tool_use_id, content) tuples for all tool_result blocks.
+            Content is normalized to string with text extracted from content blocks.
+            Returns empty list if entry is not a user message.
         """
         ...
 

@@ -59,10 +59,10 @@ QUALITY_GATE_IGNORED_KINDS: set[CommandKind] = {CommandKind.SETUP}
 # Regex for parsing custom command markers from tool_result content.
 # Matches: [custom:<name>:start], [custom:<name>:pass],
 #          [custom:<name>:fail exit=<code>], [custom:<name>:timeout]
-# Group 1: command name (alphanumeric + underscore)
+# Group 1: command name (alphanumeric, underscore, hyphen - valid YAML dict keys)
 # Group 2: marker type (start|pass|fail exit=\d+|timeout)
 CUSTOM_MARKER_PATTERN = re.compile(
-    r"\[custom:(\w+):(start|pass|fail exit=\d+|timeout)\]"
+    r"\[custom:([\w-]+):(start|pass|fail exit=\d+|timeout)\]"
 )
 
 
@@ -554,12 +554,15 @@ class QualityGate:
 
         # Build failed_commands from kinds that failed, using display names
         # Filter out ignored kinds (e.g., SETUP) so they don't block the gate
+        # Filter out CUSTOM kinds - custom command failures use marker/allow_fail path
         # Deduplicate: multiple kinds (LINT, FORMAT) may map to the same tool (ruff)
         evidence.failed_commands = list(
             dict.fromkeys(
                 cmd_name
                 for kind, (is_failed, cmd_name) in kind_failed.items()
-                if is_failed and kind not in QUALITY_GATE_IGNORED_KINDS
+                if is_failed
+                and kind not in QUALITY_GATE_IGNORED_KINDS
+                and kind != CommandKind.CUSTOM
             )
         )
 

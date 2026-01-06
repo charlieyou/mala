@@ -305,19 +305,20 @@ class SessionLogParser:
     def extract_tool_result_content(
         self, entry: JsonlEntry | JsonlEntryProtocol
     ) -> list[tuple[str, str]]:
-        """Extract tool_result content from Bash tool results.
+        """Extract textual content from all tool_result blocks.
 
-        Used for marker detection in custom validation commands. Extracts the
-        textual content from tool_result blocks that correspond to Bash tool uses.
+        Used for marker detection in custom validation commands. Returns content
+        from all tool results (not just Bash) since custom command markers have
+        a specific format `[custom:<name>:<status>]` that avoids false positives.
 
         Args:
             entry: A JsonlEntry or JsonlEntryProtocol from iter_jsonl_entries.
 
         Returns:
-            List of (tool_use_id, content) tuples for Bash tool_result blocks.
-            Content is converted to string: str used directly, list elements
-            concatenated, other types converted via str().
-            Returns empty list if entry is not a user message or has no Bash results.
+            List of (tool_use_id, content) tuples for all tool_result blocks.
+            Content is normalized to string: str used directly, list elements
+            processed recursively (text from dicts, strings concatenated).
+            Returns empty list if entry is not a user message.
         """
         # Use typed entry if available
         if entry.entry is not None:
@@ -341,13 +342,21 @@ class SessionLogParser:
 
         Returns:
             String representation: str used directly, list elements
-            concatenated (only string elements), other types via str().
+            processed recursively (extracting text from content blocks),
+            dicts with 'text' key have that value extracted, other types via str().
         """
         if isinstance(content, str):
             return content
+        if isinstance(content, dict):
+            # Handle content block dicts like {'type': 'text', 'text': '...'}
+            content_dict = cast("dict[str, Any]", content)
+            text_value = content_dict.get("text")
+            if text_value is not None:
+                return str(text_value)
+            return ""
         if isinstance(content, list):
-            # Concatenate string elements from list
-            return "".join(item for item in content if isinstance(item, str))
+            # Recursively normalize list elements and concatenate
+            return "".join(self._normalize_content(item) for item in content)
         return str(content)
 
     def _extract_tool_result_content_from_data(
