@@ -342,6 +342,15 @@ class TestClearCustoms:
                 {"_clear_customs": True, "my_custom": "some cmd"}, is_run_level=True
             )
 
+    def test_clear_customs_with_plus_prefixed_custom_keys_raises_error(self) -> None:
+        """_clear_customs combined with +prefixed custom keys raises ConfigError."""
+        with pytest.raises(
+            ConfigError, match="_clear_customs cannot be combined with custom commands"
+        ):
+            CommandsConfig.from_dict(
+                {"_clear_customs": True, "+my_custom": "some cmd"}, is_run_level=True
+            )
+
     def test_plus_clear_customs_raises_error(self) -> None:
         """+_clear_customs raises ConfigError (reserved key cannot be prefixed)."""
         with pytest.raises(ConfigError, match=r"\+_clear_customs is not allowed"):
