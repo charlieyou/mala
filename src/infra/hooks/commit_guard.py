@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from src.infra.tools.command_runner import CommandRunner
 from src.infra.tools.locking import get_lock_holder
 
-from .dangerous_commands import BASH_TOOL_NAMES
+from .dangerous_commands import BASH_TOOL_NAMES, deny_pretool_use
 
 if TYPE_CHECKING:
     from .dangerous_commands import PreToolUseHook
@@ -107,10 +107,9 @@ def make_commit_guard_hook(
         try:
             tokens = shlex.split(command)
         except ValueError:
-            return {
-                "decision": "block",
-                "reason": 'Unable to parse command. Use `git add <files> && git commit -m "..."`.',
-            }
+            return deny_pretool_use(
+                'Unable to parse command. Use `git add <files> && git commit -m "..."`.'
+            )
 
         segments = _split_segments(tokens)
         commit_index = next(
@@ -130,16 +129,15 @@ def make_commit_guard_hook(
             if _is_git_subcommand(segment, "add")
         ]
         if not add_segments:
-            return {
-                "decision": "block",
-                "reason": 'Atomic add+commit required. Use `git add <files> && git commit -m "..."`.',
-            }
+            return deny_pretool_use(
+                'Atomic add+commit required. Use `git add <files> && git commit -m "..."`.'
+            )
 
         add_paths: list[str] = []
         for segment in add_segments:
             paths, error = _extract_add_paths(segment)
             if error:
-                return {"decision": "block", "reason": error}
+                return deny_pretool_use(error)
             add_paths.extend(paths)
 
         # Check for pre-staged files to avoid committing unrelated changes.
@@ -158,13 +156,10 @@ def make_commit_guard_hook(
             staged_set = set(staged_paths)
             add_set = set(add_paths)
             if not staged_set.issubset(add_set):
-                return {
-                    "decision": "block",
-                    "reason": (
-                        "Staged files not listed in git add. "
-                        "Unstage them and use a single `git add <files> && git commit -m ...`."
-                    ),
-                }
+                return deny_pretool_use(
+                    "Staged files not listed in git add. "
+                    "Unstage them and use a single `git add <files> && git commit -m ...`."
+                )
 
         # Validate lock ownership for all files being added/committed.
         if repo_root is None:
@@ -190,14 +185,11 @@ def make_commit_guard_hook(
                 missing_locks.append(rel_path)
 
         if missing_locks:
-            return {
-                "decision": "block",
-                "reason": (
-                    "Missing locks for staged files: "
-                    + ", ".join(missing_locks)
-                    + ". Acquire locks before committing."
-                ),
-            }
+            return deny_pretool_use(
+                "Missing locks for staged files: "
+                + ", ".join(missing_locks)
+                + ". Acquire locks before committing."
+            )
 
         return {}
 

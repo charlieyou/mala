@@ -23,6 +23,26 @@ PostToolUseHook = Callable[
     Awaitable[dict[str, Any]],
 ]
 
+
+def deny_pretool_use(reason: str) -> dict[str, Any]:
+    """Create a hook response that denies a PreToolUse request.
+
+    Args:
+        reason: Explanation shown to Claude about why the tool use was denied.
+
+    Returns:
+        Hook response dict with hookSpecificOutput in the format expected by
+        the Claude Agent SDK.
+    """
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
 # Dangerous bash command patterns to block
 DANGEROUS_PATTERNS = [
     "rm -rf /",
@@ -132,10 +152,7 @@ async def block_dangerous_commands(
     # Block dangerous patterns
     for pattern in DANGEROUS_PATTERNS:
         if pattern in command:
-            return {
-                "decision": "block",
-                "reason": f"Blocked dangerous command pattern: {pattern}",
-            }
+            return deny_pretool_use(f"Blocked dangerous command pattern: {pattern}")
 
     # Block destructive git patterns with safe alternatives
     for pattern in DESTRUCTIVE_GIT_PATTERNS:
@@ -144,33 +161,24 @@ async def block_dangerous_commands(
             reason = f"Blocked destructive git command: {pattern}"
             if alternative:
                 reason = f"{reason}. Safe alternative: {alternative}"
-            return {
-                "decision": "block",
-                "reason": reason,
-            }
+            return deny_pretool_use(reason)
 
     # Enforce atomic add+commit and explicit staging (no -a/--all).
     command_lower = command.lower()
     if "git commit" in command_lower:
         if " --all" in command_lower or "git commit -a" in command_lower:
-            return {
-                "decision": "block",
-                "reason": (
-                    "Blocked git commit -a/--all. "
-                    'Stage explicit files: git add <files> && git commit -m "...".'
-                ),
-            }
+            return deny_pretool_use(
+                "Blocked git commit -a/--all. "
+                'Stage explicit files: git add <files> && git commit -m "...".'
+            )
 
         commit_index = command_lower.find("git commit")
         add_index = command_lower.find("git add")
         if add_index == -1 or add_index > commit_index:
-            return {
-                "decision": "block",
-                "reason": (
-                    "Atomic add+commit required. "
-                    'Use `git add <files> && git commit -m "..."`.'
-                ),
-            }
+            return deny_pretool_use(
+                "Atomic add+commit required. "
+                'Use `git add <files> && git commit -m "..."`.'
+            )
 
     # Block force push to ALL branches (--force-with-lease is allowed as safer alternative)
     if "git push" in command:
@@ -178,10 +186,9 @@ async def block_dangerous_commands(
         if "--force-with-lease" in command:
             pass  # Allow
         elif "--force" in command or "-f " in command:
-            return {
-                "decision": "block",
-                "reason": "Blocked force push (use --force-with-lease if needed)",
-            }
+            return deny_pretool_use(
+                "Blocked force push (use --force-with-lease if needed)"
+            )
 
     return {}  # Allow the command
 
@@ -201,8 +208,7 @@ async def block_mala_disallowed_tools(
     """
     tool_name = hook_input["tool_name"]
     if tool_name in MALA_DISALLOWED_TOOLS:
-        return {
-            "decision": "block",
-            "reason": f"Tool {tool_name} is disabled for mala agents to reduce token waste.",
-        }
+        return deny_pretool_use(
+            f"Tool {tool_name} is disabled for mala agents to reduce token waste."
+        )
     return {}

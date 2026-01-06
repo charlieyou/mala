@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from .dangerous_commands import deny_pretool_use
+
 if TYPE_CHECKING:
     from .dangerous_commands import PreToolUseHook
 
@@ -64,16 +66,14 @@ def make_lock_enforcement_hook(
         lock_holder = get_lock_holder(file_path, repo_namespace=repo_path)
 
         if lock_holder is None:
-            return {
-                "decision": "block",
-                "reason": f'File {file_path} is not locked. Use lock_acquire tool with filepaths: ["{file_path}"]',
-            }
+            return deny_pretool_use(
+                f'File {file_path} is not locked. Use lock_acquire tool with filepaths: ["{file_path}"]'
+            )
 
         if lock_holder != agent_id:
-            return {
-                "decision": "block",
-                "reason": f"File {file_path} is locked by {lock_holder}. Wait or coordinate to acquire the lock.",
-            }
+            return deny_pretool_use(
+                f"File {file_path} is locked by {lock_holder}. Wait or coordinate to acquire the lock."
+            )
 
         # Agent holds the lock, allow the write
         return {}

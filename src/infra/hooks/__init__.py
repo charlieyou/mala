@@ -22,6 +22,7 @@ from .dangerous_commands import (
     SAFE_GIT_ALTERNATIVES,
     block_dangerous_commands,
     block_mala_disallowed_tools,
+    deny_pretool_use,
 )
 from .file_cache import (
     FILE_PATH_KEYS,
@@ -70,6 +71,7 @@ __all__ = [
     "_get_git_state",
     "block_dangerous_commands",
     "block_mala_disallowed_tools",
+    "deny_pretool_use",
     "get_lock_holder",
     "make_commit_guard_hook",
     "make_file_read_cache_hook",

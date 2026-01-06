@@ -120,6 +120,8 @@ class DeadlockHandler:
             # Track that we cleaned this agent to avoid double cleanup in run_implementer
             self.cleanup_agent_locks(info.victim_id)
             state.deadlock_cleaned_agents.add(info.victim_id)
+            if victim_issue_id:
+                state.deadlock_victim_issues.add(victim_issue_id)
 
             # Use shield to protect resolution from cancellation
             # Track whether cancellation occurred during shielded section

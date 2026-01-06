@@ -41,6 +41,21 @@ def make_hook_input(tool_name: str, tool_input: dict[str, Any]) -> PreToolUseHoo
     )
 
 
+def is_hook_denied(result: dict[str, Any]) -> bool:
+    """Check if a hook result denies/blocks the tool use.
+
+    Supports the new hookSpecificOutput format with permissionDecision.
+    """
+    hook_output = result.get("hookSpecificOutput", {})
+    return hook_output.get("permissionDecision") == "deny"
+
+
+def get_hook_deny_reason(result: dict[str, Any]) -> str | None:
+    """Get the denial reason from a hook result."""
+    hook_output = result.get("hookSpecificOutput", {})
+    return hook_output.get("permissionDecisionReason")
+
+
 def make_context(agent_id: str = "test-agent") -> HookContext:
     """Create a mock HookContext."""
     return cast("HookContext", {"agent_id": agent_id})
@@ -93,8 +108,8 @@ class TestMakeLockEnforcementHook:
 
         result = await hook(hook_input, None, context)
 
-        assert result["decision"] == "block"
-        assert "other-agent" in result["reason"]
+        assert is_hook_denied(result)
+        assert "other-agent" in (get_hook_deny_reason(result) or "")
 
     @pytest.mark.asyncio
     async def test_blocks_when_no_lock_exists(
@@ -110,8 +125,9 @@ class TestMakeLockEnforcementHook:
 
         result = await hook(hook_input, None, context)
 
-        assert result["decision"] == "block"
-        assert "not locked" in result["reason"].lower()
+        assert is_hook_denied(result)
+        reason = get_hook_deny_reason(result) or ""
+        assert "not locked" in reason.lower()
 
     @pytest.mark.asyncio
     async def test_allows_non_write_tools(self, lock_dir: Path) -> None:
@@ -247,8 +263,8 @@ class TestBlockDangerousCommands:
         for cmd in stash_commands:
             hook_input = make_hook_input("Bash", {"command": cmd})
             result = await block_dangerous_commands(hook_input, None, context)
-            assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
-            assert "git stash" in result["reason"]
+            assert is_hook_denied(result), f"Expected {cmd!r} to be blocked"
+            assert "git stash" in (get_hook_deny_reason(result) or "")
 
     @pytest.mark.asyncio
     async def test_blocks_git_reset_hard(self) -> None:
@@ -258,8 +274,8 @@ class TestBlockDangerousCommands:
 
         result = await block_dangerous_commands(hook_input, None, context)
 
-        assert result["decision"] == "block"
-        assert "git reset --hard" in result["reason"]
+        assert is_hook_denied(result)
+        assert "git reset --hard" in (get_hook_deny_reason(result) or "")
 
     @pytest.mark.asyncio
     async def test_blocks_git_rebase(self) -> None:
@@ -274,8 +290,8 @@ class TestBlockDangerousCommands:
         for cmd in rebase_commands:
             hook_input = make_hook_input("Bash", {"command": cmd})
             result = await block_dangerous_commands(hook_input, None, context)
-            assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
-            assert "git rebase" in result["reason"]
+            assert is_hook_denied(result), f"Expected {cmd!r} to be blocked"
+            assert "git rebase" in (get_hook_deny_reason(result) or "")
 
 
 class TestCommitGuardHook:
@@ -288,7 +304,7 @@ class TestCommitGuardHook:
         context = make_context()
 
         result = await hook(hook_input, None, context)
-        assert result.get("decision") == "block"
+        assert is_hook_denied(result)
 
     @pytest.mark.asyncio
     async def test_blocks_commit_with_unlocked_file(
@@ -303,8 +319,8 @@ class TestCommitGuardHook:
         context = make_context()
 
         result = await hook(hook_input, None, context)
-        assert result.get("decision") == "block"
-        assert "Missing locks" in result.get("reason", "")
+        assert is_hook_denied(result)
+        assert "Missing locks" in (get_hook_deny_reason(result) or "")
 
     @pytest.mark.asyncio
     async def test_allows_commit_with_locked_file(
@@ -334,7 +350,7 @@ class TestCommitGuardHook:
         context = make_context()
 
         result = await hook(hook_input, None, context)
-        assert result.get("decision") == "block"
+        assert is_hook_denied(result)
 
     @pytest.mark.asyncio
     async def test_blocks_git_add_all_flag(self, tmp_path: Path) -> None:
@@ -346,7 +362,7 @@ class TestCommitGuardHook:
         context = make_context()
 
         result = await hook(hook_input, None, context)
-        assert result.get("decision") == "block"
+        assert is_hook_denied(result)
 
     @pytest.mark.asyncio
     async def test_blocks_force_checkout(self) -> None:
@@ -362,7 +378,7 @@ class TestCommitGuardHook:
         for cmd in force_checkouts:
             hook_input = make_hook_input("Bash", {"command": cmd})
             result = await block_dangerous_commands(hook_input, None, context)
-            assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
+            assert is_hook_denied(result), f"Expected {cmd!r} to be blocked"
 
     @pytest.mark.asyncio
     async def test_blocks_git_clean(self) -> None:
@@ -378,7 +394,7 @@ class TestCommitGuardHook:
         for cmd in clean_commands:
             hook_input = make_hook_input("Bash", {"command": cmd})
             result = await block_dangerous_commands(hook_input, None, context)
-            assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
+            assert is_hook_denied(result), f"Expected {cmd!r} to be blocked"
 
     @pytest.mark.asyncio
     async def test_blocks_git_restore(self) -> None:
@@ -394,8 +410,8 @@ class TestCommitGuardHook:
         for cmd in restore_commands:
             hook_input = make_hook_input("Bash", {"command": cmd})
             result = await block_dangerous_commands(hook_input, None, context)
-            assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
-            assert "git restore" in result["reason"]
+            assert is_hook_denied(result), f"Expected {cmd!r} to be blocked"
+            assert "git restore" in (get_hook_deny_reason(result) or "")
 
     @pytest.mark.asyncio
     async def test_blocks_abort_operations(self) -> None:
@@ -410,7 +426,7 @@ class TestCommitGuardHook:
         for cmd in abort_commands:
             hook_input = make_hook_input("Bash", {"command": cmd})
             result = await block_dangerous_commands(hook_input, None, context)
-            assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
+            assert is_hook_denied(result), f"Expected {cmd!r} to be blocked"
 
     @pytest.mark.asyncio
     async def test_includes_safe_alternatives_in_error(self) -> None:
@@ -420,20 +436,20 @@ class TestCommitGuardHook:
         # Test git stash - should suggest commit instead
         hook_input = make_hook_input("Bash", {"command": "git stash"})
         result = await block_dangerous_commands(hook_input, None, context)
-        assert "commit" in result["reason"].lower()
+        assert "commit" in (get_hook_deny_reason(result) or "").lower()
 
         # Test git reset --hard - should suggest checkout for specific files
         hook_input = make_hook_input("Bash", {"command": "git reset --hard"})
         result = await block_dangerous_commands(hook_input, None, context)
         assert (
-            "checkout" in result["reason"].lower()
-            or "commit" in result["reason"].lower()
+            "checkout" in (get_hook_deny_reason(result) or "").lower()
+            or "commit" in (get_hook_deny_reason(result) or "").lower()
         )
 
         # Test git rebase - should suggest merge
         hook_input = make_hook_input("Bash", {"command": "git rebase main"})
         result = await block_dangerous_commands(hook_input, None, context)
-        assert "merge" in result["reason"].lower()
+        assert "merge" in (get_hook_deny_reason(result) or "").lower()
 
     @pytest.mark.asyncio
     async def test_allows_non_bash_tools(self) -> None:
@@ -455,8 +471,8 @@ class TestCommitGuardHook:
 
         result = await block_dangerous_commands(hook_input, None, context)
 
-        assert result["decision"] == "block"
-        assert "force push" in result["reason"].lower()
+        assert is_hook_denied(result)
+        assert "force push" in (get_hook_deny_reason(result) or "").lower()
 
     @pytest.mark.asyncio
     async def test_allows_force_with_lease(self) -> None:
@@ -750,8 +766,8 @@ class TestMakeFileReadCacheHook:
         # Second read
         result = await hook(hook_input, None, context)
 
-        assert result["decision"] == "block"
-        assert "unchanged" in result["reason"].lower()
+        assert is_hook_denied(result)
+        assert "unchanged" in (get_hook_deny_reason(result) or "").lower()
 
     @pytest.mark.asyncio
     async def test_allows_non_read_tools(self, tmp_path: Path) -> None:
@@ -843,7 +859,7 @@ class TestMakeFileReadCacheHook:
 
         # Third read - full file again (same as first)
         result3 = await hook(full_read, None, context)
-        assert result3["decision"] == "block"  # blocked (same as first read)
+        assert is_hook_denied(result3)  # blocked (same as first read)
 
         # Fourth read - different offset
         partial_read2 = make_hook_input(
@@ -854,7 +870,7 @@ class TestMakeFileReadCacheHook:
 
         # Fifth read - same as second (offset=0, limit=2)
         result5 = await hook(partial_read, None, context)
-        assert result5["decision"] == "block"  # blocked (same as second read)
+        assert is_hook_denied(result5)  # blocked (same as second read)
 
 
 class TestDetectLintCommand:
@@ -1202,8 +1218,8 @@ class TestMakeLintCacheHook:
         # Second lint - blocked due to cached success
         result = await hook(hook_input, None, context)
 
-        assert result["decision"] == "block"
-        assert "no changes" in result["reason"].lower()
+        assert is_hook_denied(result)
+        assert "no changes" in (get_hook_deny_reason(result) or "").lower()
 
     @pytest.mark.asyncio
     async def test_allows_non_lint_bash_commands(self, tmp_path: Path) -> None:
@@ -1261,7 +1277,7 @@ class TestMakeLintCacheHook:
 
         # Second simple lint - blocked due to cached success
         result = await hook(simple_lint, None, context)
-        assert result["decision"] == "block"
+        assert is_hook_denied(result)
 
         # Compound command with && - should NOT be blocked
         compound_and = make_hook_input(

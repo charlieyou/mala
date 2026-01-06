@@ -7,7 +7,7 @@ These tests are fast and don't require API keys or network access.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -24,6 +24,18 @@ HookInputFactory = Callable[[str, str], PreToolUseHookInput]
 def _make_context() -> HookContext:
     """Create a mock HookContext."""
     return cast("HookContext", {"signal": None})
+
+
+def is_hook_denied(result: dict[str, Any]) -> bool:
+    """Check if a hook result denies/blocks the tool use."""
+    hook_output = result.get("hookSpecificOutput", {})
+    return hook_output.get("permissionDecision") == "deny"
+
+
+def get_hook_deny_reason(result: dict[str, Any]) -> str | None:
+    """Get the denial reason from a hook result."""
+    hook_output = result.get("hookSpecificOutput", {})
+    return hook_output.get("permissionDecisionReason")
 
 
 class TestBlockDangerousCommands:
@@ -77,8 +89,8 @@ class TestBlockDangerousCommands:
             result = await block_dangerous_commands(
                 make_hook_input(tool_name, "rm -rf /"), None, _make_context()
             )
-            assert result.get("decision") == "block"
-            assert "rm -rf /" in result.get("reason", "")
+            assert is_hook_denied(result)
+            assert "rm -rf /" in (get_hook_deny_reason(result) or "")
 
     @pytest.mark.asyncio
     async def test_blocks_fork_bomb(self, make_hook_input: HookInputFactory) -> None:
@@ -88,7 +100,7 @@ class TestBlockDangerousCommands:
         result = await block_dangerous_commands(
             make_hook_input("Bash", ":(){:|:&};:"), None, _make_context()
         )
-        assert result.get("decision") == "block"
+        assert is_hook_denied(result)
 
     @pytest.mark.asyncio
     async def test_blocks_curl_pipe_bash(
@@ -103,8 +115,8 @@ class TestBlockDangerousCommands:
             None,
             _make_context(),
         )
-        assert result.get("decision") == "block"
-        assert "curl | bash" in result.get("reason", "")
+        assert is_hook_denied(result)
+        assert "curl | bash" in (get_hook_deny_reason(result) or "")
 
     @pytest.mark.asyncio
     async def test_blocks_force_push_main(
@@ -118,8 +130,8 @@ class TestBlockDangerousCommands:
             None,
             _make_context(),
         )
-        assert result.get("decision") == "block"
-        assert "force push" in result.get("reason", "").lower()
+        assert is_hook_denied(result)
+        assert "force push" in (get_hook_deny_reason(result) or "").lower()
 
     @pytest.mark.asyncio
     async def test_blocks_force_push_any_branch(
@@ -133,8 +145,8 @@ class TestBlockDangerousCommands:
             None,
             _make_context(),
         )
-        assert result.get("decision") == "block"
-        assert "force push" in result.get("reason", "").lower()
+        assert is_hook_denied(result)
+        assert "force push" in (get_hook_deny_reason(result) or "").lower()
 
     @pytest.mark.asyncio
     async def test_allows_force_with_lease(
@@ -176,9 +188,7 @@ class TestBlockDangerousCommands:
             result = await block_dangerous_commands(
                 make_hook_input(tool_name, dangerous_cmd), None, _make_context()
             )
-            assert result.get("decision") == "block", (
-                f"Should block for tool_name={tool_name}"
-            )
+            assert is_hook_denied(result), f"Should block for tool_name={tool_name}"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -207,7 +217,7 @@ class TestBlockDangerousCommands:
         result = await block_dangerous_commands(
             make_hook_input("Bash", cmd), None, _make_context()
         )
-        assert result.get("decision") == "block", f"Should block: {cmd}"
+        assert is_hook_denied(result), f"Should block: {cmd}"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -250,4 +260,4 @@ class TestBlockDangerousCommands:
             None,
             _make_context(),
         )
-        assert result.get("decision") == "block"
+        assert is_hook_denied(result)

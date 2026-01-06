@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 from src.core.tool_name_extractor import extract_tool_name
 
 from ..tools.command_runner import run_command
-from .dangerous_commands import BASH_TOOL_NAMES
+from .dangerous_commands import BASH_TOOL_NAMES, deny_pretool_use
 from .file_cache import FILE_WRITE_TOOLS
 
 # Default lint tool names for fallback when no ValidationSpec is provided
@@ -351,10 +351,7 @@ def make_lint_cache_hook(
 
                 is_redundant, message = cache.check_and_update(lint_type, command)
                 if is_redundant:
-                    return {
-                        "decision": "block",
-                        "reason": message,
-                    }
+                    return deny_pretool_use(message)
 
         # Invalidate cache on file writes (lint results may change)
         if tool_name in FILE_WRITE_TOOLS:

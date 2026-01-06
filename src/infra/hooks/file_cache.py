@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .dangerous_commands import deny_pretool_use
+
 if TYPE_CHECKING:
     from .dangerous_commands import PreToolUseHook
 
@@ -237,10 +239,7 @@ def make_file_read_cache_hook(cache: FileReadCache) -> PreToolUseHook:
                     file_path, offset=offset, limit=limit
                 )
                 if is_redundant:
-                    return {
-                        "decision": "block",
-                        "reason": message,
-                    }
+                    return deny_pretool_use(message)
 
         # Invalidate cache on file writes
         if tool_name in FILE_WRITE_TOOLS:

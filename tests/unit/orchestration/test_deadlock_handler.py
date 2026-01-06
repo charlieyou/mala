@@ -218,9 +218,28 @@ class TestHandleDeadlock:
 
         # Verify agent tracked as cleaned (state change)
         assert "agent-b" in state.deadlock_cleaned_agents
+        # Verify issue tracked as deadlock victim
+        assert "issue-b" in state.deadlock_victim_issues
         # Verify cleanup callbacks were invoked (via observable state)
         assert fake_callbacks.do_cleanup_agent_locks_calls == ["agent-b"]
         assert fake_callbacks.unregister_agent_calls == ["agent-b"]
+
+    @pytest.mark.asyncio
+    async def test_tracks_deadlock_victim_issue_in_state(
+        self,
+        handler: DeadlockHandler,
+        state: OrchestratorState,
+        deadlock_info: DeadlockInfo,
+    ) -> None:
+        """handle_deadlock tracks victim issue_id in state.deadlock_victim_issues."""
+        active_tasks: dict[str, asyncio.Task[IssueResult]] = {}
+
+        await handler.handle_deadlock(deadlock_info, state, active_tasks)
+
+        # Victim issue should be tracked for special error messaging
+        assert deadlock_info.victim_issue_id in state.deadlock_victim_issues
+        # Agent should also be tracked in cleaned set
+        assert deadlock_info.victim_id in state.deadlock_cleaned_agents
 
     @pytest.mark.asyncio
     async def test_cancels_victim_task_non_self(

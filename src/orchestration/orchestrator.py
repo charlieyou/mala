@@ -831,15 +831,19 @@ class MalaOrchestrator:
             try:
                 result = task.result()
             except asyncio.CancelledError:
+                if issue_id in self._state.deadlock_victim_issues:
+                    summary = (
+                        "Killed as deadlock victim (will retry after blocker completes)"
+                    )
+                elif self.issue_coordinator.abort_reason:
+                    summary = f"Aborted: {self.issue_coordinator.abort_reason}"
+                else:
+                    summary = "Aborted due to task cancellation"
                 result = IssueResult(
                     issue_id=issue_id,
                     agent_id=self._state.agent_ids.get(issue_id, "unknown"),
                     success=False,
-                    summary=(
-                        f"Aborted due to unrecoverable error: {self.issue_coordinator.abort_reason}"
-                        if self.issue_coordinator.abort_reason
-                        else "Aborted due to unrecoverable error"
-                    ),
+                    summary=summary,
                     session_log_path=self._state.active_session_log_paths.get(issue_id),
                 )
             except Exception as e:
