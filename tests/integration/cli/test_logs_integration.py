@@ -8,7 +8,7 @@ These tests exercise the end-to-end CLI path via CliRunner, verifying that:
 Stub command tests use dynamic pytest.xfail() so they:
 - Xfail when stubs raise NotImplementedError (expected behavior)
 - Fail loudly if a different exception occurs (regression detection)
-- Pass when implementation lands (prompting test updates)
+- Fail explicitly when implementation lands (prompting test updates via XPASS-like signal)
 """
 
 from __future__ import annotations
@@ -65,24 +65,21 @@ class TestLogsListCommand:
         result = runner.invoke(app, ["logs", "list"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T003")
-        assert result.exception is None
-        assert result.exit_code == 0
+        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
     def test_list_with_json_flag(self) -> None:
         """Test 'mala logs list --json' produces valid output."""
         result = runner.invoke(app, ["logs", "list", "--json"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T003")
-        assert result.exception is None
-        assert result.exit_code == 0
+        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
     def test_list_with_all_flag(self) -> None:
         """Test 'mala logs list --all' shows all runs."""
         result = runner.invoke(app, ["logs", "list", "--all"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T003")
-        assert result.exception is None
-        assert result.exit_code == 0
+        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
 
 class TestLogsSessionsCommand:
@@ -93,32 +90,28 @@ class TestLogsSessionsCommand:
         result = runner.invoke(app, ["logs", "sessions"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T004")
-        assert result.exception is None
-        assert result.exit_code == 0
+        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
     def test_sessions_with_issue_filter(self) -> None:
         """Test 'mala logs sessions --issue test-123' filters by issue."""
         result = runner.invoke(app, ["logs", "sessions", "--issue", "test-123"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T004")
-        assert result.exception is None
-        assert result.exit_code == 0
+        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
     def test_sessions_with_json_flag(self) -> None:
         """Test 'mala logs sessions --json' produces valid output."""
         result = runner.invoke(app, ["logs", "sessions", "--json"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T004")
-        assert result.exception is None
-        assert result.exit_code == 0
+        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
     def test_sessions_with_all_flag(self) -> None:
         """Test 'mala logs sessions --all' shows all sessions."""
         result = runner.invoke(app, ["logs", "sessions", "--all"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T004")
-        assert result.exception is None
-        assert result.exit_code == 0
+        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
 
 class TestLogsShowCommand:
@@ -129,16 +122,14 @@ class TestLogsShowCommand:
         result = runner.invoke(app, ["logs", "show", "abc12345"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T005")
-        assert result.exception is None
-        assert result.exit_code == 0
+        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
     def test_show_with_json_flag(self) -> None:
         """Test 'mala logs show <run_id> --json' produces valid output."""
         result = runner.invoke(app, ["logs", "show", "abc12345", "--json"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T005")
-        assert result.exception is None
-        assert result.exit_code == 0
+        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
 
     def test_show_missing_run_id_fails(self) -> None:
         """Test 'mala logs show' without run_id argument fails."""
