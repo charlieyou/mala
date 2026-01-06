@@ -173,6 +173,23 @@ class CommandRunner(CommandRunnerPort):
         """Forward SIGINT to active process groups started by CommandRunner."""
         _forward_sigint_to_process_groups()
 
+    @staticmethod
+    def kill_active_process_groups() -> None:
+        """Send SIGKILL to all tracked process groups.
+
+        Safe to call multiple times - clears pgid set after kill.
+        No-op on Windows. Silently handles ProcessLookupError/PermissionError.
+        """
+        if sys.platform == "win32":
+            return
+        pgids = _SIGINT_FORWARD_PGIDS.copy()
+        _SIGINT_FORWARD_PGIDS.clear()
+        for pgid in pgids:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass  # Process already dead or permission issue - expected during shutdown
+
     def run(
         self,
         cmd: list[str] | str,
