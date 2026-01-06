@@ -678,7 +678,15 @@ def run(
         typer.Option(
             "--resume/--no-resume",
             "-r",
-            help="Prioritize in_progress issues before open issues",
+            help="Prioritize in_progress issues AND attempt to resume their prior Claude sessions",
+            rich_help_panel="Scope & Ordering",
+        ),
+    ] = False,
+    strict: Annotated[
+        bool,
+        typer.Option(
+            "--strict/--no-strict",
+            help="Fail issues if no prior session found (requires --resume)",
             rich_help_panel="Scope & Ordering",
         ),
     ] = False,
@@ -783,6 +791,10 @@ def run(
     if max_issues is not None and max_issues < 1:
         log("✗", "Error: --max-issues must be at least 1", Colors.RED)
         raise typer.Exit(2)
+
+    # Validate --strict requires --resume
+    if strict and not resume:
+        raise typer.BadParameter("--strict requires --resume flag")
 
     repo_path = repo_path.resolve()
 
@@ -908,6 +920,7 @@ def run(
         max_review_retries=max_review_retries,
         disable_validations=disable_set,
         prioritize_wip=resume,
+        strict_resume=strict,
         focus=focus,
         order_preference=order_preference,
         cli_args=cli_args,

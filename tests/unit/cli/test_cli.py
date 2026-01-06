@@ -1037,6 +1037,52 @@ def test_run_resume_flags_set_prioritize_wip(
     assert DummyOrchestrator.last_orch_config.prioritize_wip is True
 
 
+def test_strict_without_resume_raises_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --strict without --resume raises BadParameter error."""
+    from typer.testing import CliRunner
+
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", str(tmp_path), "--strict"])
+
+    assert result.exit_code != 0
+    assert "--strict requires --resume" in result.output
+
+
+def test_strict_with_resume_passes_to_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that --strict with --resume passes strict_resume=True to config."""
+    from typer.testing import CliRunner
+
+    cli = _reload_cli(monkeypatch)
+
+    config_dir = tmp_path / "config"
+    monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
+    import src.orchestration.factory
+
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_orchestrator",
+        _make_dummy_create_orchestrator(),
+    )
+    monkeypatch.setattr(cli, "set_verbose", lambda _: None)
+
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["run", str(tmp_path), "--resume", "--strict"])
+
+    assert result.exit_code == 0
+    assert DummyOrchestrator.last_orch_config is not None
+    assert DummyOrchestrator.last_orch_config.strict_resume is True
+
+
 def test_run_review_disabled_via_disable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
