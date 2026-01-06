@@ -512,7 +512,7 @@ def _find_matching_runs(
 
     Search strategy:
     1. Fast path: match by filename prefix (first 8 chars of search_id)
-    2. Fallback: if no matches found, scan all JSON files for run_id field match
+    2. Fallback: always scan non-conforming files for run_id field match
 
     Args:
         search_id: Full UUID or prefix (any length >= 1) to search for.
@@ -520,7 +520,7 @@ def _find_matching_runs(
     Returns:
         Tuple of (matches, corrupt_files) where:
         - matches: List of (path, parsed_data) tuples for matching runs
-        - corrupt_files: List of paths that matched but were corrupt/unreadable
+        - corrupt_files: List of paths that matched by prefix but were corrupt
     """
     cwd = Path.cwd()
     repo_runs_dir = get_repo_runs_dir(cwd)
@@ -533,8 +533,9 @@ def _find_matching_runs(
 
     matches: list[tuple[Path, dict[str, Any]]] = []
     corrupt_files: list[Path] = []
+    checked_paths: set[Path] = set()
 
-    # Fast path: filename-based matching (only works for 8-char prefix)
+    # Fast path: filename-based matching (only works for >= 8-char input)
     if len(search_id) >= 8:
         search_prefix = search_id[:8]
         for path in files:
@@ -542,28 +543,31 @@ def _find_matching_runs(
             if filename_prefix is None or filename_prefix != search_prefix:
                 continue
 
+            checked_paths.add(path)
             data = _parse_run_file(path)
             if data is None:
                 corrupt_files.append(path)
                 continue
 
-            # For prefix search: filename match is sufficient
+            # For prefix search (exactly 8 chars): filename match is sufficient
             # For full UUID: verify run_id field matches exactly
             if is_prefix_search or data.get("run_id") == search_id:
                 matches.append((path, data))
 
-    # Fallback: scan JSON run_id fields if fast path found nothing
-    # This handles non-conforming filenames or short prefixes
-    if not matches and not corrupt_files:
-        for path in files:
-            data = _parse_run_file(path)
-            if data is None:
-                # Only track corrupt if it could be a match
-                continue
+    # Fallback: scan files not covered by fast path for run_id field match
+    # This handles non-conforming filenames or short prefixes (< 8 chars)
+    for path in files:
+        if path in checked_paths:
+            continue
 
-            run_id_field = data.get("run_id", "")
-            if isinstance(run_id_field, str) and run_id_field.startswith(search_id):
-                matches.append((path, data))
+        data = _parse_run_file(path)
+        if data is None:
+            # Don't track corrupt for non-conforming files (can't attribute to search)
+            continue
+
+        run_id_field = data.get("run_id", "")
+        if isinstance(run_id_field, str) and run_id_field.startswith(search_id):
+            matches.append((path, data))
 
     return matches, corrupt_files
 
@@ -661,8 +665,10 @@ def show(
 
     # Handle not found
     if len(matches) == 0:
-        # Check if we had corrupt files that matched the prefix
-        if corrupt_files:
+        # For prefix search with corrupt files: report corrupt (exit 2)
+        # For full UUID with corrupt files: report not-found with note (exit 1)
+        # (corrupt file only matched by 8-char prefix, not confirmed as the UUID)
+        if corrupt_files and is_prefix_search:
             if json_output:
                 error_obj = {
                     "error": "corrupt",
@@ -673,14 +679,20 @@ def show(
                 print(f"Error: Run matching '{run_id}' found but file is corrupt")
             raise typer.Exit(2)
 
+        # Not found (possibly with corrupt prefix-matches for full UUID)
+        corrupt_note = (
+            f" (note: {len(corrupt_files)} corrupt file(s) with matching prefix)"
+            if corrupt_files
+            else ""
+        )
         if json_output:
             error_obj = {
                 "error": "not_found",
-                "message": f"No run found matching '{run_id}'",
+                "message": f"No run found matching '{run_id}'{corrupt_note}",
             }
             print(json.dumps(error_obj, indent=2))
         else:
-            print(f"Error: No run found matching '{run_id}'")
+            print(f"Error: No run found matching '{run_id}'{corrupt_note}")
         raise typer.Exit(1)
 
     # Single match found

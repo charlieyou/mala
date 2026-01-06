@@ -1266,3 +1266,62 @@ class TestFindMatchingRunsFallback:
 
         assert len(matches) == 1
         assert matches[0][1]["run_id"] == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    def test_fallback_runs_even_with_corrupt_prefix_match(self, tmp_path: Path) -> None:
+        """Verify fallback scan finds valid run even when corrupt prefix file exists."""
+        from src.cli.logs import _find_matching_runs
+
+        valid_run = {
+            "run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        # Corrupt file with conforming name
+        (tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json").write_text("not valid json")
+        # Valid run with non-conforming filename
+        (tmp_path / "manual-run.json").write_text(json.dumps(valid_run))
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            matches, corrupt = _find_matching_runs("a1b2c3d4")
+
+        # Should find the valid run even though corrupt file exists
+        assert len(matches) == 1
+        assert matches[0][1]["run_id"] == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        assert len(corrupt) == 1  # Corrupt file still tracked
+
+    def test_full_uuid_with_corrupt_prefix_returns_not_found(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify full UUID search with corrupt prefix match returns not_found (exit 1)."""
+        from typer.testing import CliRunner
+
+        from src.cli.logs import logs_app
+
+        runner = CliRunner()
+
+        # Corrupt file with matching 8-char prefix
+        (tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json").write_text("not valid json")
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            # Search with full UUID (not just 8-char prefix)
+            result = runner.invoke(
+                logs_app, ["show", "a1b2c3d4-xxxx-yyyy-zzzz-000000000000", "--json"]
+            )
+
+        # Should be not_found (exit 1), NOT corrupt (exit 2)
+        assert result.exit_code == 1
+        # Extract JSON from output (stderr warning may be mixed in)
+        output_lines = result.output.strip().split("\n")
+        json_lines = []
+        in_json = False
+        for line in output_lines:
+            if line.startswith("{"):
+                in_json = True
+            if in_json:
+                json_lines.append(line)
+            if line.startswith("}"):
+                break
+        output = json.loads("\n".join(json_lines))
+        assert output["error"] == "not_found"
+        # Should mention corrupt files as a note
+        assert "corrupt" in output["message"].lower()
