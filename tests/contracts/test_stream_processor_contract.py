@@ -10,6 +10,7 @@ import pytest
 
 from src.pipeline.message_stream_processor import (
     IdleTimeoutError,
+    IdleTimeoutStream,
     MessageIterationResult,
     MessageIterationState,
     MessageStreamProcessor,
@@ -156,7 +157,15 @@ class TestFakeStreamProcessorBehavior:
             )
 
 
-async def _empty_stream() -> None:
-    """Create an empty async iterator for testing."""
-    return
-    yield  # Makes this an async generator
+def _empty_stream() -> IdleTimeoutStream:
+    """Create an empty IdleTimeoutStream for testing."""
+    from collections.abc import AsyncIterator
+    from typing import Never
+
+    async def _gen() -> AsyncIterator[Never]:
+        return
+        yield  # Makes this an async generator  # type: ignore[misc]
+
+    return IdleTimeoutStream(
+        stream=_gen(), timeout_seconds=None, pending_tool_ids=set()
+    )
