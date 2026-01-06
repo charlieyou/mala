@@ -610,14 +610,16 @@ class ValidationConfig:
         if "custom_commands" in data:
             raise ConfigError(
                 "'custom_commands' is no longer supported. Move custom commands "
-                "into the 'commands' section using '+command_name' keys for "
-                "additive merge. See plans/2026-01-06-custom-validation-commands-spec.md"
+                "into the 'commands' section as additional keys (e.g., "
+                "'import_lint: \"uvx import-linter\"'). "
+                "See plans/2026-01-06-inline-custom-commands-plan.md"
             )
         if "run_level_custom_commands" in data:
             raise ConfigError(
                 "'run_level_custom_commands' is no longer supported. Move custom "
-                "commands into the 'run_level_commands' section with '+' prefix "
-                "for additive merge. See plans/2026-01-06-custom-validation-commands-spec.md"
+                "commands into the 'run_level_commands' section. Use unprefixed "
+                "keys to replace repo-level customs, or '+' prefix for additive "
+                "merge. See plans/2026-01-06-inline-custom-commands-plan.md"
             )
 
         # Track which fields were explicitly present in the source dict

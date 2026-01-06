@@ -439,11 +439,11 @@ class TestValidationConfig:
         ):
             ValidationConfig.from_dict({"custom_commands": {"my_check": "echo test"}})
 
-    def test_deprecated_custom_commands_error_references_spec(self) -> None:
-        """custom_commands error message references the spec document."""
+    def test_deprecated_custom_commands_error_references_plan(self) -> None:
+        """custom_commands error message references the plan document."""
         with pytest.raises(
             ConfigError,
-            match=r"plans/2026-01-06-custom-validation-commands-spec\.md",
+            match=r"plans/2026-01-06-inline-custom-commands-plan\.md",
         ):
             ValidationConfig.from_dict({"custom_commands": {}})
 
@@ -457,11 +457,11 @@ class TestValidationConfig:
                 {"run_level_custom_commands": {"my_check": "echo test"}}
             )
 
-    def test_deprecated_run_level_custom_commands_error_references_spec(self) -> None:
-        """run_level_custom_commands error message references the spec document."""
+    def test_deprecated_run_level_custom_commands_error_references_plan(self) -> None:
+        """run_level_custom_commands error message references the plan document."""
         with pytest.raises(
             ConfigError,
-            match=r"plans/2026-01-06-custom-validation-commands-spec\.md",
+            match=r"plans/2026-01-06-inline-custom-commands-plan\.md",
         ):
             ValidationConfig.from_dict({"run_level_custom_commands": {}})
 
