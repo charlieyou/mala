@@ -534,14 +534,19 @@ while True:
                 proc.kill()
                 proc.wait()
 
-    def test_abort_with_validation_failed(self, tmp_path: Path) -> None:
-        """When validation fails during interrupt handling, abort exits with code 1.
+    def test_coordinator_interrupt_exits_130(self, tmp_path: Path) -> None:
+        """Coordinator interrupt always exits 130 - orchestrator handles exit code override.
 
-        This tests the real IssueExecutionCoordinator._handle_interrupt path:
-        after tasks are aborted, the coordinator runs validation_callback.
-        If validation fails, exit_code becomes 1 instead of 130.
+        Stage 2 (graceful abort) exit code is determined by the orchestrator's
+        _abort_exit_code snapshot at Stage 2 entry, not by validation during abort.
+        The coordinator's _handle_interrupt simply aborts tasks and returns 130.
+        The orchestrator overrides this with _abort_exit_code when _abort_mode_active.
+
+        This test verifies the coordinator-level behavior. Full Stage 2 exit code
+        precedence (1 if validation had failed before abort, else 130) is tested
+        via the orchestrator integration tests.
         """
-        script = tmp_path / "validation_failed_abort_test.py"
+        script = tmp_path / "coordinator_interrupt_test.py"
         script.write_text(
             """
 import asyncio
@@ -589,8 +594,8 @@ async def main():
         return AbortResult(aborted_count=1, has_unresponsive_tasks=False)
 
     async def validation_callback() -> bool:
-        # Validation fails - this should cause exit_code=1
-        print("VALIDATION_FAILED", flush=True)
+        # Stage 2 should NOT call validation - print for verification
+        print("UNEXPECTED_VALIDATION_CALL", flush=True)
         return False
 
     coord = IssueExecutionCoordinator(
@@ -643,7 +648,7 @@ asyncio.run(main())
             # Wait for task to start
             time.sleep(0.3)
 
-            # Send SIGINT to trigger interrupt handling with validation
+            # Send SIGINT to trigger interrupt handling
             _send_sigint_and_wait(proc, wait_after=0.5)
 
             # Wait for exit
@@ -655,19 +660,19 @@ asyncio.run(main())
                 proc.wait()
                 pytest.fail(f"Process did not exit after SIGINT. Stderr: {stderr}")
 
-            # When validation fails during interrupt, exit code should be 1
-            if proc.returncode != 1:
+            # Coordinator interrupt always exits 130 (orchestrator overrides for Stage 2)
+            if proc.returncode != 130:
                 stderr = _get_stderr(proc)
                 pytest.fail(
-                    f"Expected exit code 1 (validation failed during abort), "
+                    f"Expected exit code 130 (interrupt), "
                     f"got {proc.returncode}. Stderr: {stderr}"
                 )
 
-            # Assert validation_callback actually ran (not just any failure with code 1)
+            # Verify validation was NOT called during interrupt
             remaining_stdout = proc.stdout.read() if proc.stdout else ""
             all_stdout = output + remaining_stdout
-            assert "VALIDATION_FAILED" in all_stdout, (
-                f"validation_callback did not run - VALIDATION_FAILED not in stdout. "
+            assert "UNEXPECTED_VALIDATION_CALL" not in all_stdout, (
+                f"validation_callback should NOT be called during interrupt. "
                 f"Stdout: {all_stdout}"
             )
 

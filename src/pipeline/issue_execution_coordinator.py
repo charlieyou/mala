@@ -171,43 +171,31 @@ class IssueExecutionCoordinator:
     async def _handle_interrupt(
         self,
         abort_callback: AbortCallback,
-        validation_callback: Callable[[], Awaitable[bool]] | None,
         watch_state: WatchState,
         issues_spawned: int,
     ) -> RunResult:
-        """Handle SIGINT by aborting active tasks, running final validation, and returning.
+        """Handle Stage 2 SIGINT by aborting active tasks and returning exit_code=130.
+
+        Stage 2 (graceful abort) does NOT run validation. The exit code is determined
+        by the orchestrator's _abort_exit_code which was snapshotted at Stage 2 entry
+        based on whether validation had already failed. This method always returns 130;
+        the orchestrator overrides with _abort_exit_code when _abort_mode_active.
 
         Note: abort_callback waits up to ABORT_GRACE_SECONDS for tasks to finish.
         Tasks that don't respond to cancellation within the grace period are finalized
-        as "unresponsive" but may still be running. When tasks are unresponsive,
-        validation is skipped to avoid non-deterministic outcomes from concurrent
-        mutations, and exit_code=130 is forced.
+        as "unresponsive" but may still be running.
         """
         abort_result = await abort_callback(is_interrupt=True)
         aborted_count = abort_result.aborted_count
         # Recompute completed_count from completed_ids to avoid polluted state
         watch_state.completed_count = len(self.completed_ids) + aborted_count
-        exit_code = 130
 
-        # Skip validation if any tasks are still running (unresponsive to cancellation)
-        # to avoid non-deterministic outcomes from concurrent repo mutations
         if abort_result.has_unresponsive_tasks:
             logger.warning(
-                "Skipping validation: unresponsive tasks may still be mutating repo"
-            )
-            return RunResult(
-                issues_spawned, exit_code=exit_code, exit_reason="interrupted"
+                "Skipping finalization: unresponsive tasks may still be mutating repo"
             )
 
-        if not isinstance(watch_state.last_validation_at, int):
-            watch_state.last_validation_at = 0
-        if watch_state.completed_count > watch_state.last_validation_at:
-            if validation_callback:
-                validation_passed = await validation_callback()
-                watch_state.last_validation_at = watch_state.completed_count
-                if not validation_passed:
-                    exit_code = 1
-        return RunResult(issues_spawned, exit_code=exit_code, exit_reason="interrupted")
+        return RunResult(issues_spawned, exit_code=130, exit_reason="interrupted")
 
     async def run_loop(
         self,
@@ -286,7 +274,6 @@ class IssueExecutionCoordinator:
                 if interrupt_event and interrupt_event.is_set():
                     return await self._handle_interrupt(
                         abort_callback,
-                        validation_callback,
                         watch_state,
                         issues_spawned,
                     )
@@ -403,7 +390,6 @@ class IssueExecutionCoordinator:
                                 # Interrupted during poll retry wait
                                 return await self._handle_interrupt(
                                     abort_callback,
-                                    validation_callback,
                                     watch_state,
                                     issues_spawned,
                                 )
@@ -505,7 +491,6 @@ class IssueExecutionCoordinator:
                                     # Event was set - SIGINT received during idle
                                     return await self._handle_interrupt(
                                         abort_callback,
-                                        validation_callback,
                                         watch_state,
                                         issues_spawned,
                                     )
@@ -589,7 +574,6 @@ class IssueExecutionCoordinator:
                 if interrupt_event and interrupt_event.is_set():
                     return await self._handle_interrupt(
                         abort_callback,
-                        validation_callback,
                         watch_state,
                         issues_spawned,
                     )

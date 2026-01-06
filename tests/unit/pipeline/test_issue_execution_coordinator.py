@@ -833,10 +833,15 @@ class TestInterruptWithUnresponsiveTasks:
         assert result.exit_reason == "interrupted"
 
     @pytest.mark.asyncio
-    async def test_runs_validation_when_tasks_responsive(
+    async def test_no_validation_when_tasks_responsive(
         self, event_sink: MockEventSink
     ) -> None:
-        """Validation runs normally when all tasks respond to cancellation."""
+        """Stage 2 interrupt does NOT run validation - exit code determined by orchestrator.
+
+        Per spec, Stage 2 (graceful abort) exit code is determined by the orchestrator's
+        _abort_exit_code snapshot at Stage 2 entry, not by validation during abort.
+        The coordinator always returns exit_code=130 for interrupts.
+        """
         beads = MockIssueProvider(ready_issues=[["issue-1"], []])
         coord = IssueExecutionCoordinator(
             beads=beads,  # type: ignore[arg-type]
@@ -869,7 +874,7 @@ class TestInterruptWithUnresponsiveTasks:
         async def validation_callback() -> bool:
             nonlocal validation_called
             validation_called = True
-            return False  # Fail validation
+            return False  # Would fail if called
 
         loop_task = asyncio.create_task(
             coord.run_loop(
@@ -886,8 +891,8 @@ class TestInterruptWithUnresponsiveTasks:
 
         result = await loop_task
 
-        # Validation should run since tasks were responsive
-        assert validation_called is True
-        # Exit code should be 1 from failed validation
-        assert result.exit_code == 1
+        # Validation should NOT run during Stage 2 interrupt
+        assert validation_called is False
+        # Coordinator always returns 130 for interrupt; orchestrator overrides with _abort_exit_code
+        assert result.exit_code == 130
         assert result.exit_reason == "interrupted"

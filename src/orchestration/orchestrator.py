@@ -1111,11 +1111,17 @@ class MalaOrchestrator:
                     self.event_sink.on_locks_released(released)
                 remove_run_marker(run_metadata.run_id)
 
-            # Check if interrupted - use exit_code from loop_result (which may be 1 if
-            # validation failed during interrupt handling, or 130 otherwise)
+            # Check if interrupted - use _abort_exit_code for Stage 2 (snapshotted at
+            # abort entry based on whether validation had already failed), or exit_code
+            # from loop_result for Stage 1 drain completion
             if interrupted or interrupt_event.is_set():
-                self._exit_code = exit_code
-                return await self._finalize_run(run_metadata, exit_code != 1)
+                # Stage 2 abort: use snapshotted exit code from abort entry
+                # Stage 1 drain: use loop_result exit code (validation ran after drain)
+                final_exit_code = (
+                    self._abort_exit_code if self._abort_mode_active else exit_code
+                )
+                self._exit_code = final_exit_code
+                return await self._finalize_run(run_metadata, final_exit_code != 1)
 
             # Run-level validation and finalization happen after lock cleanup
             # but before debug log cleanup (so they're captured in the debug log)
