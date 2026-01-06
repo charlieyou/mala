@@ -3959,3 +3959,81 @@ class TestSessionRestartLoop:
         assert len(final_client.queries) >= 1
         continuation_prompt = final_client.queries[0][0]
         assert "raw checkpoint text without tags" in continuation_prompt
+
+
+class TestResumeSessionId:
+    """Tests for resume_session_id wiring through AgentSessionRunner."""
+
+    @pytest.fixture
+    def tmp_log_path(self, tmp_path: Path) -> Path:
+        """Create a temporary log file."""
+        log_path = tmp_path / "test.log"
+        log_path.write_text('{"type": "test"}')
+        return log_path
+
+    @pytest.mark.asyncio
+    async def test_resume_session_id_wired_to_sdk(
+        self,
+        tmp_path: Path,
+        tmp_log_path: Path,
+    ) -> None:
+        """resume_session_id should be passed to sdk_client_factory.with_resume().
+
+        This test verifies that when AgentSessionInput has a resume_session_id,
+        the runner calls with_resume() on the SDK client factory to configure
+        session resumption.
+
+        NOTE: This test is expected to FAIL until T003 implements the wiring
+        in _initialize_session() to call with_resume().
+        """
+        fake_client = FakeSDKClient(result_message=make_result_message())
+        factory = FakeSDKClientFactory(fake_client)
+
+        def get_log_path(session_id: str) -> Path:
+            return tmp_log_path
+
+        async def on_gate_check(
+            issue_id: str, log_path: Path, retry_state: RetryState
+        ) -> tuple[GateResult, int]:
+            return (
+                GateResult(passed=True, failure_reasons=[], commit_hash="abc123"),
+                1000,
+            )
+
+        callbacks = SessionCallbacks(
+            get_log_path=get_log_path,
+            on_gate_check=on_gate_check,
+        )
+
+        config = AgentSessionConfig(
+            repo_path=tmp_path,
+            timeout_seconds=120,
+            prompts=make_test_prompts(),
+            review_enabled=False,
+            mcp_server_factory=make_noop_mcp_factory(),
+        )
+
+        runner = AgentSessionRunner(
+            config=config,
+            callbacks=callbacks,
+            sdk_client_factory=factory,
+        )
+
+        # Create input with resume_session_id
+        input_data = AgentSessionInput(
+            issue_id="test-resume",
+            prompt="Test prompt",
+            resume_session_id="test-session-123",
+        )
+
+        await runner.run_session(input_data)
+
+        # Verify with_resume was called with the session ID
+        # This assertion will FAIL until T003 wires the call
+        assert len(factory.with_resume_calls) > 0, (
+            "with_resume() was not called - T003 needs to wire resume_session_id "
+            "from AgentSessionInput to sdk_client_factory.with_resume()"
+        )
+        # Check the session ID was passed correctly
+        _, resume_id = factory.with_resume_calls[0]
+        assert resume_id == "test-session-123"

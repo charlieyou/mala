@@ -697,3 +697,18 @@ def _is_process_running(pid: int) -> bool:
         return True
     except (OSError, ProcessLookupError):
         return False
+
+
+def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
+    """Look up the session ID from a prior run on this issue.
+
+    Stub - implementation in T002.
+
+    Args:
+        repo_path: Repository path for finding run metadata.
+        issue_id: The issue ID to look up.
+
+    Returns:
+        Session ID from the most recent run on this issue, or None if not found.
+    """
+    return None

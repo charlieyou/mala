@@ -235,6 +235,7 @@ class AgentSessionInput:
         baseline_commit: Optional baseline commit for diff comparison.
         issue_description: Issue description for scope verification.
         agent_id: Optional pre-generated agent ID for lock management.
+        resume_session_id: Optional session ID to resume from a prior run.
     """
 
     issue_id: str
@@ -242,6 +243,7 @@ class AgentSessionInput:
     baseline_commit: str | None = None
     issue_description: str | None = None
     agent_id: str | None = None
+    resume_session_id: str | None = None
 
 
 @dataclass
