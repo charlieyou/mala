@@ -6,7 +6,7 @@ The validation module (`src/domain/validation/`) provides structured validation 
 
 After an agent completes an issue, the orchestrator runs a quality gate that verifies:
 
-1. **Commit exists**: A git commit with `bd-<issue_id>` in the message, created during the current run (stale commits from previous runs are rejected via baseline timestamp)
+1. **Commit exists**: One or more git commits with `bd-<issue_id>` in the message, created during the current run (stale commits from previous runs are rejected via baseline timestamp)
 2. **Validation evidence**: The agent ran ALL required checks defined in `mala.yaml` (parsed from JSONL logs). For Python projects using `preset: python-uv`:
    - `pytest` - tests
    - `ruff check` - linting
@@ -14,7 +14,7 @@ After an agent completes an issue, the orchestrator runs a quality gate that ver
    - `ty check` - type checking
 3. **Commands succeeded**: All validation commands must exit with zero status (non-zero exits fail the gate)
 
-All validation commands must run AND pass for the gate to pass. Partial validation (e.g., only tests) is rejected. The required commands are spec-driven via `ValidationSpec` built from `mala.yaml`.
+All validation commands must run AND pass for the gate to pass. Partial validation (e.g., only tests) is rejected. The required commands are spec-driven via `ValidationSpec` built from `mala.yaml`. Multiple commits per issue are supported; reviews use the full commit list for the issue when available.
 
 ### Same-Session Re-entry
 

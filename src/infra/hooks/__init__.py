@@ -41,6 +41,9 @@ from .lint_cache import (
 from .deadlock import (
     make_lock_event_hook,
 )
+from .commit_guard import (
+    make_commit_guard_hook,
+)
 from .locking import (
     StopHook,
     get_lock_holder,
@@ -68,6 +71,7 @@ __all__ = [
     "block_dangerous_commands",
     "block_mala_disallowed_tools",
     "get_lock_holder",
+    "make_commit_guard_hook",
     "make_file_read_cache_hook",
     "make_lint_cache_hook",
     "make_lock_enforcement_hook",

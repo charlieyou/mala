@@ -191,6 +191,8 @@ class TestBlockDangerousCommands:
             "git checkout -- .",
             "git rebase main",
             "git rebase -i HEAD~3",
+            "git reset --soft HEAD~1",
+            "git commit --amend --no-edit",
             "git branch -D feature",
             "git push --force origin feature",
             "git push -f origin feature",
@@ -215,7 +217,7 @@ class TestBlockDangerousCommands:
             "git diff",
             "git log",
             "git add .",
-            "git commit -m 'test'",
+            "git add docs/file.md && git commit -m 'test'",
             "git push origin main",
             "git pull",
             "git fetch",
@@ -235,3 +237,17 @@ class TestBlockDangerousCommands:
             make_hook_input("Bash", cmd), None, _make_context()
         )
         assert result == {}, f"Should allow: {cmd}"
+
+    @pytest.mark.asyncio
+    async def test_blocks_git_commit_without_add(
+        self, make_hook_input: HookInputFactory
+    ) -> None:
+        """git commit without atomic add+commit should be blocked."""
+        from src.infra.hooks import block_dangerous_commands
+
+        result = await block_dangerous_commands(
+            make_hook_input("Bash", "git commit -m 'test'"),
+            None,
+            _make_context(),
+        )
+        assert result.get("decision") == "block"

@@ -203,8 +203,8 @@ class TestAgentRuntimeBuilder:
 
         # Deadlock monitor adds one post-tool hook for MCP locking tools
         # (WAITING events are now emitted by MCP tool handlers directly)
-        # Pre-tool hooks: 5 base (no lock_wait hook needed)
-        assert len(runtime.pre_tool_hooks) == 5
+        # Pre-tool hooks: 6 base (no lock_wait hook needed)
+        assert len(runtime.pre_tool_hooks) == 6
         assert len(runtime.post_tool_hooks) == 1
 
     @pytest.mark.unit

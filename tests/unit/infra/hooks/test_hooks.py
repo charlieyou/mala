@@ -24,6 +24,7 @@ from src.infra.hooks import (
     FileReadCache,
     CachedFileInfo,
     make_file_read_cache_hook,
+    make_commit_guard_hook,
     make_stop_hook,
 )
 from src.infra.tools.locking import try_lock, get_lock_holder
@@ -216,7 +217,7 @@ class TestBlockDangerousCommands:
             "git log",
             "git diff",
             "git add .",
-            "git commit -m 'test'",
+            "git add docs/file.md && git commit -m 'test'",
             "git pull",
             "git fetch",
             "git branch feature",
@@ -275,6 +276,77 @@ class TestBlockDangerousCommands:
             result = await block_dangerous_commands(hook_input, None, context)
             assert result.get("decision") == "block", f"Expected {cmd!r} to be blocked"
             assert "git rebase" in result["reason"]
+
+
+class TestCommitGuardHook:
+    """Tests for the commit guard hook enforcing add+commit and locks."""
+
+    @pytest.mark.asyncio
+    async def test_blocks_commit_without_add(self, tmp_path: Path) -> None:
+        hook = make_commit_guard_hook("agent-1", str(tmp_path))
+        hook_input = make_hook_input("Bash", {"command": "git commit -m 'test'"})
+        context = make_context()
+
+        result = await hook(hook_input, None, context)
+        assert result.get("decision") == "block"
+
+    @pytest.mark.asyncio
+    async def test_blocks_commit_with_unlocked_file(
+        self, tmp_path: Path, lock_dir: Path
+    ) -> None:
+        (tmp_path / "file.py").write_text("print('hi')\n")
+        hook = make_commit_guard_hook("agent-1", str(tmp_path))
+        hook_input = make_hook_input(
+            "Bash",
+            {"command": "git add file.py && git commit -m 'test'"},
+        )
+        context = make_context()
+
+        result = await hook(hook_input, None, context)
+        assert result.get("decision") == "block"
+        assert "Missing locks" in result.get("reason", "")
+
+    @pytest.mark.asyncio
+    async def test_allows_commit_with_locked_file(
+        self, tmp_path: Path, lock_dir: Path
+    ) -> None:
+        file_path = tmp_path / "file.py"
+        file_path.write_text("print('hi')\n")
+        assert try_lock(str(file_path), "agent-1", repo_namespace=str(tmp_path))
+
+        hook = make_commit_guard_hook("agent-1", str(tmp_path))
+        hook_input = make_hook_input(
+            "Bash",
+            {"command": "git add file.py && git commit -m 'test'"},
+        )
+        context = make_context("agent-1")
+
+        result = await hook(hook_input, None, context)
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_blocks_git_add_dot(self, tmp_path: Path) -> None:
+        hook = make_commit_guard_hook("agent-1", str(tmp_path))
+        hook_input = make_hook_input(
+            "Bash",
+            {"command": "git add . && git commit -m 'test'"},
+        )
+        context = make_context()
+
+        result = await hook(hook_input, None, context)
+        assert result.get("decision") == "block"
+
+    @pytest.mark.asyncio
+    async def test_blocks_git_add_all_flag(self, tmp_path: Path) -> None:
+        hook = make_commit_guard_hook("agent-1", str(tmp_path))
+        hook_input = make_hook_input(
+            "Bash",
+            {"command": "git add -A && git commit -m 'test'"},
+        )
+        context = make_context()
+
+        result = await hook(hook_input, None, context)
+        assert result.get("decision") == "block"
 
     @pytest.mark.asyncio
     async def test_blocks_force_checkout(self) -> None:

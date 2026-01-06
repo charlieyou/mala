@@ -12,7 +12,7 @@ The quality gate check failed with the following issues:
    - `{lint_command}`
    - `{format_command}`
    - `{typecheck_command}`
-3. Commit your changes with message: `bd-{issue_id}: <description>`
+3. Commit your changes with message: `bd-{issue_id}: <description>` (multiple commits allowed; use the prefix on each)
 
 **CRITICAL:** Do NOT scope checks to only your modified files. The validation runs on the entire codebase. Fix ALL errors you see, even if you didn't introduce them. Do NOT use `git blame` to decide whether to fix an error.
 
