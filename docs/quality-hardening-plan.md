@@ -233,7 +233,7 @@ Existing modules updated:
 Defaults:
 - post-commit validation: ON
 - run-level validation: ON
-- slow tests: ON
+- integration tests: ON
 - coverage: ON (min 85%)
 - E2E fixture repo: ON (run-level only)
 - codex review: ON
@@ -322,7 +322,7 @@ If enabled and a change is classified as docs-only:
 - Run-level validation still runs the full suite unless explicitly disabled.
 
 ### EvidenceGate opt-out mapping
-- `--disable integration-tests` => EvidenceGate expects non-slow pytest only.
+- `--disable integration-tests` => EvidenceGate excludes `@pytest.mark.integration` tests.
 - `--disable coverage` => coverage evidence not required.
 - `--disable e2e` => E2E evidence not required.
 
