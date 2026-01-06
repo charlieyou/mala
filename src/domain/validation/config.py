@@ -198,7 +198,8 @@ class CustomCommandConfig:
             known_keys = {"command", "timeout", "allow_fail"}
             unknown_keys = set(value.keys()) - known_keys
             if unknown_keys:
-                first_unknown = sorted(unknown_keys)[0]
+                # Use str() to handle mixed-type keys (e.g., int keys in YAML)
+                first_unknown = sorted(str(k) for k in unknown_keys)[0]
                 raise ConfigError(
                     f"Unknown key '{first_unknown}' in custom command '{name}'. "
                     f"Allowed keys: {', '.join(sorted(known_keys))}"
