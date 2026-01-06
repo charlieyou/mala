@@ -576,9 +576,11 @@ class IssueExecutionCoordinator:
                     )
 
                 # Check if validation threshold crossed
+                # Only enter this block if validation is actually configured
                 if (
                     watch_config
                     and watch_config.enabled
+                    and validation_callback
                     and watch_state.completed_count
                     >= watch_state.next_validation_threshold
                 ):
@@ -610,7 +612,8 @@ class IssueExecutionCoordinator:
                     # (threshold crossing requires validation to be configured)
                     validate_every = (
                         validation_config.validate_every
-                        if validation_config and validation_config.validate_every
+                        if validation_config
+                        and validation_config.validate_every is not None
                         else 10
                     )
                     while (
