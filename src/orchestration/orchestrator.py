@@ -939,6 +939,7 @@ class MalaOrchestrator:
         # Install SIGINT handler using call_soon_threadsafe for thread-safety
         def handle_sigint(sig: int, frame: object) -> None:
             loop.call_soon_threadsafe(interrupt_event.set)
+            CommandRunner.forward_sigint()
 
         original_handler = signal.signal(signal.SIGINT, handle_sigint)
 

@@ -10,7 +10,9 @@ Tests cover:
 from __future__ import annotations
 
 import asyncio
+import signal
 import sys
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -86,6 +88,24 @@ class TestCommandRunner:
         assert result.ok is False
         assert result.timed_out is True
         assert result.returncode == 124
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    def test_sigint_forwarding_interrupts_process_group(self, tmp_path: Path) -> None:
+        runner = CommandRunner(cwd=tmp_path)
+
+        def send_sigint() -> None:
+            time.sleep(0.1)
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                CommandRunner.forward_sigint()
+                time.sleep(0.05)
+
+        thread = threading.Thread(target=send_sigint, daemon=True)
+        thread.start()
+        result = runner.run(["sleep", "2"])
+        thread.join()
+
+        assert result.returncode == -signal.SIGINT
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
     def test_timeout_kills_process_group(self, tmp_path: Path) -> None:
@@ -219,6 +239,26 @@ class TestAsyncCommandRunner:
         result = await runner.run_async(["sleep", "10"])
         assert result.ok is False
         assert result.timed_out is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")
+    async def test_async_sigint_forwarding_interrupts_process_group(
+        self, tmp_path: Path
+    ) -> None:
+        runner = CommandRunner(cwd=tmp_path)
+
+        async def send_sigint() -> None:
+            await asyncio.sleep(0.1)
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                CommandRunner.forward_sigint()
+                await asyncio.sleep(0.05)
+
+        sigint_task = asyncio.create_task(send_sigint())
+        result = await runner.run_async(["sleep", "2"])
+        await sigint_task
+
+        assert result.returncode == -signal.SIGINT
 
     @pytest.mark.asyncio
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only test")

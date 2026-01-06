@@ -38,6 +38,27 @@ TIMEOUT_EXIT_CODE = 124
 # Default grace period before SIGKILL after SIGTERM (seconds)
 DEFAULT_KILL_GRACE_SECONDS = 2.0
 
+# Track process groups to receive forwarded SIGINTs during long-running commands.
+_SIGINT_FORWARD_PGIDS: set[int] = set()
+
+
+def _register_sigint_pgid(pgid: int) -> None:
+    _SIGINT_FORWARD_PGIDS.add(pgid)
+
+
+def _unregister_sigint_pgid(pgid: int) -> None:
+    _SIGINT_FORWARD_PGIDS.discard(pgid)
+
+
+def _forward_sigint_to_process_groups() -> None:
+    if sys.platform == "win32":
+        return
+    for pgid in list(_SIGINT_FORWARD_PGIDS):
+        try:
+            os.killpg(pgid, signal.SIGINT)
+        except (ProcessLookupError, PermissionError):
+            pass
+
 
 def _tail(text: str, max_chars: int = 800, max_lines: int = 20) -> str:
     """Truncate text to last N lines and M characters.
@@ -147,6 +168,11 @@ class CommandRunner(CommandRunnerPort):
         self.timeout_seconds = timeout_seconds
         self.kill_grace_seconds = kill_grace_seconds
 
+    @staticmethod
+    def forward_sigint() -> None:
+        """Forward SIGINT to active process groups started by CommandRunner."""
+        _forward_sigint_to_process_groups()
+
     def run(
         self,
         cmd: list[str] | str,
@@ -203,32 +229,39 @@ class CommandRunner(CommandRunnerPort):
             start_new_session=effective_use_process_group,
             shell=shell,
         )
+        pgid = proc.pid if effective_use_process_group else None
+        if pgid is not None:
+            _register_sigint_pgid(pgid)
 
         try:
-            stdout, stderr = proc.communicate(timeout=effective_timeout)
-            duration = time.monotonic() - start
-            return CommandResult(
-                command=cmd,
-                returncode=proc.returncode,
-                stdout=stdout or "",
-                stderr=stderr or "",
-                duration_seconds=duration,
-                timed_out=False,
-            )
-        except subprocess.TimeoutExpired:
-            # Terminate the process group properly
-            duration = time.monotonic() - start
-            stdout, stderr = self._terminate_process_sync(
-                proc, effective_use_process_group
-            )
-            return CommandResult(
-                command=cmd,
-                returncode=TIMEOUT_EXIT_CODE,
-                stdout=stdout,
-                stderr=stderr,
-                duration_seconds=duration,
-                timed_out=True,
-            )
+            try:
+                stdout, stderr = proc.communicate(timeout=effective_timeout)
+                duration = time.monotonic() - start
+                return CommandResult(
+                    command=cmd,
+                    returncode=proc.returncode,
+                    stdout=stdout or "",
+                    stderr=stderr or "",
+                    duration_seconds=duration,
+                    timed_out=False,
+                )
+            except subprocess.TimeoutExpired:
+                # Terminate the process group properly
+                duration = time.monotonic() - start
+                stdout, stderr = self._terminate_process_sync(
+                    proc, effective_use_process_group
+                )
+                return CommandResult(
+                    command=cmd,
+                    returncode=TIMEOUT_EXIT_CODE,
+                    stdout=stdout,
+                    stderr=stderr,
+                    duration_seconds=duration,
+                    timed_out=True,
+                )
+        finally:
+            if pgid is not None:
+                _unregister_sigint_pgid(pgid)
 
     def _terminate_process_sync(
         self,
@@ -362,31 +395,39 @@ class CommandRunner(CommandRunnerPort):
                     start_new_session=effective_use_process_group,
                 )
 
+            pgid = proc.pid if effective_use_process_group else None
+            if pgid is not None:
+                _register_sigint_pgid(pgid)
+
             try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=effective_timeout,
-                )
-                duration = time.monotonic() - start
-                return CommandResult(
-                    command=cmd,
-                    returncode=proc.returncode or 0,
-                    stdout=stdout_bytes.decode() if stdout_bytes else "",
-                    stderr=stderr_bytes.decode() if stderr_bytes else "",
-                    duration_seconds=duration,
-                    timed_out=False,
-                )
-            except TimeoutError:
-                duration = time.monotonic() - start
-                await self._terminate_process(proc, effective_use_process_group)
-                return CommandResult(
-                    command=cmd,
-                    returncode=TIMEOUT_EXIT_CODE,
-                    stdout="",
-                    stderr="",
-                    duration_seconds=duration,
-                    timed_out=True,
-                )
+                try:
+                    stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                        proc.communicate(),
+                        timeout=effective_timeout,
+                    )
+                    duration = time.monotonic() - start
+                    return CommandResult(
+                        command=cmd,
+                        returncode=proc.returncode or 0,
+                        stdout=stdout_bytes.decode() if stdout_bytes else "",
+                        stderr=stderr_bytes.decode() if stderr_bytes else "",
+                        duration_seconds=duration,
+                        timed_out=False,
+                    )
+                except TimeoutError:
+                    duration = time.monotonic() - start
+                    await self._terminate_process(proc, effective_use_process_group)
+                    return CommandResult(
+                        command=cmd,
+                        returncode=TIMEOUT_EXIT_CODE,
+                        stdout="",
+                        stderr="",
+                        duration_seconds=duration,
+                        timed_out=True,
+                    )
+            finally:
+                if pgid is not None:
+                    _unregister_sigint_pgid(pgid)
         except Exception as e:
             duration = time.monotonic() - start
             return CommandResult(
