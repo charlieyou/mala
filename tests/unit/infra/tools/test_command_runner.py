@@ -43,22 +43,38 @@ class TestKillActiveProcessGroups:
 
     @unix_only
     def test_preserves_concurrent_additions(self) -> None:
-        """Pgids added during kill are preserved (not cleared)."""
-        command_runner._SIGINT_FORWARD_PGIDS.update({1001, 1002})
+        """Pgids added between copy() and difference_update() are preserved.
 
-        def killpg_adds_concurrent(pgid: int, sig: int) -> None:
-            # Simulate a concurrent registration during kill iteration
-            if pgid == 1001:
-                command_runner._SIGINT_FORWARD_PGIDS.add(9999)
+        This test would fail if the implementation used clear() instead of
+        difference_update(), catching regressions to the race-prone pattern.
+        """
 
-        with patch("os.killpg", side_effect=killpg_adds_concurrent):
-            CommandRunner.kill_active_process_groups()
+        class SetThatAddsDuringCopy(set[int]):
+            """Set subclass that simulates concurrent add during copy()."""
 
-        # 9999 was added during kill and must be preserved
-        assert 9999 in command_runner._SIGINT_FORWARD_PGIDS
-        # Original pgids should be removed
-        assert 1001 not in command_runner._SIGINT_FORWARD_PGIDS
-        assert 1002 not in command_runner._SIGINT_FORWARD_PGIDS
+            def copy(self) -> set[int]:
+                snapshot = set(self)  # Take snapshot first
+                self.add(9999)  # Simulate concurrent registration
+                return snapshot
+
+        # Replace the global set with our instrumented version
+        original_set = command_runner._SIGINT_FORWARD_PGIDS
+        instrumented_set: set[int] = SetThatAddsDuringCopy({1001, 1002})
+        command_runner._SIGINT_FORWARD_PGIDS = instrumented_set
+
+        try:
+            with patch("os.killpg"):
+                CommandRunner.kill_active_process_groups()
+
+            # 9999 was added after copy() but before difference_update()
+            # With difference_update(): 9999 is preserved (only 1001, 1002 removed)
+            # With clear(): 9999 would be cleared (test would fail)
+            assert 9999 in command_runner._SIGINT_FORWARD_PGIDS
+            # Original pgids should be removed
+            assert 1001 not in command_runner._SIGINT_FORWARD_PGIDS
+            assert 1002 not in command_runner._SIGINT_FORWARD_PGIDS
+        finally:
+            command_runner._SIGINT_FORWARD_PGIDS = original_set
 
     @unix_only
     def test_handles_empty_pgid_set(self) -> None:
