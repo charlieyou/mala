@@ -36,30 +36,32 @@ def _build_custom_commands_section(
 
     for name, command, timeout, allow_fail in custom_commands:
         # Build marker-wrapped command pattern
-        # Uses __status to capture exit code without polluting environment
+        # Uses subshell to isolate exit and prevent terminating parent shell
         # Wrap command in bash -c to handle shell metacharacters (;, &&, ||, pipes, env vars)
         # Escape single quotes in command by replacing ' with '\''
+        # Note: command names are already validated by CUSTOM_COMMAND_NAME_PATTERN
+        # to only contain [a-zA-Z_][a-zA-Z0-9_]* so no escaping needed for names
         escaped_command = command.replace("'", "'\\''")
         if allow_fail:
-            # Advisory: always exit 0, note failure but don't block
+            # Advisory: always exit 0 from subshell, note failure but don't block
             wrapper = (
-                f"echo '[custom:{name}:start]'; "
+                f"(echo '[custom:{name}:start]'; "
                 f"__status=0; timeout {timeout} bash -c '{escaped_command}' || __status=$?; "
                 f"if [ $__status -eq 0 ]; then echo '[custom:{name}:pass]'; "
                 f"elif [ $__status -eq 124 ]; then echo '[custom:{name}:timeout]'; "
                 f'else echo "[custom:{name}:fail exit=$__status]"; fi; '
-                f"exit 0  # advisory (allow_fail=true)"
+                f"exit 0)  # advisory (allow_fail=true)"
             )
             lines.append(f"# {name} (advisory - failures don't block)")
         else:
-            # Strict: exit with command's status
+            # Strict: exit from subshell with command's status
             wrapper = (
-                f"echo '[custom:{name}:start]'; "
+                f"(echo '[custom:{name}:start]'; "
                 f"__status=0; timeout {timeout} bash -c '{escaped_command}' || __status=$?; "
                 f"if [ $__status -eq 0 ]; then echo '[custom:{name}:pass]'; "
                 f"elif [ $__status -eq 124 ]; then echo '[custom:{name}:timeout]'; "
                 f'else echo "[custom:{name}:fail exit=$__status]"; fi; '
-                f"exit $__status"
+                f"exit $__status)"
             )
             lines.append(f"# {name}")
 
