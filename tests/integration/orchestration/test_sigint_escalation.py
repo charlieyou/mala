@@ -937,7 +937,7 @@ async def long_running_agent(issue_id: str):
     except asyncio.CancelledError:
         pass
     # Return a minimal IssueResult
-    from src.core.models import IssueResult
+    from src.pipeline.issue_result import IssueResult
     return IssueResult(issue_id=issue_id, agent_id="mock", success=False, summary="Cancelled")
 
 
@@ -1160,7 +1160,7 @@ async def long_running_agent(issue_id: str):
     except asyncio.CancelledError:
         pass
     # Return a minimal IssueResult
-    from src.core.models import IssueResult
+    from src.pipeline.issue_result import IssueResult
     return IssueResult(issue_id=issue_id, agent_id="mock", success=False, summary="Cancelled")
 
 
