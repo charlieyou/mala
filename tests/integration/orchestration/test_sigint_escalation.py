@@ -659,10 +659,25 @@ asyncio.run(main())
             # Wait for exit and drain stdout/stderr safely
             try:
                 remaining_stdout, stderr = proc.communicate(timeout=5.0)
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as e:
+                # Capture partial output from first timeout (str since text=True)
+                partial_stdout = str(e.stdout) if e.stdout else ""
+                partial_stderr = str(e.stderr) if e.stderr else ""
                 proc.kill()
-                remaining_stdout, stderr = proc.communicate(timeout=5.0)
-                pytest.fail(f"Process did not exit after SIGINT. Stderr: {stderr}")
+                try:
+                    kill_stdout, kill_stderr = proc.communicate(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    pytest.fail(
+                        f"Process did not exit after SIGINT and kill(). "
+                        f"Partial stdout: {partial_stdout}\n"
+                        f"Partial stderr: {partial_stderr}"
+                    )
+                remaining_stdout = partial_stdout + kill_stdout
+                stderr = partial_stderr + kill_stderr
+                pytest.fail(
+                    f"Process did not exit after SIGINT. "
+                    f"Stdout: {output + remaining_stdout}\nStderr: {stderr}"
+                )
 
             all_stdout = output + remaining_stdout
 
@@ -834,11 +849,24 @@ if __name__ == "__main__":
             # Wait for exit and drain stdout/stderr safely
             try:
                 remaining_stdout, stderr = proc.communicate(timeout=10.0)
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as e:
+                # Capture partial output from first timeout (str since text=True)
+                partial_stdout = str(e.stdout) if e.stdout else ""
+                partial_stderr = str(e.stderr) if e.stderr else ""
                 proc.kill()
-                remaining_stdout, stderr = proc.communicate(timeout=5.0)
+                try:
+                    kill_stdout, kill_stderr = proc.communicate(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    pytest.fail(
+                        f"Process did not exit after single SIGINT and kill(). "
+                        f"Partial stdout: {output + partial_stdout}\n"
+                        f"Partial stderr: {partial_stderr}"
+                    )
+                remaining_stdout = partial_stdout + kill_stdout
+                stderr = partial_stderr + kill_stderr
                 pytest.fail(
-                    f"Process did not exit after single SIGINT. Stderr: {stderr}"
+                    f"Process did not exit after single SIGINT. "
+                    f"Stdout: {output + remaining_stdout}\nStderr: {stderr}"
                 )
 
             all_stdout = output + remaining_stdout
@@ -998,11 +1026,24 @@ if __name__ == "__main__":
             # Wait for exit and drain stdout/stderr safely
             try:
                 remaining_stdout, stderr = proc.communicate(timeout=10.0)
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as e:
+                # Capture partial output from first timeout (str since text=True)
+                partial_stdout = str(e.stdout) if e.stdout else ""
+                partial_stderr = str(e.stderr) if e.stderr else ""
                 proc.kill()
-                remaining_stdout, stderr = proc.communicate(timeout=5.0)
+                try:
+                    kill_stdout, kill_stderr = proc.communicate(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    pytest.fail(
+                        f"Process did not exit after double SIGINT and kill(). "
+                        f"Partial stdout: {output + partial_stdout}\n"
+                        f"Partial stderr: {partial_stderr}"
+                    )
+                remaining_stdout = partial_stdout + kill_stdout
+                stderr = partial_stderr + kill_stderr
                 pytest.fail(
-                    f"Process did not exit after double SIGINT. Stderr: {stderr}"
+                    f"Process did not exit after double SIGINT. "
+                    f"Stdout: {output + remaining_stdout}\nStderr: {stderr}"
                 )
 
             all_stdout = output + remaining_stdout
@@ -1185,11 +1226,24 @@ if __name__ == "__main__":
             # Wait for exit and drain stdout/stderr safely
             try:
                 remaining_stdout, stderr = proc.communicate(timeout=10.0)
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as e:
+                # Capture partial output from first timeout (str since text=True)
+                partial_stdout = str(e.stdout) if e.stdout else ""
+                partial_stderr = str(e.stderr) if e.stderr else ""
                 proc.kill()
-                remaining_stdout, stderr = proc.communicate(timeout=5.0)
+                try:
+                    kill_stdout, kill_stderr = proc.communicate(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    pytest.fail(
+                        f"Process did not exit after triple SIGINT and kill(). "
+                        f"Partial stdout: {output + partial_stdout}\n"
+                        f"Partial stderr: {partial_stderr}"
+                    )
+                remaining_stdout = partial_stdout + kill_stdout
+                stderr = partial_stderr + kill_stderr
                 pytest.fail(
-                    f"Process did not exit after triple SIGINT. Stderr: {stderr}"
+                    f"Process did not exit after triple SIGINT. "
+                    f"Stdout: {output + remaining_stdout}\nStderr: {stderr}"
                 )
 
             all_stdout = output + remaining_stdout
