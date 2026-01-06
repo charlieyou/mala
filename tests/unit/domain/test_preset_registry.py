@@ -41,13 +41,13 @@ class TestPresetRegistryProhibitions:
     def test_preset_with_custom_commands_raises_config_error(
         self, registry: PresetRegistry, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Presets cannot define custom_commands (per spec R1)."""
+        """Presets cannot define custom_commands (rejected by ValidationConfig)."""
 
         # Mock _load_preset_yaml to return a preset with custom_commands
         def mock_load_preset_yaml(self: PresetRegistry, name: str) -> dict:
             return {
                 "commands": {"test": "echo test"},
-                "custom_commands": {},  # Even empty dict is forbidden
+                "custom_commands": {},  # Deprecated field - rejected by from_dict
             }
 
         monkeypatch.setattr(PresetRegistry, "_load_preset_yaml", mock_load_preset_yaml)
@@ -55,7 +55,8 @@ class TestPresetRegistryProhibitions:
         with pytest.raises(ConfigError) as exc_info:
             registry.get("python-uv")
 
-        assert "presets cannot define custom_commands" in str(exc_info.value)
+        # Error comes from ValidationConfig.from_dict migration hint
+        assert "'custom_commands' is no longer supported" in str(exc_info.value)
 
     @pytest.mark.unit
     def test_preset_with_unknown_command_keys_raises_config_error(
@@ -137,3 +138,135 @@ class TestPresetRegistryProhibitions:
         # Should not raise
         config = registry.get("python-uv")
         assert config.commands.test is None
+
+    @pytest.mark.unit
+    def test_preset_commands_non_dict_raises_config_error(
+        self, registry: PresetRegistry, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Preset commands section must be a dict."""
+
+        def mock_load_preset_yaml(self: PresetRegistry, name: str) -> dict:
+            return {"commands": ["test", "lint"]}  # List instead of dict
+
+        monkeypatch.setattr(PresetRegistry, "_load_preset_yaml", mock_load_preset_yaml)
+
+        with pytest.raises(ConfigError) as exc_info:
+            registry.get("python-uv")
+
+        error_msg = str(exc_info.value)
+        assert "Preset commands must be an object" in error_msg
+        assert "list" in error_msg
+
+    @pytest.mark.unit
+    def test_preset_commands_string_raises_config_error(
+        self, registry: PresetRegistry, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Preset commands section must be a dict, not string."""
+
+        def mock_load_preset_yaml(self: PresetRegistry, name: str) -> dict:
+            return {"commands": "echo test"}  # String instead of dict
+
+        monkeypatch.setattr(PresetRegistry, "_load_preset_yaml", mock_load_preset_yaml)
+
+        with pytest.raises(ConfigError) as exc_info:
+            registry.get("python-uv")
+
+        error_msg = str(exc_info.value)
+        assert "Preset commands must be an object" in error_msg
+        assert "str" in error_msg
+
+    @pytest.mark.unit
+    def test_preset_commands_non_string_keys_raises_config_error(
+        self, registry: PresetRegistry, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Preset commands keys must be strings."""
+
+        def mock_load_preset_yaml(self: PresetRegistry, name: str) -> dict:
+            return {"commands": {1: "echo one", "test": "echo test"}}
+
+        monkeypatch.setattr(PresetRegistry, "_load_preset_yaml", mock_load_preset_yaml)
+
+        with pytest.raises(ConfigError) as exc_info:
+            registry.get("python-uv")
+
+        error_msg = str(exc_info.value)
+        assert "Preset commands keys must be strings" in error_msg
+        assert "int" in error_msg
+
+    @pytest.mark.unit
+    def test_preset_run_level_commands_unknown_keys_raises_config_error(
+        self, registry: PresetRegistry, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Presets cannot define custom commands in run_level_commands."""
+
+        def mock_load_preset_yaml(self: PresetRegistry, name: str) -> dict:
+            return {
+                "commands": {"test": "echo test"},
+                "run_level_commands": {
+                    "lint": "echo lint",
+                    "my_custom": "echo custom",  # Unknown key
+                },
+            }
+
+        monkeypatch.setattr(PresetRegistry, "_load_preset_yaml", mock_load_preset_yaml)
+
+        with pytest.raises(ConfigError) as exc_info:
+            registry.get("python-uv")
+
+        error_msg = str(exc_info.value)
+        assert "Preset run_level_commands contain unknown keys:" in error_msg
+        assert "my_custom" in error_msg
+
+    @pytest.mark.unit
+    def test_preset_run_level_commands_non_dict_raises_config_error(
+        self, registry: PresetRegistry, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Preset run_level_commands section must be a dict."""
+
+        def mock_load_preset_yaml(self: PresetRegistry, name: str) -> dict:
+            return {"run_level_commands": "echo test"}
+
+        monkeypatch.setattr(PresetRegistry, "_load_preset_yaml", mock_load_preset_yaml)
+
+        with pytest.raises(ConfigError) as exc_info:
+            registry.get("python-uv")
+
+        error_msg = str(exc_info.value)
+        assert "Preset run_level_commands must be an object" in error_msg
+        assert "str" in error_msg
+
+    @pytest.mark.unit
+    def test_preset_run_level_commands_non_string_keys_raises_config_error(
+        self, registry: PresetRegistry, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Preset run_level_commands keys must be strings."""
+
+        def mock_load_preset_yaml(self: PresetRegistry, name: str) -> dict:
+            return {"run_level_commands": {42: "echo test"}}
+
+        monkeypatch.setattr(PresetRegistry, "_load_preset_yaml", mock_load_preset_yaml)
+
+        with pytest.raises(ConfigError) as exc_info:
+            registry.get("python-uv")
+
+        error_msg = str(exc_info.value)
+        assert "Preset run_level_commands keys must be strings" in error_msg
+        assert "int" in error_msg
+
+    @pytest.mark.unit
+    def test_preset_with_valid_run_level_commands_loads_successfully(
+        self, registry: PresetRegistry, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Presets with valid run_level_commands load without error."""
+
+        def mock_load_preset_yaml(self: PresetRegistry, name: str) -> dict:
+            return {
+                "commands": {"test": "echo test"},
+                "run_level_commands": {"lint": "echo lint"},
+            }
+
+        monkeypatch.setattr(PresetRegistry, "_load_preset_yaml", mock_load_preset_yaml)
+
+        # Should not raise
+        config = registry.get("python-uv")
+        assert config.run_level_commands.lint is not None
