@@ -55,7 +55,7 @@ claude login
 
 ### Cerberus Review-Gate (Optional)
 
-[Cerberus](https://github.com/charlieyou/cerberus) provides automated code review. Disable with `--disable review` (or legacy `--disable-validations=review`).
+[Cerberus](https://github.com/charlieyou/cerberus) provides automated code review. Disable with `--disable review`.
 
 ```bash
 claude /plugin marketplace add charlieyou/cerberus

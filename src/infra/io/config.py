@@ -426,7 +426,7 @@ class CLIOverrides:
         cerberus_env: Raw string of extra env vars (JSON or KEY=VALUE,KEY=VALUE).
         review_timeout: Override for review timeout in seconds.
         max_epic_verification_retries: Override for max epic verification retries.
-        disable_review: Whether 'review' is in --disable-validations.
+        disable_review: Whether 'review' is in --disable.
     """
 
     cerberus_spawn_args: str | None = None

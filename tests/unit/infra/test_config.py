@@ -497,7 +497,7 @@ class TestBuildResolvedConfigReviewEnabled:
     """Tests for review_enabled derivation."""
 
     def test_review_disabled_by_cli_flag(self) -> None:
-        """--disable-validations review disables review."""
+        """--disable review disables review."""
         base = MalaConfig()  # review_enabled=True by default
         overrides = CLIOverrides(disable_review=True)
         resolved = build_resolved_config(base, overrides)

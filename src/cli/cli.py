@@ -191,7 +191,7 @@ def _print_task_line(
     )
 
 
-# Valid values for --disable-validations flag
+# Valid values for --disable flag
 # Each value controls a specific validation phase:
 #   post-validate: Skip all validation commands (pytest, ruff, ty) after agent commits
 #   run-level-validate: Skip run-level validation at end of batch (reserved for future use)
@@ -672,7 +672,6 @@ def run(
         list[str] | None,
         typer.Option(
             "--disable",
-            "--disable-validations",
             help=(
                 "Validations to skip (repeatable). Options: "
                 "post-validate (skip pytest/ruff/ty after commits), "
@@ -739,7 +738,6 @@ def run(
         str | None,
         typer.Option(
             "--review-spawn-args",
-            "--cerberus-spawn-args",  # Hidden alias for backward compatibility
             help="Extra args for `review-gate spawn-code-review` (shlex-style string)",
             rich_help_panel="Review Backend",
         ),

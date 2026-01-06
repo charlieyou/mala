@@ -23,7 +23,7 @@
 | `--review-spawn-args` | - | Extra args appended to `review-gate spawn-code-review` |
 | `--review-wait-args` | - | Extra args appended to `review-gate wait` |
 | `--review-env` | - | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
-| `--disable`, `--disable-validations` | - | Repeatable list of validations to skip (see below) |
+| `--disable` | - | Repeatable list of validations to skip (see below) |
 | `--coverage-threshold` | - | Minimum coverage percentage (0-100); if not set, uses 'no decrease' mode |
 | `--dry-run`, `-d` | false | Preview task order without processing |
 | `--watch` | false | Keep running and poll for new issues instead of exiting when idle |
@@ -32,12 +32,12 @@
 | `--epic-override` | - | Repeatable epic IDs to close without verification (human bypass) |
 
 Notes:
-- `--wip` is a hidden alias of `--resume` (deprecated).
-- `--cerberus-*` flags are legacy aliases of `--review-*` (prefer `--review-*`).
+- Use `--resume` to prioritize in-progress issues.
+- Use `--review-*` flags for review configuration.
 
 ### Disable Validation Flags
 
-Use `--disable` (or legacy `--disable-validations`) with one or more values.
+Use `--disable` with one or more values.
 Repeat the flag or pass comma-separated lists (e.g., `--disable coverage --disable review` or `--disable coverage,review`):
 
 | Flag | Description |

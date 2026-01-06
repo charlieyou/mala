@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 from .helpers import (
     annotate_issue,
@@ -299,15 +300,8 @@ class E2ERunner:
                 f"{repo_root}{os.pathsep}{pythonpath}" if pythonpath else str(repo_root)
             )
 
-        # Use 'uv run' to ensure dependencies are available in the worktree
-        # context. Using sys.executable directly would fail in worktrees where
-        # the virtual environment hasn't been synced.
         cmd = [
-            "uv",
-            "run",
-            "--directory",
-            str(repo_root),
-            "python",
+            *_select_python_invoker(repo_root),
             "-m",
             "src.cli.main",
             "run",
@@ -318,7 +312,7 @@ class E2ERunner:
             str(self.config.max_issues),
             "--timeout",
             str(timeout_minutes),
-            "--disable-validations",
+            "--disable",
             "e2e",
             # Use fast mode for Cerberus to speed up E2E tests
             f"--review-spawn-args=--mode={self.config.cerberus_mode}",
@@ -375,3 +369,71 @@ def check_e2e_prereqs(
     runner = E2ERunner(env_config, command_runner)
     result = runner.check_prereqs(env)
     return result.failure_reason()
+
+
+def _select_python_invoker(repo_root: Path) -> list[str]:
+    """Select a python invoker for running mala in E2E.
+
+    Prefers uv when the repo's validation config uses uv-based commands
+    and uv is available; otherwise falls back to the current interpreter.
+    """
+    if _config_prefers_uv(repo_root) and shutil.which("uv"):
+        return ["uv", "run", "--directory", str(repo_root), "python"]
+    return [sys.executable]
+
+
+def _config_prefers_uv(repo_root: Path) -> bool:
+    """Return True if validation commands indicate uv usage."""
+    try:
+        from src.domain.validation.spec import (
+            CommandKind,
+            ValidationScope,
+            build_validation_spec,
+        )
+
+        spec = build_validation_spec(repo_root, scope=ValidationScope.RUN_LEVEL)
+    except Exception:
+        return False
+
+    setup_cmd = next(
+        (cmd.command for cmd in spec.commands if cmd.kind == CommandKind.SETUP), ""
+    )
+    if setup_cmd:
+        return _commands_use_uv([setup_cmd])
+
+    return (repo_root / "uv.lock").exists()
+
+
+def _commands_use_uv(commands: Iterable[str]) -> bool:
+    for command in commands:
+        tokens = _parse_command_tokens(command)
+        if not tokens:
+            continue
+        first = tokens[0].lower()
+        if first in {"uv", "uvx"}:
+            return True
+    return False
+
+
+def _parse_command_tokens(command: str) -> list[str]:
+    """Parse command string and drop leading env assignments."""
+    import shlex
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+
+    idx = 0
+    while idx < len(tokens) and _is_env_assignment(tokens[idx]):
+        idx += 1
+    return tokens[idx:]
+
+
+def _is_env_assignment(token: str) -> bool:
+    if "=" not in token:
+        return False
+    name, _, _ = token.partition("=")
+    if not name or name[0].isdigit():
+        return False
+    return all(c.isalnum() or c == "_" for c in name)

@@ -55,7 +55,7 @@ External review via Cerberus is enabled by default. After the deterministic gate
    - Cumulative diff from baseline (includes all work across retry attempts)
 5. **Re-gating**: After fixes, runs both deterministic gate AND external review again
 
-Review retries are capped at `max_review_retries` (default: 3). Use `--disable review` (or legacy `--disable-validations=review`) to disable. Review-gate args can be configured with `--review-spawn-args`, `--review-wait-args`, and `--review-env`.
+Review retries are capped at `max_review_retries` (default: 3). Use `--disable review` to disable. Review-gate args can be configured with `--review-spawn-args`, `--review-wait-args`, and `--review-env`.
 
 **Skipped for no-work resolutions**: Issues resolved with `ISSUE_NO_CHANGE`, `ISSUE_OBSOLETE`, or `ISSUE_ALREADY_COMPLETE` skip external review entirely since there's no new code to review.
 
