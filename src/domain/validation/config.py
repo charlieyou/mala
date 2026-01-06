@@ -597,11 +597,12 @@ class ValidationConfig:
                         name, cast("str | dict[str, object] | None", value)
                     )
 
-        # Parse run_level_custom_commands - track if explicitly present
-        # None = not set (use repo-level), {} = explicitly empty (disable all)
+        # Parse run_level_custom_commands - track in _fields_set only when dict
+        # None/null = not set (use repo-level), {} = explicitly empty (disable all)
+        # Only add to fields_set when value is a dict (including {}), so null
+        # truly behaves like omission at the metadata level
         run_level_custom_commands: dict[str, CustomCommandConfig] | None = None
         if "run_level_custom_commands" in data:
-            fields_set.add("run_level_custom_commands")
             rlcc_data = data.get("run_level_custom_commands")
             if rlcc_data is not None:
                 if not isinstance(rlcc_data, dict):
@@ -609,6 +610,8 @@ class ValidationConfig:
                         "run_level_custom_commands must be an object, "
                         f"got {type(rlcc_data).__name__}"
                     )
+                # Only track in fields_set when value is a dict (not null)
+                fields_set.add("run_level_custom_commands")
                 run_level_custom_commands = {}
                 for name, value in rlcc_data.items():
                     if not isinstance(name, str):
@@ -653,6 +656,8 @@ class ValidationConfig:
                 self.run_level_commands.format,
                 self.run_level_commands.typecheck,
                 self.run_level_commands.e2e,
+                self.custom_commands,  # Non-empty dict is truthy
+                self.run_level_custom_commands,  # Non-empty dict is truthy
             ]
         )
 
