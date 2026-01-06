@@ -744,6 +744,7 @@ def run(
         str | None,
         typer.Option(
             "--review-spawn-args",
+            "--cerberus-spawn-args",  # Hidden alias for backward compatibility
             help="Extra args for `review-gate spawn-code-review` (shlex-style string)",
             rich_help_panel="Review Backend",
         ),
