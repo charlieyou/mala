@@ -423,3 +423,340 @@ class TestEpicIdFiltering:
         await coord.run_loop(AsyncMock(), AsyncMock(), AsyncMock())
 
         assert beads.captured_kwargs["epic_id"] == "epic-123"
+
+
+class TestDrainMode:
+    """Tests for drain_event handling (Stage 1 SIGINT)."""
+
+    @pytest.fixture
+    def event_sink(self) -> MockEventSink:
+        return MockEventSink()
+
+    @pytest.mark.asyncio
+    async def test_drain_with_no_active_tasks_returns_immediately(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Drain mode with no active tasks returns immediately with drained reason."""
+        beads = MockIssueProvider(ready_issues=[["issue-1"]])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]
+            event_sink=event_sink,  # type: ignore[arg-type]
+            config=CoordinatorConfig(),
+        )
+
+        drain_event = asyncio.Event()
+        drain_event.set()  # Already draining
+
+        result = await coord.run_loop(
+            AsyncMock(return_value=None),  # spawn fails, no active tasks
+            AsyncMock(),
+            AsyncMock(),
+            drain_event=drain_event,
+        )
+
+        assert result.exit_reason == "drained"
+        assert result.exit_code == 0
+        assert result.issues_spawned == 0
+
+    @pytest.mark.asyncio
+    async def test_drain_stops_spawning_new_issues(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Drain mode stops spawning new issues but lets active tasks complete."""
+        beads = MockIssueProvider(
+            ready_issues=[["issue-1", "issue-2"], ["issue-2"], []]
+        )
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]
+            event_sink=event_sink,  # type: ignore[arg-type]
+            config=CoordinatorConfig(max_agents=1),  # Limit to 1 concurrent
+        )
+
+        spawned_ids: list[str] = []
+        pending_events: dict[str, asyncio.Event] = {}
+        drain_event = asyncio.Event()
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+            spawned_ids.append(issue_id)
+            event = asyncio.Event()
+            pending_events[issue_id] = event
+
+            async def work() -> None:
+                await event.wait()
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+            coord.mark_completed(issue_id)
+
+        loop_task = asyncio.create_task(
+            coord.run_loop(
+                spawn_callback,
+                finalize_callback,
+                AsyncMock(),
+                drain_event=drain_event,
+            )
+        )
+
+        # Wait for first issue to spawn
+        await asyncio.sleep(0.01)
+        assert "issue-1" in spawned_ids
+
+        # Set drain mode before issue-1 completes
+        drain_event.set()
+
+        # Complete issue-1
+        pending_events["issue-1"].set()
+
+        # Wait for loop to complete
+        result = await loop_task
+
+        # Only issue-1 should have been spawned (drain prevented issue-2)
+        assert spawned_ids == ["issue-1"]
+        assert result.exit_reason == "drained"
+        assert result.issues_spawned == 1
+
+    @pytest.mark.asyncio
+    async def test_drain_waits_for_active_tasks_to_complete(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Drain mode waits for active tasks to complete (no cancellation)."""
+        beads = MockIssueProvider(ready_issues=[["issue-1"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]
+            event_sink=event_sink,  # type: ignore[arg-type]
+            config=CoordinatorConfig(),
+        )
+
+        task_completed = False
+        pending_event = asyncio.Event()
+        drain_event = asyncio.Event()
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+            async def work() -> None:
+                nonlocal task_completed
+                await pending_event.wait()
+                task_completed = True
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+            coord.mark_completed(issue_id)
+
+        loop_task = asyncio.create_task(
+            coord.run_loop(
+                spawn_callback,
+                finalize_callback,
+                AsyncMock(),
+                drain_event=drain_event,
+            )
+        )
+
+        await asyncio.sleep(0.01)
+        drain_event.set()  # Enter drain mode
+
+        # Task should still be running (not cancelled)
+        assert not task_completed
+
+        # Complete the task
+        pending_event.set()
+        await loop_task
+
+        # Task completed normally (not cancelled)
+        assert task_completed
+
+    @pytest.mark.asyncio
+    async def test_drain_triggers_validation_callback(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Drain completion triggers validation callback when provided."""
+        beads = MockIssueProvider(ready_issues=[["issue-1"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]
+            event_sink=event_sink,  # type: ignore[arg-type]
+            config=CoordinatorConfig(),
+        )
+
+        validation_called = False
+        pending_event = asyncio.Event()
+        drain_event = asyncio.Event()
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+            async def work() -> None:
+                await pending_event.wait()
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+            coord.mark_completed(issue_id)
+
+        async def validation_callback() -> bool:
+            nonlocal validation_called
+            validation_called = True
+            return True
+
+        # Create a mock WatchConfig that acts like enabled=True
+        # The coordinator checks watch_enabled = bool(watch_config and watch_config.enabled)
+        mock_watch_config = MagicMock()
+        mock_watch_config.enabled = True
+        mock_watch_config.validate_every = 10  # Required by coordinator init
+
+        loop_task = asyncio.create_task(
+            coord.run_loop(
+                spawn_callback,
+                finalize_callback,
+                AsyncMock(),
+                watch_config=mock_watch_config,
+                validation_callback=validation_callback,
+                drain_event=drain_event,
+            )
+        )
+
+        await asyncio.sleep(0.01)
+        drain_event.set()
+        pending_event.set()
+
+        result = await loop_task
+
+        assert validation_called
+        assert result.exit_reason == "drained"
+        assert result.exit_code == 0
+
+    @pytest.mark.asyncio
+    async def test_drain_validation_failure_returns_exit_code_1(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Drain validation failure returns exit_code=1."""
+        beads = MockIssueProvider(ready_issues=[["issue-1"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]
+            event_sink=event_sink,  # type: ignore[arg-type]
+            config=CoordinatorConfig(),
+        )
+
+        pending_event = asyncio.Event()
+        drain_event = asyncio.Event()
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+            async def work() -> None:
+                await pending_event.wait()
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+            coord.mark_completed(issue_id)
+
+        async def validation_callback() -> bool:
+            return False  # Validation fails
+
+        # Create a mock WatchConfig that acts like enabled=True
+        mock_watch_config = MagicMock()
+        mock_watch_config.enabled = True
+        mock_watch_config.validate_every = 10
+
+        loop_task = asyncio.create_task(
+            coord.run_loop(
+                spawn_callback,
+                finalize_callback,
+                AsyncMock(),
+                watch_config=mock_watch_config,
+                validation_callback=validation_callback,
+                drain_event=drain_event,
+            )
+        )
+
+        await asyncio.sleep(0.01)
+        drain_event.set()
+        pending_event.set()
+
+        result = await loop_task
+
+        assert result.exit_reason == "drained"
+        assert result.exit_code == 1
+
+    @pytest.mark.asyncio
+    async def test_interrupt_takes_precedence_over_drain(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """interrupt_event takes precedence over drain_event."""
+        beads = MockIssueProvider(ready_issues=[["issue-1"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]
+            event_sink=event_sink,  # type: ignore[arg-type]
+            config=CoordinatorConfig(),
+        )
+
+        pending_event = asyncio.Event()
+        drain_event = asyncio.Event()
+        interrupt_event = asyncio.Event()
+        abort_called = False
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+            async def work() -> None:
+                await pending_event.wait()
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+            coord.mark_completed(issue_id)
+
+        async def abort_callback(*, is_interrupt: bool = False) -> int:
+            nonlocal abort_called
+            abort_called = True
+            for task in coord.active_tasks.values():
+                task.cancel()
+            coord.active_tasks.clear()
+            return 1
+
+        loop_task = asyncio.create_task(
+            coord.run_loop(
+                spawn_callback,
+                finalize_callback,
+                abort_callback,
+                interrupt_event=interrupt_event,
+                drain_event=drain_event,
+            )
+        )
+
+        await asyncio.sleep(0.01)
+
+        # Set both events - interrupt should take precedence
+        drain_event.set()
+        interrupt_event.set()
+
+        result = await loop_task
+
+        assert result.exit_reason == "interrupted"
+        assert abort_called
+
+    @pytest.mark.asyncio
+    async def test_existing_behavior_unchanged_when_drain_none(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Existing behavior unchanged when drain_event is None."""
+        beads = MockIssueProvider(ready_issues=[["issue-1"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]
+            event_sink=event_sink,  # type: ignore[arg-type]
+            config=CoordinatorConfig(),
+        )
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+            async def work() -> None:
+                pass
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+            coord.mark_completed(issue_id)
+
+        result = await coord.run_loop(
+            spawn_callback,
+            finalize_callback,
+            AsyncMock(),
+            drain_event=None,  # Explicitly None
+        )
+
+        assert result.exit_reason == "success"
+        assert result.issues_spawned == 1
+        assert "issue-1" in coord.completed_ids

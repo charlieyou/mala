@@ -192,6 +192,7 @@ class IssueExecutionCoordinator:
         interrupt_event: asyncio.Event | None = None,
         validation_callback: Callable[[], Awaitable[bool]] | None = None,
         sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        drain_event: asyncio.Event | None = None,
     ) -> RunResult:
         """Run the main agent spawning and completion loop.
 
@@ -209,6 +210,10 @@ class IssueExecutionCoordinator:
             validation_callback: Called periodically in watch mode to run validation.
                 Returns True if validation passed, False otherwise.
             sleep_fn: Async sleep function, injectable for testing.
+            drain_event: Event set to enter drain mode. In drain mode, no new issues
+                are spawned, but active tasks complete normally. When all active tasks
+                finish, validation is triggered (if in watch mode) and the loop exits.
+                If interrupt_event is also set, interrupt takes precedence.
 
         Returns:
             RunResult with issues_spawned, exit_code, and exit_reason.
@@ -267,6 +272,58 @@ class IssueExecutionCoordinator:
                         exit_reason="abort",
                     )
 
+                # Check for drain mode (Stage 1 SIGINT - stop spawning, let active complete)
+                if drain_event and drain_event.is_set():
+                    if not self.active_tasks:
+                        # All drained - trigger validation if in watch mode
+                        exit_code = 0
+                        if watch_enabled and validation_callback:
+                            if (
+                                watch_state.completed_count
+                                > watch_state.last_validation_at
+                            ):
+                                validation_passed = await validation_callback()
+                                watch_state.last_validation_at = (
+                                    watch_state.completed_count
+                                )
+                                if not validation_passed:
+                                    exit_code = 1
+                        return RunResult(
+                            issues_spawned=issues_spawned,
+                            exit_code=exit_code,
+                            exit_reason="drained",
+                        )
+                    # Active tasks exist - skip to waiting for them (no spawning)
+                    # Jump directly to task wait section
+                    self.event_sink.on_waiting_for_agents(len(self.active_tasks))
+                    wait_tasks: set[asyncio.Task[object]] = set(
+                        self.active_tasks.values()
+                    )
+                    if interrupt_event:
+                        if interrupt_task is None or interrupt_task.done():
+                            interrupt_task = asyncio.create_task(interrupt_event.wait())
+                        wait_tasks.add(interrupt_task)
+
+                    done, _ = await asyncio.wait(
+                        wait_tasks,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+
+                    done_agent_tasks = (
+                        done - {interrupt_task} if interrupt_task else done
+                    )
+
+                    # Finalize completed tasks
+                    for task in done_agent_tasks:
+                        for issue_id, t in list(self.active_tasks.items()):
+                            if t is task:
+                                await finalize_callback(issue_id, task)
+                                watch_state.completed_count += 1
+                                break
+
+                    # Loop back to check drain completion or interrupt
+                    continue
+
                 # Check if we've hit the issue limit (using completed_count, not spawned)
                 limit_reached = (
                     self.config.max_issues is not None
@@ -282,7 +339,7 @@ class IssueExecutionCoordinator:
                         | self.completed_ids
                     )
 
-                # Fetch ready issues (unless we've hit the limit)
+                # Fetch ready issues (unless we've hit the limit or draining)
                 if limit_reached:
                     ready: list[str] = []
                 else:
