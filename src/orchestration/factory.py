@@ -44,12 +44,16 @@ __all__ = [
     "DEFAULT_AGENT_TIMEOUT_MINUTES",
     "OrchestratorConfig",
     "OrchestratorDependencies",
+    "create_issue_provider",
     "create_orchestrator",
 ]
 
 import logging
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
     from src.core.protocols import (
         CodeReviewer,
         EpicVerificationModel,
@@ -65,6 +69,27 @@ if TYPE_CHECKING:
     from .orchestrator import MalaOrchestrator
 
 logger = logging.getLogger(__name__)
+
+
+def create_issue_provider(
+    repo_path: Path,
+    log_warning: Callable[[str], None] | None = None,
+) -> IssueProvider:
+    """Create an IssueProvider instance (BeadsClient).
+
+    This factory function allows CLI code to create an IssueProvider without
+    importing BeadsClient directly, maintaining the architectural boundary.
+
+    Args:
+        repo_path: Path to the repository.
+        log_warning: Optional callback for logging warnings.
+
+    Returns:
+        An IssueProvider instance (BeadsClient).
+    """
+    from src.infra.clients.beads_client import BeadsClient
+
+    return BeadsClient(repo_path, log_warning=log_warning)  # type: ignore[return-value]
 
 
 def _derive_config(

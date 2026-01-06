@@ -12,6 +12,7 @@ import src.orchestration.orchestrator
 import src.infra.clients.beads_client
 import src.infra.tools.locking
 import src.orchestration.cli_support
+import src.orchestration.factory
 import src.infra.io.log_output.run_metadata
 from src.core.models import EpicVerificationResult
 
@@ -1337,14 +1338,17 @@ def test_dry_run_exits_without_processing(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    import src.orchestration.factory
 
     monkeypatch.setattr(
         src.orchestration.factory,
         "create_orchestrator",
         _make_dummy_create_orchestrator(),
     )
-    monkeypatch.setattr(src.orchestration.cli_support, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_issue_provider",
+        lambda repo_path, log_warning=None: DummyBeadsClient(repo_path),
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -1366,7 +1370,11 @@ def test_dry_run_passes_flags_to_beads_client(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestration.cli_support, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_issue_provider",
+        lambda repo_path, log_warning=None: DummyBeadsClient(repo_path),
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit):
@@ -1394,7 +1402,11 @@ def test_dry_run_displays_empty_task_list(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestration.cli_support, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_issue_provider",
+        lambda repo_path, log_warning=None: DummyBeadsClient(repo_path),
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -1430,7 +1442,11 @@ def test_dry_run_displays_tasks_with_metadata(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestration.cli_support, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_issue_provider",
+        lambda repo_path, log_warning=None: DummyBeadsClient(repo_path),
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -1476,7 +1492,11 @@ def test_dry_run_focus_mode_groups_by_epic(
 
     config_dir = tmp_path / "config"
     monkeypatch.setattr(cli, "USER_CONFIG_DIR", config_dir)
-    monkeypatch.setattr(src.orchestration.cli_support, "BeadsClient", DummyBeadsClient)
+    monkeypatch.setattr(
+        src.orchestration.factory,
+        "create_issue_provider",
+        lambda repo_path, log_warning=None: DummyBeadsClient(repo_path),
+    )
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
@@ -1511,7 +1531,9 @@ class TestHandleDryRun:
         DummyBeadsClient.issues_to_return = []
 
         monkeypatch.setattr(
-            src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
+            src.orchestration.factory,
+            "create_issue_provider",
+            lambda repo_path, log_warning=None: DummyBeadsClient(repo_path),
         )
 
         from src.core.models import OrderPreference
@@ -1544,7 +1566,9 @@ class TestHandleDryRun:
 
         DummyBeadsClient.issues_to_return = []
         monkeypatch.setattr(
-            src.orchestration.cli_support, "BeadsClient", DummyBeadsClient
+            src.orchestration.factory,
+            "create_issue_provider",
+            lambda repo_path, log_warning=None: DummyBeadsClient(repo_path),
         )
 
         from src.core.models import OrderPreference

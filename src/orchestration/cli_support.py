@@ -16,9 +16,6 @@ from src.infra.tools.env import (
     load_user_env,
 )
 
-# BeadsClient (from src.infra.clients.beads_client)
-from src.infra.clients.beads_client import BeadsClient
-
 # Locking utilities (from src.infra.tools.locking)
 from src.infra.tools.locking import get_lock_dir
 
@@ -37,7 +34,6 @@ from src.infra.io.log_output.console import (
 
 __all__ = [
     "USER_CONFIG_DIR",
-    "BeadsClient",
     "Colors",
     "get_lock_dir",
     "get_running_instances",

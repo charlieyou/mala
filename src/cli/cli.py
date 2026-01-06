@@ -34,13 +34,13 @@ _lazy_modules: dict[str, Any] = {}
 # Names that are lazily loaded (for __getattr__ to handle)
 _LAZY_NAMES = frozenset(
     {
-        "BeadsClient",
         "MalaConfig",
         "MalaOrchestrator",
         "OrderPreference",
         "OrchestratorConfig",
         "PeriodicValidationConfig",
         "WatchConfig",
+        "create_issue_provider",
         "create_orchestrator",
         "get_all_locks",
         "get_lock_dir",
@@ -90,9 +90,9 @@ import typer
 from ..orchestration.cli_support import Colors, log, set_verbose
 from .logs import logs_app
 
-# SDK-dependent imports (BeadsClient, MalaOrchestrator, get_lock_dir, run_metadata)
+# SDK-dependent imports (MalaOrchestrator, get_lock_dir, run_metadata, etc.)
 # are lazy-loaded via __getattr__ to ensure bootstrap() runs before claude_agent_sdk
-# is imported. Access them as module attributes: BeadsClient, MalaOrchestrator, etc.
+# is imported. Access them as module attributes: MalaOrchestrator, create_issue_provider, etc.
 
 
 def display_dry_run_tasks(
@@ -502,7 +502,7 @@ def _handle_dry_run(
     )
 
     async def _dry_run() -> None:
-        beads = _lazy("BeadsClient")(repo_path)
+        beads = _lazy("create_issue_provider")(repo_path)
         issues = await beads.get_ready_issues_async(
             epic_id=epic_id,
             only_ids=only_ids,
@@ -1263,11 +1263,7 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
     if name in _lazy_modules:
         return _lazy_modules[name]
 
-    if name == "BeadsClient":
-        from ..orchestration.cli_support import BeadsClient
-
-        _lazy_modules[name] = BeadsClient
-    elif name == "MalaConfig":
+    if name == "MalaConfig":
         from src.infra.io.config import MalaConfig
 
         _lazy_modules[name] = MalaConfig
@@ -1291,6 +1287,10 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from ..core.models import WatchConfig
 
         _lazy_modules[name] = WatchConfig
+    elif name == "create_issue_provider":
+        from ..orchestration.factory import create_issue_provider
+
+        _lazy_modules[name] = create_issue_provider
     elif name == "create_orchestrator":
         from ..orchestration.factory import create_orchestrator
 
