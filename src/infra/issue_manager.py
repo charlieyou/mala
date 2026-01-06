@@ -205,7 +205,7 @@ class IssueManager:
         focus: bool,
         prioritize_wip: bool,
         only_ids: list[str] | None = None,
-        order_preference: OrderPreference = OrderPreference.FOCUS,
+        order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
     ) -> list[dict[str, object]]:
         """Sort issues by order_preference (authoritative over focus flag).
 
@@ -214,7 +214,7 @@ class IssueManager:
             focus: Legacy flag (ignored when order_preference is set explicitly).
             prioritize_wip: If True, put in_progress issues first (ignored for INPUT order).
             only_ids: Optional list of issue IDs for input order preservation.
-            order_preference: Issue ordering preference (focus, priority, or input).
+            order_preference: Issue ordering (focus, epic-priority, issue-priority, or input).
                 This is the authoritative source of truth for ordering.
 
         Returns:
@@ -233,11 +233,19 @@ class IssueManager:
                 key=lambda i: id_order.get(str(i["id"]), len(only_ids)),
             )
 
-        # order_preference is authoritative - PRIORITY uses priority sort, FOCUS uses epic groups
-        if order_preference == OrderPreference.PRIORITY:
+        # order_preference is authoritative
+        if order_preference == OrderPreference.ISSUE_PRIORITY:
             result = sorted(issues, key=lambda i: i.get("priority") or 0)
+        elif order_preference == OrderPreference.FOCUS:
+            # FOCUS: single-epic mode - return only issues from the top epic group
+            sorted_all = IssueManager.sort_by_epic_groups(list(issues))
+            if sorted_all:
+                first_epic = sorted_all[0].get("parent_epic")
+                result = [i for i in sorted_all if i.get("parent_epic") == first_epic]
+            else:
+                result = sorted_all
         else:
-            # FOCUS order (default): group by epic
+            # EPIC_PRIORITY (default): group by epic, return all
             result = IssueManager.sort_by_epic_groups(list(issues))
 
         if prioritize_wip:

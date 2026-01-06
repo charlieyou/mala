@@ -4,43 +4,89 @@
 
 ## CLI Options
 
+### Execution Limits
+
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--max-agents`, `-n` | unlimited | Maximum concurrent agents |
 | `--timeout`, `-t` | 60 | Timeout per agent in minutes |
 | `--max-issues`, `-i` | unlimited | Maximum total issues to process |
+
+### Scope & Ordering
+
+| Flag | Default | Description |
+|------|---------|-------------|
 | `--scope`, `-s` | `all` | Scope filter: `all`, `epic:<id>`, `ids:<id,...>`, `orphans` |
-| `--order` | `focus` | Issue ordering: `focus`, `priority`, `input` (requires `--scope ids:<id,...>`) |
+| `--order` | `epic-priority` | Issue ordering mode (see [Order Modes](#order-modes)) |
 | `--resume`, `-r` | false | Prioritize in_progress issues before open issues |
-| `--epic`, `-e` | - | Deprecated; use `--scope epic:<id>` |
-| `--only`, `-o` | - | Deprecated; use `--scope ids:<id,...>` |
-| `--orphans-only` | false | Deprecated; use `--scope orphans` |
-| `--focus/--no-focus` | focus | Deprecated; use `--order` |
+
+### Order Modes
+
+The `--order` flag controls how issues are sorted and processed:
+
+| Mode | Description |
+|------|-------------|
+| `focus` | **Single-epic mode**: Only process issues from one epic at a time. Picks the highest-priority epic and returns only its issues. Other epics are queued for later. |
+| `epic-priority` | **Default**: Group issues by epic, then order groups by priority. All epics are processed, but issues from the same epic are kept together. |
+| `issue-priority` | **Global priority**: Sort all issues by priority regardless of epic. Issues from different epics may be interleaved. |
+| `input` | **Preserve order**: Keep issues in the order specified by `--scope ids:<id,...>`. Requires explicit ID list. |
+
+**Examples:**
+
+```bash
+# Default: group by epic, process all epics
+mala run /path/to/repo
+
+# Focus on one epic at a time (strict single-epic)
+mala run --order focus /path/to/repo
+
+# Global priority ordering (ignore epic grouping)
+mala run --order issue-priority /path/to/repo
+
+# Process specific issues in exact order
+mala run --scope ids:T-123,T-456,T-789 --order input /path/to/repo
+```
+
+### Quality Gates
+
+| Flag | Default | Description |
+|------|---------|-------------|
 | `--max-gate-retries` | 3 | Maximum quality gate retry attempts per issue |
 | `--max-review-retries` | 3 | Maximum external review retry attempts per issue |
 | `--max-epic-verification-retries` | 3 | Maximum retries for epic verification loop |
+| `--disable` | - | Validations to skip (see [Disable Flags](#disable-validation-flags)) |
+
+### Review Backend
+
+| Flag | Default | Description |
+|------|---------|-------------|
 | `--review-timeout` | 1200 | Timeout in seconds for review operations |
 | `--review-spawn-args` | - | Extra args appended to `review-gate spawn-code-review` |
 | `--review-wait-args` | - | Extra args appended to `review-gate wait` |
 | `--review-env` | - | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
-| `--disable` | - | Repeatable list of validations to skip (see below) |
-| `--dry-run`, `-d` | false | Preview task order without processing |
+
+### Watch Mode
+
+| Flag | Default | Description |
+|------|---------|-------------|
 | `--watch` | false | Keep running and poll for new issues instead of exiting when idle |
 | `--validate-every` | 10 | Run validation after every N issues (watch mode only) |
+
+### Debugging
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--dry-run`, `-d` | false | Preview task order without processing |
 | `--verbose`, `-v` | false | Enable verbose output; shows full tool arguments |
 | `--epic-override` | - | Repeatable epic IDs to close without verification (human bypass) |
-
-Notes:
-- Use `--resume` to prioritize in-progress issues.
-- Use `--review-*` flags for review configuration.
 
 ### Disable Validation Flags
 
 Use `--disable` with one or more values.
 Repeat the flag or pass comma-separated lists (e.g., `--disable coverage --disable review` or `--disable coverage,review`):
 
-| Flag | Description |
-|------|-------------|
+| Value | Description |
+|-------|-------------|
 | `post-validate` | Skip all per-issue validation (tests, lint, typecheck) |
 | `run-level-validate` | Skip run-level validation |
 | `integration-tests` | Exclude integration tests from pytest |

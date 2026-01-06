@@ -471,7 +471,7 @@ class IssueProvider(Protocol):
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
-        order_preference: OrderPreference = OrderPreference.FOCUS,
+        order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
     ) -> list[str]:
         """Get list of ready issue IDs, sorted by priority.
 
@@ -483,7 +483,7 @@ class IssueProvider(Protocol):
             prioritize_wip: If True, sort in_progress issues first.
             focus: If True, group tasks by parent epic.
             orphans_only: If True, only return issues with no parent epic.
-            order_preference: Issue ordering preference (focus, priority, or input).
+            order_preference: Issue ordering (focus, epic-priority, issue-priority, or input).
 
         Returns:
             List of issue IDs sorted by priority (lower = higher priority).

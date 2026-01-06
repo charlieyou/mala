@@ -495,7 +495,7 @@ def _handle_dry_run(
     epic_id = scope_config.epic_id if scope_config else None
     only_ids = scope_config.ids if scope_config else None
     orphans_only = scope_config.scope_type == "orphans" if scope_config else False
-    focus = order_preference == _lazy("OrderPreference").FOCUS
+    focus = order_preference in (_lazy("OrderPreference").FOCUS, _lazy("OrderPreference").EPIC_PRIORITY)
 
     async def _dry_run() -> None:
         beads = _lazy("BeadsClient")(repo_path)
@@ -682,7 +682,7 @@ def run(
         str | None,
         typer.Option(
             "--order",
-            help="Issue ordering: 'focus' (default, epic-grouped), 'priority' (global priority), 'input' (preserve --scope ids: order)",
+            help="Issue ordering: 'epic-priority' (default, epic-grouped), 'issue-priority' (global priority), 'focus' (single-epic), 'input' (preserve --scope ids: order)",
             rich_help_panel="Scope & Ordering",
         ),
     ] = None,
@@ -788,13 +788,15 @@ def run(
         scope_config = parse_scope(scope)
 
     # Parse and validate --order option
-    order_preference = _lazy("OrderPreference").FOCUS  # default
+    order_preference = _lazy("OrderPreference").EPIC_PRIORITY  # default
     if order is not None:
         order_lower = order.lower()
-        if order_lower == "focus":
+        if order_lower == "epic-priority":
+            order_preference = _lazy("OrderPreference").EPIC_PRIORITY
+        elif order_lower == "issue-priority":
+            order_preference = _lazy("OrderPreference").ISSUE_PRIORITY
+        elif order_lower == "focus":
             order_preference = _lazy("OrderPreference").FOCUS
-        elif order_lower == "priority":
-            order_preference = _lazy("OrderPreference").PRIORITY
         elif order_lower == "input":
             order_preference = _lazy("OrderPreference").INPUT
             # --order input requires --scope ids:
@@ -808,7 +810,7 @@ def run(
         else:
             log(
                 "✗",
-                f"Invalid --order value: '{order}'. Valid values: focus, priority, input",
+                f"Invalid --order value: '{order}'. Valid values: focus, epic-priority, issue-priority, input",
                 Colors.RED,
             )
             raise typer.Exit(1)
@@ -817,7 +819,7 @@ def run(
     epic_id = scope_config.epic_id if scope_config else None
     only_ids = scope_config.ids if scope_config else None
     orphans_only = scope_config.scope_type == "orphans" if scope_config else False
-    focus = order_preference == _lazy("OrderPreference").FOCUS
+    focus = order_preference in (_lazy("OrderPreference").FOCUS, _lazy("OrderPreference").EPIC_PRIORITY)
 
     # Validate and parse CLI arguments
     validated = _validate_run_args(

@@ -32,13 +32,15 @@ class OrderPreference(Enum):
     """Issue ordering preference for orchestrator.
 
     Attributes:
-        FOCUS: Group tasks by epic for focused work (default).
-        PRIORITY: Use global priority ordering across all epics.
+        FOCUS: Only work on one epic at a time (strict single-epic mode).
+        EPIC_PRIORITY: Group tasks by epic, order groups by priority (default).
+        ISSUE_PRIORITY: Use global priority ordering across all epics.
         INPUT: Preserve user-specified input order (only valid with --scope ids:).
     """
 
     FOCUS = "focus"
-    PRIORITY = "priority"
+    EPIC_PRIORITY = "epic-priority"
+    ISSUE_PRIORITY = "issue-priority"
     INPUT = "input"
 
 

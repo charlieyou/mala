@@ -76,9 +76,9 @@ class CoordinatorConfig:
         epic_id: Only process tasks under this epic.
         only_ids: List of issue IDs to process exclusively.
         prioritize_wip: Prioritize in_progress issues before open issues.
-        focus: Group tasks by epic for focused work.
+        focus: Legacy flag for epic grouping (use order_preference instead).
         orphans_only: Only process issues with no parent epic.
-        order_preference: Issue ordering preference (focus, priority, or input).
+        order_preference: Issue ordering (focus, epic-priority, issue-priority, or input).
     """
 
     max_agents: int | None = None
@@ -88,7 +88,7 @@ class CoordinatorConfig:
     prioritize_wip: bool = False
     focus: bool = True
     orphans_only: bool = False
-    order_preference: OrderPreference = OrderPreference.FOCUS
+    order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY
 
 
 class IssueExecutionCoordinator:

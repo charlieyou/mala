@@ -792,10 +792,10 @@ def test_run_validation_flags_defaults(
     assert DummyOrchestrator.last_orch_config.focus is True
 
 
-def test_run_focus_default_true(
+def test_run_epic_priority_default(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that focus ordering is the default (epic-grouped ordering)."""
+    """Test that epic-priority ordering is the default (epic-grouped ordering)."""
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"
@@ -817,10 +817,10 @@ def test_run_focus_default_true(
     assert DummyOrchestrator.last_orch_config.focus is True
 
 
-def test_run_order_priority_sets_focus_false(
+def test_run_order_issue_priority_sets_focus_false(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that --order priority sets focus=False for priority-only ordering."""
+    """Test that --order issue-priority sets focus=False for global priority ordering."""
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"
@@ -835,17 +835,17 @@ def test_run_order_priority_sets_focus_false(
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, order="priority")
+        cli.run(repo_path=tmp_path, order="issue-priority")
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
     assert DummyOrchestrator.last_orch_config.focus is False
 
 
-def test_run_order_focus_composes_with_resume(
+def test_run_order_epic_priority_composes_with_resume(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that --order focus and --resume flags compose correctly."""
+    """Test that --order epic-priority and --resume flags compose correctly."""
     cli = _reload_cli(monkeypatch)
 
     config_dir = tmp_path / "config"
@@ -860,7 +860,7 @@ def test_run_order_focus_composes_with_resume(
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, order="focus", resume=True)
+        cli.run(repo_path=tmp_path, order="epic-priority", resume=True)
 
     assert excinfo.value.exit_code == 0
     assert DummyOrchestrator.last_orch_config is not None
@@ -1371,7 +1371,7 @@ def test_dry_run_passes_flags_to_beads_client(
             dry_run=True,
             scope="ids:id-1,id-2",
             resume=True,
-            order="priority",
+            order="issue-priority",
         )
 
     assert DummyBeadsClient.last_kwargs is not None
@@ -1430,7 +1430,7 @@ def test_dry_run_displays_tasks_with_metadata(
     monkeypatch.setattr(cli, "set_verbose", lambda _: None)
 
     with pytest.raises(typer.Exit) as excinfo:
-        cli.run(repo_path=tmp_path, dry_run=True, order="priority")
+        cli.run(repo_path=tmp_path, dry_run=True, order="issue-priority")
 
     assert excinfo.value.exit_code == 0
     captured = capsys.readouterr()
@@ -1520,14 +1520,14 @@ class TestHandleDryRun:
                 repo_path=tmp_path,
                 scope_config=scope_config,
                 resume=True,
-                order_preference=OrderPreference.FOCUS,
+                order_preference=OrderPreference.EPIC_PRIORITY,
             )
 
         assert DummyBeadsClient.last_kwargs is not None
         assert DummyBeadsClient.last_kwargs["only_ids"] == ["id-1", "id-2"]
         assert DummyBeadsClient.last_kwargs["prioritize_wip"] is True
         assert DummyBeadsClient.last_kwargs["focus"] is True
-        assert DummyBeadsClient.last_kwargs["order_preference"] == OrderPreference.FOCUS
+        assert DummyBeadsClient.last_kwargs["order_preference"] == OrderPreference.EPIC_PRIORITY
 
     def test_raises_typer_exit_zero(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1547,7 +1547,7 @@ class TestHandleDryRun:
                 repo_path=tmp_path,
                 scope_config=None,
                 resume=False,
-                order_preference=OrderPreference.FOCUS,
+                order_preference=OrderPreference.EPIC_PRIORITY,
             )
 
         assert excinfo.value.exit_code == 0
