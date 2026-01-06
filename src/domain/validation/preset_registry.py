@@ -38,6 +38,11 @@ class PresetRegistry:
     # Package containing preset YAML files
     _PRESETS_PACKAGE: ClassVar[str] = "src.domain.validation.presets"
 
+    # Built-in command keys that presets are allowed to define
+    _BUILTIN_COMMAND_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {"setup", "format", "lint", "typecheck", "test", "e2e"}
+    )
+
     # Mapping of preset names to YAML filenames
     _PRESET_FILES: ClassVar[dict[str, str]] = {
         "go": "go.yaml",
@@ -72,6 +77,9 @@ class PresetRegistry:
         # Presets MUST NOT define custom_commands (per spec R1)
         if "custom_commands" in data:
             raise ConfigError("presets cannot define custom_commands")
+
+        # Validate that commands only contain built-in keys (no custom commands)
+        self._validate_preset_commands(data.get("commands", {}))
 
         return _build_config(data)
 
@@ -109,3 +117,27 @@ class PresetRegistry:
             return data if data is not None else {}
         except (ModuleNotFoundError, FileNotFoundError, TypeError) as e:
             raise PresetNotFoundError(name, self.list_presets()) from e
+
+    def _validate_preset_commands(self, commands_data: dict[str, Any]) -> None:
+        """Validate that preset commands only contain built-in keys.
+
+        Presets should only define built-in commands. Any unknown key would
+        become a custom command with inline custom commands, which must be
+        blocked for presets.
+
+        Args:
+            commands_data: The 'commands' section from a preset YAML file.
+
+        Raises:
+            ConfigError: If commands_data contains keys not in _BUILTIN_COMMAND_KEYS.
+        """
+        if not commands_data:
+            return
+
+        unknown_keys = set(commands_data.keys()) - self._BUILTIN_COMMAND_KEYS
+        if unknown_keys:
+            sorted_keys = sorted(unknown_keys)
+            raise ConfigError(
+                f"Preset commands contain unknown keys: {sorted_keys}. "
+                "Presets can only define built-in commands."
+            )
