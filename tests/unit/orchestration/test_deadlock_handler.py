@@ -11,6 +11,7 @@ import pytest
 
 from src.domain.deadlock import DeadlockInfo
 from src.orchestration.deadlock_handler import DeadlockHandler, DeadlockHandlerCallbacks
+from src.pipeline.issue_execution_coordinator import AbortResult
 from src.orchestration.orchestrator_state import OrchestratorState
 from src.pipeline.issue_result import IssueResult
 
@@ -428,7 +429,7 @@ class TestAbortActiveTasks:
         active_tasks = {"issue-1": task}
         state.agent_ids["issue-1"] = "agent-1"
 
-        await handler.abort_active_tasks(
+        result = await handler.abort_active_tasks(
             active_tasks,
             "Test abort",
             state,
@@ -444,6 +445,10 @@ class TestAbortActiveTasks:
         assert fake_callbacks.on_tasks_aborting_calls == [(1, "Test abort")]
         assert len(fake_callbacks.finalize_issue_result_calls) == 1
         assert fake_callbacks.mark_completed_calls == ["issue-1"]
+        # Return value assertions
+        assert isinstance(result, AbortResult)
+        assert result.aborted_count == 1
+        assert result.has_unresponsive_tasks is False
 
     @pytest.mark.asyncio
     async def test_uses_real_results_for_completed_tasks(
@@ -558,7 +563,7 @@ class TestAbortActiveTasks:
         """abort_active_tasks returns early for empty tasks dict."""
         active_tasks: dict[str, asyncio.Task[IssueResult]] = {}
 
-        await handler.abort_active_tasks(
+        result = await handler.abort_active_tasks(
             active_tasks,
             "Test abort",
             state,
@@ -568,6 +573,8 @@ class TestAbortActiveTasks:
         # No callbacks should be invoked for empty active_tasks
         assert len(fake_callbacks.on_tasks_aborting_calls) == 0
         assert len(fake_callbacks.finalize_issue_result_calls) == 0
+        # Empty result
+        assert result == AbortResult(aborted_count=0, has_unresponsive_tasks=False)
 
     @pytest.mark.asyncio
     async def test_includes_session_log_path(
@@ -604,6 +611,64 @@ class TestAbortActiveTasks:
         assert result.session_log_path == log_path
 
         # Ensure task reaches terminal state to avoid "Task was destroyed" warnings
+        await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_unresponsive_tasks_flagged(
+        self,
+        handler: DeadlockHandler,
+        fake_callbacks: FakeCallbacks,
+        state: OrchestratorState,
+        fake_run_metadata: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """abort_active_tasks sets has_unresponsive_tasks when tasks don't respond to cancel."""
+        import src.orchestration.deadlock_handler as dh_module
+
+        # Use very short grace period for test
+        monkeypatch.setattr(dh_module, "ABORT_GRACE_SECONDS", 0.05)
+
+        task_started = asyncio.Event()
+        allow_finish = asyncio.Event()
+
+        async def unresponsive_task() -> IssueResult:
+            task_started.set()
+            # Use a loop that catches and ignores CancelledError
+            while not allow_finish.is_set():
+                try:
+                    await asyncio.sleep(10)  # Long sleep, will be cancelled
+                except asyncio.CancelledError:
+                    # Ignore cancellation and continue - simulates unresponsive task
+                    pass
+            return IssueResult(
+                issue_id="issue-1", agent_id="agent-1", success=True, summary="done"
+            )
+
+        task = asyncio.create_task(unresponsive_task())
+        await task_started.wait()
+        active_tasks = {"issue-1": task}
+        state.agent_ids["issue-1"] = "agent-1"
+
+        result = await handler.abort_active_tasks(
+            active_tasks,
+            "Test abort",
+            state,
+            fake_run_metadata,  # type: ignore[arg-type]
+        )
+
+        # Task should still be running (unresponsive)
+        assert not task.done()
+        assert result.has_unresponsive_tasks is True
+        assert result.aborted_count == 1
+
+        # Verify task was finalized with unresponsive summary
+        assert len(fake_callbacks.finalize_issue_result_calls) == 1
+        _issue_id, finalized_result, _ = fake_callbacks.finalize_issue_result_calls[0]
+        assert "unresponsive" in finalized_result.summary
+
+        # Clean up - allow task to finish and cancel again (it will finish this time)
+        allow_finish.set()
+        task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
 

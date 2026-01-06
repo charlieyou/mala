@@ -10,6 +10,7 @@ import pytest
 
 from src.core.models import OrderPreference, PeriodicValidationConfig
 from src.pipeline.issue_execution_coordinator import (
+    AbortResult,
     CoordinatorConfig,
     IssueExecutionCoordinator,
 )
@@ -332,7 +333,7 @@ class TestRunLoop:
             # Trigger abort after first issue completes
             coord.request_abort("test abort")
 
-        async def abort_callback(*, is_interrupt: bool = False) -> int:
+        async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:
             nonlocal abort_called
             abort_called = True
             # Cancel any remaining tasks
@@ -340,7 +341,7 @@ class TestRunLoop:
             for task in coord.active_tasks.values():
                 task.cancel()
             coord.active_tasks.clear()
-            return count
+            return AbortResult(aborted_count=count, has_unresponsive_tasks=False)
 
         await coord.run_loop(spawn_callback, finalize_callback, abort_callback)
 
@@ -700,7 +701,7 @@ class TestDrainMode:
         async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
             coord.mark_completed(issue_id)
 
-        async def abort_callback(*, is_interrupt: bool = False) -> int:
+        async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:
             nonlocal abort_called
             abort_called = True
             tasks = list(coord.active_tasks.values())
@@ -708,7 +709,7 @@ class TestDrainMode:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             coord.active_tasks.clear()
-            return 1
+            return AbortResult(aborted_count=1, has_unresponsive_tasks=False)
 
         loop_task = asyncio.create_task(
             coord.run_loop(
@@ -762,3 +763,131 @@ class TestDrainMode:
         assert result.exit_reason == "success"
         assert result.issues_spawned == 1
         assert "issue-1" in coord.completed_ids
+
+
+class TestInterruptWithUnresponsiveTasks:
+    """Tests for interrupt handling when tasks are unresponsive."""
+
+    @pytest.fixture
+    def event_sink(self) -> MockEventSink:
+        return MockEventSink()
+
+    @pytest.mark.asyncio
+    async def test_skips_validation_when_tasks_unresponsive(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Validation is skipped when abort reports unresponsive tasks."""
+        beads = MockIssueProvider(ready_issues=[["issue-1"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]
+            event_sink=event_sink,  # type: ignore[arg-type]
+            config=CoordinatorConfig(),
+        )
+
+        pending_event = asyncio.Event()
+        interrupt_event = asyncio.Event()
+        validation_called = False
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+            async def work() -> None:
+                await pending_event.wait()
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+            coord.mark_completed(issue_id)
+
+        async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:
+            # Simulate unresponsive tasks scenario
+            tasks = list(coord.active_tasks.values())
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            coord.active_tasks.clear()
+            return AbortResult(aborted_count=1, has_unresponsive_tasks=True)
+
+        async def validation_callback() -> bool:
+            nonlocal validation_called
+            validation_called = True
+            return False  # Would fail validation if called
+
+        loop_task = asyncio.create_task(
+            coord.run_loop(
+                spawn_callback,
+                finalize_callback,
+                abort_callback,
+                interrupt_event=interrupt_event,
+                validation_callback=validation_callback,
+            )
+        )
+
+        await asyncio.sleep(0.01)
+        interrupt_event.set()
+
+        result = await loop_task
+
+        # Validation should be skipped due to unresponsive tasks
+        assert validation_called is False
+        # Exit code should be 130 (not 1 from failed validation)
+        assert result.exit_code == 130
+        assert result.exit_reason == "interrupted"
+
+    @pytest.mark.asyncio
+    async def test_runs_validation_when_tasks_responsive(
+        self, event_sink: MockEventSink
+    ) -> None:
+        """Validation runs normally when all tasks respond to cancellation."""
+        beads = MockIssueProvider(ready_issues=[["issue-1"], []])
+        coord = IssueExecutionCoordinator(
+            beads=beads,  # type: ignore[arg-type]
+            event_sink=event_sink,  # type: ignore[arg-type]
+            config=CoordinatorConfig(),
+        )
+
+        pending_event = asyncio.Event()
+        interrupt_event = asyncio.Event()
+        validation_called = False
+
+        async def spawn_callback(issue_id: str) -> asyncio.Task | None:  # type: ignore[type-arg]
+            async def work() -> None:
+                await pending_event.wait()
+
+            return asyncio.create_task(work())
+
+        async def finalize_callback(issue_id: str, task: asyncio.Task) -> None:  # type: ignore[type-arg]
+            coord.mark_completed(issue_id)
+
+        async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:
+            # All tasks respond normally
+            tasks = list(coord.active_tasks.values())
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            coord.active_tasks.clear()
+            return AbortResult(aborted_count=1, has_unresponsive_tasks=False)
+
+        async def validation_callback() -> bool:
+            nonlocal validation_called
+            validation_called = True
+            return False  # Fail validation
+
+        loop_task = asyncio.create_task(
+            coord.run_loop(
+                spawn_callback,
+                finalize_callback,
+                abort_callback,
+                interrupt_event=interrupt_event,
+                validation_callback=validation_callback,
+            )
+        )
+
+        await asyncio.sleep(0.01)
+        interrupt_event.set()
+
+        result = await loop_task
+
+        # Validation should run since tasks were responsive
+        assert validation_called is True
+        # Exit code should be 1 from failed validation
+        assert result.exit_code == 1
+        assert result.exit_reason == "interrupted"

@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
+    from src.pipeline.issue_execution_coordinator import AbortResult
     from src.core.protocols import (
         CodeReviewer,
         GateChecker,
@@ -621,7 +622,7 @@ class MalaOrchestrator:
 
     async def _abort_active_tasks(
         self, run_metadata: RunMetadata, *, is_interrupt: bool = False
-    ) -> int:
+    ) -> AbortResult:
         """Cancel active tasks and mark them as failed.
 
         Delegates to DeadlockHandler.abort_active_tasks.
@@ -631,7 +632,7 @@ class MalaOrchestrator:
             is_interrupt: If True, use "Interrupted" summary instead of "Aborted".
 
         Returns:
-            Number of tasks that were aborted.
+            AbortResult with aborted count and flag indicating unresponsive tasks.
         """
         return await self._deadlock_handler.abort_active_tasks(
             self.active_tasks,
@@ -817,7 +818,7 @@ class MalaOrchestrator:
             await self._finalize_issue_result(issue_id, result, run_metadata)
             self.issue_coordinator.mark_completed(issue_id)
 
-        async def abort_callback(*, is_interrupt: bool = False) -> int:
+        async def abort_callback(*, is_interrupt: bool = False) -> AbortResult:
             """Abort all active tasks."""
             return await self._abort_active_tasks(
                 run_metadata, is_interrupt=is_interrupt

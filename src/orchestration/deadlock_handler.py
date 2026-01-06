@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from src.pipeline.issue_execution_coordinator import AbortResult
 from src.pipeline.issue_result import IssueResult
 
 # Stage 2 abort grace period (seconds) - how long to wait for tasks to finish
@@ -204,7 +205,7 @@ class DeadlockHandler:
         run_metadata: RunMetadata,
         *,
         is_interrupt: bool = False,
-    ) -> int:
+    ) -> AbortResult:
         """Cancel active tasks, wait up to ABORT_GRACE_SECONDS, and finalize them.
 
         Tasks that have already completed are finalized with their real results
@@ -220,10 +221,10 @@ class DeadlockHandler:
             is_interrupt: If True, use "Interrupted" summary instead of "Aborted".
 
         Returns:
-            Number of tasks that were aborted.
+            AbortResult with aborted count and flag indicating unresponsive tasks.
         """
         if not active_tasks:
-            return 0
+            return AbortResult(aborted_count=0, has_unresponsive_tasks=False)
         reason = abort_reason or (
             "Interrupted by user" if is_interrupt else "Unrecoverable error"
         )
@@ -241,17 +242,13 @@ class DeadlockHandler:
         # This prevents Stage 2 abort from waiting indefinitely for tasks to finish.
         # If tasks don't complete within the grace period, Stage 3 (force kill)
         # is still available via another Ctrl-C.
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(
-                    *[task for _, task in tasks_snapshot], return_exceptions=True
-                ),
-                timeout=ABORT_GRACE_SECONDS,
-            )
-        except TimeoutError:
-            # Tasks still running after grace period - continue with finalization
-            # Note: asyncio.TimeoutError is an alias for TimeoutError in Python 3.11+
-            pass
+        #
+        # Note: We use asyncio.wait() instead of asyncio.wait_for(gather(...))
+        # because wait_for+gather blocks indefinitely when tasks suppress CancelledError.
+        # asyncio.wait() returns immediately after the timeout with pending tasks.
+        tasks_set = {task for _, task in tasks_snapshot}
+        _done, pending = await asyncio.wait(tasks_set, timeout=ABORT_GRACE_SECONDS)
+        has_unresponsive_tasks = len(pending) > 0
 
         # Finalize each issue - use real result if completed, abort summary if cancelled
         aborted_count = 0
@@ -292,7 +289,9 @@ class DeadlockHandler:
             await self._callbacks.finalize_issue_result(issue_id, result, run_metadata)
             # Mark completed in coordinator to keep state consistent
             self._callbacks.mark_completed(issue_id)
-        return aborted_count
+        return AbortResult(
+            aborted_count=aborted_count, has_unresponsive_tasks=has_unresponsive_tasks
+        )
 
     def cleanup_agent_locks(self, agent_id: str) -> None:
         """Remove locks held by a specific agent (crash/timeout cleanup).
