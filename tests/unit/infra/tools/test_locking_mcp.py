@@ -37,7 +37,7 @@ def _create_handlers(
     """
     events: list[Any] = []
     emit = emit_lock_event if emit_lock_event else events.append
-    backend = locking_backend or FakeLockingBackend()
+    backend = locking_backend if locking_backend is not None else FakeLockingBackend()
 
     from src.infra.tools.locking_mcp import create_locking_mcp_server
 
@@ -175,7 +175,7 @@ class TestLockAcquireWiring:
     async def test_calls_try_lock_for_each_file_sorted(self) -> None:
         """try_lock called for each file in sorted canonical order."""
         backend = FakeLockingBackend()
-        backend.canonicalize_fn = lambda p, ns: f"/{p}"  # type: ignore[assignment]
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"
 
         handlers = _create_handlers(locking_backend=backend)
 
@@ -189,7 +189,7 @@ class TestLockAcquireWiring:
     async def test_deduplicates_by_canonical_path(self) -> None:
         """Duplicate canonical paths are deduplicated."""
         backend = FakeLockingBackend()
-        backend.canonicalize_fn = lambda p, ns: "/same/path.py"  # type: ignore[assignment]
+        backend.canonicalize_fn = lambda p, ns: "/same/path.py"
 
         handlers = _create_handlers(locking_backend=backend)
 
@@ -212,7 +212,7 @@ class TestLockAcquireWaitingEvents:
         events: list[Any] = []
 
         backend = FakeLockingBackend()
-        backend.canonicalize_fn = lambda p, ns: f"/canonical/{p}"  # type: ignore[assignment]
+        backend.canonicalize_fn = lambda p, ns: f"/canonical/{p}"
         backend.try_lock_results["/canonical/blocked1.py"] = False
         backend.try_lock_results["/canonical/blocked2.py"] = False
         backend.holders["/canonical/blocked1.py"] = "blocker"
@@ -369,7 +369,7 @@ class TestLockReleaseWiring:
     async def test_release_specific_calls_release_lock(self) -> None:
         """Specific filepaths call release_lock for each."""
         backend = FakeLockingBackend()
-        backend.canonicalize_fn = lambda p, ns: f"/{p}"  # type: ignore[assignment]
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"
         # Pre-acquire locks so release returns True
         backend.locks["/a.py"] = "test-agent"
         backend.locks["/b.py"] = "test-agent"
@@ -386,7 +386,7 @@ class TestLockReleaseWiring:
     async def test_release_idempotent_behavior(self) -> None:
         """Release succeeds even when lock not held (idempotent)."""
         backend = FakeLockingBackend()
-        backend.canonicalize_fn = lambda p, ns: f"/{p}"  # type: ignore[assignment]
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"
         # Don't pre-acquire lock, so release_lock returns False
 
         handlers = _create_handlers(locking_backend=backend)
@@ -406,7 +406,7 @@ class TestLockAcquireAsyncWaiting:
     async def test_waits_for_blocked_files(self) -> None:
         """Spawns wait tasks for blocked files."""
         backend = FakeLockingBackend()
-        backend.canonicalize_fn = lambda p, ns: f"/{p}"  # type: ignore[assignment]
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"
         backend.try_lock_results["/blocked.py"] = False
         backend.holders["/blocked.py"] = "other"
 
@@ -474,7 +474,7 @@ class TestLockAcquireAsyncWaiting:
                         raise
 
         backend = TimingBackend()
-        backend.canonicalize_fn = lambda p, ns: f"/{p}"  # type: ignore[assignment]
+        backend.canonicalize_fn = lambda p, ns: f"/{p}"
         backend.try_lock_results["/a.py"] = False
         backend.try_lock_results["/b.py"] = False
         backend.holders["/a.py"] = "other"

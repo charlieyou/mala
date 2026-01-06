@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.infra.tools.locking_mcp import LockingBackend
 
 
@@ -53,13 +55,15 @@ class FakeLockingBackend:
     wait_for_lock_results: dict[str, bool] = field(default_factory=dict)
     holders: dict[str, str | None] = field(default_factory=dict)
     cleanup_result: tuple[int, list[str]] = field(default_factory=lambda: (0, []))
-    canonicalize_fn: None = None  # Set to a callable to override canonicalize_path
+    canonicalize_fn: Callable[[str, str | None], str] | None = (
+        None  # Override canonicalize_path
+    )
 
     def canonicalize_path(self, path: str, namespace: str | None) -> str:
         """Canonicalize path. By default returns the path unchanged."""
         self.canonicalize_calls.append((path, namespace))
         if self.canonicalize_fn is not None:
-            return self.canonicalize_fn(path, namespace)  # type: ignore[misc]
+            return self.canonicalize_fn(path, namespace)
         return path
 
     def try_lock(self, filepath: str, agent_id: str, ns: str | None) -> bool:

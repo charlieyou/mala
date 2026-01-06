@@ -158,7 +158,9 @@ def create_locking_mcp_server(
     # Import LockEvent and LockEventType here to avoid circular imports
     from src.core.models import LockEvent, LockEventType
 
-    backend = locking_backend or DefaultLockingBackend()
+    backend = (
+        locking_backend if locking_backend is not None else DefaultLockingBackend()
+    )
 
     def _canonical(filepath: str) -> str:
         """Canonicalize path for consistent deadlock graph nodes."""
