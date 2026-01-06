@@ -291,13 +291,70 @@ def list_runs(
         print(tabulate(rows, headers=headers, tablefmt="simple"))
 
 
+def _extract_sessions(
+    runs: list[dict[str, Any]], issue_filter: str | None
+) -> list[dict[str, Any]]:
+    """Extract per-issue session rows from runs.
+
+    Args:
+        runs: List of run metadata dicts.
+        issue_filter: If provided, only include sessions matching this issue ID (exact match).
+
+    Returns:
+        List of session dicts with keys: run_id, session_id, issue_id, run_started_at,
+        status, log_path, metadata_path.
+    """
+    sessions: list[dict[str, Any]] = []
+    for run in runs:
+        issues = run.get("issues", {})
+        if not isinstance(issues, dict):
+            continue
+        for issue_id, issue_data in issues.items():
+            # Skip if filter provided and doesn't match (exact, case-sensitive)
+            if issue_filter is not None and issue_id != issue_filter:
+                continue
+            if not isinstance(issue_data, dict):
+                continue
+            sessions.append(
+                {
+                    "run_id": run["run_id"],
+                    "session_id": issue_data.get("session_id"),
+                    "issue_id": issue_id,
+                    "run_started_at": run.get("started_at"),
+                    "status": issue_data.get("status"),
+                    "log_path": issue_data.get("log_path"),
+                    "metadata_path": run.get("metadata_path"),
+                }
+            )
+    return sessions
+
+
+def _sort_sessions(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Sort sessions by run_started_at desc, then run_id asc, then issue_id asc.
+
+    Args:
+        sessions: List of session dicts.
+
+    Returns:
+        Sorted list.
+    """
+    return sorted(
+        sessions,
+        key=lambda s: (
+            -_parse_timestamp(s.get("run_started_at") or ""),
+            s.get("run_id") or "",
+            s.get("issue_id") or "",
+        ),
+    )
+
+
 @logs_app.command()
 def sessions(
     issue: Annotated[
         str | None,
         typer.Option(
             "--issue",
-            help="Filter by issue ID",
+            help="Filter by issue ID (exact match, case-sensitive)",
         ),
     ] = None,
     json_output: Annotated[
@@ -311,12 +368,72 @@ def sessions(
         bool,
         typer.Option(
             "--all",
-            help="Show all sessions (not just recent)",
+            help="Show sessions from all repos (not just current)",
         ),
     ] = False,
 ) -> None:
     """List Claude sessions from mala runs."""
-    raise NotImplementedError("Not implemented yet")
+    files = _discover_run_files(all_sessions)
+    runs = _collect_runs(files)
+    session_rows = _extract_sessions(runs, issue)
+    session_rows = _sort_sessions(session_rows)
+
+    if not session_rows:
+        if json_output:
+            print("[]")
+        else:
+            print("No sessions found")
+        return
+
+    if json_output:
+        output = []
+        for s in session_rows:
+            entry: dict[str, Any] = {
+                "run_id": s["run_id"],
+                "session_id": s["session_id"],
+                "issue_id": s["issue_id"],
+                "run_started_at": s["run_started_at"],
+                "status": s["status"],
+                "log_path": s["log_path"],
+            }
+            if all_sessions:
+                # Get repo_path from the run
+                for run in runs:
+                    if run["run_id"] == s["run_id"]:
+                        entry["repo_path"] = _get_repo_path(run)
+                        break
+            output.append(entry)
+        print(json.dumps(output, indent=2))
+    else:
+        headers = [
+            "run_id",
+            "session_id",
+            "issue_id",
+            "run_started_at",
+            "status",
+            "log_path",
+        ]
+        if all_sessions:
+            headers.insert(1, "repo_path")
+
+        # Build lookup for repo_path
+        run_repo_map = {run["run_id"]: _get_repo_path(run) for run in runs}
+
+        rows = []
+        for s in session_rows:
+            row = [
+                s["run_id"][:8],  # Short ID for display
+                _format_null(s["session_id"]),
+                _format_null(s["issue_id"]),
+                _format_null(s["run_started_at"]),
+                _format_null(s["status"]),
+                _format_null(s["log_path"]),
+            ]
+            if all_sessions:
+                row.insert(1, _format_null(run_repo_map.get(s["run_id"])))
+            rows.append(row)
+
+        print(tabulate(rows, headers=headers, tablefmt="simple"))
 
 
 @logs_app.command()

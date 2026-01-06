@@ -86,51 +86,38 @@ class TestLogsListCommand:
 
 
 class TestLogsSessionsCommand:
-    """Tests for 'mala logs sessions' command (expected to fail until T004)."""
+    """Tests for 'mala logs sessions' command."""
 
     def test_sessions_basic_invocation(self) -> None:
         """Test basic 'mala logs sessions' invocation."""
         result = runner.invoke(app, ["logs", "sessions"])
-        if isinstance(result.exception, NotImplementedError):
-            pytest.xfail("Stub raises NotImplementedError - T004")
-        if result.exception is not None and result.exit_code != 0:
-            raise result.exception
-        if result.exit_code != 0:
-            pytest.fail(f"Unexpected exit_code={result.exit_code}")
-        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
+        assert result.exit_code == 0
+        # Empty result expected when no runs exist
+        assert "No sessions found" in result.output or result.output.strip() == ""
 
     def test_sessions_with_issue_filter(self) -> None:
         """Test 'mala logs sessions --issue test-123' filters by issue."""
         result = runner.invoke(app, ["logs", "sessions", "--issue", "test-123"])
-        if isinstance(result.exception, NotImplementedError):
-            pytest.xfail("Stub raises NotImplementedError - T004")
-        if result.exception is not None and result.exit_code != 0:
-            raise result.exception
-        if result.exit_code != 0:
-            pytest.fail(f"Unexpected exit_code={result.exit_code}")
-        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
+        assert result.exit_code == 0
+        # Empty result expected when no matching sessions
+        assert "No sessions found" in result.output or result.output.strip() == ""
 
     def test_sessions_with_json_flag(self) -> None:
-        """Test 'mala logs sessions --json' produces valid output."""
+        """Test 'mala logs sessions --json' produces valid JSON output."""
         result = runner.invoke(app, ["logs", "sessions", "--json"])
-        if isinstance(result.exception, NotImplementedError):
-            pytest.xfail("Stub raises NotImplementedError - T004")
-        if result.exception is not None and result.exit_code != 0:
-            raise result.exception
-        if result.exit_code != 0:
-            pytest.fail(f"Unexpected exit_code={result.exit_code}")
-        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
+        assert result.exit_code == 0
+        # Should produce valid JSON (empty array when no sessions)
+        import json
+
+        data = json.loads(result.output)
+        assert isinstance(data, list)
 
     def test_sessions_with_all_flag(self) -> None:
-        """Test 'mala logs sessions --all' shows all sessions."""
+        """Test 'mala logs sessions --all' runs without error."""
         result = runner.invoke(app, ["logs", "sessions", "--all"])
-        if isinstance(result.exception, NotImplementedError):
-            pytest.xfail("Stub raises NotImplementedError - T004")
-        if result.exception is not None and result.exit_code != 0:
-            raise result.exception
-        if result.exit_code != 0:
-            pytest.fail(f"Unexpected exit_code={result.exit_code}")
-        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
+        assert result.exit_code == 0
+        # May find sessions from other repos or show "No sessions found"
+        assert result.output.strip() != "" or "No sessions found" in result.output
 
 
 class TestLogsShowCommand:

@@ -455,3 +455,203 @@ class TestRepoScoping:
         assert len(files) == 2
         run_ids = {json.loads(f.read_text())["run_id"] for f in files}
         assert run_ids == {"repo1-run", "repo2-run"}
+
+
+class TestExtractSessions:
+    """Tests for _extract_sessions helper function."""
+
+    def test_issue_id_exact_match(self) -> None:
+        """Verify issue filter matches exactly (case-sensitive)."""
+        from src.cli.logs import _extract_sessions
+
+        runs = [
+            {
+                "run_id": "run1",
+                "started_at": "2024-01-01T10:00:00+00:00",
+                "issues": {
+                    "bd-mala-abc": {"session_id": "s1", "status": "success"},
+                    "BD-MALA-ABC": {"session_id": "s2", "status": "failed"},
+                    "bd-mala-abc-2": {"session_id": "s3", "status": "success"},
+                },
+            }
+        ]
+
+        # Exact match should return only the matching issue
+        result = _extract_sessions(runs, "bd-mala-abc")
+        assert len(result) == 1
+        assert result[0]["issue_id"] == "bd-mala-abc"
+        assert result[0]["session_id"] == "s1"
+
+    def test_issue_id_no_partial_match(self) -> None:
+        """Verify issue filter does not do substring matching."""
+        from src.cli.logs import _extract_sessions
+
+        runs = [
+            {
+                "run_id": "run1",
+                "started_at": "2024-01-01T10:00:00+00:00",
+                "issues": {
+                    "bd-mala-abc": {"session_id": "s1", "status": "success"},
+                    "bd-mala-abc-suffix": {"session_id": "s2", "status": "success"},
+                    "prefix-bd-mala-abc": {"session_id": "s3", "status": "success"},
+                },
+            }
+        ]
+
+        # Filter should match exactly, not substring
+        result = _extract_sessions(runs, "bd-mala-abc")
+        assert len(result) == 1
+        assert result[0]["issue_id"] == "bd-mala-abc"
+
+    def test_sessions_output_format(self) -> None:
+        """Verify extracted sessions have expected fields."""
+        from src.cli.logs import _extract_sessions
+
+        runs = [
+            {
+                "run_id": "run-123",
+                "started_at": "2024-01-01T10:00:00+00:00",
+                "metadata_path": "/path/to/run.json",
+                "issues": {
+                    "issue-1": {
+                        "session_id": "sess-abc",
+                        "status": "success",
+                        "log_path": "/path/to/log.jsonl",
+                    },
+                },
+            }
+        ]
+
+        result = _extract_sessions(runs, None)
+        assert len(result) == 1
+        session = result[0]
+        assert session["run_id"] == "run-123"
+        assert session["session_id"] == "sess-abc"
+        assert session["issue_id"] == "issue-1"
+        assert session["run_started_at"] == "2024-01-01T10:00:00+00:00"
+        assert session["status"] == "success"
+        assert session["log_path"] == "/path/to/log.jsonl"
+        assert session["metadata_path"] == "/path/to/run.json"
+
+    def test_sessions_null_session_id(self) -> None:
+        """Verify null session_id is handled correctly."""
+        from src.cli.logs import _extract_sessions
+
+        runs = [
+            {
+                "run_id": "run1",
+                "started_at": "2024-01-01T10:00:00+00:00",
+                "issues": {
+                    "issue-1": {
+                        "status": "failed",
+                        "log_path": "/some/path.jsonl",
+                        # session_id is missing
+                    },
+                },
+            }
+        ]
+
+        result = _extract_sessions(runs, None)
+        assert len(result) == 1
+        assert result[0]["session_id"] is None
+
+    def test_sessions_null_log_path(self) -> None:
+        """Verify null log_path is handled correctly."""
+        from src.cli.logs import _extract_sessions
+
+        runs = [
+            {
+                "run_id": "run1",
+                "started_at": "2024-01-01T10:00:00+00:00",
+                "issues": {
+                    "issue-1": {
+                        "session_id": "sess-1",
+                        "status": "success",
+                        # log_path is missing
+                    },
+                },
+            }
+        ]
+
+        result = _extract_sessions(runs, None)
+        assert len(result) == 1
+        assert result[0]["log_path"] is None
+
+
+class TestSortSessions:
+    """Tests for _sort_sessions helper function."""
+
+    def test_sort_by_run_started_at_desc(self) -> None:
+        """Verify sessions are sorted by run_started_at descending."""
+        from src.cli.logs import _sort_sessions
+
+        sessions = [
+            {
+                "run_started_at": "2024-01-01T10:00:00+00:00",
+                "run_id": "a",
+                "issue_id": "i1",
+            },
+            {
+                "run_started_at": "2024-01-03T10:00:00+00:00",
+                "run_id": "b",
+                "issue_id": "i2",
+            },
+            {
+                "run_started_at": "2024-01-02T10:00:00+00:00",
+                "run_id": "c",
+                "issue_id": "i3",
+            },
+        ]
+
+        result = _sort_sessions(sessions)
+        assert [s["run_id"] for s in result] == ["b", "c", "a"]
+
+    def test_sort_tiebreaker_run_id_asc(self) -> None:
+        """Verify run_id is used as tiebreaker (ascending) when started_at is same."""
+        from src.cli.logs import _sort_sessions
+
+        sessions = [
+            {
+                "run_started_at": "2024-01-01T10:00:00+00:00",
+                "run_id": "c",
+                "issue_id": "i1",
+            },
+            {
+                "run_started_at": "2024-01-01T10:00:00+00:00",
+                "run_id": "a",
+                "issue_id": "i2",
+            },
+            {
+                "run_started_at": "2024-01-01T10:00:00+00:00",
+                "run_id": "b",
+                "issue_id": "i3",
+            },
+        ]
+
+        result = _sort_sessions(sessions)
+        assert [s["run_id"] for s in result] == ["a", "b", "c"]
+
+    def test_sort_tiebreaker_issue_id_asc(self) -> None:
+        """Verify issue_id is final tiebreaker (ascending)."""
+        from src.cli.logs import _sort_sessions
+
+        sessions = [
+            {
+                "run_started_at": "2024-01-01T10:00:00+00:00",
+                "run_id": "a",
+                "issue_id": "z",
+            },
+            {
+                "run_started_at": "2024-01-01T10:00:00+00:00",
+                "run_id": "a",
+                "issue_id": "m",
+            },
+            {
+                "run_started_at": "2024-01-01T10:00:00+00:00",
+                "run_id": "a",
+                "issue_id": "a",
+            },
+        ]
+
+        result = _sort_sessions(sessions)
+        assert [s["issue_id"] for s in result] == ["a", "m", "z"]
