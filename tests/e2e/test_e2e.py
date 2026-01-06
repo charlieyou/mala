@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -15,6 +16,8 @@ from src.domain.validation.e2e import (
     E2EResult,
     E2ERunner,
     E2EStatus,
+    _commands_use_uv,
+    _select_python_invoker,
     check_e2e_prereqs,
 )
 from src.domain.validation.helpers import (
@@ -598,6 +601,55 @@ class TestAnnotateIssue:
         assert "bd" in cmd
         assert "update" in cmd
         assert "test-123" in cmd
+
+
+class TestE2EInvokerSelection:
+    def test_commands_use_uv_detects_uv_commands(self) -> None:
+        assert _commands_use_uv(
+            [
+                "uv run pytest",
+                "RUFF_CACHE_DIR=/tmp/ruff uvx ruff check .",
+            ]
+        )
+
+    def test_commands_use_uv_ignores_non_uv(self) -> None:
+        assert not _commands_use_uv(["python -m pytest", "go test ./..."])
+
+    def test_select_python_invoker_prefers_uv_when_available(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(
+            "src.domain.validation.e2e._config_prefers_uv", lambda _: True
+        )
+        monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/uv")
+
+        invoker = _select_python_invoker(tmp_path)
+        assert invoker[:2] == ["uv", "run"]
+        assert "--directory" in invoker
+        assert str(tmp_path) in invoker
+        assert invoker[-1] == "python"
+
+    def test_select_python_invoker_falls_back_to_sys_executable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(
+            "src.domain.validation.e2e._config_prefers_uv", lambda _: True
+        )
+        monkeypatch.setattr(shutil, "which", lambda name: None)
+
+        invoker = _select_python_invoker(tmp_path)
+        assert invoker == [sys.executable]
+
+    def test_select_python_invoker_ignores_uv_when_config_not_uv(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(
+            "src.domain.validation.e2e._config_prefers_uv", lambda _: False
+        )
+        monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/uv")
+
+        invoker = _select_python_invoker(tmp_path)
+        assert invoker == [sys.executable]
 
 
 class TestCheckE2EPrereqsLegacy:
