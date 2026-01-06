@@ -3258,6 +3258,7 @@ class TestDocsOnlyResolution:
         git_diff_tree_cmd = (
             "git",
             "diff-tree",
+            "-m",
             "--no-commit-id",
             "--name-only",
             "-r",
@@ -3335,6 +3336,7 @@ class TestDocsOnlyResolution:
         git_diff_tree_cmd = (
             "git",
             "diff-tree",
+            "-m",
             "--no-commit-id",
             "--name-only",
             "-r",
@@ -3368,11 +3370,9 @@ class TestDocsOnlyResolution:
             spec=spec,
         )
 
-        # Should fail because commit contains code/config/setup files
+        # Should fail because commit contains files that trigger validation
         assert result.passed is False
-        assert any(
-            "code/config/setup files" in r.lower() for r in result.failure_reasons
-        )
+        assert any("trigger validation" in r for r in result.failure_reasons)
         assert any("src/main.py" in r for r in result.failure_reasons)
 
     def test_docs_only_fails_without_rationale(
@@ -3514,6 +3514,7 @@ class TestDocsOnlyResolution:
         git_diff_tree_cmd = (
             "git",
             "diff-tree",
+            "-m",
             "--no-commit-id",
             "--name-only",
             "-r",
@@ -3553,9 +3554,10 @@ class TestDocsOnlyResolution:
             spec=spec,
         )
 
-        # Should fail because no patterns are configured (fail closed)
+        # Should fail because empty code_patterns means "all files trigger validation"
+        # (should_trigger_validation returns True for any file when patterns empty)
         assert result.passed is False
-        assert any("requires code_patterns" in r for r in result.failure_reasons)
+        assert any("trigger validation" in r for r in result.failure_reasons)
 
     def test_docs_only_fails_when_git_diff_tree_fails(
         self,
@@ -3594,6 +3596,7 @@ class TestDocsOnlyResolution:
         git_diff_tree_cmd = (
             "git",
             "diff-tree",
+            "-m",
             "--no-commit-id",
             "--name-only",
             "-r",
@@ -3668,6 +3671,7 @@ class TestDocsOnlyResolution:
         git_diff_tree_cmd = (
             "git",
             "diff-tree",
+            "-m",
             "--no-commit-id",
             "--name-only",
             "-r",
@@ -3706,6 +3710,141 @@ class TestDocsOnlyResolution:
         # Should fail because uv.lock is in setup_files
         assert result.passed is False
         assert any("uv.lock" in r for r in result.failure_reasons)
+
+    def test_docs_only_fails_with_mala_yaml_change(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """DOCS_ONLY should fail if commit contains mala.yaml (always triggers)."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_DOCS_ONLY: Updated config comments.",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        # Create gate with fake command runner - commit contains mala.yaml
+        git_log_cmd = (
+            "git",
+            "log",
+            "--format=%h %ct %s",
+            "--grep",
+            "bd-test-123",
+            "-n",
+            "1",
+            "--since=30 days ago",
+        )
+        git_diff_tree_cmd = (
+            "git",
+            "diff-tree",
+            "-m",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "abc123",
+        )
+        fake_runner = FakeCommandRunner(
+            responses={
+                git_log_cmd: CommandResult(
+                    command=[],
+                    returncode=0,
+                    stdout="abc123 1704067200 bd-test-123: Update config\n",
+                    stderr="",
+                ),
+                git_diff_tree_cmd: CommandResult(
+                    command=[],
+                    returncode=0,
+                    stdout="mala.yaml\n",
+                    stderr="",
+                ),
+            }
+        )
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
+        # Create mala.yaml (mala.yaml changes always trigger validation)
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+
+        result = gate.check_with_resolution(
+            issue_id="test-123",
+            log_path=log_path,
+            baseline_timestamp=1704067100,
+            spec=spec,
+        )
+
+        # Should fail because mala.yaml always triggers validation
+        assert result.passed is False
+        assert any("mala.yaml" in r for r in result.failure_reasons)
+
+    def test_docs_only_fails_when_commit_hash_missing(
+        self,
+        tmp_path: Path,
+        log_provider: LogProvider,
+        mock_command_runner: FakeCommandRunner,
+    ) -> None:
+        """DOCS_ONLY should fail if commit exists but hash cannot be determined."""
+        log_path = tmp_path / "session.jsonl"
+        log_content = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "ISSUE_DOCS_ONLY: Updated docs.",
+                        }
+                    ]
+                },
+            }
+        )
+        log_path.write_text(log_content + "\n")
+
+        # Create gate with fake command runner - returns malformed output (no hash)
+        git_log_cmd = (
+            "git",
+            "log",
+            "--format=%h %ct %s",
+            "--grep",
+            "bd-test-123",
+            "-n",
+            "1",
+            "--since=30 days ago",
+        )
+        fake_runner = FakeCommandRunner(
+            responses={
+                git_log_cmd: CommandResult(
+                    command=[],
+                    returncode=0,
+                    # Empty output - git found something but parsing fails
+                    stdout="",
+                    stderr="",
+                ),
+            }
+        )
+        gate = QualityGate(tmp_path, log_provider, command_runner=fake_runner)
+        (tmp_path / "mala.yaml").write_text("preset: python-uv\n")
+        spec = build_validation_spec(tmp_path, scope=ValidationScope.PER_ISSUE)
+
+        result = gate.check_with_resolution(
+            issue_id="test-123",
+            log_path=log_path,
+            baseline_timestamp=1704067100,  # Must provide baseline to use %ct format
+            spec=spec,
+        )
+
+        # Should fail because no commit was found (empty output)
+        assert result.passed is False
+        assert any("no commit" in r.lower() for r in result.failure_reasons)
 
 
 class TestExtractIssueFromRationale:

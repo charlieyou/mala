@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, ClassVar
 
 from src.core.tool_name_extractor import extract_tool_name
 
-from .validation.code_pattern_matcher import filter_matching_files
 from .validation.spec import (
     CommandKind,
     IssueResolution,
@@ -28,6 +27,7 @@ from .validation.spec import (
     ValidationScope,
     build_validation_spec,
 )
+from .validation.validation_gating import should_trigger_validation
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -690,10 +690,12 @@ class QualityGate:
             None if git command fails (callers should treat as error).
             Empty list if commit has no file changes.
         """
+        # Use -m to show file changes for merge commits (otherwise empty)
         result = self._command_runner.run(
             [
                 "git",
                 "diff-tree",
+                "-m",
                 "--no-commit-id",
                 "--name-only",
                 "-r",
@@ -739,10 +741,12 @@ class QualityGate:
         For docs_only resolutions:
         - Gate 2 (commit check) runs normally
         - Gate 3 (validation evidence) is skipped
-        - Requires rationale and commit must not contain validation-triggering files
-          (code_patterns + config_files + setup_files)
-        - Requires at least one pattern category to be configured (fails closed)
-        - Fails if git diff-tree cannot determine changed files (fails closed)
+        - Requires rationale and commit must not trigger validation
+        - Uses should_trigger_validation() for consistency with validation gating:
+          * mala.yaml changes always trigger (rejected for DOCS_ONLY)
+          * empty code_patterns means all files trigger (rejected for DOCS_ONLY)
+          * code_patterns + config_files + setup_files patterns all checked
+        - Fails if commit hash or changed files cannot be determined (fails closed)
 
         When a ValidationSpec is provided, evidence requirements are derived
         from the spec rather than using hardcoded defaults. This ensures:
@@ -873,69 +877,56 @@ class QualityGate:
                         resolution=resolution,
                     )
 
-                # Verify commit does not contain code/config/setup files
-                # Use the same union of patterns used for validation gating
-                # (should_trigger_validation checks code_patterns + config_files + setup_files)
-                validation_patterns = [
-                    *spec.code_patterns,
-                    *spec.config_files,
-                    *spec.setup_files,
-                ]
-
-                if commit_result.commit_hash:
-                    commit_files = self.get_commit_files(commit_result.commit_hash)
-
-                    # Fail closed: if we can't determine changed files, reject DOCS_ONLY
-                    if commit_files is None:
-                        failure_reasons.append(
-                            "DOCS_ONLY resolution failed: could not determine "
-                            "files changed in commit (git diff-tree failed)"
-                        )
-                        return GateResult(
-                            passed=False,
-                            failure_reasons=failure_reasons,
-                            commit_hash=commit_result.commit_hash,
-                            resolution=resolution,
-                        )
-
-                    # Check against validation-triggering patterns
-                    # Note: empty validation_patterns means no explicit patterns configured,
-                    # which differs from validation gating (where empty = match all).
-                    # For DOCS_ONLY, we require explicit patterns to enforce the check;
-                    # without patterns, we can't verify the commit is truly docs-only,
-                    # so we reject to fail closed.
-                    if not validation_patterns:
-                        failure_reasons.append(
-                            "DOCS_ONLY resolution requires code_patterns, config_files, "
-                            "or setup_files to be configured in mala.yaml to verify "
-                            "the commit contains only documentation"
-                        )
-                        return GateResult(
-                            passed=False,
-                            failure_reasons=failure_reasons,
-                            commit_hash=commit_result.commit_hash,
-                            resolution=resolution,
-                        )
-
-                    triggering_files = filter_matching_files(
-                        commit_files, validation_patterns
+                # Fail closed: if commit hash is missing, we can't verify files
+                if not commit_result.commit_hash:
+                    failure_reasons.append(
+                        "DOCS_ONLY resolution failed: commit exists but hash "
+                        "could not be determined"
                     )
-                    if triggering_files:
-                        failure_reasons.append(
-                            f"DOCS_ONLY resolution but commit contains "
-                            f"code/config/setup files: {', '.join(triggering_files[:5])}"
-                            + (
-                                f" (and {len(triggering_files) - 5} more)"
-                                if len(triggering_files) > 5
-                                else ""
-                            )
+                    return GateResult(
+                        passed=False,
+                        failure_reasons=failure_reasons,
+                        resolution=resolution,
+                    )
+
+                # Get files changed in this commit
+                commit_files = self.get_commit_files(commit_result.commit_hash)
+
+                # Fail closed: if we can't determine changed files, reject DOCS_ONLY
+                if commit_files is None:
+                    failure_reasons.append(
+                        "DOCS_ONLY resolution failed: could not determine "
+                        "files changed in commit (git diff-tree failed)"
+                    )
+                    return GateResult(
+                        passed=False,
+                        failure_reasons=failure_reasons,
+                        commit_hash=commit_result.commit_hash,
+                        resolution=resolution,
+                    )
+
+                # Use should_trigger_validation to check if any changed files
+                # would trigger validation. This reuses the same logic as
+                # validation gating, including:
+                # - mala.yaml changes always trigger
+                # - empty code_patterns means match all files
+                # - config_files and setup_files patterns
+                if should_trigger_validation(commit_files, spec):
+                    failure_reasons.append(
+                        "DOCS_ONLY resolution but commit contains files that "
+                        f"trigger validation: {', '.join(commit_files[:5])}"
+                        + (
+                            f" (and {len(commit_files) - 5} more)"
+                            if len(commit_files) > 5
+                            else ""
                         )
-                        return GateResult(
-                            passed=False,
-                            failure_reasons=failure_reasons,
-                            commit_hash=commit_result.commit_hash,
-                            resolution=resolution,
-                        )
+                    )
+                    return GateResult(
+                        passed=False,
+                        failure_reasons=failure_reasons,
+                        commit_hash=commit_result.commit_hash,
+                        resolution=resolution,
+                    )
 
                 # Docs-only with rationale and no triggering files passes
                 # (skip validation evidence - only documentation changes)

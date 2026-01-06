@@ -431,7 +431,8 @@ class ImplementerLifecycle:
 
         if gate_result.passed:
             # Gate passed - should we run review?
-            # Skip review for resolutions with no new code (no_change, obsolete, already_complete)
+            # Skip review for resolutions with no new code to review
+            # (no_change, obsolete, already_complete, docs_only)
             resolution_skips_review = (
                 gate_result.resolution is not None
                 and gate_result.resolution.outcome in _SKIP_REVIEW_OUTCOMES
