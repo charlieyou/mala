@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 from src.cli.logs import (
     _collect_runs,
     _count_issue_statuses,
+    _extract_timestamp_prefix,
     _format_null,
     _parse_run_file,
     _sort_runs,
@@ -293,14 +294,21 @@ class TestCollectRuns:
         assert len(runs) == 25
 
     def test_collect_with_limit_stops_early(self, tmp_path: Path) -> None:
-        """Verify _collect_runs stops after collecting limit valid runs."""
-        # Create 25 valid run files
+        """Verify _collect_runs stops after collecting limit valid runs.
+
+        Uses realistic filename format with different timestamps so the
+        early termination logic can stop at different timestamp boundaries.
+        """
+        # Create 25 valid run files with different timestamp prefixes
+        # Each file has a unique timestamp so early termination works
         files = []
         for i in range(25):
-            run_file = tmp_path / f"run_{i:02d}.json"
+            # Use different timestamps so we can stop at limit
+            timestamp = f"2024-01-{(i % 28) + 1:02d}T{i:02d}-00-00"
+            run_file = tmp_path / f"{timestamp}_{i:08d}.json"
             data = {
                 "run_id": f"run-{i:02d}",
-                "started_at": f"2024-01-{(i % 28) + 1:02d}T10:00:00+00:00",
+                "started_at": f"2024-01-{(i % 28) + 1:02d}T{i:02d}:00:00+00:00",
                 "issues": {},
             }
             run_file.write_text(json.dumps(data))
@@ -354,6 +362,143 @@ class TestCollectRuns:
         runs = _collect_runs([run_file])
         assert len(runs) == 1
         assert runs[0]["metadata_path"] == str(run_file)
+
+    def test_collect_continues_for_same_timestamp_prefix(self, tmp_path: Path) -> None:
+        """Verify _collect_runs continues past limit for files with same timestamp prefix.
+
+        When multiple runs share the same second-resolution timestamp in their
+        filenames, we must collect all of them to ensure correct top-N after
+        sorting by the higher-resolution started_at field.
+        """
+        # Create files with same timestamp prefix but different microsecond started_at
+        # Filename format: {timestamp}_{short_id}.json
+        # All 3 files have timestamp "2024-01-01T10-00-00" in filename
+        # But their started_at has microsecond differences
+        files = []
+
+        # File A: filename sorts first (aaa), started_at is LATEST (should be #1)
+        file_a = tmp_path / "2024-01-01T10-00-00_aaaaaaaa.json"
+        file_a.write_text(
+            json.dumps(
+                {
+                    "run_id": "run-aaa",
+                    "started_at": "2024-01-01T10:00:00.900000+00:00",  # Latest
+                    "issues": {},
+                }
+            )
+        )
+        files.append(file_a)
+
+        # File B: filename sorts second (bbb), started_at is EARLIEST (should be #3)
+        file_b = tmp_path / "2024-01-01T10-00-00_bbbbbbbb.json"
+        file_b.write_text(
+            json.dumps(
+                {
+                    "run_id": "run-bbb",
+                    "started_at": "2024-01-01T10:00:00.100000+00:00",  # Earliest
+                    "issues": {},
+                }
+            )
+        )
+        files.append(file_b)
+
+        # File C: filename sorts third (ccc), started_at is MIDDLE (should be #2)
+        file_c = tmp_path / "2024-01-01T10-00-00_cccccccc.json"
+        file_c.write_text(
+            json.dumps(
+                {
+                    "run_id": "run-ccc",
+                    "started_at": "2024-01-01T10:00:00.500000+00:00",  # Middle
+                    "issues": {},
+                }
+            )
+        )
+        files.append(file_c)
+
+        # With limit=2, old behavior would stop after A and B (by filename order)
+        # and return [A, B] which after sorting by started_at would be [A, B]
+        # But correct top-2 by started_at should be [A, C] (latest two)
+        #
+        # New behavior: continues collecting all files with same timestamp prefix
+        runs = _collect_runs(files, limit=2)
+
+        # Should collect all 3 files since they share timestamp prefix
+        assert len(runs) == 3
+
+        # After sorting by started_at desc and slicing (done by caller),
+        # we would get [run-aaa, run-ccc] which is correct
+        sorted_runs = _sort_runs(runs)[:2]
+        assert [r["run_id"] for r in sorted_runs] == ["run-aaa", "run-ccc"]
+
+    def test_collect_stops_at_different_timestamp_prefix(self, tmp_path: Path) -> None:
+        """Verify _collect_runs stops when timestamp prefix changes."""
+        files = []
+
+        # Two files with timestamp "2024-01-02T10-00-00"
+        file_a = tmp_path / "2024-01-02T10-00-00_aaaaaaaa.json"
+        file_a.write_text(
+            json.dumps(
+                {
+                    "run_id": "run-a",
+                    "started_at": "2024-01-02T10:00:00+00:00",
+                    "issues": {},
+                }
+            )
+        )
+        files.append(file_a)
+
+        file_b = tmp_path / "2024-01-02T10-00-00_bbbbbbbb.json"
+        file_b.write_text(
+            json.dumps(
+                {
+                    "run_id": "run-b",
+                    "started_at": "2024-01-02T10:00:00+00:00",
+                    "issues": {},
+                }
+            )
+        )
+        files.append(file_b)
+
+        # One file with DIFFERENT timestamp "2024-01-01T10-00-00"
+        file_c = tmp_path / "2024-01-01T10-00-00_cccccccc.json"
+        file_c.write_text(
+            json.dumps(
+                {
+                    "run_id": "run-c",
+                    "started_at": "2024-01-01T10:00:00+00:00",
+                    "issues": {},
+                }
+            )
+        )
+        files.append(file_c)
+
+        # With limit=2, should collect exactly 2 (A and B have same prefix as boundary)
+        # and stop before C (different prefix)
+        runs = _collect_runs(files, limit=2)
+        assert len(runs) == 2
+        assert {r["run_id"] for r in runs} == {"run-a", "run-b"}
+
+
+class TestExtractTimestampPrefix:
+    """Tests for _extract_timestamp_prefix function."""
+
+    def test_standard_filename(self) -> None:
+        """Verify extraction from standard run filename format."""
+        assert (
+            _extract_timestamp_prefix("2024-01-01T10-00-00_abc12345.json")
+            == "2024-01-01T10-00-00"
+        )
+
+    def test_no_underscore(self) -> None:
+        """Verify empty string returned when no underscore in filename."""
+        assert _extract_timestamp_prefix("no-underscore.json") == ""
+
+    def test_multiple_underscores(self) -> None:
+        """Verify only first underscore is used as delimiter."""
+        assert (
+            _extract_timestamp_prefix("2024-01-01T10-00-00_abc_extra.json")
+            == "2024-01-01T10-00-00"
+        )
 
 
 class TestRepoScoping:

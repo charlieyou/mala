@@ -151,11 +151,35 @@ def _parse_timestamp(ts: str) -> float:
         return 0.0
 
 
+def _extract_timestamp_prefix(filename: str) -> str:
+    """Extract the timestamp prefix from a run filename.
+
+    Filenames have format: {timestamp}_{short_id}.json
+    where timestamp is %Y-%m-%dT%H-%M-%S (second resolution).
+
+    Args:
+        filename: The filename (not full path).
+
+    Returns:
+        The timestamp prefix (everything before the first underscore),
+        or empty string if no underscore found.
+    """
+    underscore_pos = filename.find("_")
+    if underscore_pos == -1:
+        return ""
+    return filename[:underscore_pos]
+
+
 def _collect_runs(files: list[Path], limit: int | None = None) -> list[dict[str, Any]]:
     """Collect valid run metadata from files, stopping early if limit reached.
 
     Files are assumed to be pre-sorted by filename descending (newest first),
     allowing early termination once `limit` valid runs are collected.
+
+    To preserve correctness when multiple runs share the same second-resolution
+    timestamp, this function continues scanning files with the same timestamp
+    prefix as the last-collected file, then returns all candidates for final
+    sorting and slicing by the caller.
 
     Args:
         files: List of JSON file paths (pre-sorted newest first).
@@ -163,17 +187,33 @@ def _collect_runs(files: list[Path], limit: int | None = None) -> list[dict[str,
 
     Returns:
         List of run metadata dicts with 'metadata_path' added.
-        Caller may apply final sort for determinism on ties.
+        Caller must apply final sort and slice to limit for correctness.
     """
     runs: list[dict[str, Any]] = []
+    boundary_prefix: str | None = None
+
     for path in files:
+        # If we've reached limit, only continue for files with same timestamp prefix
+        if limit is not None and len(runs) >= limit:
+            if boundary_prefix is None:
+                # Record the timestamp prefix of the last-collected file
+                boundary_prefix = _extract_timestamp_prefix(runs[-1]["metadata_path"])
+                # Use the filename from metadata_path (which is full path)
+                boundary_prefix = _extract_timestamp_prefix(
+                    Path(runs[-1]["metadata_path"]).name
+                )
+
+            current_prefix = _extract_timestamp_prefix(path.name)
+            if current_prefix != boundary_prefix:
+                # Different timestamp prefix, safe to stop
+                break
+
         data = _parse_run_file(path)
         if data is not None:
             # Add metadata_path to a copy to avoid mutating parsed data
             run_entry = {**data, "metadata_path": str(path)}
             runs.append(run_entry)
-            if limit is not None and len(runs) >= limit:
-                break
+
     return runs
 
 
@@ -226,10 +266,14 @@ def list_runs(
     """List recent mala runs."""
     files = _discover_run_files(all_runs)
     # Collect with limit (files are pre-sorted newest first by filename)
+    # _collect_runs may return more than limit if ties exist at the boundary
     runs = _collect_runs(files, limit=limit)
 
     # Final sort for determinism (handles ties within the collected set)
     runs = _sort_runs(runs)
+
+    # Slice to limit after sorting to ensure correct top-N
+    runs = runs[:limit]
 
     if not runs:
         if json_output:
