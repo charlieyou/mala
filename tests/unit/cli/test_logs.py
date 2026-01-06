@@ -150,6 +150,40 @@ class TestValidateRunMetadataKeys:
         }
         assert _validate_run_metadata(data) is True
 
+    def test_validate_rejects_non_dict(self) -> None:
+        """Verify non-dict JSON is rejected."""
+        assert _validate_run_metadata([]) is False
+        assert _validate_run_metadata("string") is False
+        assert _validate_run_metadata(123) is False
+        assert _validate_run_metadata(None) is False
+
+    def test_validate_rejects_null_started_at(self) -> None:
+        """Verify null started_at is rejected."""
+        data = {
+            "run_id": "abc123",
+            "started_at": None,
+            "issues": {},
+        }
+        assert _validate_run_metadata(data) is False
+
+    def test_validate_accepts_null_issues(self) -> None:
+        """Verify null issues is accepted (normalized to {})."""
+        data = {
+            "run_id": "abc123",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": None,
+        }
+        assert _validate_run_metadata(data) is True
+
+    def test_validate_rejects_non_dict_issues(self) -> None:
+        """Verify non-dict issues is rejected."""
+        data = {
+            "run_id": "abc123",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": ["list", "not", "dict"],
+        }
+        assert _validate_run_metadata(data) is False
+
 
 class TestNullValueHandling:
     """Tests for null value handling in output."""
@@ -211,8 +245,8 @@ class TestParseRunFile:
 class TestCollectRuns:
     """Tests for _collect_runs function."""
 
-    def test_limit_to_20_runs(self, tmp_path: Path) -> None:
-        """Verify only 20 results are returned."""
+    def test_collect_all_valid_runs(self, tmp_path: Path) -> None:
+        """Verify all valid runs are collected (limit applied after sort)."""
         # Create 25 valid run files
         files = []
         for i in range(25):
@@ -225,8 +259,15 @@ class TestCollectRuns:
             run_file.write_text(json.dumps(data))
             files.append(run_file)
 
+        # _collect_runs now collects all, limit is applied after sorting
         runs = _collect_runs(files, limit=20)
-        assert len(runs) == 20
+        assert len(runs) == 25  # All valid runs collected
+
+        # Verify limit works when applied to sorted runs
+        from src.cli.logs import _sort_runs
+
+        sorted_runs = _sort_runs(runs)[:20]
+        assert len(sorted_runs) == 20
 
     def test_collect_skips_invalid_files(self, tmp_path: Path) -> None:
         """Verify invalid files are skipped, valid ones collected."""

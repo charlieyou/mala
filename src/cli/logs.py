@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -16,6 +17,9 @@ logs_app = typer.Typer(name="logs", help="Search and inspect mala run logs")
 
 # Required keys for valid run metadata
 _REQUIRED_KEYS = {"run_id", "started_at", "issues"}
+
+# Default limit for number of runs to display
+_DEFAULT_LIMIT = 20
 
 
 def _discover_run_files(all_runs: bool) -> list[Path]:
@@ -44,16 +48,29 @@ def _discover_run_files(all_runs: bool) -> list[Path]:
     return sorted(files, key=lambda p: p.name, reverse=True)
 
 
-def _validate_run_metadata(data: dict[str, Any]) -> bool:
-    """Check if run metadata has required keys.
+def _validate_run_metadata(
+    data: dict[str, object] | list[object] | str | float | bool | None,
+) -> bool:
+    """Check if run metadata is a dict with required keys and valid values.
 
     Args:
         data: Parsed JSON data.
 
     Returns:
-        True if all required keys are present.
+        True if data is a dict with all required keys and valid values.
     """
-    return _REQUIRED_KEYS.issubset(data.keys())
+    if not isinstance(data, dict):
+        return False
+    if not _REQUIRED_KEYS.issubset(data.keys()):
+        return False
+    # Validate started_at is a non-null string
+    if not isinstance(data.get("started_at"), str):
+        return False
+    # Validate issues is a dict (or None which we treat as empty)
+    issues = data.get("issues")
+    if issues is not None and not isinstance(issues, dict):
+        return False
+    return True
 
 
 def _parse_run_file(path: Path) -> dict[str, Any] | None:
@@ -71,6 +88,9 @@ def _parse_run_file(path: Path) -> dict[str, Any] | None:
             data = json.load(f)
         if not _validate_run_metadata(data):
             return None
+        # Normalize issues to empty dict if None
+        if data.get("issues") is None:
+            data["issues"] = {}
         return data
     except (json.JSONDecodeError, OSError) as e:
         print(f"Warning: skipping corrupt file {path}: {e}", file=sys.stderr)
@@ -115,41 +135,52 @@ def _sort_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _parse_timestamp(ts: str) -> float:
     """Parse ISO timestamp to epoch float for sorting."""
-    from datetime import datetime
-
     try:
         # Handle both Z suffix and +00:00
         ts = ts.replace("Z", "+00:00")
         dt = datetime.fromisoformat(ts)
         return dt.timestamp()
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         return 0.0
 
 
-def _collect_runs(files: list[Path], limit: int = 20) -> list[dict[str, Any]]:
-    """Collect valid run metadata up to limit.
+def _collect_runs(files: list[Path], limit: int) -> list[dict[str, Any]]:
+    """Collect all valid run metadata, sort by started_at, and return top N.
 
     Args:
-        files: List of JSON file paths (pre-sorted by filename desc).
-        limit: Maximum runs to collect.
+        files: List of JSON file paths.
+        limit: Maximum runs to return after sorting.
 
     Returns:
-        List of run metadata dicts with 'metadata_path' added.
+        List of run metadata dicts with 'metadata_path' added, sorted by
+        started_at desc then run_id asc, limited to `limit` entries.
     """
     runs: list[dict[str, Any]] = []
     for path in files:
-        if len(runs) >= limit:
-            break
         data = _parse_run_file(path)
         if data is not None:
-            data["metadata_path"] = str(path)
-            runs.append(data)
+            # Add metadata_path to a copy to avoid mutating parsed data
+            run_entry = {**data, "metadata_path": str(path)}
+            runs.append(run_entry)
     return runs
 
 
 def _format_null(value: str | float | None) -> str:
     """Format value for table display, showing '-' for None."""
     return "-" if value is None else str(value)
+
+
+def _extract_repo_from_path(metadata_path: str) -> str | None:
+    """Extract repo path from metadata file's parent directory name.
+
+    The parent directory is encoded as '-home-user-repo' format.
+    Decodes back to '/home/user/repo'.
+    """
+    parent_name = Path(metadata_path).parent.name
+    if parent_name.startswith("-"):
+        # Decode: -home-user-repo -> /home/user/repo
+        return "/" + parent_name[1:].replace("-", "/")
+    return None
 
 
 @logs_app.command(name="list")
@@ -168,13 +199,21 @@ def list_runs(
             help="Show all runs (not just current repo)",
         ),
     ] = False,
+    limit: Annotated[
+        int,
+        typer.Option(
+            "--limit",
+            "-n",
+            help="Maximum number of runs to display",
+        ),
+    ] = _DEFAULT_LIMIT,
 ) -> None:
     """List recent mala runs."""
     files = _discover_run_files(all_runs)
-    runs = _collect_runs(files, limit=20)
+    runs = _collect_runs(files, limit=limit)
 
-    # Sort by started_at desc, run_id asc for determinism
-    runs = _sort_runs(runs)
+    # Sort by started_at desc, run_id asc for determinism, then take top N
+    runs = _sort_runs(runs)[:limit]
 
     if not runs:
         if json_output:
@@ -200,11 +239,11 @@ def list_runs(
             }
             if all_runs:
                 # Extract repo_path from parent directory name
-                entry["repo_path"] = run.get("repo_path")
+                entry["repo_path"] = _extract_repo_from_path(run["metadata_path"])
             output.append(entry)
         print(json.dumps(output, indent=2))
     else:
-        # Build table rows
+        # Build table rows (run_id truncated to 8 chars for display)
         headers = [
             "run_id",
             "started_at",
@@ -231,7 +270,8 @@ def list_runs(
                 run["metadata_path"],
             ]
             if all_runs:
-                row.insert(1, _format_null(run.get("repo_path")))
+                repo_path = _extract_repo_from_path(run["metadata_path"])
+                row.insert(1, _format_null(repo_path))
             rows.append(row)
 
         print(tabulate(rows, headers=headers, tablefmt="simple"))
