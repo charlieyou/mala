@@ -42,14 +42,23 @@ class TestKillActiveProcessGroups:
             assert call.args[1] == signal.SIGKILL
 
     @unix_only
-    def test_removes_only_killed_pgids(self) -> None:
-        """Only killed pgids are removed, preserving concurrent additions."""
+    def test_preserves_concurrent_additions(self) -> None:
+        """Pgids added during kill are preserved (not cleared)."""
         command_runner._SIGINT_FORWARD_PGIDS.update({1001, 1002})
 
-        with patch("os.killpg"):
+        def killpg_adds_concurrent(pgid: int, sig: int) -> None:
+            # Simulate a concurrent registration during kill iteration
+            if pgid == 1001:
+                command_runner._SIGINT_FORWARD_PGIDS.add(9999)
+
+        with patch("os.killpg", side_effect=killpg_adds_concurrent):
             CommandRunner.kill_active_process_groups()
 
-        assert len(command_runner._SIGINT_FORWARD_PGIDS) == 0
+        # 9999 was added during kill and must be preserved
+        assert 9999 in command_runner._SIGINT_FORWARD_PGIDS
+        # Original pgids should be removed
+        assert 1001 not in command_runner._SIGINT_FORWARD_PGIDS
+        assert 1002 not in command_runner._SIGINT_FORWARD_PGIDS
 
     @unix_only
     def test_handles_empty_pgid_set(self) -> None:
