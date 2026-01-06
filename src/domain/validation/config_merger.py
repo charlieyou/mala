@@ -237,10 +237,12 @@ def _merge_commands(
     # run_level_commands overrides.
     # Note: _clear_customs sets custom_override_mode=CLEAR but doesn't set built-in
     # fields, so we must also check that no custom command directive was given.
+    # Similarly, if user has custom_commands (but no built-ins), that's not "empty".
     if (
         clear_on_explicit_empty
         and user_commands_explicitly_set
         and not user._fields_set
+        and not user.custom_commands
         and user.custom_override_mode == CustomOverrideMode.INHERIT
     ):
         return user

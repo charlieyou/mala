@@ -1422,3 +1422,79 @@ class TestClearCustomsPresetMerge:
         assert (
             result.run_level_commands.custom_override_mode == CustomOverrideMode.CLEAR
         )
+
+    def test_only_custom_commands_does_not_clear_preset_run_level(self) -> None:
+        """Run-level with only custom keys (no built-ins) should NOT clear preset.
+
+        When user sets run_level_commands with only custom_commands (no built-in
+        fields set), _fields_set is empty but this should NOT be treated as
+        "explicitly empty" that clears preset run-level built-ins.
+        """
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+            ),
+            run_level_commands=CommandsConfig(
+                test=CommandConfig(command="pytest -m integration"),
+                lint=CommandConfig(command="ruff check . --select=E"),
+            ),
+        )
+        # User sets run_level_commands with only custom commands, no built-ins
+        user = ValidationConfig(
+            run_level_commands=CommandsConfig(
+                custom_commands={
+                    "mycheck": CustomCommandConfig(command="mycheck run"),
+                },
+                custom_override_mode=CustomOverrideMode.INHERIT,
+                _fields_set=frozenset(),  # No built-in fields set
+            ),
+            _fields_set=frozenset({"run_level_commands"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        # Preset run_level_commands should be INHERITED, not cleared
+        assert result.run_level_commands.test is not None
+        assert result.run_level_commands.test.command == "pytest -m integration"
+        assert result.run_level_commands.lint is not None
+        assert result.run_level_commands.lint.command == "ruff check . --select=E"
+        # User's custom_commands should be preserved
+        assert "mycheck" in result.run_level_commands.custom_commands
+        assert (
+            result.run_level_commands.custom_commands["mycheck"].command
+            == "mycheck run"
+        )
+
+    def test_truly_empty_run_level_still_clears_preset(self) -> None:
+        """Run-level with {} (truly empty) should still clear preset overrides.
+
+        When user sets run_level_commands: {} (no built-ins, no customs, mode=INHERIT),
+        this should clear all preset run-level overrides.
+        """
+        preset = ValidationConfig(
+            commands=CommandsConfig(
+                test=CommandConfig(command="pytest"),
+            ),
+            run_level_commands=CommandsConfig(
+                test=CommandConfig(command="pytest -m integration"),
+                lint=CommandConfig(command="ruff check . --select=E"),
+            ),
+        )
+        # Truly empty: no built-ins, no customs, mode=INHERIT
+        user = ValidationConfig(
+            run_level_commands=CommandsConfig(
+                custom_commands={},
+                custom_override_mode=CustomOverrideMode.INHERIT,
+                _fields_set=frozenset(),
+            ),
+            _fields_set=frozenset({"run_level_commands"}),
+        )
+
+        result = merge_configs(preset, user)
+
+        # run_level_commands should be cleared (empty)
+        assert result.run_level_commands.test is None
+        assert result.run_level_commands.lint is None
+        # Commands at base level should still be inherited
+        assert result.commands.test is not None
+        assert result.commands.test.command == "pytest"
