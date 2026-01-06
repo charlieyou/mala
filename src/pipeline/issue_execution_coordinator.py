@@ -191,9 +191,7 @@ class IssueExecutionCoordinator:
         watch_state.completed_count = len(self.completed_ids) + aborted_count
 
         if abort_result.has_unresponsive_tasks:
-            logger.warning(
-                "Skipping finalization: unresponsive tasks may still be mutating repo"
-            )
+            logger.warning("Unresponsive tasks may still be mutating repo")
 
         return RunResult(issues_spawned, exit_code=130, exit_reason="interrupted")
 

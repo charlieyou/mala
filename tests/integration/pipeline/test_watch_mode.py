@@ -468,8 +468,8 @@ class TestWatchModeFullFlow:
         1. Start with issues
         2. Process all issues
         3. Enter idle state (no more issues)
-        4. Receive SIGINT
-        5. Exit cleanly with final validation
+        4. Receive SIGINT (Stage 2)
+        5. Exit cleanly (Stage 2 does NOT run validation per spec)
         """
         provider = FakeIssueProvider(
             issues={
@@ -533,7 +533,11 @@ class TestWatchModeFullFlow:
         assert result.exit_code == 130
         assert result.exit_reason == "interrupted"
         assert len(coord.completed_ids) == 3
-        assert validation_called, "Final validation should have been called"
+        # Stage 2 interrupt does NOT call validation - exit code is determined by
+        # orchestrator's _abort_exit_code snapshot, not by validation during abort
+        assert not validation_called, (
+            "Validation should NOT be called during Stage 2 interrupt"
+        )
 
 
 @pytest.mark.integration

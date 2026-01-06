@@ -1137,18 +1137,26 @@ class MalaOrchestrator:
                     )
                     run_validation_passed = validation_output.passed
                 except asyncio.CancelledError:
-                    # SIGINT during validation - gracefully exit with 130
-                    if interrupt_event.is_set():
-                        self._exit_code = 130
-                        return await self._finalize_run(run_metadata, True)
+                    # SIGINT during validation - use snapshotted exit code
+                    if interrupt_event.is_set() or self._shutdown_requested:
+                        final_exit_code = (
+                            self._abort_exit_code if self._abort_mode_active else 130
+                        )
+                        self._exit_code = final_exit_code
+                        return await self._finalize_run(
+                            run_metadata, final_exit_code != 1
+                        )
                     raise
 
             # Check if SIGINT occurred during final validation phase
             # Note: this should rarely be reached since interrupt is handled earlier,
-            # but keep as safety net. Use validation result if available.
+            # but keep as safety net. Use snapshotted exit code for Stage 2.
             if interrupt_event.is_set():
-                self._exit_code = 1 if not run_validation_passed else 130
-                return await self._finalize_run(run_metadata, run_validation_passed)
+                final_exit_code = (
+                    self._abort_exit_code if self._abort_mode_active else 130
+                )
+                self._exit_code = final_exit_code
+                return await self._finalize_run(run_metadata, final_exit_code != 1)
 
             # Store exit code for CLI access (validation failure overrides to 1)
             self._exit_code = 1 if not run_validation_passed else exit_code
