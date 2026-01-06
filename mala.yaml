@@ -4,6 +4,8 @@ run_level_commands:
   test:
     command: "uv run pytest -m 'unit or integration or e2e' --cov=src --cov-report=xml:coverage.xml --cov-fail-under=0 -o cache_dir=/tmp/pytest-${AGENT_ID:-default}"
     timeout: 600
+  import-linter:
+    command: "uvx run --from import-linter lint-imports"
 
 coverage:
   format: xml
