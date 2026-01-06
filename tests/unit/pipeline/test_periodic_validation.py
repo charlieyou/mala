@@ -73,8 +73,7 @@ class TestPeriodicValidationThresholds:
             return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
-            # Mark issue as claimed so FakeIssueProvider excludes it from get_ready
-            provider.issues[issue_id].status = "closed"
+            await provider.close_async(issue_id)
             coord.mark_completed(issue_id)
 
         result = await asyncio.wait_for(
@@ -136,7 +135,7 @@ class TestValidationWithoutWatchMode:
             return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
-            provider.issues[issue_id].status = "closed"
+            await provider.close_async(issue_id)
             coord.mark_completed(issue_id)
 
         result = await asyncio.wait_for(
@@ -199,7 +198,7 @@ class TestNoValidationWhenConfigNone:
             return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
-            provider.issues[issue_id].status = "closed"
+            await provider.close_async(issue_id)
             coord.mark_completed(issue_id)
 
         result = await asyncio.wait_for(
@@ -258,7 +257,7 @@ class TestExactBoundaryValidation:
             return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
-            provider.issues[issue_id].status = "closed"
+            await provider.close_async(issue_id)
             coord.mark_completed(issue_id)
 
         result = await asyncio.wait_for(
@@ -313,7 +312,7 @@ class TestExactBoundaryValidation:
             return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
-            provider.issues[issue_id].status = "closed"
+            await provider.close_async(issue_id)
             coord.mark_completed(issue_id)
 
         result = await asyncio.wait_for(
@@ -372,7 +371,7 @@ class TestValidationFailureInNonWatchMode:
             return asyncio.create_task(complete_immediately())
 
         async def finalize_callback(issue_id: str, task: asyncio.Task[None]) -> None:
-            provider.issues[issue_id].status = "closed"
+            await provider.close_async(issue_id)
             coord.mark_completed(issue_id)
 
         result = await asyncio.wait_for(
