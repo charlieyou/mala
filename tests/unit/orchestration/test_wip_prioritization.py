@@ -13,6 +13,7 @@ This includes:
 from __future__ import annotations
 
 
+from src.core.models import OrderPreference
 from src.infra.issue_manager import IssueManager
 
 
@@ -438,7 +439,7 @@ class TestFocusModeOrderPreference:
             issues,
             focus=True,
             prioritize_wip=False,
-            order_preference="focus",
+            order_preference=OrderPreference.FOCUS,
         )
 
         # epic-a has min_priority=1, should be first group
@@ -472,7 +473,7 @@ class TestFocusModeOrderPreference:
             issues,
             focus=True,
             prioritize_wip=False,
-            order_preference="focus",
+            order_preference=OrderPreference.FOCUS,
         )
 
         # Orphan group has P0, epic-a has P1 - orphans first
@@ -510,7 +511,7 @@ class TestFocusModeOrderPreference:
             issues,
             focus=True,
             prioritize_wip=True,
-            order_preference="focus",
+            order_preference=OrderPreference.FOCUS,
         )
 
         # epic-a has P1 min, epic-b has P0 - but we filter first, then prioritize
@@ -555,7 +556,7 @@ class TestIssePriorityModeOrderPreference:
             issues,
             focus=False,
             prioritize_wip=False,
-            order_preference="issue-priority",
+            order_preference=OrderPreference.ISSUE_PRIORITY,
         )
 
         # Sorted by priority only: P1, P2, P3
