@@ -262,8 +262,8 @@ def list_runs(
 def _find_sessions_all_repos(issue_id: str) -> list[dict[str, Any]]:
     """Find sessions across all repos for --all flag.
 
-    Uses _discover_run_files_all_repos and manually extracts sessions since
-    find_sessions_for_issue only searches one repo.
+    Uses _discover_run_files_all_repos and the shared extract_session_from_run
+    function to avoid duplicating session extraction logic.
 
     Args:
         issue_id: The issue ID to filter by (exact match).
@@ -271,38 +271,28 @@ def _find_sessions_all_repos(issue_id: str) -> list[dict[str, Any]]:
     Returns:
         List of session dicts sorted by run_started_at descending.
     """
+    from src.infra.io.log_output.run_metadata import extract_session_from_run
+
     files = _discover_run_files_all_repos()
     runs_with_paths = load_runs(files)
     sessions: list[dict[str, Any]] = []
 
     for data, path in runs_with_paths:
-        issues = data.get("issues", {})
-        if not isinstance(issues, dict):
+        session_info = extract_session_from_run(data, path, issue_id)
+        if session_info is None:
             continue
 
-        issue_data = issues.get(issue_id)
-        if not isinstance(issue_data, dict):
-            continue
-
-        started_at = data.get("started_at") or ""
-        # Get repo_path from metadata, with fallback to parent dir name
-        stored_path = data.get("repo_path")
-        if isinstance(stored_path, str):
-            repo_path = stored_path
-        else:
-            parent_name = path.parent.name
-            repo_path = parent_name if parent_name else None
-
+        # Convert SessionInfo to dict for CLI display
         sessions.append(
             {
-                "run_id": data.get("run_id") or "",
-                "session_id": issue_data.get("session_id"),
-                "issue_id": issue_id,
-                "run_started_at": started_at,
-                "status": issue_data.get("status"),
-                "log_path": issue_data.get("log_path"),
-                "metadata_path": str(path),
-                "repo_path": repo_path,
+                "run_id": session_info.run_id,
+                "session_id": session_info.session_id,
+                "issue_id": session_info.issue_id,
+                "run_started_at": session_info.run_started_at,
+                "status": session_info.status,
+                "log_path": session_info.log_path,
+                "metadata_path": str(session_info.metadata_path),
+                "repo_path": session_info.repo_path,
             }
         )
 

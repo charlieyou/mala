@@ -884,6 +884,48 @@ class SessionInfo:
     repo_path: str | None
 
 
+def extract_session_from_run(
+    data: dict[str, Any], path: Path, issue_id: str
+) -> SessionInfo | None:
+    """Extract session info for a specific issue from run metadata.
+
+    This is the canonical implementation for session extraction, used by
+    both find_sessions_for_issue and CLI's _find_sessions_all_repos.
+
+    Args:
+        data: Parsed run metadata dict.
+        path: Path to the metadata file.
+        issue_id: The issue ID to extract.
+
+    Returns:
+        SessionInfo if the issue exists in the run, None otherwise.
+    """
+    issues = data.get("issues", {})
+    if not isinstance(issues, dict):
+        return None
+
+    issue_data = issues.get(issue_id)
+    if not isinstance(issue_data, dict):
+        return None
+
+    started_at = data.get("started_at") or ""
+    # Validate session_id is a string (or None)
+    raw_session_id = issue_data.get("session_id")
+    session_id = raw_session_id if isinstance(raw_session_id, str) else None
+
+    return SessionInfo(
+        run_id=data.get("run_id") or "",
+        session_id=session_id,
+        issue_id=issue_id,
+        run_started_at=started_at,
+        started_at_ts=parse_timestamp(started_at),
+        status=issue_data.get("status"),
+        log_path=issue_data.get("log_path"),
+        metadata_path=path,
+        repo_path=_get_repo_path_from_run(data, path),
+    )
+
+
 def find_sessions_for_issue(repo_path: Path | None, issue_id: str) -> list[SessionInfo]:
     """Find all sessions for a specific issue.
 
@@ -906,28 +948,9 @@ def find_sessions_for_issue(repo_path: Path | None, issue_id: str) -> list[Sessi
         if data is None:
             continue
 
-        issues = data.get("issues", {})
-        if not isinstance(issues, dict):
-            continue
-
-        issue_data = issues.get(issue_id)
-        if not isinstance(issue_data, dict):
-            continue
-
-        started_at = data.get("started_at") or ""
-        sessions.append(
-            SessionInfo(
-                run_id=data.get("run_id") or "",
-                session_id=issue_data.get("session_id"),
-                issue_id=issue_id,
-                run_started_at=started_at,
-                started_at_ts=parse_timestamp(started_at),
-                status=issue_data.get("status"),
-                log_path=issue_data.get("log_path"),
-                metadata_path=path,
-                repo_path=_get_repo_path_from_run(data, path),
-            )
-        )
+        session = extract_session_from_run(data, path, issue_id)
+        if session is not None:
+            sessions.append(session)
 
     # Sort by started_at descending, then run_id ascending for ties
     return sorted(
@@ -939,8 +962,14 @@ def find_sessions_for_issue(repo_path: Path | None, issue_id: str) -> list[Sessi
 def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
     """Look up the session ID from a prior run on this issue.
 
-    Uses find_sessions_for_issue() to find all sessions for the issue,
-    then returns the session_id from the most recent run.
+    Scans run metadata files in the repo's runs directory, finds entries
+    for the given issue, and returns the session_id from the most recent
+    run (sorted by started_at timestamp descending, with run_id as tiebreaker).
+
+    Files are sorted by filename descending before scanning (leveraging the
+    timestamp prefix in filenames for efficiency). Includes early-exit
+    optimization: stops scanning when files are guaranteed to be older than
+    the best match found.
 
     Args:
         repo_path: Repository path for finding run metadata.
@@ -949,14 +978,62 @@ def lookup_prior_session(repo_path: Path, issue_id: str) -> str | None:
     Returns:
         Session ID from the most recent run on this issue, or None if not found.
     """
-    sessions = find_sessions_for_issue(repo_path, issue_id)
+    runs_dir = get_repo_runs_dir(repo_path)
+    if not runs_dir.exists():
+        return None
 
-    # Find the first session with a valid session_id
-    for session in sessions:
-        if session.session_id:
-            return session.session_id
+    # Sort files by filename descending (newest first based on timestamp prefix)
+    json_files = sorted(runs_dir.glob("*.json"), key=lambda p: p.name, reverse=True)
 
-    return None
+    # Track best match: (started_at_ts, run_id, session_id)
+    best: tuple[float, str, str] | None = None
+
+    for json_path in json_files:
+        # Early-exit: if we have a match and current file's timestamp prefix
+        # is older than our best, we can stop (files are sorted newest-first)
+        if best is not None:
+            current_prefix = _extract_timestamp_prefix(json_path.name)
+            if current_prefix:
+                try:
+                    file_ts = datetime.strptime(
+                        current_prefix, "%Y-%m-%dT%H-%M-%S"
+                    ).replace(tzinfo=UTC)
+                    # Compare at second granularity
+                    if file_ts.timestamp() < int(best[0]):
+                        break  # All remaining files are older
+                except ValueError:
+                    pass  # Non-standard filename, continue scanning
+
+        data = _parse_run_file(json_path)
+        if data is None:
+            continue
+
+        issues = data.get("issues", {})
+        if not isinstance(issues, dict):
+            continue
+
+        issue_data = issues.get(issue_id)
+        if not isinstance(issue_data, dict):
+            continue
+
+        session_id = issue_data.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            continue
+
+        # Parse started_at for sorting
+        started_at = data.get("started_at") or ""
+        run_id = data.get("run_id") or ""
+        timestamp = parse_timestamp(started_at)
+
+        # Update best if this is newer, or same timestamp with smaller run_id
+        if (
+            best is None
+            or timestamp > best[0]
+            or (timestamp == best[0] and run_id < best[1])
+        ):
+            best = (timestamp, run_id, session_id)
+
+    return best[2] if best else None
 
 
 def parse_timestamp(ts: str) -> float:
