@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import yaml
 
-from src.domain.validation.config import PresetNotFoundError
+from src.domain.validation.config import ConfigError, PresetNotFoundError
 from src.domain.validation.config_loader import _build_config
 
 if TYPE_CHECKING:
@@ -68,6 +68,11 @@ class PresetRegistry:
             raise PresetNotFoundError(name, self.list_presets())
 
         data = self._load_preset_yaml(name)
+
+        # Presets MUST NOT define custom_commands (per spec R1)
+        if "custom_commands" in data:
+            raise ConfigError("presets cannot define custom_commands")
+
         return _build_config(data)
 
     def list_presets(self) -> list[str]:
