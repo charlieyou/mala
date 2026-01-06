@@ -474,6 +474,119 @@ def sessions(
         print(tabulate(rows, headers=headers, tablefmt="simple"))
 
 
+def _extract_run_id_prefix_from_filename(filename: str) -> str | None:
+    """Extract the 8-char run_id prefix from a run filename.
+
+    Filenames have format: {timestamp}_{short_id}.json
+    where short_id is the first 8 characters of the run_id.
+
+    Args:
+        filename: The filename (not full path).
+
+    Returns:
+        The 8-char run_id prefix, or None if parsing fails.
+    """
+    # Remove .json extension
+    if not filename.endswith(".json"):
+        return None
+    base = filename[:-5]  # Remove ".json"
+
+    # Find last underscore to split timestamp from run_id prefix
+    underscore_pos = base.rfind("_")
+    if underscore_pos == -1:
+        return None
+
+    prefix = base[underscore_pos + 1 :]
+    # Validate it looks like an 8-char hex prefix
+    if len(prefix) != 8:
+        return None
+    return prefix
+
+
+def _find_matching_runs(
+    search_id: str,
+) -> tuple[list[tuple[Path, dict[str, Any]]], list[Path]]:
+    """Find runs matching the given run_id or prefix.
+
+    Args:
+        search_id: Full UUID or 8-char prefix to search for.
+
+    Returns:
+        Tuple of (matches, corrupt_files) where:
+        - matches: List of (path, parsed_data) tuples for matching runs
+        - corrupt_files: List of paths that matched by filename but were corrupt
+    """
+    cwd = Path.cwd()
+    repo_runs_dir = get_repo_runs_dir(cwd)
+    if not repo_runs_dir.exists():
+        return [], []
+
+    files = list(repo_runs_dir.glob("*.json"))
+    is_prefix = len(search_id) == 8
+    search_prefix = search_id[:8]
+
+    matches: list[tuple[Path, dict[str, Any]]] = []
+    corrupt_files: list[Path] = []
+
+    for path in files:
+        filename_prefix = _extract_run_id_prefix_from_filename(path.name)
+
+        # First check: filename prefix must match
+        if filename_prefix is None or filename_prefix != search_prefix:
+            continue
+
+        # Parse the file
+        data = _parse_run_file(path)
+        if data is None:
+            corrupt_files.append(path)
+            continue
+
+        # For 8-char prefix: filename match is sufficient
+        # For full UUID: verify run_id field matches exactly
+        if is_prefix or data.get("run_id") == search_id:
+            matches.append((path, data))
+
+    return matches, corrupt_files
+
+
+def _print_run_details(run: dict[str, Any]) -> None:
+    """Print run details in human-readable table format.
+
+    Args:
+        run: Run metadata dict with all fields.
+    """
+    # Basic metadata
+    print(f"Run ID:       {run.get('run_id', '-')}")
+    print(f"Started:      {run.get('started_at', '-')}")
+    if run.get("ended_at"):
+        print(f"Ended:        {run['ended_at']}")
+    if run.get("status"):
+        print(f"Status:       {run['status']}")
+    if run.get("repo_path"):
+        print(f"Repo:         {run['repo_path']}")
+    print(f"Metadata:     {run.get('metadata_path', '-')}")
+
+    # Issues section
+    issues = run.get("issues", {})
+    if not issues:
+        print("\nIssues:       (none)")
+    else:
+        print(f"\nIssues ({len(issues)}):")
+        for issue_id, issue_data in sorted(issues.items()):
+            if not isinstance(issue_data, dict):
+                print(f"  {issue_id}: (invalid data)")
+                continue
+
+            status = issue_data.get("status", "-")
+            session_id = issue_data.get("session_id", "-")
+            log_path = issue_data.get("log_path", "-")
+
+            print(f"  {issue_id}:")
+            print(f"    Status:     {status}")
+            print(f"    Session:    {session_id}")
+            print(f"    Log:        {log_path}")
+
+
 @logs_app.command()
 def show(
     run_id: Annotated[
@@ -491,4 +604,55 @@ def show(
     ] = False,
 ) -> None:
     """Show details for a specific run."""
-    raise NotImplementedError("Not implemented yet")
+    matches, corrupt_files = _find_matching_runs(run_id)
+
+    # Handle ambiguous prefix (multiple matches)
+    if len(matches) > 1:
+        match_ids = sorted([m[1]["run_id"] for m in matches])
+        if json_output:
+            error_obj = {
+                "error": "ambiguous_prefix",
+                "message": f"Ambiguous prefix '{run_id}' matches multiple runs",
+                "matches": match_ids,
+            }
+            print(json.dumps(error_obj, indent=2))
+        else:
+            print(f"Error: Ambiguous prefix '{run_id}' matches multiple runs:")
+            for mid in match_ids:
+                print(f"  {mid}")
+        raise typer.Exit(1)
+
+    # Handle not found
+    if len(matches) == 0:
+        # Check if we had corrupt files that matched the prefix
+        if corrupt_files:
+            if json_output:
+                error_obj = {
+                    "error": "corrupt",
+                    "message": f"Run matching '{run_id}' found but file is corrupt",
+                }
+                print(json.dumps(error_obj, indent=2))
+            else:
+                print(f"Error: Run matching '{run_id}' found but file is corrupt")
+            raise typer.Exit(2)
+
+        if json_output:
+            error_obj = {
+                "error": "not_found",
+                "message": f"No run found matching '{run_id}'",
+            }
+            print(json.dumps(error_obj, indent=2))
+        else:
+            print(f"Error: No run found matching '{run_id}'")
+        raise typer.Exit(1)
+
+    # Single match found
+    path, data = matches[0]
+
+    # Add metadata_path to output
+    output_data = {**data, "metadata_path": str(path)}
+
+    if json_output:
+        print(json.dumps(output_data, indent=2))
+    else:
+        _print_run_details(output_data)

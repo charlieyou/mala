@@ -126,29 +126,24 @@ class TestLogsSessionsCommand:
 
 
 class TestLogsShowCommand:
-    """Tests for 'mala logs show' command (expected to fail until T005)."""
+    """Tests for 'mala logs show' command."""
 
     def test_show_basic_invocation(self) -> None:
-        """Test 'mala logs show <run_id>' invocation."""
+        """Test 'mala logs show <run_id>' returns not-found for nonexistent run."""
         result = runner.invoke(app, ["logs", "show", "abc12345"])
-        if isinstance(result.exception, NotImplementedError):
-            pytest.xfail("Stub raises NotImplementedError - T005")
-        if result.exception is not None and result.exit_code != 0:
-            raise result.exception
-        if result.exit_code != 0:
-            pytest.fail(f"Unexpected exit_code={result.exit_code}")
-        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
+        # Exit code 1 for not found
+        assert result.exit_code == 1
+        assert "No run found" in result.output
 
     def test_show_with_json_flag(self) -> None:
-        """Test 'mala logs show <run_id> --json' produces valid output."""
+        """Test 'mala logs show <run_id> --json' produces valid JSON error for not found."""
+        import json
+
         result = runner.invoke(app, ["logs", "show", "abc12345", "--json"])
-        if isinstance(result.exception, NotImplementedError):
-            pytest.xfail("Stub raises NotImplementedError - T005")
-        if result.exception is not None and result.exit_code != 0:
-            raise result.exception
-        if result.exit_code != 0:
-            pytest.fail(f"Unexpected exit_code={result.exit_code}")
-        pytest.fail("Implementation landed; remove xfail guard and add real assertions")
+        # Exit code 1 for not found
+        assert result.exit_code == 1
+        output = json.loads(result.output)
+        assert output["error"] == "not_found"
 
     def test_show_missing_run_id_fails(self) -> None:
         """Test 'mala logs show' without run_id argument fails."""

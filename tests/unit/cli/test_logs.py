@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 from src.cli.logs import (
     _collect_runs,
     _count_issue_statuses,
+    _extract_run_id_prefix_from_filename,
     _extract_timestamp_prefix,
     _format_null,
     _parse_run_file,
@@ -806,3 +807,393 @@ class TestSortSessions:
 
         result = _sort_sessions(sessions)
         assert [s["issue_id"] for s in result] == ["a", "m", "z"]
+
+
+class TestExtractRunIdPrefixFromFilename:
+    """Tests for _extract_run_id_prefix_from_filename function."""
+
+    def test_valid_filename(self) -> None:
+        """Verify extraction from valid filename format."""
+        result = _extract_run_id_prefix_from_filename(
+            "2024-01-01T10-00-00_a1b2c3d4.json"
+        )
+        assert result == "a1b2c3d4"
+
+    def test_filename_without_json_extension(self) -> None:
+        """Verify None returned for non-json files."""
+        result = _extract_run_id_prefix_from_filename(
+            "2024-01-01T10-00-00_a1b2c3d4.txt"
+        )
+        assert result is None
+
+    def test_filename_without_underscore(self) -> None:
+        """Verify None returned for filename without underscore."""
+        result = _extract_run_id_prefix_from_filename("a1b2c3d4.json")
+        assert result is None
+
+    def test_prefix_wrong_length(self) -> None:
+        """Verify None returned when prefix is not 8 chars."""
+        # Too short
+        result = _extract_run_id_prefix_from_filename("2024-01-01T10-00-00_a1b2.json")
+        assert result is None
+        # Too long
+        result = _extract_run_id_prefix_from_filename(
+            "2024-01-01T10-00-00_a1b2c3d4e5.json"
+        )
+        assert result is None
+
+    def test_multiple_underscores(self) -> None:
+        """Verify last underscore is used for split."""
+        result = _extract_run_id_prefix_from_filename(
+            "2024-01-01T10-00-00_extra_a1b2c3d4.json"
+        )
+        assert result == "a1b2c3d4"
+
+
+class TestFindMatchingRuns:
+    """Tests for _find_matching_runs function."""
+
+    def test_exact_match_full_uuid(self, tmp_path: Path) -> None:
+        """Verify full UUID matches exactly."""
+        # Import inside test to avoid stale reference after module reload
+        from src.cli.logs import _find_matching_runs
+
+        # Create a run file
+        run_data = {
+            "run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        run_file = tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json"
+        run_file.write_text(json.dumps(run_data))
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            matches, corrupt = _find_matching_runs(
+                "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+            )
+
+        assert len(matches) == 1
+        assert matches[0][1]["run_id"] == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        assert len(corrupt) == 0
+
+    def test_prefix_match_8_chars(self, tmp_path: Path) -> None:
+        """Verify 8-char prefix matches run."""
+        from src.cli.logs import _find_matching_runs
+
+        run_data = {
+            "run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        run_file = tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json"
+        run_file.write_text(json.dumps(run_data))
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            matches, corrupt = _find_matching_runs("a1b2c3d4")
+
+        assert len(matches) == 1
+        assert matches[0][1]["run_id"] == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        assert len(corrupt) == 0
+
+    def test_ambiguous_prefix(self, tmp_path: Path) -> None:
+        """Verify multiple matches returned for ambiguous prefix."""
+        from src.cli.logs import _find_matching_runs
+
+        # Create two runs with same 8-char prefix
+        run1 = {
+            "run_id": "a1b2c3d4-aaaa-0000-0000-000000000001",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        run2 = {
+            "run_id": "a1b2c3d4-bbbb-0000-0000-000000000002",
+            "started_at": "2024-01-01T11:00:00+00:00",
+            "issues": {},
+        }
+        (tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json").write_text(json.dumps(run1))
+        (tmp_path / "2024-01-01T11-00-00_a1b2c3d4.json").write_text(json.dumps(run2))
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            matches, corrupt = _find_matching_runs("a1b2c3d4")
+
+        assert len(matches) == 2
+        assert len(corrupt) == 0
+
+    def test_not_found(self, tmp_path: Path) -> None:
+        """Verify empty result when no match found."""
+        from src.cli.logs import _find_matching_runs
+
+        run_data = {
+            "run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        run_file = tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json"
+        run_file.write_text(json.dumps(run_data))
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            matches, corrupt = _find_matching_runs("xxxxxxxx")
+
+        assert len(matches) == 0
+        assert len(corrupt) == 0
+
+    def test_corrupt_file_detected(self, tmp_path: Path) -> None:
+        """Verify corrupt files are tracked separately."""
+        from src.cli.logs import _find_matching_runs
+
+        # Create a corrupt JSON file with matching prefix
+        corrupt_file = tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json"
+        corrupt_file.write_text("not valid json")
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            matches, corrupt = _find_matching_runs("a1b2c3d4")
+
+        assert len(matches) == 0
+        assert len(corrupt) == 1
+
+    def test_full_uuid_no_match_different_uuid(self, tmp_path: Path) -> None:
+        """Verify full UUID doesn't match when only prefix matches."""
+        from src.cli.logs import _find_matching_runs
+
+        # File has prefix a1b2c3d4 but different full UUID
+        run_data = {
+            "run_id": "a1b2c3d4-aaaa-0000-0000-000000000001",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        run_file = tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json"
+        run_file.write_text(json.dumps(run_data))
+
+        # Search with full UUID that has same prefix but different rest
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            matches, corrupt = _find_matching_runs(
+                "a1b2c3d4-bbbb-0000-0000-000000000002"
+            )
+
+        assert len(matches) == 0
+        assert len(corrupt) == 0
+
+    def test_empty_directory(self, tmp_path: Path) -> None:
+        """Verify empty result for empty directory."""
+        from src.cli.logs import _find_matching_runs
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            matches, corrupt = _find_matching_runs("a1b2c3d4")
+
+        assert len(matches) == 0
+        assert len(corrupt) == 0
+
+    def test_nonexistent_directory(self, tmp_path: Path) -> None:
+        """Verify empty result when directory doesn't exist."""
+        from src.cli.logs import _find_matching_runs
+
+        nonexistent = tmp_path / "does_not_exist"
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=nonexistent):
+            matches, corrupt = _find_matching_runs("a1b2c3d4")
+
+        assert len(matches) == 0
+        assert len(corrupt) == 0
+
+
+class TestShowCommand:
+    """Tests for show command output formatting."""
+
+    def test_show_output_includes_all_issues(self, tmp_path: Path) -> None:
+        """Verify show output includes all issues with their details."""
+        from typer.testing import CliRunner
+
+        from src.cli.logs import logs_app
+
+        runner = CliRunner()
+
+        run_data = {
+            "run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {
+                "issue-1": {
+                    "status": "success",
+                    "session_id": "sess-001",
+                    "log_path": "/logs/issue-1.jsonl",
+                },
+                "issue-2": {
+                    "status": "failed",
+                    "session_id": "sess-002",
+                    "log_path": "/logs/issue-2.jsonl",
+                },
+            },
+        }
+        run_file = tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json"
+        run_file.write_text(json.dumps(run_data))
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            result = runner.invoke(logs_app, ["show", "a1b2c3d4"])
+
+        assert result.exit_code == 0
+        assert "a1b2c3d4-e5f6-7890-abcd-ef1234567890" in result.output
+        assert "issue-1" in result.output
+        assert "issue-2" in result.output
+        assert "success" in result.output
+        assert "failed" in result.output
+        assert "/logs/issue-1.jsonl" in result.output
+        assert "/logs/issue-2.jsonl" in result.output
+
+    def test_show_json_output(self, tmp_path: Path) -> None:
+        """Verify --json flag produces valid JSON output."""
+        from typer.testing import CliRunner
+
+        from src.cli.logs import logs_app
+
+        runner = CliRunner()
+
+        run_data = {
+            "run_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {"issue-1": {"status": "success"}},
+        }
+        run_file = tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json"
+        run_file.write_text(json.dumps(run_data))
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            result = runner.invoke(logs_app, ["show", "a1b2c3d4", "--json"])
+
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+        assert output["run_id"] == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        assert "metadata_path" in output
+        assert "issues" in output
+
+    def test_show_not_found_error(self, tmp_path: Path) -> None:
+        """Verify exit code 1 when run not found."""
+        from typer.testing import CliRunner
+
+        from src.cli.logs import logs_app
+
+        runner = CliRunner()
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            result = runner.invoke(logs_app, ["show", "xxxxxxxx"])
+
+        assert result.exit_code == 1
+        assert "No run found" in result.output
+
+    def test_show_not_found_json_error(self, tmp_path: Path) -> None:
+        """Verify JSON error format when run not found."""
+        from typer.testing import CliRunner
+
+        from src.cli.logs import logs_app
+
+        runner = CliRunner()
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            result = runner.invoke(logs_app, ["show", "xxxxxxxx", "--json"])
+
+        assert result.exit_code == 1
+        output = json.loads(result.output)
+        assert output["error"] == "not_found"
+
+    def test_show_ambiguous_prefix_error(self, tmp_path: Path) -> None:
+        """Verify exit code 1 and match list for ambiguous prefix."""
+        from typer.testing import CliRunner
+
+        from src.cli.logs import logs_app
+
+        runner = CliRunner()
+
+        # Create two runs with same prefix
+        run1 = {
+            "run_id": "a1b2c3d4-aaaa-0000-0000-000000000001",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        run2 = {
+            "run_id": "a1b2c3d4-bbbb-0000-0000-000000000002",
+            "started_at": "2024-01-01T11:00:00+00:00",
+            "issues": {},
+        }
+        (tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json").write_text(json.dumps(run1))
+        (tmp_path / "2024-01-01T11-00-00_a1b2c3d4.json").write_text(json.dumps(run2))
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            result = runner.invoke(logs_app, ["show", "a1b2c3d4"])
+
+        assert result.exit_code == 1
+        assert "Ambiguous" in result.output
+        assert "a1b2c3d4-aaaa-0000-0000-000000000001" in result.output
+        assert "a1b2c3d4-bbbb-0000-0000-000000000002" in result.output
+
+    def test_show_ambiguous_prefix_json_error(self, tmp_path: Path) -> None:
+        """Verify JSON error format for ambiguous prefix."""
+        from typer.testing import CliRunner
+
+        from src.cli.logs import logs_app
+
+        runner = CliRunner()
+
+        run1 = {
+            "run_id": "a1b2c3d4-aaaa-0000-0000-000000000001",
+            "started_at": "2024-01-01T10:00:00+00:00",
+            "issues": {},
+        }
+        run2 = {
+            "run_id": "a1b2c3d4-bbbb-0000-0000-000000000002",
+            "started_at": "2024-01-01T11:00:00+00:00",
+            "issues": {},
+        }
+        (tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json").write_text(json.dumps(run1))
+        (tmp_path / "2024-01-01T11-00-00_a1b2c3d4.json").write_text(json.dumps(run2))
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            result = runner.invoke(logs_app, ["show", "a1b2c3d4", "--json"])
+
+        assert result.exit_code == 1
+        output = json.loads(result.output)
+        assert output["error"] == "ambiguous_prefix"
+        assert "matches" in output
+        assert len(output["matches"]) == 2
+
+    def test_show_corrupt_file_error(self, tmp_path: Path) -> None:
+        """Verify exit code 2 when file is corrupt."""
+        from typer.testing import CliRunner
+
+        from src.cli.logs import logs_app
+
+        runner = CliRunner()
+
+        corrupt_file = tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json"
+        corrupt_file.write_text("not valid json")
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            result = runner.invoke(logs_app, ["show", "a1b2c3d4"])
+
+        assert result.exit_code == 2
+        assert "corrupt" in result.output.lower()
+
+    def test_show_corrupt_file_json_error(self, tmp_path: Path) -> None:
+        """Verify JSON error format for corrupt file."""
+        from typer.testing import CliRunner
+
+        from src.cli.logs import logs_app
+
+        runner = CliRunner()
+
+        corrupt_file = tmp_path / "2024-01-01T10-00-00_a1b2c3d4.json"
+        corrupt_file.write_text("not valid json")
+
+        with patch("src.cli.logs.get_repo_runs_dir", return_value=tmp_path):
+            result = runner.invoke(logs_app, ["show", "a1b2c3d4", "--json"])
+
+        assert result.exit_code == 2
+        # Extract JSON from output (stderr warning may be mixed in)
+        # Find the JSON object in the output
+        output_lines = result.output.strip().split("\n")
+        json_lines = []
+        in_json = False
+        for line in output_lines:
+            if line.startswith("{"):
+                in_json = True
+            if in_json:
+                json_lines.append(line)
+            if line.startswith("}"):
+                break
+        output = json.loads("\n".join(json_lines))
+        assert output["error"] == "corrupt"
