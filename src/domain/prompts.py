@@ -37,11 +37,14 @@ def _build_custom_commands_section(
     for name, command, timeout, allow_fail in custom_commands:
         # Build marker-wrapped command pattern
         # Uses __status to capture exit code without polluting environment
+        # Wrap command in bash -c to handle shell metacharacters (;, &&, ||, pipes, env vars)
+        # Escape single quotes in command by replacing ' with '\''
+        escaped_command = command.replace("'", "'\\''")
         if allow_fail:
             # Advisory: always exit 0, note failure but don't block
             wrapper = (
                 f"echo '[custom:{name}:start]'; "
-                f"__status=0; timeout {timeout} {command} || __status=$?; "
+                f"__status=0; timeout {timeout} bash -c '{escaped_command}' || __status=$?; "
                 f"if [ $__status -eq 0 ]; then echo '[custom:{name}:pass]'; "
                 f"elif [ $__status -eq 124 ]; then echo '[custom:{name}:timeout]'; "
                 f'else echo "[custom:{name}:fail exit=$__status]"; fi; '
@@ -52,7 +55,7 @@ def _build_custom_commands_section(
             # Strict: exit with command's status
             wrapper = (
                 f"echo '[custom:{name}:start]'; "
-                f"__status=0; timeout {timeout} {command} || __status=$?; "
+                f"__status=0; timeout {timeout} bash -c '{escaped_command}' || __status=$?; "
                 f"if [ $__status -eq 0 ]; then echo '[custom:{name}:pass]'; "
                 f"elif [ $__status -eq 124 ]; then echo '[custom:{name}:timeout]'; "
                 f'else echo "[custom:{name}:fail exit=$__status]"; fi; '
