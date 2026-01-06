@@ -634,9 +634,12 @@ class EpicVerifier:
                 if isinstance(epic, dict) and epic.get("id") == epic_id:
                     if row.get("eligible_for_close"):
                         return None  # Actually eligible
-                    total = row.get("total_children", 0)
-                    closed = row.get("closed_children", 0)
-                    open_count = total - closed
+                    try:
+                        total = int(row.get("total_children") or 0)
+                        closed = int(row.get("closed_children") or 0)
+                        open_count = max(0, total - closed)
+                    except (TypeError, ValueError):
+                        return "Epic is not eligible for closure"
                     if open_count > 0:
                         return f"{open_count} of {total} child issues still open"
                     # Epic found but not eligible for unknown reason
