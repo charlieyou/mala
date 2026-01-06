@@ -25,7 +25,6 @@ from tests.fakes.coordinator_callbacks import (
 def test_fake_spawn_callback_implements_protocol() -> None:
     """FakeSpawnCallback must implement SpawnCallback protocol."""
     protocol_methods = get_protocol_members(SpawnCallback)
-    fake_methods = {name for name in dir(FakeSpawnCallback) if not name.startswith("_")}
 
     # SpawnCallback requires __call__, check it exists
     assert "__call__" in protocol_methods
@@ -36,7 +35,6 @@ def test_fake_spawn_callback_implements_protocol() -> None:
 def test_fake_finalize_callback_implements_protocol() -> None:
     """FakeFinalizeCallback must implement FinalizeCallback protocol."""
     protocol_methods = get_protocol_members(FinalizeCallback)
-    fake_methods = {name for name in dir(FakeFinalizeCallback) if not name.startswith("_")}
 
     assert "__call__" in protocol_methods
     assert hasattr(FakeFinalizeCallback, "__call__")
@@ -46,7 +44,6 @@ def test_fake_finalize_callback_implements_protocol() -> None:
 def test_fake_abort_callback_implements_protocol() -> None:
     """FakeAbortCallback must implement AbortCallback protocol."""
     protocol_methods = get_protocol_members(AbortCallback)
-    fake_methods = {name for name in dir(FakeAbortCallback) if not name.startswith("_")}
 
     assert "__call__" in protocol_methods
     assert hasattr(FakeAbortCallback, "__call__")

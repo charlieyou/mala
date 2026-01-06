@@ -10,10 +10,11 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from src.core.protocols import CommandResultProtocol, CommandRunnerPort
 
 

@@ -142,9 +142,7 @@ class TestFakeStreamProcessorBehavior:
     @pytest.mark.asyncio
     async def test_side_effect_raises_exception(self) -> None:
         """side_effect causes configured exception to be raised."""
-        processor = FakeStreamProcessor(
-            side_effect=IdleTimeoutError("custom error")
-        )
+        processor = FakeStreamProcessor(side_effect=IdleTimeoutError("custom error"))
 
         with pytest.raises(IdleTimeoutError, match="custom error"):
             await processor.process_stream(
@@ -158,7 +156,7 @@ class TestFakeStreamProcessorBehavior:
             )
 
 
-async def _empty_stream():
+async def _empty_stream() -> None:
     """Create an empty async iterator for testing."""
     return
-    yield  # Makes this an async generator  # noqa: RET503
+    yield  # Makes this an async generator
