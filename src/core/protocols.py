@@ -32,6 +32,8 @@ if TYPE_CHECKING:
     from types import TracebackType
     from typing import Self
 
+    from src.core.models import EpicVerificationResult
+
 
 # =============================================================================
 # Type Aliases
@@ -928,7 +930,7 @@ class EpicVerifierProtocol(Protocol):
         self,
         epic_id: str,
         human_override: bool = False,
-    ) -> object:
+    ) -> EpicVerificationResult:
         """Verify and close a single specific epic if eligible.
 
         This method checks if the specified epic is eligible (all children closed),
