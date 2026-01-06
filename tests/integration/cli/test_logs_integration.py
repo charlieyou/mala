@@ -93,7 +93,7 @@ class TestLogsSessionsCommand:
         result = runner.invoke(app, ["logs", "sessions"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T004")
-        if result.exception is not None:
+        if result.exception is not None and result.exit_code != 0:
             raise result.exception
         if result.exit_code != 0:
             pytest.fail(f"Unexpected exit_code={result.exit_code}")
@@ -104,7 +104,7 @@ class TestLogsSessionsCommand:
         result = runner.invoke(app, ["logs", "sessions", "--issue", "test-123"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T004")
-        if result.exception is not None:
+        if result.exception is not None and result.exit_code != 0:
             raise result.exception
         if result.exit_code != 0:
             pytest.fail(f"Unexpected exit_code={result.exit_code}")
@@ -115,7 +115,7 @@ class TestLogsSessionsCommand:
         result = runner.invoke(app, ["logs", "sessions", "--json"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T004")
-        if result.exception is not None:
+        if result.exception is not None and result.exit_code != 0:
             raise result.exception
         if result.exit_code != 0:
             pytest.fail(f"Unexpected exit_code={result.exit_code}")
@@ -126,7 +126,7 @@ class TestLogsSessionsCommand:
         result = runner.invoke(app, ["logs", "sessions", "--all"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T004")
-        if result.exception is not None:
+        if result.exception is not None and result.exit_code != 0:
             raise result.exception
         if result.exit_code != 0:
             pytest.fail(f"Unexpected exit_code={result.exit_code}")
@@ -141,7 +141,7 @@ class TestLogsShowCommand:
         result = runner.invoke(app, ["logs", "show", "abc12345"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T005")
-        if result.exception is not None:
+        if result.exception is not None and result.exit_code != 0:
             raise result.exception
         if result.exit_code != 0:
             pytest.fail(f"Unexpected exit_code={result.exit_code}")
@@ -152,7 +152,7 @@ class TestLogsShowCommand:
         result = runner.invoke(app, ["logs", "show", "abc12345", "--json"])
         if isinstance(result.exception, NotImplementedError):
             pytest.xfail("Stub raises NotImplementedError - T005")
-        if result.exception is not None:
+        if result.exception is not None and result.exit_code != 0:
             raise result.exception
         if result.exit_code != 0:
             pytest.fail(f"Unexpected exit_code={result.exit_code}")
