@@ -12,6 +12,7 @@ from pathlib import Path
 
 
 from src.domain.validation.config import (
+    CommandConfig,
     CommandsConfig,
     CustomCommandConfig,
     CustomOverrideMode,
@@ -25,6 +26,7 @@ from src.domain.validation.spec import (
     ValidationScope,
     ValidationSpec,
     _apply_custom_commands_override,
+    _build_commands_from_config,
     build_validation_spec,
     classify_change,
 )
@@ -803,13 +805,6 @@ class TestBuildValidationSpecCustomCommands:
 
     def test_build_validation_spec_custom_commands_pipeline_order(self) -> None:
         """Custom commands appear after typecheck, before test in pipeline order."""
-        from src.domain.validation.config import (
-            CommandConfig,
-            CommandsConfig,
-            CustomCommandConfig,
-        )
-        from src.domain.validation.spec import _build_commands_from_config
-
         commands_config = CommandsConfig(
             format=CommandConfig(command="uvx ruff format --check ."),
             lint=CommandConfig(command="uvx ruff check ."),
@@ -840,13 +835,6 @@ class TestBuildValidationSpecCustomCommands:
 
     def test_build_validation_spec_custom_commands_insertion_order(self) -> None:
         """Custom commands preserve dict insertion order."""
-        from src.domain.validation.config import (
-            CommandConfig,
-            CommandsConfig,
-            CustomCommandConfig,
-        )
-        from src.domain.validation.spec import _build_commands_from_config
-
         commands_config = CommandsConfig(test=CommandConfig(command="pytest"))
         custom_commands = {
             "cmd_a": CustomCommandConfig(command="echo a"),
@@ -866,13 +854,6 @@ class TestBuildValidationSpecCustomCommands:
 
     def test_build_validation_spec_custom_commands_attributes(self) -> None:
         """Custom commands have correct attributes (kind, allow_fail, timeout)."""
-        from src.domain.validation.config import (
-            CommandConfig,
-            CommandsConfig,
-            CustomCommandConfig,
-        )
-        from src.domain.validation.spec import _build_commands_from_config
-
         commands_config = CommandsConfig(test=CommandConfig(command="pytest"))
         custom_commands = {
             "security_scan": CustomCommandConfig(
@@ -1084,13 +1065,6 @@ class TestCustomCommandsYamlOrderPreservation:
         1. Dict insertion order is preserved in custom_commands
         2. _build_commands_from_config maintains that order in output
         """
-        from src.domain.validation.config import (
-            CommandConfig,
-            CommandsConfig,
-            CustomCommandConfig,
-        )
-        from src.domain.validation.spec import _build_commands_from_config
-
         commands_config = CommandsConfig(test=CommandConfig(command="pytest"))
         # Dict with specific insertion order
         custom_commands = {

@@ -25,7 +25,7 @@ from src.core.models import (
     ResolutionOutcome as ResolutionOutcome,
     ValidationArtifacts as ValidationArtifacts,
 )
-from src.domain.validation.config import CommandsConfig
+from src.domain.validation.config import CommandsConfig, CustomOverrideMode
 
 if TYPE_CHECKING:
     from re import Pattern
@@ -482,8 +482,6 @@ def _apply_custom_commands_override(
     - REPLACE: Return only run-level customs (full replace)
     - ADDITIVE: Merge run-level into repo-level ({**repo, **run})
     """
-    from src.domain.validation.config import CustomOverrideMode
-
     # For PER_ISSUE scope, always use repo-level custom_commands
     if scope == ValidationScope.PER_ISSUE:
         return repo_customs
