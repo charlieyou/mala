@@ -666,11 +666,14 @@ asyncio.run(main())
                 proc.kill()
                 try:
                     kill_stdout, kill_stderr = proc.communicate(timeout=5.0)
-                except subprocess.TimeoutExpired:
+                except subprocess.TimeoutExpired as e2:
+                    # Capture any additional output from the post-kill timeout
+                    kill_partial_stdout = str(e2.stdout) if e2.stdout else ""
+                    kill_partial_stderr = str(e2.stderr) if e2.stderr else ""
                     pytest.fail(
                         f"Process did not exit after SIGINT and kill(). "
-                        f"Partial stdout: {partial_stdout}\n"
-                        f"Partial stderr: {partial_stderr}"
+                        f"Partial stdout: {output + partial_stdout + kill_partial_stdout}\n"
+                        f"Partial stderr: {partial_stderr + kill_partial_stderr}"
                     )
                 remaining_stdout = partial_stdout + kill_stdout
                 stderr = partial_stderr + kill_stderr
@@ -865,11 +868,14 @@ if __name__ == "__main__":
                 proc.kill()
                 try:
                     kill_stdout, kill_stderr = proc.communicate(timeout=5.0)
-                except subprocess.TimeoutExpired:
+                except subprocess.TimeoutExpired as e2:
+                    # Capture any additional output from the post-kill timeout
+                    kill_partial_stdout = str(e2.stdout) if e2.stdout else ""
+                    kill_partial_stderr = str(e2.stderr) if e2.stderr else ""
                     pytest.fail(
                         f"Process did not exit after single SIGINT and kill(). "
-                        f"Partial stdout: {output + partial_stdout}\n"
-                        f"Partial stderr: {partial_stderr}"
+                        f"Partial stdout: {output + partial_stdout + kill_partial_stdout}\n"
+                        f"Partial stderr: {partial_stderr + kill_partial_stderr}"
                     )
                 remaining_stdout = partial_stdout + kill_stdout
                 stderr = partial_stderr + kill_stderr
@@ -1051,11 +1057,14 @@ if __name__ == "__main__":
                 proc.kill()
                 try:
                     kill_stdout, kill_stderr = proc.communicate(timeout=5.0)
-                except subprocess.TimeoutExpired:
+                except subprocess.TimeoutExpired as e2:
+                    # Capture any additional output from the post-kill timeout
+                    kill_partial_stdout = str(e2.stdout) if e2.stdout else ""
+                    kill_partial_stderr = str(e2.stderr) if e2.stderr else ""
                     pytest.fail(
                         f"Process did not exit after double SIGINT and kill(). "
-                        f"Partial stdout: {output + partial_stdout}\n"
-                        f"Partial stderr: {partial_stderr}"
+                        f"Partial stdout: {output + partial_stdout + kill_partial_stdout}\n"
+                        f"Partial stderr: {partial_stderr + kill_partial_stderr}"
                     )
                 remaining_stdout = partial_stdout + kill_stdout
                 stderr = partial_stderr + kill_stderr
@@ -1261,11 +1270,14 @@ if __name__ == "__main__":
                 proc.kill()
                 try:
                     kill_stdout, kill_stderr = proc.communicate(timeout=5.0)
-                except subprocess.TimeoutExpired:
+                except subprocess.TimeoutExpired as e2:
+                    # Capture any additional output from the post-kill timeout
+                    kill_partial_stdout = str(e2.stdout) if e2.stdout else ""
+                    kill_partial_stderr = str(e2.stderr) if e2.stderr else ""
                     pytest.fail(
                         f"Process did not exit after triple SIGINT and kill(). "
-                        f"Partial stdout: {output + partial_stdout}\n"
-                        f"Partial stderr: {partial_stderr}"
+                        f"Partial stdout: {output + partial_stdout + kill_partial_stdout}\n"
+                        f"Partial stderr: {partial_stderr + kill_partial_stderr}"
                     )
                 remaining_stdout = partial_stdout + kill_stdout
                 stderr = partial_stderr + kill_stderr
