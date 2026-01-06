@@ -46,7 +46,6 @@ if TYPE_CHECKING:
 # Returns: Dict mapping server names to server configurations
 McpServerFactory = Callable[[str, Path, Callable | None], dict[str, object]]
 
-
 # =============================================================================
 # Local Protocol Types
 # =============================================================================

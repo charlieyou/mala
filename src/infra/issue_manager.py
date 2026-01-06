@@ -11,41 +11,7 @@ without mutating inputs.
 
 from __future__ import annotations
 
-from typing import Literal, Protocol, TypeAlias, cast
-
-OrderPreferenceValue: TypeAlias = Literal[
-    "focus",
-    "epic-priority",
-    "issue-priority",
-    "input",
-]
-
-
-class SupportsOrderPreference(Protocol):
-    """Structural type for enums carrying a string order_preference value."""
-
-    value: str
-
-
-OrderPreferenceLike: TypeAlias = OrderPreferenceValue | SupportsOrderPreference
-DEFAULT_ORDER_PREFERENCE: OrderPreferenceValue = "epic-priority"
-_ORDER_PREFERENCE_VALUES: tuple[OrderPreferenceValue, ...] = (
-    "focus",
-    "epic-priority",
-    "issue-priority",
-    "input",
-)
-
-
-def _normalize_order_preference(order_preference: object) -> OrderPreferenceValue:
-    if order_preference is None:
-        return DEFAULT_ORDER_PREFERENCE
-    raw = order_preference
-    if not isinstance(raw, str):
-        raw = getattr(raw, "value", raw)
-    if isinstance(raw, str) and raw in _ORDER_PREFERENCE_VALUES:
-        return cast("OrderPreferenceValue", raw)
-    return DEFAULT_ORDER_PREFERENCE
+from src.core.models import OrderPreference
 
 
 class IssueManager:
@@ -239,7 +205,7 @@ class IssueManager:
         focus: bool,
         prioritize_wip: bool,
         only_ids: list[str] | None = None,
-        order_preference: OrderPreferenceLike = DEFAULT_ORDER_PREFERENCE,
+        order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
     ) -> list[dict[str, object]]:
         """Sort issues by order_preference (authoritative over focus flag).
 
@@ -248,8 +214,7 @@ class IssueManager:
             focus: Legacy flag (ignored when order_preference is set explicitly).
             prioritize_wip: If True, put in_progress issues first (ignored for INPUT order).
             only_ids: Optional list of issue IDs for input order preservation.
-            order_preference: Issue ordering ("focus", "epic-priority",
-                "issue-priority", or "input"), or an enum with matching values.
+            order_preference: Issue ordering (focus, epic-priority, issue-priority, or input).
                 This is the authoritative source of truth for ordering.
 
         Returns:
@@ -258,11 +223,9 @@ class IssueManager:
         if not issues:
             return issues
 
-        preference = _normalize_order_preference(order_preference)
-
         # INPUT order: preserve user-specified order from only_ids
         # Note: prioritize_wip is ignored for INPUT order to preserve exact user order
-        if preference == "input" and only_ids:
+        if order_preference == OrderPreference.INPUT and only_ids:
             # Create index map for O(1) lookup
             id_order = {id_: idx for idx, id_ in enumerate(only_ids)}
             return sorted(
@@ -271,9 +234,9 @@ class IssueManager:
             )
 
         # order_preference is authoritative
-        if preference == "issue-priority":
+        if order_preference == OrderPreference.ISSUE_PRIORITY:
             result = sorted(issues, key=lambda i: i.get("priority") or 0)
-        elif preference == "focus":
+        elif order_preference == OrderPreference.FOCUS:
             # FOCUS: single-epic mode - return only issues from the top epic group
             sorted_all = IssueManager.sort_by_epic_groups(list(issues))
             if sorted_all:

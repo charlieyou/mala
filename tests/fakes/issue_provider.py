@@ -18,7 +18,7 @@ Observable state:
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from src.core.protocols import OrderPreferenceLike
+from src.core.models import OrderPreference
 
 
 @dataclass
@@ -81,7 +81,7 @@ class FakeIssueProvider:
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
-        order_preference: OrderPreferenceLike = "focus",
+        order_preference: OrderPreference = OrderPreference.FOCUS,
     ) -> list[str]:
         """Get list of ready issue IDs, sorted by priority.
 

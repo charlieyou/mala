@@ -16,14 +16,13 @@ import json
 import re
 from typing import TYPE_CHECKING
 
+from src.core.models import OrderPreference
 from src.infra.issue_manager import IssueManager
 from src.infra.tools.command_runner import CommandResult, CommandRunner
 
 if TYPE_CHECKING:
     from pathlib import Path
     from collections.abc import Callable
-
-    from src.core.protocols import OrderPreferenceLike
 
 # Default timeout for bd/git subprocess calls (seconds)
 DEFAULT_COMMAND_TIMEOUT = 30.0
@@ -277,7 +276,7 @@ class BeadsClient:
         focus: bool,
         prioritize_wip: bool,
         only_ids: list[str] | None = None,
-        order_preference: OrderPreferenceLike = "epic-priority",
+        order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
     ) -> list[dict[str, object]]:
         """Sort issues by focus mode vs priority (pipeline step 5, pure function).
 
@@ -332,7 +331,7 @@ class BeadsClient:
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
-        order_preference: OrderPreferenceLike = "epic-priority",
+        order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
     ) -> list[dict[str, object]]:
         """Fetch, filter, enrich, and sort ready issues."""
         exclude_ids = exclude_ids or set()
@@ -367,7 +366,7 @@ class BeadsClient:
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
-        order_preference: OrderPreferenceLike = "epic-priority",
+        order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
     ) -> list[str]:
         """Get list of ready issue IDs via bd CLI, sorted by priority (async version).
 
@@ -382,8 +381,7 @@ class BeadsClient:
                 and within groups by (priority, updated DESC). Orphan tasks form a
                 virtual group with the same sorting rules.
             orphans_only: If True, only return issues with no parent epic.
-            order_preference: Issue ordering ("focus", "epic-priority",
-                "issue-priority", or "input"), or an enum with matching values.
+            order_preference: Issue ordering (focus, epic-priority, issue-priority, or input).
 
         Returns:
             List of issue IDs sorted by priority (lower = higher priority).
@@ -410,7 +408,7 @@ class BeadsClient:
         prioritize_wip: bool = False,
         focus: bool = True,
         orphans_only: bool = False,
-        order_preference: OrderPreferenceLike = "epic-priority",
+        order_preference: OrderPreference = OrderPreference.EPIC_PRIORITY,
     ) -> list[dict[str, object]]:
         """Get list of ready issues with full metadata, sorted by priority (async version).
 
@@ -425,8 +423,7 @@ class BeadsClient:
             prioritize_wip: If True, sort in_progress issues before open issues.
             focus: Legacy flag for epic grouping (use order_preference instead).
             orphans_only: If True, only return issues with no parent epic.
-            order_preference: Issue ordering ("focus", "epic-priority",
-                "issue-priority", or "input"), or an enum with matching values.
+            order_preference: Issue ordering (focus, epic-priority, issue-priority, or input).
 
         Returns:
             List of issue dicts with id, title, priority, status, and parent_epic fields.
