@@ -41,8 +41,7 @@ def require_claude_cli_auth() -> None:
 
 @pytest.fixture(autouse=True)
 def clean_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Clean environment for tests - disable Braintrust, use CLI auth."""
-    monkeypatch.delenv("BRAINTRUST_API_KEY", raising=False)
+    """Clean environment for tests - use CLI auth."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
 

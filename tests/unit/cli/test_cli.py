@@ -459,7 +459,7 @@ def test_status_no_running_instance(
 
     config_dir = tmp_path / "config"
     config_dir.mkdir()
-    (config_dir / ".env").write_text("BRAINTRUST_API_KEY=test")
+    (config_dir / ".env").write_text("MALA_TEST=1")
 
     lock_dir = tmp_path / "locks"
     lock_dir.mkdir()
@@ -494,7 +494,7 @@ def test_status_with_running_instance(
 
     config_dir = tmp_path / "config"
     config_dir.mkdir()
-    (config_dir / ".env").write_text("BRAINTRUST_API_KEY=test")
+    (config_dir / ".env").write_text("MALA_TEST=1")
 
     lock_dir = tmp_path / "locks"
     lock_dir.mkdir()
@@ -562,7 +562,7 @@ def test_status_all_flag(
 
     config_dir = tmp_path / "config"
     config_dir.mkdir()
-    (config_dir / ".env").write_text("BRAINTRUST_API_KEY=test")
+    (config_dir / ".env").write_text("MALA_TEST=1")
 
     lock_dir = tmp_path / "locks"
     lock_dir.mkdir()

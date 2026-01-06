@@ -57,7 +57,7 @@ mala uses a global config directory at `~/.config/mala/`:
 
 ```
 ~/.config/mala/
-├── .env          # API keys (ANTHROPIC_API_KEY, BRAINTRUST_API_KEY)
+├── .env          # API keys (ANTHROPIC_API_KEY) and config overrides
 ├── logs/         # JSONL session logs
 └── runs/         # Run metadata (repo-segmented directories)
     └── -home-user-repo/
@@ -93,14 +93,6 @@ Precedence: CLI flags override global config, which overrides program defaults.
 | `MALA_CERBERUS_ENV` | Extra env for review-gate (JSON object or comma KEY=VALUE list) |
 
 Note: The repo's `.env` file is for testing only and is not loaded by the program.
-
-## Braintrust Tracing
-
-To enable Braintrust tracing for agent sessions, add your API key to the global config:
-
-```bash
-echo "BRAINTRUST_API_KEY=your-key" >> ~/.config/mala/.env
-```
 
 ## Logs
 

@@ -64,7 +64,7 @@ Import boundaries are **enforced by import-linter** (see `pyproject.toml` for cu
 | `core` | (none - leaf layer) |
 
 External dependencies are also constrained:
-- **SDK packages** (anthropic, braintrust): `pipeline`, `domain`, and `core` cannot import SDKs or their wrappers directly; only `cli`, `orchestration`, and `infra` may use them
+- **SDK packages** (anthropic): `pipeline`, `domain`, and `core` cannot import SDKs or their wrappers directly; only `cli`, `orchestration`, and `infra` may use them
 - **typer**: confined to `cli` (enforced by `Only CLI imports typer` contract)
 
 ## Grimp Architecture Snapshot
@@ -212,7 +212,7 @@ sequenceDiagram
 
 High-level flow:
 
-1. CLI parses arguments and bootstraps environment (Braintrust, config).
+1. CLI parses arguments and bootstraps environment (config).
 2. `create_orchestrator()` builds dependencies and configuration.
 3. `MalaOrchestrator.run()`:
    - Delegates scheduling to `IssueExecutionCoordinator.run_loop`.
@@ -285,7 +285,7 @@ External integrations and utilities.
 
 | Subpackage | Purpose |
 |------------|---------|
-| `clients/` | SDK wrappers (Anthropic, Braintrust, Beads, Cerberus) |
+| `clients/` | SDK wrappers (Anthropic, Beads, Cerberus) |
 | `io/` | Config loading, event sink (base_sink, console_sink), log parsing |
 | `tools/` | Command runner, file locking, environment helpers |
 | `hooks/` | Agent hooks (lint cache, file cache, lock enforcement) |
@@ -483,7 +483,6 @@ Supporting orchestration components:
     - `close_eligible_epics_async()`: epic housekeeping at end of run.
     - `get_issue_description_async()`: fetch description for prompting/review.
 - `DefaultReviewer`: wrapper for Cerberus review-gate.
-- `BraintrustProvider`: tracing integration for SDK activity.
 - `EpicVerifier`: runs acceptance verification across child issue commits.
   - Key methods:
     - `verify_and_close_eligible()`: main epic closure loop.
@@ -537,7 +536,6 @@ Expected to pass (tighten invariants without refactors):
 - **External dependency confinement:**
   - `dotenv` is only allowed in `src.infra.tools.env`.
   - `yaml` is only allowed under `src.domain.validation`.
-  - `braintrust` is only allowed in `src.infra.clients` and the CLI bootstrap layer.
   - `anthropic` is only allowed in `src.infra.clients`.
   - These constraints target direct imports; indirect use via the approved wrappers is allowed.
 
@@ -585,7 +583,6 @@ Clean-room validation in isolated git worktrees:
 
 Agent sessions emit spans through a `TelemetryProvider` abstraction:
 - Protocol and `NullTelemetryProvider` in `infra.telemetry`
-- Braintrust-backed implementation in `infra.clients.braintrust_integration`
 
 ## Data Flow
 
