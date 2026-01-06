@@ -387,7 +387,6 @@ class TestValidationConfig:
         assert isinstance(config.config_files, tuple)
         assert isinstance(config.setup_files, tuple)
 
-    @pytest.mark.xfail(reason="T002 not yet implemented")
     def test_config_loader_parses_custom_commands(self) -> None:
         """Custom commands are parsed from dict into CustomCommandConfig instances."""
         config = ValidationConfig.from_dict(
