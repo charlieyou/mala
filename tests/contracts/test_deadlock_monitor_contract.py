@@ -16,10 +16,14 @@ from tests.fakes.deadlock_monitor import FakeDeadlockMonitor
 def test_fake_deadlock_monitor_implements_all_protocol_methods() -> None:
     """FakeDeadlockMonitor must implement all public methods of DeadlockMonitorProtocol."""
     protocol_methods = get_protocol_members(DeadlockMonitorProtocol)
-    fake_methods = {name for name in dir(FakeDeadlockMonitor) if not name.startswith("_")}
+    fake_methods = {
+        name for name in dir(FakeDeadlockMonitor) if not name.startswith("_")
+    }
 
     missing = protocol_methods - fake_methods
-    assert not missing, f"FakeDeadlockMonitor missing protocol methods: {sorted(missing)}"
+    assert not missing, (
+        f"FakeDeadlockMonitor missing protocol methods: {sorted(missing)}"
+    )
 
 
 @pytest.mark.unit

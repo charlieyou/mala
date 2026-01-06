@@ -220,7 +220,7 @@ class TestExecuteIterationTimeout:
 
         processor = FakeStreamProcessor(
             timeout_until=1,
-            result=MessageIterationResult(success=True, session_id="resumed-session")
+            result=MessageIterationResult(success=True, session_id="resumed-session"),
         )
 
         config = RetryConfig(
@@ -370,7 +370,7 @@ class TestBackoffTiming:
 
         processor = FakeStreamProcessor(
             timeout_until=2,
-            result=MessageIterationResult(success=True, session_id="final-session")
+            result=MessageIterationResult(success=True, session_id="final-session"),
         )
 
         config = RetryConfig(
@@ -423,7 +423,7 @@ class TestBackoffTiming:
 
         processor = FakeStreamProcessor(
             timeout_until=3,
-            result=MessageIterationResult(success=True, session_id="final-session")
+            result=MessageIterationResult(success=True, session_id="final-session"),
         )
 
         config = RetryConfig(
@@ -477,7 +477,7 @@ class TestRetryWithoutSessionId:
 
         processor = FakeStreamProcessor(
             timeout_until=1,
-            result=MessageIterationResult(success=True, session_id="new-session")
+            result=MessageIterationResult(success=True, session_id="new-session"),
         )
 
         config = RetryConfig(
@@ -576,9 +576,7 @@ class TestDisconnectBehavior:
         """Client disconnect is called when timeout occurs."""
         sdk_factory.configure_next_client(responses=[])
 
-        processor = FakeStreamProcessor(
-            side_effect=IdleTimeoutError("idle timeout")
-        )
+        processor = FakeStreamProcessor(side_effect=IdleTimeoutError("idle timeout"))
 
         config = RetryConfig(max_idle_retries=0)
         policy = IdleTimeoutRetryPolicy(
@@ -685,7 +683,9 @@ class TestStateManagement:
                 self.captured_on_retry["pending_lint_commands"] = (
                     state.pending_lint_commands.copy()
                 )
-                self.captured_on_retry["pending_tool_ids"] = state.pending_tool_ids.copy()
+                self.captured_on_retry["pending_tool_ids"] = (
+                    state.pending_tool_ids.copy()
+                )
                 return MessageIterationResult(success=True, session_id="sess")
 
         processor = RetryStateCaptureProcessor()

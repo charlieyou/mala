@@ -77,7 +77,6 @@ async def messages_to_stream(
     yield result
 
 
-
 class FakeTracer:
     """Fake tracer for testing, satisfies TelemetrySpan protocol."""
 

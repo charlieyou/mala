@@ -43,6 +43,7 @@ def make_mock_env_config() -> Mock:
     mock.find_cerberus_bin_path.return_value = None
     return mock
 
+
 # Fixture XML content for different test cases
 VALID_COVERAGE_XML_90_PERCENT = """\
 <?xml version="1.0" ?>

@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-
 @dataclass
 class FakeSpawnCallback:
     """Fake spawn callback that creates no-op tasks.

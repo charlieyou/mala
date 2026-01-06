@@ -13,7 +13,6 @@ This includes:
 from __future__ import annotations
 
 
-
 from src.infra.issue_manager import IssueManager
 
 

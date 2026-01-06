@@ -270,9 +270,7 @@ class TestRemoveWorktree:
         )
         runner = FakeCommandRunner(allow_unregistered=True)
 
-        result_ctx = remove_worktree(
-            ctx, validation_passed=True, command_runner=runner
-        )
+        result_ctx = remove_worktree(ctx, validation_passed=True, command_runner=runner)
 
         assert result_ctx.state == WorktreeState.PENDING
         # Should not call any git commands for pending worktree
@@ -665,9 +663,7 @@ class TestRemoveWorktreeFailurePropagation:
             stderr="fatal: worktree has uncommitted changes",
         )
 
-        result_ctx = remove_worktree(
-            ctx, validation_passed=True, command_runner=runner
-        )
+        result_ctx = remove_worktree(ctx, validation_passed=True, command_runner=runner)
 
         # Should fail
         assert result_ctx.state == WorktreeState.FAILED
@@ -704,15 +700,13 @@ class TestRemoveWorktreeFailurePropagation:
 
         # Git command fails but force_remove=True means we still cleanup
         runner = FakeCommandRunner(allow_unregistered=True)
-        runner.responses[
-            ("git", "worktree", "remove", "--force", str(ctx._path))
-        ] = CommandResult(
-            command=[], returncode=1, stdout="", stderr="git worktree remove failed"
+        runner.responses[("git", "worktree", "remove", "--force", str(ctx._path))] = (
+            CommandResult(
+                command=[], returncode=1, stdout="", stderr="git worktree remove failed"
+            )
         )
 
-        result_ctx = remove_worktree(
-            ctx, validation_passed=True, command_runner=runner
-        )
+        result_ctx = remove_worktree(ctx, validation_passed=True, command_runner=runner)
 
         # Should fail (git command failed)
         assert result_ctx.state == WorktreeState.FAILED

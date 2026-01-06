@@ -394,7 +394,7 @@ class TestRunMetadataSerialization:
                 max_issues=None,
                 epic_id=None,
                 only_ids=None,
-                )
+            )
 
             # Test the full save with DI via runs_dir
             runs_dir = Path(tmpdir) / "-home-user-my-project"
@@ -934,7 +934,7 @@ class TestDebugLogging:
                     max_issues=None,
                     epic_id=None,
                     only_ids=None,
-                        )
+                )
                 # Use DI via runs_dir parameter
                 metadata = RunMetadata(
                     repo_path=Path("/tmp/test-repo"),
@@ -1044,7 +1044,7 @@ class TestDebugLogging:
                     max_issues=None,
                     epic_id=None,
                     only_ids=None,
-                        )
+                )
                 # Use DI via runs_dir parameter
                 metadata = RunMetadata(
                     repo_path=Path("/tmp/test-repo"),

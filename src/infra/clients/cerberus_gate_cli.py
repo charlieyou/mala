@@ -302,7 +302,9 @@ class CerberusGateCLI:
         except Exception as e:
             return ResolveResult(success=False, error_detail=str(e))
 
-    async def check_diff_empty(self, diff_range: str, runner: CommandRunnerPort) -> bool:
+    async def check_diff_empty(
+        self, diff_range: str, runner: CommandRunnerPort
+    ) -> bool:
         """Check if the diff range has no changes.
 
         Uses git diff --stat to check if there are any changes in the range.
