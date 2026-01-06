@@ -205,11 +205,12 @@ class DeadlockHandler:
         *,
         is_interrupt: bool = False,
     ) -> int:
-        """Cancel active tasks, await them, and mark them as failed.
+        """Cancel active tasks, wait up to ABORT_GRACE_SECONDS, and finalize them.
 
         Tasks that have already completed are finalized with their real results
-        rather than being marked as aborted. All tasks are awaited to ensure
-        orderly shutdown.
+        rather than being marked as aborted. Tasks that don't respond to
+        cancellation within the grace period are finalized as "unresponsive"
+        but may still be running (Stage 3 force kill handles these).
 
         Args:
             active_tasks: Mapping of issue_id to asyncio.Task.
@@ -249,6 +250,7 @@ class DeadlockHandler:
             )
         except TimeoutError:
             # Tasks still running after grace period - continue with finalization
+            # Note: asyncio.TimeoutError is an alias for TimeoutError in Python 3.11+
             pass
 
         # Finalize each issue - use real result if completed, abort summary if cancelled
