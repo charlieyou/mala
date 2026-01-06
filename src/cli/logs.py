@@ -11,6 +11,7 @@ import typer
 from tabulate import tabulate
 
 from src.infra.io.log_output.run_metadata import (
+    _validate_run_data,
     discover_run_files,
     find_sessions_for_issue,
     load_runs,
@@ -80,15 +81,14 @@ def _sort_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(runs, key=lambda r: (-parse_timestamp(r["started_at"]), r["run_id"]))
 
 
-# Required keys for valid run metadata (used for _parse_run_file_cli)
-_REQUIRED_KEYS = {"run_id", "started_at", "issues"}
-
-
 def _parse_run_file_cli(path: Path) -> dict[str, Any] | None:
     """Parse a run metadata JSON file with CLI-specific error handling.
 
     Unlike infra's _parse_run_file which logs warnings, this version prints
     to stderr for CLI user visibility.
+
+    Uses the shared _validate_run_data from run_metadata.py to avoid
+    duplicating validation logic.
 
     Args:
         path: Path to JSON file.
@@ -100,25 +100,28 @@ def _parse_run_file_cli(path: Path) -> dict[str, Any] | None:
     try:
         with path.open() as f:
             data = json.load(f)
-        if not isinstance(data, dict):
-            return None
-        d = dict(data)  # type: dict[str, Any]
-        if not _REQUIRED_KEYS.issubset(d.keys()):
-            return None
-        if not isinstance(d.get("run_id"), str):
-            return None
-        if not isinstance(d.get("started_at"), str):
-            return None
-        issues = d.get("issues")
-        if issues is not None and not isinstance(issues, dict):
+        if not _validate_run_data(data):
             return None
         # Normalize issues to empty dict if None
-        if d.get("issues") is None:
-            d["issues"] = {}
-        return d
+        if data.get("issues") is None:
+            data["issues"] = {}
+        return data
     except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
         print(f"Warning: skipping corrupt file {path}: {e}", file=sys.stderr)
         return None
+
+
+def _warn_corrupt_file(path: Path, exc: Exception | None) -> None:
+    """Print a CLI warning for corrupt or invalid run files.
+
+    Args:
+        path: Path to the corrupt file.
+        exc: Exception if parse/IO error, None if validation failure.
+    """
+    if exc is not None:
+        print(f"Warning: skipping corrupt file {path}: {exc}", file=sys.stderr)
+    else:
+        print(f"Warning: skipping invalid file {path}", file=sys.stderr)
 
 
 def _collect_runs_with_paths(
@@ -127,7 +130,8 @@ def _collect_runs_with_paths(
     """Collect runs from files using shared load_runs, adding metadata_path.
 
     Thin wrapper around infra's load_runs() that adds 'metadata_path' field
-    for CLI display compatibility.
+    for CLI display compatibility. Uses on_corrupt callback to print warnings
+    to stderr for CLI user visibility.
 
     Args:
         files: List of JSON file paths (pre-sorted newest first).
@@ -136,7 +140,7 @@ def _collect_runs_with_paths(
     Returns:
         List of run metadata dicts with 'metadata_path' added.
     """
-    runs_with_paths = load_runs(files, limit=limit)
+    runs_with_paths = load_runs(files, limit=limit, on_corrupt=_warn_corrupt_file)
     return [{**data, "metadata_path": str(path)} for data, path in runs_with_paths]
 
 
@@ -263,7 +267,8 @@ def _find_sessions_all_repos(issue_id: str) -> list[dict[str, Any]]:
     """Find sessions across all repos for --all flag.
 
     Uses _discover_run_files_all_repos and the shared extract_session_from_run
-    function to avoid duplicating session extraction logic.
+    function to avoid duplicating session extraction logic. Uses on_corrupt
+    callback to print warnings to stderr for CLI user visibility.
 
     Args:
         issue_id: The issue ID to filter by (exact match).
@@ -274,7 +279,7 @@ def _find_sessions_all_repos(issue_id: str) -> list[dict[str, Any]]:
     from src.infra.io.log_output.run_metadata import extract_session_from_run
 
     files = _discover_run_files_all_repos()
-    runs_with_paths = load_runs(files)
+    runs_with_paths = load_runs(files, on_corrupt=_warn_corrupt_file)
     sessions: list[dict[str, Any]] = []
 
     for data, path in runs_with_paths:

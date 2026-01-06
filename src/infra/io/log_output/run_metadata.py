@@ -24,6 +24,7 @@ from src.infra.tools.env import get_lock_dir, get_repo_runs_dir
 # Type aliases for dependency injection in tests
 
 ProcessChecker = Callable[[int], bool]
+CorruptFileCallback = Callable[[Path, Exception | None], None]
 
 
 def configure_debug_logging(
@@ -736,27 +737,37 @@ def _validate_run_data(data: object) -> bool:
     return True
 
 
-def _parse_run_file(path: Path) -> dict[str, Any] | None:
+def _parse_run_file(
+    path: Path, on_corrupt: CorruptFileCallback | None = None
+) -> dict[str, Any] | None:
     """Parse a run metadata JSON file.
 
     Args:
         path: Path to JSON file.
+        on_corrupt: Optional callback invoked when a file is corrupt or invalid.
+            Receives (path, exception) where exception is None for validation
+            failures and the actual exception for parse/IO errors.
 
     Returns:
         Parsed dict if valid, None if corrupt or missing required keys.
-        Logs a warning for corrupt files.
+        Logs a warning for corrupt files (unless on_corrupt is provided).
     """
     try:
         with path.open() as f:
             data = json.load(f)
         if not _validate_run_data(data):
+            if on_corrupt is not None:
+                on_corrupt(path, None)
             return None
         # Normalize issues to empty dict if None
         if data.get("issues") is None:
             data["issues"] = {}
         return data
     except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
-        _logger.warning("Skipping corrupt file %s: %s", path, e)
+        if on_corrupt is not None:
+            on_corrupt(path, e)
+        else:
+            _logger.warning("Skipping corrupt file %s: %s", path, e)
         return None
 
 
@@ -801,7 +812,9 @@ def discover_run_files(repo_path: Path | None = None) -> list[Path]:
 
 
 def load_runs(
-    files: list[Path], limit: int | None = None
+    files: list[Path],
+    limit: int | None = None,
+    on_corrupt: CorruptFileCallback | None = None,
 ) -> list[tuple[dict[str, Any], Path]]:
     """Load valid run metadata from files.
 
@@ -816,6 +829,10 @@ def load_runs(
     Args:
         files: List of JSON file paths (pre-sorted newest first).
         limit: Maximum number of runs to collect. None means collect all.
+        on_corrupt: Optional callback invoked when a file is corrupt or invalid.
+            Receives (path, exception) where exception is None for validation
+            failures and the actual exception for parse/IO errors. If not provided,
+            corrupt files are logged via _logger.warning.
 
     Returns:
         List of (run_data, path) tuples. Caller must apply final sort and
@@ -840,7 +857,7 @@ def load_runs(
                 # Different timestamp prefix, safe to stop
                 break
 
-        data = _parse_run_file(path)
+        data = _parse_run_file(path, on_corrupt=on_corrupt)
         if data is not None:
             runs.append((data, path))
 
