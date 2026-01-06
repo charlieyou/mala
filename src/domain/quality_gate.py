@@ -126,9 +126,10 @@ class ValidationEvidence:
         """Check if any validation command ran.
 
         Used for progress detection to determine if new validation
-        activity occurred since the last check.
+        activity occurred since the last check. Includes both built-in
+        commands (via commands_ran) and custom commands (via custom_commands_ran).
         """
-        return any(self.commands_ran.values())
+        return any(self.commands_ran.values()) or any(self.custom_commands_ran.values())
 
     def has_minimum_validation(self) -> bool:
         """Check if minimum required validation was performed.
