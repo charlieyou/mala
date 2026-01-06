@@ -15,6 +15,7 @@ from src.domain.validation.config import (
     CommandsConfig,
     ConfigError,
     CustomCommandConfig,
+    CustomOverrideMode,
     PresetNotFoundError,
     PromptValidationCommands,
     ValidationConfig,
@@ -289,6 +290,21 @@ class TestCommandsConfig:
         with pytest.raises(ConfigError, match="cannot be empty string"):
             CommandsConfig.from_dict({"test": ""})
 
+    def test_default_custom_commands_and_override_mode(self) -> None:
+        """CommandsConfig defaults: empty custom_commands and INHERIT mode."""
+        config = CommandsConfig.from_dict(None)
+        assert config.custom_commands == {}
+        assert config.custom_override_mode == CustomOverrideMode.INHERIT
+
+    def test_from_dict_accepts_is_run_level_param(self) -> None:
+        """from_dict accepts is_run_level kwarg (stub for future parsing)."""
+        # is_run_level doesn't change behavior yet, but signature should accept it
+        config = CommandsConfig.from_dict({"lint": "ruff check ."}, is_run_level=True)
+        assert config.lint is not None
+        assert config.lint.command == "ruff check ."
+        # custom_commands still empty until inline parsing implemented
+        assert config.custom_commands == {}
+
 
 class TestValidationConfig:
     """Tests for ValidationConfig dataclass."""
@@ -471,6 +487,47 @@ class TestValidationConfig:
         """
         config = ValidationConfig.from_dict({})
         assert "custom_commands" not in config._fields_set
+
+    def test_inline_custom_commands_integration_path(self) -> None:
+        """Integration test: inline custom commands in commands section.
+
+        This test exercises the full parsing path from YAML-like dict through
+        ValidationConfig.from_dict -> CommandsConfig.from_dict. Currently fails
+        because inline custom command parsing is not yet implemented.
+
+        Expected final behavior: custom commands defined alongside standard commands
+        will be parsed and stored in CommandsConfig.custom_commands.
+
+        RED PHASE: This test currently fails because CommandsConfig.from_dict
+        rejects unknown keys (like "security") with ConfigError. When inline
+        parsing is implemented, this test should pass instead.
+        """
+        # Config with inline custom commands in commands section
+        # "security" is not a standard command kind, so it should be parsed
+        # as a custom command once inline parsing is implemented
+        yaml_data = {
+            "preset": "python-uv",
+            "commands": {
+                "lint": "uvx ruff check .",
+                "test": "uv run pytest",
+                # Future: non-standard keys will be parsed as custom commands
+                "security": "bandit -r src/",
+            },
+        }
+
+        # Current behavior: raises ConfigError for unknown command kind
+        # Future behavior: should parse "security" as custom command
+        # When this test starts failing differently (not ConfigError), update it
+        with pytest.raises(ConfigError, match="Unknown command kind"):
+            ValidationConfig.from_dict(yaml_data)
+
+        # TODO(mala-81qt): When inline parsing is implemented, replace the above with:
+        # config = ValidationConfig.from_dict(yaml_data)
+        # assert "security" in config.commands.custom_commands
+        pytest.fail(
+            "Inline custom commands not yet implemented - "
+            "remove pytest.raises and uncomment assertions when ready"
+        )
 
 
 class TestPresetNotFoundError:

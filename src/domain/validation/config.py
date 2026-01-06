@@ -19,11 +19,25 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import cast
 
 # Regex for valid custom command names: starts with letter or underscore,
 # followed by letters, digits, underscores, or hyphens
 CUSTOM_COMMAND_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+
+
+class CustomOverrideMode(Enum):
+    """Mode for how custom commands in run_level_commands override per_issue_commands.
+
+    When run_level_commands defines custom commands, this mode determines how they
+    combine with custom commands from per_issue_commands.
+    """
+
+    INHERIT = "inherit"  # Keep per_issue customs unchanged (no run_level customs)
+    CLEAR = "clear"  # Remove all per_issue customs (no customs at run-level)
+    REPLACE = "replace"  # Replace per_issue customs with run_level customs
+    ADDITIVE = "additive"  # Merge run_level customs into per_issue customs
 
 
 class ConfigError(Exception):
@@ -381,6 +395,8 @@ class CommandsConfig:
         format: Formatter check command (e.g., "uvx ruff format --check .").
         typecheck: Type checker command (e.g., "uvx ty check", "tsc --noEmit").
         e2e: End-to-end test command (e.g., "uv run pytest -m e2e").
+        custom_commands: Dictionary of custom validation commands (name -> config).
+        custom_override_mode: How run_level custom commands combine with per_issue.
         _fields_set: Set of field names that were explicitly provided in source.
             Used by the merger to distinguish "not set" from "explicitly null".
     """
@@ -391,15 +407,22 @@ class CommandsConfig:
     format: CommandConfig | None = None
     typecheck: CommandConfig | None = None
     e2e: CommandConfig | None = None
+    custom_commands: dict[str, CustomCommandConfig] = field(default_factory=dict)
+    custom_override_mode: CustomOverrideMode = CustomOverrideMode.INHERIT
     _fields_set: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
-    def from_dict(cls, data: dict[str, object] | None) -> CommandsConfig:
+    def from_dict(
+        cls, data: dict[str, object] | None, *, is_run_level: bool = False
+    ) -> CommandsConfig:
         """Create CommandsConfig from a YAML dict.
 
         Args:
             data: Dict with optional command fields. Each can be a string,
                 command object, or null.
+            is_run_level: If True, this is for run_level_commands section.
+                Affects how +prefix custom commands are interpreted.
+                (Currently unused - stub for future implementation.)
 
         Returns:
             CommandsConfig instance.
@@ -407,6 +430,9 @@ class CommandsConfig:
         Raises:
             ConfigError: If a command value is invalid.
         """
+        # is_run_level will be used in future to parse +prefix custom commands
+        _ = is_run_level
+
         if data is None:
             return cls()
 
