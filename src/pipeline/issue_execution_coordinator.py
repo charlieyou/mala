@@ -579,9 +579,13 @@ class IssueExecutionCoordinator:
 
                 # Check if validation threshold crossed
                 # Only enter this block if validation is actually configured
+                validate_every = (
+                    validation_config.validate_every
+                    if validation_config is not None
+                    else None
+                )
                 if (
-                    validation_config is not None
-                    and validation_config.validate_every is not None
+                    validate_every is not None
                     and validation_callback
                     and watch_state.completed_count
                     >= watch_state.next_validation_threshold
@@ -610,14 +614,11 @@ class IssueExecutionCoordinator:
                     # Advance threshold to next future threshold beyond completed_count
                     # This handles cases where completed_count jumps past multiple thresholds
                     watch_state.last_validation_at = watch_state.completed_count
-                    # validate_every is guaranteed non-None by the guard above
                     while (
                         watch_state.next_validation_threshold
                         <= watch_state.completed_count
                     ):
-                        watch_state.next_validation_threshold += (
-                            validation_config.validate_every
-                        )
+                        watch_state.next_validation_threshold += validate_every
 
         finally:
             # Clean up interrupt_task when exiting the loop (any return path)
