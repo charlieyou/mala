@@ -48,29 +48,29 @@ def _discover_run_files(all_runs: bool) -> list[Path]:
     return sorted(files, key=lambda p: p.name, reverse=True)
 
 
-def _validate_run_metadata(
-    data: dict[str, object] | list[object] | str | float | bool | None,
-) -> bool:
+def _validate_run_metadata(data: object) -> bool:
     """Check if run metadata is a dict with required keys and valid values.
 
     Args:
-        data: Parsed JSON data.
+        data: Parsed JSON data (any JSON value).
 
     Returns:
         True if data is a dict with all required keys and valid values.
     """
     if not isinstance(data, dict):
         return False
-    if not _REQUIRED_KEYS.issubset(data.keys()):
+    # Cast to dict[str, Any] for type checker after isinstance check
+    d = dict(data)  # type: dict[str, Any]
+    if not _REQUIRED_KEYS.issubset(d.keys()):
         return False
     # Validate run_id is a non-null string
-    if not isinstance(data.get("run_id"), str):
+    if not isinstance(d.get("run_id"), str):
         return False
     # Validate started_at is a non-null string
-    if not isinstance(data.get("started_at"), str):
+    if not isinstance(d.get("started_at"), str):
         return False
     # Validate issues is a dict (or None which we treat as empty)
-    issues = data.get("issues")
+    issues = d.get("issues")
     if issues is not None and not isinstance(issues, dict):
         return False
     return True
@@ -104,16 +104,20 @@ def _count_issue_statuses(issues: dict[str, Any]) -> tuple[int, int, int, int]:
     """Count issue statuses from issues dict.
 
     Args:
-        issues: Dict of issue_id -> issue data.
+        issues: Dict of issue_id -> issue data (values should be dicts).
 
     Returns:
         Tuple of (total, success, failed, timeout) counts.
+        Non-dict values are counted in total but not in status categories.
     """
     total = len(issues)
     success = 0
     failed = 0
     timeout = 0
     for issue in issues.values():
+        # Guard against non-dict issue values
+        if not isinstance(issue, dict):
+            continue
         status = issue.get("status")
         if status == "success":
             success += 1
@@ -167,7 +171,7 @@ def _collect_runs(files: list[Path]) -> list[dict[str, Any]]:
     return runs
 
 
-def _format_null(value: str | float | None) -> str:
+def _format_null(value: object) -> str:
     """Format value for table display, showing '-' for None."""
     return "-" if value is None else str(value)
 
