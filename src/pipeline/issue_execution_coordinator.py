@@ -164,8 +164,10 @@ class IssueExecutionCoordinator:
     ) -> RunResult:
         """Handle SIGINT by aborting active tasks, running final validation, and returning.
 
-        Note: abort_callback awaits all tasks before returning to ensure orderly shutdown.
-        It also updates watch_state.completed_count for aborted tasks.
+        Note: abort_callback waits up to ABORT_GRACE_SECONDS for tasks to finish.
+        Tasks that don't respond to cancellation within the grace period are finalized
+        as "unresponsive" but may still be running. It also updates
+        watch_state.completed_count for aborted tasks.
         """
         aborted_count = await abort_callback(is_interrupt=True)
         if not isinstance(aborted_count, int):
