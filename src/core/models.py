@@ -198,7 +198,7 @@ class WatchConfig:
 
 
 @dataclass
-class ValidationConfig:
+class PeriodicValidationConfig:
     """Configuration for periodic validation triggering.
 
     Attributes:

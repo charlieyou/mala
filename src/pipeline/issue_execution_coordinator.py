@@ -22,7 +22,7 @@ from src.core.models import OrderPreference, RunResult, WatchState
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from src.core.models import ValidationConfig, WatchConfig
+    from src.core.models import PeriodicValidationConfig, WatchConfig
     from src.core.protocols import IssueProvider, MalaEventSink
 
 logger = logging.getLogger(__name__)
@@ -189,7 +189,7 @@ class IssueExecutionCoordinator:
         finalize_callback: FinalizeCallback,
         abort_callback: AbortCallback,
         watch_config: WatchConfig | None = None,
-        validation_config: ValidationConfig | None = None,
+        validation_config: PeriodicValidationConfig | None = None,
         interrupt_event: asyncio.Event | None = None,
         validation_callback: Callable[[], Awaitable[bool]] | None = None,
         sleep_fn: Callable[[float], Awaitable[None]] = asyncio.sleep,

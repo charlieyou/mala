@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.core.models import ValidationConfig, WatchConfig
+from src.core.models import PeriodicValidationConfig, WatchConfig
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
@@ -353,7 +353,7 @@ class TestValidationTriggers:
             enabled=True,
             poll_interval_seconds=0.1,
         )
-        validation_config = ValidationConfig(
+        validation_config = PeriodicValidationConfig(
             validate_every=2
         )  # Trigger at 2 completions
         validation_calls: list[int] = []  # Record completed count at each call
@@ -417,7 +417,7 @@ class TestValidationTriggers:
             enabled=True,
             poll_interval_seconds=0.1,
         )
-        validation_config = ValidationConfig(validate_every=2)
+        validation_config = PeriodicValidationConfig(validate_every=2)
 
         coord = IssueExecutionCoordinator(
             beads=provider,
@@ -568,7 +568,7 @@ import asyncio
 import sys
 import signal
 
-from src.core.models import ValidationConfig, WatchConfig
+from src.core.models import PeriodicValidationConfig, WatchConfig
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
@@ -700,7 +700,7 @@ class TestPeriodicValidationWithoutWatch:
         event_sink = FakeEventSink()
         # Watch mode disabled, but validation enabled
         watch_config = WatchConfig(enabled=False)
-        validation_config = ValidationConfig(validate_every=2)
+        validation_config = PeriodicValidationConfig(validate_every=2)
 
         # Track validation callback invocations
         validation_calls: list[bool] = []

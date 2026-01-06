@@ -39,7 +39,7 @@ _LAZY_NAMES = frozenset(
         "MalaOrchestrator",
         "OrderPreference",
         "OrchestratorConfig",
-        "ValidationConfig",
+        "PeriodicValidationConfig",
         "WatchConfig",
         "create_orchestrator",
         "get_all_locks",
@@ -907,9 +907,9 @@ def run(
         orch_config, mala_config=override_result.updated_config
     )
 
-    # Build WatchConfig and ValidationConfig, then run orchestrator
+    # Build WatchConfig and PeriodicValidationConfig, then run orchestrator
     watch_config = _lazy("WatchConfig")(enabled=watch)
-    validation_config = _lazy("ValidationConfig")(validate_every=validate_every)
+    validation_config = _lazy("PeriodicValidationConfig")(validate_every=validate_every)
     success_count, total = asyncio.run(
         orchestrator.run(watch_config=watch_config, validation_config=validation_config)
     )
@@ -1267,10 +1267,10 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from ..orchestration.types import OrchestratorConfig
 
         _lazy_modules[name] = OrchestratorConfig
-    elif name == "ValidationConfig":
-        from ..core.models import ValidationConfig
+    elif name == "PeriodicValidationConfig":
+        from ..core.models import PeriodicValidationConfig
 
-        _lazy_modules[name] = ValidationConfig
+        _lazy_modules[name] = PeriodicValidationConfig
     elif name == "WatchConfig":
         from ..core.models import WatchConfig
 

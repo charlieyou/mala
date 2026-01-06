@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.core.models import ValidationConfig, WatchConfig
+from src.core.models import PeriodicValidationConfig, WatchConfig
 from src.pipeline.issue_execution_coordinator import (
     CoordinatorConfig,
     IssueExecutionCoordinator,
@@ -55,7 +55,7 @@ class TestWatchModeSleeps:
         """
         provider = FakeIssueProvider()  # No issues
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=30.0)
-        validation_config = ValidationConfig(validate_every=10)
+        validation_config = PeriodicValidationConfig(validate_every=10)
 
         coord = IssueExecutionCoordinator(
             beads=provider,
@@ -105,7 +105,7 @@ class TestWatchModeInterrupt:
         """When interrupt_event is set, watch mode should exit gracefully."""
         provider = FakeIssueProvider()  # No issues
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=60.0)
-        validation_config = ValidationConfig(validate_every=10)
+        validation_config = PeriodicValidationConfig(validate_every=10)
         interrupt_event = asyncio.Event()
         interrupt_event.set()  # Set immediately
 
@@ -150,7 +150,7 @@ class TestWatchModeValidation:
             }
         )
         watch_config = WatchConfig(enabled=True)
-        validation_config = ValidationConfig(validate_every=3)
+        validation_config = PeriodicValidationConfig(validate_every=3)
         validation_callback = AsyncMock(return_value=True)
 
         coord = IssueExecutionCoordinator(
@@ -216,7 +216,7 @@ class TestWatchModeValidation:
             }
         )
         watch_config = WatchConfig(enabled=True)
-        validation_config = ValidationConfig(validate_every=10)
+        validation_config = PeriodicValidationConfig(validate_every=10)
         validation_callback = AsyncMock(return_value=True)
 
         coord = IssueExecutionCoordinator(
@@ -277,7 +277,7 @@ class TestWatchModeValidation:
             }
         )
         watch_config = WatchConfig(enabled=True)
-        validation_config = ValidationConfig(validate_every=10)
+        validation_config = PeriodicValidationConfig(validate_every=10)
         validation_callback = AsyncMock(return_value=True)
 
         coord = IssueExecutionCoordinator(
@@ -337,7 +337,7 @@ class TestWatchModeValidation:
             }
         )
         watch_config = WatchConfig(enabled=True)
-        validation_config = ValidationConfig(validate_every=3)
+        validation_config = PeriodicValidationConfig(validate_every=3)
         validation_callback = AsyncMock(return_value=False)  # Validation fails
 
         coord = IssueExecutionCoordinator(
@@ -495,7 +495,7 @@ class TestWatchModeValidation:
             }
         )
         watch_config = WatchConfig(enabled=True)
-        validation_config = ValidationConfig(validate_every=10)
+        validation_config = PeriodicValidationConfig(validate_every=10)
         validation_callback = AsyncMock(return_value=True)
         interrupt_event = asyncio.Event()
 
@@ -1122,7 +1122,7 @@ class TestWatchModeIdleBehavior:
         )
         # Set validate_every=5, so validation should NOT trigger after only 3 completions
         watch_config = WatchConfig(enabled=True, poll_interval_seconds=10.0)
-        validation_config = ValidationConfig(validate_every=5)
+        validation_config = PeriodicValidationConfig(validate_every=5)
         interrupt_event = asyncio.Event()
         validation_callback = AsyncMock(return_value=True)
 

@@ -98,7 +98,7 @@ if TYPE_CHECKING:
     from src.pipeline.epic_verification_coordinator import EpicVerificationCoordinator
     from src.pipeline.issue_finalizer import IssueFinalizer
 
-    from src.core.models import RunResult, ValidationConfig, WatchConfig
+    from src.core.models import PeriodicValidationConfig, RunResult, WatchConfig
 
     from .types import OrchestratorConfig, _DerivedConfig
 
@@ -766,7 +766,7 @@ class MalaOrchestrator:
         run_metadata: RunMetadata,
         *,
         watch_config: WatchConfig | None = None,
-        validation_config: ValidationConfig | None = None,
+        validation_config: PeriodicValidationConfig | None = None,
         drain_event: asyncio.Event | None = None,
         interrupt_event: asyncio.Event | None = None,
         validation_callback: Callable[[], Awaitable[bool]] | None = None,
@@ -917,7 +917,7 @@ class MalaOrchestrator:
         self,
         *,
         watch_config: WatchConfig | None = None,
-        validation_config: ValidationConfig | None = None,
+        validation_config: PeriodicValidationConfig | None = None,
     ) -> tuple[int, int]:
         """Main orchestration loop. Returns (success_count, total_count).
 
@@ -1111,6 +1111,7 @@ class MalaOrchestrator:
         self,
         *,
         watch_config: WatchConfig | None = None,
+        validation_config: PeriodicValidationConfig | None = None,
     ) -> tuple[int, int]:
         """Synchronous wrapper for run(). Returns (success_count, total_count).
 
@@ -1120,6 +1121,8 @@ class MalaOrchestrator:
         Args:
             watch_config: Optional watch mode configuration. If provided, enables
                 watch mode with polling and interruptible idle sleep.
+            validation_config: Optional periodic validation configuration. If provided
+                with a validate_every value, enables periodic validation triggering.
 
         Raises:
             RuntimeError: If called from within an async context (e.g., inside an
@@ -1159,4 +1162,6 @@ class MalaOrchestrator:
             # No running event loop - this is the expected case for sync usage
 
         # Create a new event loop and run
-        return asyncio.run(self.run(watch_config=watch_config))
+        return asyncio.run(
+            self.run(watch_config=watch_config, validation_config=validation_config)
+        )
