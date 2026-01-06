@@ -245,7 +245,6 @@ Disable list (repeatable or comma-separated):
     `e2e`, `codex-review`, `followup-on-run-validate-fail`
 
 Other flags:
-- `--coverage-threshold <float>` (default 85.0)
 - `--keep-worktrees`
 
 Opt-in exceptions:
@@ -284,7 +283,7 @@ Optional dev flag: `--skip-e2e-if-no-keys` (warn and skip instead of failing).
 ## 6) Coverage (High but Reasonable)
 
 Default threshold: 85% line + branch coverage.
-If current coverage is lower, use `--coverage-threshold` temporarily and
+If current coverage is lower, set `coverage.min_percent` in `mala.yaml` temporarily and
 ratchet up over time.
 
 Command (in clean worktree):
@@ -292,8 +291,8 @@ Command (in clean worktree):
 uv run pytest --cov=src --cov-branch --cov-report=term-missing --cov-report=xml --cov-fail-under=<threshold>
 ```
 
-Where `<threshold>` is `CoverageConfig.min_percent` (default 85.0) and is
-controlled by `--coverage-threshold`.
+Where `<threshold>` is `CoverageConfig.min_percent` (default 85.0), configured
+via `coverage.min_percent` in `mala.yaml`.
 
 ## 7) Policy Enforcement Details
 
