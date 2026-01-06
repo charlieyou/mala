@@ -6,6 +6,7 @@ mala CLI: Agent SDK orchestrator for parallel issue processing.
 Usage:
     mala run [OPTIONS] [REPO_PATH]
     mala epic-verify [OPTIONS] EPIC_ID [REPO_PATH]
+    mala logs [list|sessions|show] [OPTIONS]
     mala clean
     mala status
 """
@@ -86,6 +87,7 @@ from typing import Annotated, Never
 import typer
 
 from ..orchestration.cli_support import Colors, log, set_verbose
+from .logs import logs_app
 
 # SDK-dependent imports (BeadsClient, MalaOrchestrator, get_lock_dir, run_metadata)
 # are lazy-loaded via __getattr__ to ensure bootstrap() runs before claude_agent_sdk
@@ -611,6 +613,9 @@ app = typer.Typer(
     help="Parallel issue processing with Claude Agent SDK",
     add_completion=False,
 )
+
+# Register subcommand apps
+app.add_typer(logs_app, name="logs")
 
 
 @app.command()
