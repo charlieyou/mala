@@ -4052,6 +4052,12 @@ class TestLogProviderInjection:
                 """Extract assistant text blocks from entry."""
                 return []
 
+            def extract_tool_result_content(
+                self, entry: JsonlEntry
+            ) -> list[tuple[str, str]]:
+                """Extract tool result content from entry."""
+                return []
+
         # Create mock entries with pytest command - include typed entry
         tool_use_block = ToolUseBlock(
             id="test-1", name="Bash", input={"command": "uv run pytest"}

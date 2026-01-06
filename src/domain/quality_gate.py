@@ -472,6 +472,17 @@ class QualityGate:
                         # Latest status for this CommandKind wins (allows retries to succeed)
                         kind_failed[kind] = (is_error, cmd_name)
 
+            # Extract tool result content for custom command marker parsing (T007)
+            # Currently a stub that returns empty list; T007 will implement marker parsing
+            # to populate evidence.custom_commands_ran and evidence.custom_commands_failed
+            for (
+                _tool_use_id,
+                _content,
+            ) in self._log_provider.extract_tool_result_content(entry):
+                # T007: Parse markers like [custom:<name>:pass] or [custom:<name>:fail exit=N]
+                # and update evidence.custom_commands_ran[name] and evidence.custom_commands_failed[name]
+                pass
+
         # Build failed_commands from kinds that failed, using display names
         # Filter out ignored kinds (e.g., SETUP) so they don't block the gate
         # Deduplicate: multiple kinds (LINT, FORMAT) may map to the same tool (ruff)
